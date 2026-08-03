@@ -19,9 +19,13 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@chorus/shared": "workspace:*",
     "@chorus/agent-protocol": "workspace:*",
     "@chorus/event-store": "workspace:*",
+    "@chorus/shared": "workspace:*",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "better-sqlite3": "^13.0.2"
   }
 }

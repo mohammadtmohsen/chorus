@@ -5,7 +5,7 @@ Plan: [plan.md](./plan.md)
 | Milestone                          | State                                         |
 | ---------------------------------- | --------------------------------------------- |
 | M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes  |
-| M1 Event store & orchestrator      | Not started                                   |
+| M1 Event store & orchestrator      | **Core complete** — read API deferred to M4   |
 | M2 Codex adapter                   | Not started                                   |
 | M3 Claude adapter                  | Not started                                   |
 | M4 Shared conversation UI          | Not started                                   |
@@ -82,3 +82,35 @@ Plan: [plan.md](./plan.md)
      it would stall and buffer unboundedly exactly when a long turn is running in the
      background. Needs a timed fallback flush and a bounded buffer. Frame budget also
      tightened to 8.3 ms (120 Hz), not the 16 ms the plan assumed.
+
+- **2026-08-03 — M1 core complete.** Event store and orchestrator built and tested with
+  zero Electron involved. 61 tests across the workspace, all gates green.
+
+  Shipped:
+  - `@chorus/event-store` — append-only log, numbered forward-only migrations (with a
+    pre-migration snapshot hook, since `backup()` is async per S4), a `better-sqlite3`
+    driver behind the `Database` port, and projections for conversations, messages,
+    agent sessions, approvals and handoffs. Append and projection updates share one
+    transaction, so a projection can never run ahead of the log.
+  - `rebuildProjections()` — drops every projection and replays the log. Tested to
+    reproduce byte-identical state after a wipe and to recover from a deliberately
+    corrupted projection. `projectionDrift()` reports a projection left behind.
+  - `@chorus/orchestrator` — `DeltaBuffer` (two-sided size/time bound plus a total-chars
+    backstop) and `ConversationService`, which maps `AgentEvent` to durable
+    `ChorusEvent`s.
+  - `FakeAdapter` — an in-memory `AgentAdapter`. This is also the harness the shared
+    adapter conformance suite will run against in M2/M3.
+
+  Three S3 findings are now enforced by tests, not just documented:
+  1. Streamed text is persisted as it arrives — 500 deltas coalesce into fewer than 10
+     log rows while the message row still reconstructs in full.
+  2. Pending deltas flush **before** any lifecycle event, so a command can never be logged
+     ahead of the sentence that introduced it.
+  3. A user-initiated stop is recorded as `interrupted` with `userInitiated: true`, while
+     an unrequested failure stays `failed` — Claude reports both identically on the wire.
+
+  Deferred out of M1 (not blocking M2/M3):
+  - No typed read API over the projections yet; M4 needs one and should own its shape.
+  - `projects` table exists but nothing manages projects yet.
+  - Handoff and approval _events_ are modelled and projected, but the handoff engine (M6)
+    and policy engine (M5) are not built.

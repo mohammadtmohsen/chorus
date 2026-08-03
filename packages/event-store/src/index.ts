@@ -1,3 +1,6 @@
+export * from './events.js'
+export * from './migrations.js'
 export * from './port.js'
-
-// M1 lands the append-only log, projections, and migrations here (plan §4.3).
+export * from './projections.js'
+export * from './sqlite.js'
+export * from './store.js'
