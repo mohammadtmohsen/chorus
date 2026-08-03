@@ -1,0 +1,20 @@
+{
+  "app": {
+    "name": "Chorus",
+    "tagline": "A local-first workspace for collaborating with multiple coding agents."
+  },
+  "agents": {
+    "heading": "Agents",
+    "probing": "Probing…",
+    "notFound": "not found on PATH",
+    "unknownVersion": "unknown version"
+  },
+  "runtime": {
+    "heading": "Runtime",
+    "loading": "Loading…",
+    "electron": "Electron",
+    "chromium": "Chromium",
+    "node": "Node",
+    "platform": "Platform"
+  }
+}

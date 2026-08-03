@@ -1,0 +1,28 @@
+{
+  "name": "@chorus/adapter-codex",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AgentAdapter over `codex app-server` (JSON-RPC 2.0 on stdio).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@chorus/agent-protocol": "workspace:*",
+    "@chorus/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1"
+  }
+}

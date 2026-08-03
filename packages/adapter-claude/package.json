@@ -1,0 +1,28 @@
+{
+  "name": "@chorus/adapter-claude",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AgentAdapter over @anthropic-ai/claude-agent-sdk, driving the installed CLI.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@chorus/agent-protocol": "workspace:*",
+    "@chorus/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1"
+  }
+}

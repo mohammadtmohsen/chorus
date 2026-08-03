@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+build/
+coverage/
+.turbo/
+pnpm-lock.yaml
+*.tsbuildinfo
+
+# Generated from the Codex protocol (plan §6.1) — reformatting it would create
+# spurious diffs in the drift check.
+packages/adapter-codex/src/generated/

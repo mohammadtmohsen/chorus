@@ -1,0 +1,11 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Postinstall scripts run arbitrary code, so they are opt-in one package at a
+# time. Keeping this list short is the one-native-module budget from plan §4.4 —
+# every entry here is another binary to sign if M9 ever triggers.
+allowBuilds:
+  esbuild: true
+  electron: true
+  better-sqlite3: true

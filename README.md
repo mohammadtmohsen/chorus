@@ -1,0 +1,47 @@
+# Chorus
+
+Chorus is a local-first workspace where a developer can collaborate with multiple coding agents in one shared conversation.
+
+## Vision
+
+Coding agents are most useful when they can specialize, exchange findings, and remain under clear human control. Chorus provides one place to ask an agent for analysis, hand the result to another agent for implementation, and send the finished work back for review.
+
+## Core workflow
+
+1. Ask Codex to inspect a project and recommend an approach without editing files.
+2. Review and discuss the recommendation in the shared conversation.
+3. Hand the approved recommendation to Claude for implementation.
+4. Approve commands and file changes through structured confirmation cards.
+5. Ask Codex to review Claude's changes and report actionable findings.
+
+## Product principles
+
+- **Human controlled:** consequential commands and edits require visible approval.
+- **Local first:** projects, transcripts, and agent processes stay on the developer's Mac by default.
+- **Explicit context sharing:** agents keep separate contexts, while Chorus forwards selected messages and handoffs.
+- **Reliable integrations:** use supported programmatic interfaces instead of parsing terminal graphics.
+- **Agent independent:** adapters keep the shared conversation separate from any single model provider.
+
+## Proposed architecture
+
+- **Desktop client:** Electron, React, and TypeScript.
+- **Local orchestrator:** routes messages, approvals, tasks, and agent events.
+- **Codex adapter:** communicates with `codex app-server` over standard input/output.
+- **Claude adapter:** uses Claude's streaming CLI for the private local version, with the Agent SDK available for distributed products.
+- **Event store:** SQLite stores conversations, handoffs, approvals, and project metadata.
+- **Workspace service:** manages project directories, Git status, diffs, and optional worktree isolation.
+
+## MVP
+
+- Shared conversation for the developer, Claude, and Codex.
+- `@claude` and `@codex` mentions.
+- Direct handoff buttons between agents.
+- Streaming responses and agent status indicators.
+- Approval cards for commands and file changes.
+- Per-project working directories and permission profiles.
+- Git diff and review view.
+- Optional terminal drawer for raw sessions and debugging.
+
+## Status
+
+Chorus is currently in the product-design stage.

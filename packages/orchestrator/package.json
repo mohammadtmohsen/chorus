@@ -1,0 +1,27 @@
+{
+  "name": "@chorus/orchestrator",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Domain core: conversation, handoff, policy, approvals. Zero Electron, zero adapters.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@chorus/shared": "workspace:*",
+    "@chorus/agent-protocol": "workspace:*",
+    "@chorus/event-store": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

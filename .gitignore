@@ -1,0 +1,37 @@
+node_modules/
+dist/
+out/
+build/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Electron packaging output
+apps/desktop/out/
+apps/desktop/dist/
+
+# Generated Codex protocol bindings are committed on purpose (see plan §6.1).
+# Nothing else generated should be.
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+.chorus/
+
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

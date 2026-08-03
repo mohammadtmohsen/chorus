@@ -1,0 +1,35 @@
+{
+  "name": "@chorus/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Chorus desktop client.",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
+    "test": "vitest run --config vitest.config.mts",
+    "clean": "rm -rf out dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@chorus/agent-protocol": "workspace:*",
+    "@chorus/event-store": "workspace:*",
+    "@chorus/orchestrator": "workspace:*",
+    "@chorus/shared": "workspace:*",
+    "@chorus/workspace": "workspace:*",
+    "i18next": "^26.3.6",
+    "react-i18next": "^17.0.11",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "electron": "^43.2.0",
+    "electron-vite": "^5.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "vite": "^8.2.0"
+  }
+}

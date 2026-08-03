@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Electron's binary is only needed for packaging, not for typecheck/lint/test.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+jobs:
+  check:
+    name: Typecheck, lint, test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format
+        run: pnpm run format:check
+
+      - name: Test
+        run: pnpm run test
+
+  build:
+    name: Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
+  protocol-drift:
+    name: Codex protocol drift
+    runs-on: macos-latest
+    # Informational until M2 generates the bindings. The app-server is marked
+    # [experimental] and will move under us — this is how we find out from a red
+    # build rather than from a broken adapter at runtime (plan §6.1).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Regenerate protocol bindings
+        run: |
+          if [ ! -d packages/adapter-codex/src/generated ]; then
+            echo "Bindings not generated yet (lands in M2). Skipping."
+            exit 0
+          fi
+          codex app-server generate-ts --out packages/adapter-codex/src/generated
+
+      - name: Fail on drift
+        run: |
+          if ! git diff --quiet -- packages/adapter-codex/src/generated; then
+            echo "::error::Codex app-server protocol changed. Review the diff and update the adapter."
+            git diff -- packages/adapter-codex/src/generated
+            exit 1
+          fi
