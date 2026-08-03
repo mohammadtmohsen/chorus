@@ -4,7 +4,7 @@ Plan: [plan.md](./plan.md)
 
 | Milestone                          | State                                         |
 | ---------------------------------- | --------------------------------------------- |
-| M0 Foundations & spikes            | Infrastructure done; spikes S3–S5 remain      |
+| M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes  |
 | M1 Event store & orchestrator      | Not started                                   |
 | M2 Codex adapter                   | Not started                                   |
 | M3 Claude adapter                  | Not started                                   |
@@ -58,3 +58,27 @@ Plan: [plan.md](./plan.md)
   4. Typed linting needs test files inside a tsconfig, but the build must exclude them, so
      every package carries `tsconfig.json` (lint/editor, includes tests, emits nothing) plus
      `tsconfig.build.json` (emits, excludes tests).
+
+- **2026-08-03 — M0 complete. All five spikes pass.** Full write-up in
+  [docs/research/spikes-2026-08-03.md](../../research/spikes-2026-08-03.md). Five results
+  changed the plan:
+  1. **Codex discards partial assistant output; Claude preserves it.** After an interrupt
+     or SIGKILL, `thread/read` returns the interrupted turn with only the `userMessage` —
+     everything streamed is gone. So the transcript cannot be rebuilt from the providers.
+     The event log is now load-bearing for crash recovery, not just audit, and M1 must
+     persist `message.delta` as it arrives rather than waiting for `message.completed`.
+  2. **Claude reports a user interrupt as `error_during_execution` / `is_error: true`**,
+     with no distinct status; Codex reports `interrupted`. The adapter must track whether
+     _we_ asked for the interrupt, or the UI shows an error card for pressing Stop.
+  3. **The published Codex docs are wrong on the wire format** — `SandboxMode` (string
+     enum) vs `SandboxPolicy` (tagged object) on adjacent methods, kebab-case
+     `approvalPolicy` with an undocumented `granular` variant, a required snake_case
+     `text_elements`, and `turn/interrupt` needing `turnId`. All corrected in plan §2.1
+     from the generated bindings.
+  4. **S4's premise was wrong in our favour**: `better-sqlite3` ships N-API prebuilds and
+     loads in Electron 43 with no rebuild step. 10k rows insert in ~18 ms, so synchronous
+     SQLite on the main thread is settled. Note `backup()` is the one async method.
+  5. **rAF stops in hidden/occluded windows**, so coalescing cannot be built on it alone —
+     it would stall and buffer unboundedly exactly when a long turn is running in the
+     background. Needs a timed fallback flush and a bounded buffer. Frame budget also
+     tightened to 8.3 ms (120 Hz), not the 16 ms the plan assumed.

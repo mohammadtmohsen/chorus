@@ -61,17 +61,35 @@ These were verified against live docs and the locally installed toolchain on 202
   `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, and
   `item/permissions/requestApproval`. Responses are
   `accept | acceptForSession | decline | cancel`, followed by `serverRequest/resolved`.
-- **Sandbox policy** is first-class on `thread/start`: `type` is one of
-  `readOnly | workspaceWrite | dangerFullAccess | externalSandbox`, plus `readableRoots`,
-  `writableRoots`, `networkAccess`. Combined with `approvalPolicy`
-  (`never | unlessTrusted | onRequest`).
+- **Sandbox policy is first-class — but there are two different types with nearly the
+  same name.** Corrected 2026-08-03 against the generated bindings; the published prose
+  docs are wrong here and the values below are what the server actually accepts:
+  - `thread/start` takes `sandbox: SandboxMode`, a **string enum**:
+    `"read-only" | "workspace-write" | "danger-full-access"`.
+  - `turn/start` takes `sandboxPolicy: SandboxPolicy`, a **tagged object** with
+    camelCase tags: `{ type: "readOnly", networkAccess }`,
+    `{ type: "workspaceWrite", writableRoots, networkAccess, … }`,
+    `{ type: "dangerFullAccess" }`, `{ type: "externalSandbox", networkAccess }`.
+  - `approvalPolicy: AskForApproval` is `"untrusted"`, `"on-request"`, `"never"`, or a
+    `{ granular: … }` object with per-category toggles (`sandbox_approval`, `rules`,
+    `skill_approval`, `request_permissions`, `mcp_elicitations`). The `granular` variant
+    is undocumented and may map onto our permission profiles better than the presets —
+    revisit in M5.
+  - Text input requires `text_elements: TextElement[]` alongside `text` — snake_case in
+    an otherwise camelCase API.
+  - `turn/interrupt` needs **both** `threadId` and `turnId`.
+  - `turn/start` **returns immediately** with `{ turn: { id, status: "inProgress" } }`;
+    it is not a long-lived request. Streaming arrives as notifications.
 - **Experimental methods require opt-in** via `capabilities.experimentalApi: true` in
   `initialize`, or the server rejects them.
 - Backpressure is explicit: JSON-RPC error `-32001` "Server overloaded; retry later" →
   the client must retry with exponential backoff + jitter.
 - **`codex app-server generate-ts --out <DIR>` emits TypeScript bindings for the whole
-  protocol.** Verified present in `codex-cli 0.146.0`. This is the single biggest
-  de-risking lever available and the plan builds on it (§6.1).
+  protocol.** Verified present in `codex-cli 0.146.0` — **622 files, 2.5 MB**, current
+  protocol under `v2/`. This is the single biggest de-risking lever available and the
+  plan builds on it (§6.1). Every correction in the bullet above came from these
+  bindings contradicting the prose docs, which is the case for committing them and
+  diffing in CI.
 
 ### 2.2 Claude — Agent SDK
 
@@ -328,6 +346,19 @@ export interface AgentCapabilities {
 Capabilities are declared, not assumed — the UI hides a Steer button for an agent that
 can't steer instead of failing at runtime.
 
+**Validated by S3 (2026-08-03) with two additions** — see
+[spike findings](../../research/spikes-2026-08-03.md):
+
+- Codex has **two similarly named, structurally different sandbox types**:
+  `SandboxMode` (a kebab-case string enum) on `thread/start`, and `SandboxPolicy`
+  (a tagged object, camelCase) on `turn/start`. Neither may escape the adapter;
+  our own `SandboxPolicy` above is the only shape the rest of the app sees.
+- `AgentSession` needs to record **whether an interrupt was user-initiated**,
+  because Claude reports one as `error_during_execution` / `is_error: true` with
+  no distinct status. Without that flag the adapter cannot tell "the user pressed
+  Stop" from "the turn crashed", and the UI would show an error card for a normal
+  action.
+
 ### 4.2 The normalized `AgentEvent` union
 
 Both providers project onto this. Nothing provider-specific leaks past the adapter
@@ -360,6 +391,16 @@ Note the asymmetries and plan for them explicitly:
 ### 4.3 Event store & data model
 
 Append-only source of truth; everything else is a projection that can be rebuilt.
+
+**S3 promoted this from "good for audit" to load-bearing.** Codex does not persist
+partial assistant output: after an interrupt or a crash, `thread/read` returns the
+interrupted turn containing only the `userMessage` — everything the agent had already
+streamed is gone. Claude preserves it. So the transcript **cannot** be rebuilt from the
+providers, and Chorus must persist `message.delta` events as they arrive rather than
+waiting for `message.completed`. See [spike findings](../../research/spikes-2026-08-03.md).
+
+S4 also settles the performance question: 10,000 rows insert in ~18 ms in one
+transaction, so synchronous writes on the main thread are not a latency concern.
 
 ```sql
 -- source of truth
@@ -493,6 +534,21 @@ Flow:
   lifecycle or approval events) and surface a "stream throttled" indicator.
 - Codex `-32001` overload → exponential backoff with jitter in the adapter's RPC client.
 
+**Revised by S5 (2026-08-03):**
+
+- ⚠ **Coalescing may not be built on `requestAnimationFrame` alone.** rAF stops in
+  hidden and occluded windows — which is precisely when a long agent turn is most
+  likely to be running. A pure-rAF flush stalls and buffers without bound while
+  Chorus is backgrounded. Use rAF when visible with a **time-based fallback flush
+  and a hard buffer cap** as the floor.
+- The frame budget is **8.3 ms, not 16 ms** — the test machine runs at 120 Hz, and
+  the original target was written for 60 Hz.
+- Coalescing's measured benefit is the tail, not the median: max frame time
+  74.6 ms → 9.5 ms, and ~40% fewer React renders. React 19's automatic batching
+  hides most of the median cost, so naive rendering looks fine right up until it
+  isn't. The measurement used plain text nodes; re-run against the real transcript
+  (markdown, highlighting, virtualization) as an M4 exit gate.
+
 ---
 
 ## 5. Tech stack
@@ -535,13 +591,13 @@ in `package.json` and let CI tell us when it's safe to bump.
 
 ### 6.2 Spikes (M0) — throwaway code, hard questions
 
-| Spike               | Question it answers                                                                                                                                                                 | Done when                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| S1 Codex stdio      | ~~Can we handshake?~~ **Proven 2026-08-03** (§2.5). Remaining: start a thread, stream a turn, answer an approval request                                                            | A script runs `git status` in a temp repo via approval round-trip                                   |
-| S2 Claude SDK       | ~~What are the real `canUseTool` / `SDKMessage` types?~~ **Done 2026-08-03** — see §2.2. Remaining: does `pathToClaudeCodeExecutable` + `--omit=optional` actually work end to end? | Approval + interrupt + resume proven against the installed `claude`, with no bundled binary present |
-| S3 Interrupt/resume | Do both survive kill-and-resume mid-turn without corrupting state?                                                                                                                  | Both resume with intact history                                                                     |
-| S4 Native module    | Does `better-sqlite3` rebuild for Electron's ABI and load from a packaged, ad-hoc-signed app?                                                                                       | Packaged app opens a DB, writes, and reads back on a clean user account                             |
-| S5 Perf             | Renderer under a 5k-token/s stream                                                                                                                                                  | < 16ms frame time with coalescing                                                                   |
+| Spike               | Question it answers                                                                                                                           | Done when                                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| S1 Codex stdio      | **PASSED 2026-08-03.** Handshake, thread/turn lifecycle, streaming, interrupt all proven against the installed CLI                            | ✅ See [spike findings](../../research/spikes-2026-08-03.md)                                                           |
+| S2 Claude SDK       | **PASSED 2026-08-03.** Real `CanUseTool` signature captured; `pathToClaudeCodeExecutable` + `--omit=optional` proven end to end               | ✅ Drives installed `claude`, 257 MB binary verifiably absent                                                          |
+| S3 Interrupt/resume | **PASSED 2026-08-03 — with an asymmetry.** Both interrupt and resume cleanly; Codex survives SIGKILL mid-turn with context intact             | ⚠ Codex discards partial assistant output, Claude preserves it. Forces the event log to be the source of truth (§4.3)  |
+| S4 Native module    | ~~Does `better-sqlite3` rebuild for Electron ABI?~~ **PASSED — premise was wrong.** It ships N-API prebuilds and loads with _no_ rebuild step | ✅ WAL on, 10k rows in ~18 ms, backup API works. Signing the `.node` still pending M9                                  |
+| S5 Perf             | **PASSED 2026-08-03.** Target tightened from 16 ms to 8.3 ms (120 Hz display)                                                                 | ✅ p99 9.4 ms; coalescing removes a 74.6 ms tail spike. ⚠ rAF stalls when backgrounded — needs a timed fallback (§4.6) |
 
 **On S4 and notarization:** full notarization requires a paid Apple Developer ID, which
 "personal now, product later" (§10) defers. So S4 proves the _hard_ half — native rebuild
