@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Upstream drift check. Both CLIs self-update, so this is how we find out
+    # the protocol moved from a red build rather than a broken session.
+    - cron: '17 6 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -58,34 +62,63 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
 
-  protocol-drift:
-    name: Codex protocol drift
+  # Two different questions, deliberately split.
+  #
+  # This job asks "do the committed bindings still match the version we pinned?"
+  # — i.e. did someone hand-edit generated code. It must always pass.
+  bindings-match-pin:
+    name: Codex bindings match pinned CLI
     runs-on: macos-latest
-    # Informational until M2 generates the bindings. The app-server is marked
-    # [experimental] and will move under us — this is how we find out from a red
-    # build rather than from a broken adapter at runtime (plan §6.1).
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - name: Install Codex CLI
-        run: npm install -g @openai/codex
-
-      - name: Regenerate protocol bindings
+      - name: Install the pinned Codex CLI
         run: |
-          if [ ! -d packages/adapter-codex/src/generated ]; then
-            echo "Bindings not generated yet (lands in M2). Skipping."
-            exit 0
-          fi
+          VERSION="$(cat packages/adapter-codex/src/generated/.codex-version)"
+          echo "pinned codex version: $VERSION"
+          npm install -g "@openai/codex@$VERSION"
+
+      - name: Regenerate and compare
+        run: |
           codex app-server generate-ts --out packages/adapter-codex/src/generated
-
-      - name: Fail on drift
-        run: |
+          codex --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' > packages/adapter-codex/src/generated/.codex-version
           if ! git diff --quiet -- packages/adapter-codex/src/generated; then
-            echo "::error::Codex app-server protocol changed. Review the diff and update the adapter."
-            git diff -- packages/adapter-codex/src/generated
+            echo "::error::Committed bindings do not match the pinned CLI. Regenerate with:"
+            echo "  codex app-server generate-ts --out packages/adapter-codex/src/generated"
+            git diff --stat -- packages/adapter-codex/src/generated
             exit 1
           fi
+
+  # This job asks "has the protocol moved upstream?" The app-server is marked
+  # [experimental] and its generated types already contradicted the published
+  # docs in six places, so a red build here is the signal we want (plan §6.1).
+  # It runs on a schedule rather than per-PR, because upstream shipping is not a
+  # reason to block a pull request.
+  protocol-drift:
+    name: Codex protocol drift (upstream)
+    if: github.event_name == 'schedule'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install the latest Codex CLI
+        run: npm install -g @openai/codex@latest
+
+      - name: Report drift against the pinned bindings
+        run: |
+          PINNED="$(cat packages/adapter-codex/src/generated/.codex-version)"
+          LATEST="$(codex --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          codex app-server generate-ts --out packages/adapter-codex/src/generated
+          if git diff --quiet -- packages/adapter-codex/src/generated; then
+            echo "No protocol change between $PINNED and $LATEST."
+            exit 0
+          fi
+          echo "::warning::Codex protocol changed between $PINNED and $LATEST — review before bumping."
+          git diff --stat -- packages/adapter-codex/src/generated
+          exit 1

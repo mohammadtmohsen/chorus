@@ -2,18 +2,18 @@
 
 Plan: [plan.md](./plan.md)
 
-| Milestone                          | State                                         |
-| ---------------------------------- | --------------------------------------------- |
-| M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes  |
-| M1 Event store & orchestrator      | **Core complete** — read API deferred to M4   |
-| M2 Codex adapter                   | Not started                                   |
-| M3 Claude adapter                  | Not started                                   |
-| M4 Shared conversation UI          | Not started                                   |
-| M5 Approvals & permission profiles | Not started                                   |
-| M6 Handoffs                        | Not started                                   |
-| M7 Workspace & review              | Not started                                   |
-| M8 Hardening                       | Not started                                   |
-| M9 Distribution                    | Deferred — decision point after M8 dogfooding |
+| Milestone                          | State                                          |
+| ---------------------------------- | ---------------------------------------------- |
+| M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes   |
+| M1 Event store & orchestrator      | **Core complete** — read API deferred to M4    |
+| M2 Codex adapter                   | **In progress** — supervisor + app wiring left |
+| M3 Claude adapter                  | Not started                                    |
+| M4 Shared conversation UI          | Not started                                    |
+| M5 Approvals & permission profiles | Not started                                    |
+| M6 Handoffs                        | Not started                                    |
+| M7 Workspace & review              | Not started                                    |
+| M8 Hardening                       | Not started                                    |
+| M9 Distribution                    | Deferred — decision point after M8 dogfooding  |
 
 ## Log
 
@@ -114,3 +114,46 @@ Plan: [plan.md](./plan.md)
   - `projects` table exists but nothing manages projects yet.
   - Handoff and approval _events_ are modelled and projected, but the handoff engine (M6)
     and policy engine (M5) are not built.
+
+- **2026-08-03 — M2 in progress.** Codex adapter core built and tested; 100 tests
+  workspace-wide, all gates green.
+
+  Shipped:
+  - **Generated protocol bindings committed** — 622 files from
+    `codex app-server generate-ts`, pinned to codex-cli 0.146.0 via a
+    `.codex-version` marker. Build cost measured at ~1.5s; they are type-only.
+  - `JsonRpcClient` — bidirectional by design. Approvals arrive as requests _from_
+    the server and must be answered by id; a client modelling only one direction
+    hangs every approval. Also handles `-32001` overload with exponential backoff
+    plus full jitter (lockstep retry just recreates the overload), request
+    timeouts, and failing every in-flight promise when the process dies — the
+    S3a scenario, which otherwise leaves promises pending forever.
+  - `mapping.ts` — pure Codex-notification → `AgentEvent` translation, including
+    all three approval request shapes onto the single `ApprovalRequest` card, and
+    decision translation that fails closed (a timeout becomes `decline`, never
+    `accept`).
+  - `CodexAdapter` / `CodexSession` — handshake, `thread/start`, `turn/start`,
+    `turn/interrupt`, resume, and approval round-trip. Both Codex sandbox types
+    stay inside this file, per plan §4.1.
+  - An opt-in integration test (`CHORUS_E2E=1`) against the real binary. It stops
+    short of starting a turn, so it costs no tokens while still exercising the
+    handshake and the sandbox/approval-policy encodings the docs got wrong.
+
+  **The drift check is now two jobs, not one.** They answer different questions:
+  `bindings-match-pin` regenerates against the _pinned_ CLI on every PR and must
+  always pass — it catches hand-edited generated code. `protocol-drift` runs on a
+  daily schedule against `@latest` and is allowed to go red, because upstream
+  shipping is not a reason to block a pull request.
+
+  One thing the linter caught that was worth fixing properly: the mapping used
+  `String(unknown)` throughout, which yields `"[object Object]"` for an
+  unexpected shape — verbatim into a transcript. Replaced with a narrowing
+  helper, so a bad shape reads as absent rather than as garbage.
+
+  Remaining before M2 closes:
+  - **Supervisor** — crash detection, restart with backoff, automatic thread
+    resume. `resume()` exists on the adapter but nothing drives it yet.
+  - **Wiring into the desktop app** — the adapter is not yet reachable from the
+    Electron main process.
+  - The shared adapter conformance suite, which only becomes meaningful once the
+    Claude adapter exists in M3 to run against the same tests.
