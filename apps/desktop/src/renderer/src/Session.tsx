@@ -87,6 +87,17 @@ export function Session(props: {
   )
 
   useEffect(() => {
+    /*
+     * A new session exists to be typed into, so it takes the caret.
+     *
+     * Mount is the right moment rather than every render: this component is
+     * keyed by conversation, so it runs exactly once per session — a pane that
+     * already exists never steals the caret back from one you are using.
+     */
+    input.current?.focus()
+  }, [])
+
+  useEffect(() => {
     window.chorus
       .history({ conversationId })
       .then((history) => {

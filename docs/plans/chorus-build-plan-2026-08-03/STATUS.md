@@ -1086,3 +1086,14 @@ sentence each, …` produced replies from both, with the user's message logged *
   `data-conversation` so anything outside React can address the right one.
 
   396 tests.
+
+- **2026-08-04 — a new session takes the caret.** The composer focuses when a
+  session opens, so the first thing you do is type rather than click.
+
+  On mount rather than on render: `Session` is keyed by conversation, so the
+  effect runs exactly once per session and a pane that already exists never
+  steals the caret back from one you are using.
+
+  Verified live: focus on `body` before starting, in pane 1's composer after,
+  text typed with no click landing in it, focus moving to pane 2 when a second
+  session opens, and pane 1's half-written draft still there.
