@@ -11,24 +11,12 @@ import {
 } from '../shared/ipc.js'
 import { probeAgents } from './agent-probe.js'
 import type { ChorusRuntime } from './runtime.js'
+import { applyScale } from './scale.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
 
 type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>> }
 
 const OK = { ok: true } as const
-
-/**
- * Zooms every open window.
- *
- * Lives in the main process because the renderer is sandboxed and `webFrame` is
- * not reachable from it — and because applying it here means the same call is
- * used on launch and on change, rather than two paths that can disagree.
- */
-export function applyScale(scale: number): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.setZoomFactor(scale)
-  }
-}
 
 function buildHandlers(runtime: ChorusRuntime): Handlers {
   return {
@@ -97,8 +85,12 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'settings:read': () => Promise.resolve(readSettings(app.getPath('userData'))),
 
-    'settings:write': (request: Settings) => {
-      const saved = writeSettings(app.getPath('userData'), request)
+    'settings:write': (request: Partial<Settings>) => {
+      const path = app.getPath('userData')
+      // Merged over what is on disk, so a field the renderer did not send keeps
+      // whatever the menu or a previous session left there. Zod drops absent
+      // keys rather than passing them as undefined, so the spread is safe.
+      const saved = writeSettings(path, { ...readSettings(path), ...request })
       applyScale(saved.scale)
       return Promise.resolve(saved)
     },

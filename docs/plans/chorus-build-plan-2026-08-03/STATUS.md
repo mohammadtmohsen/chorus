@@ -767,8 +767,9 @@ sentence each, …` produced replies from both, with the user's message logged *
   masthead once panes exist, and a changed profile surviving a full relaunch.
   365 tests.
 
-- **2026-08-04 — size in Settings.** Five steps (85% to 150%), plus ⌘+, ⌘− and
-  ⌘0 stepping through the same sizes.
+- **2026-08-04 — size, first in Settings and then only on the keyboard.** Five
+  steps (85% to 150%) with ⌘+, ⌘− and ⌘0. The sheet control was dropped a moment
+  later; the record of why the mechanism is a zoom factor is worth keeping.
 
   It is a **zoom factor, not a font size**. Scaling type alone would leave every
   border, gutter and control where it was, so larger text would arrive in a
@@ -788,3 +789,25 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   Verified live: 1.0 at launch, 1.3 after picking 130%, ⌘0 back to 1.0, ⌘− down
   to 0.85, and 0.85 still in force after a full relaunch. 365 tests.
+
+- **2026-08-04 — zoom moved to the menu, out of Settings.** The size control is
+  gone from the sheet; ⌘+, ⌘− and ⌘0 are the whole interface.
+
+  This forced a real change rather than deleting a fieldset. **A menu accelerator
+  is handled before the page ever sees the keystroke**, so the shortcut could not
+  live in the renderer: Electron's default View menu would have taken ⌘+ first,
+  zoomed the window itself, and remembered nothing. Chorus now sets its own
+  application menu — which means also keeping what the default gave for free.
+  Without `editMenu` there is no ⌘C in the app at all, so that is a test.
+
+  ⌘= is bound as a hidden second item, because ⌘+ needs Shift on most layouts and
+  a visible duplicate would read as two commands.
+
+  `settings:write` became a **patch**. With zoom owned by the menu, the
+  renderer's copy of `scale` goes stale the moment ⌘− is pressed, and a whole
+  object write would have quietly reverted it. Verified: writing only
+  `profileId` left a menu-set scale of 1.3 untouched.
+
+  The accelerators themselves are covered by unit tests over the menu template
+  and the stepping — a native menu keystroke cannot be driven through CDP, so
+  that last inch is structure, not a synthetic keypress. 378 tests.

@@ -202,8 +202,15 @@ export const IPC_CONTRACT = {
     request: z.object({}),
     response: SettingsShape,
   },
+  /**
+   * A patch, not a whole object.
+   *
+   * Zoom is changed from the menu, so the renderer's copy of `scale` goes stale
+   * the moment ⌘− is pressed. Sending only what changed means a stale field
+   * cannot overwrite a fresh one.
+   */
   'settings:write': {
-    request: SettingsShape,
+    request: SettingsShape.partial(),
     response: SettingsShape,
   },
   'diagnostics:read': {

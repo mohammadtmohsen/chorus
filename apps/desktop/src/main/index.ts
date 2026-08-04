@@ -1,7 +1,9 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
-import { applyScale, forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
+import { forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
 import { createLogger } from './logging.js'
+import { installMenu } from './menu.js'
+import { applyScale } from './scale.js'
 import { readSettings } from './settings.js'
 import { reapOrphanedAgents } from './reap.js'
 import { ChorusRuntime } from './runtime.js'
@@ -81,6 +83,8 @@ void app.whenReady().then(() => {
 
   runtime = ChorusRuntime.open(app.getPath('userData'), log)
   registerIpcHandlers(runtime)
+  // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
+  installMenu(app.getPath('userData'))
   forwardEventsToRenderer(runtime)
 
   createWindow()
