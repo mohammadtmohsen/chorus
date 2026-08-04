@@ -153,9 +153,36 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       })
       return
 
-    case 'approval.decided':
-      view.approvals = view.approvals.filter((a) => a.approvalId !== str('approvalId'))
+    case 'approval.decided': {
+      const id = str('approvalId')
+      view.approvals = view.approvals.filter((a) => a.approvalId !== id)
+
+      /*
+       * An auto-decision always leaves a line in the transcript. A policy that
+       * works silently is indistinguishable from no policy — the user must be
+       * able to see what was decided for them, and which rule did it (§4.4).
+       *
+       * Deliberately not conditioned on whether a card was showing: the request
+       * is logged before policy evaluates, so an auto-decided approval *does*
+       * briefly appear pending. Skipping the notice in that case made every
+       * automatic decision invisible, which a live run caught.
+       */
+      if (str('decidedBy') !== 'user') {
+        const rule = str('policyRuleId')
+        const outcome = str('outcome')
+        view.messages.push({
+          key: event.id,
+          actor: 'system',
+          kind: 'notice',
+          text:
+            outcome === 'timeout'
+              ? 'Denied — nobody answered in time.'
+              : `${outcome === 'allow' ? 'Allowed' : 'Denied'} automatically${rule === '' ? '' : ` · ${rule}`}`,
+          status: 'complete',
+        })
+      }
       return
+    }
 
     case 'error.raised':
       view.messages.push({

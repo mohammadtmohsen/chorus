@@ -244,17 +244,83 @@ describe('approval decisions', () => {
   })
 
   it('attributes an auto-decision to the rule that made it', async () => {
-    await service.decideApproval(
-      'ap2',
-      { outcome: 'deny', message: 'outside project root' },
-      'policy',
-      'deny-outside-root'
-    )
-    expect(store.read(CONV, { types: ['approval.decided'] })[0]?.payload).toMatchObject({
-      decidedBy: 'policy',
-      policyRuleId: 'deny-outside-root',
-      scope: null,
+    // The rule id comes from the engine, never from the caller — an allow that
+    // cannot be traced back to a rule is indistinguishable from no policy.
+    const s = session()
+    s.emit({
+      type: 'approval.requested',
+      request: {
+        id: 'ap-auto' as never,
+        agentId: 'claude',
+        kind: 'command',
+        command: ['rm', '-rf', '/tmp/x'],
+        cwd: '/tmp',
+        withNetwork: false,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
     })
+    await tick()
+
+    const decided = store.read(CONV, { types: ['approval.decided'] })[0]
+    expect(decided?.payload).toMatchObject({
+      approvalId: 'ap-auto',
+      outcome: 'deny',
+      decidedBy: 'policy',
+      policyRuleId: 'deny-recursive-delete',
+    })
+  })
+
+  it('auto-allows an inspection command without asking', async () => {
+    const s = session()
+    s.emit({
+      type: 'approval.requested',
+      request: {
+        id: 'ap-read' as never,
+        agentId: 'claude',
+        kind: 'command',
+        command: ['git', 'status'],
+        cwd: '/repo',
+        withNetwork: false,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
+    })
+    await tick()
+
+    expect(store.read(CONV, { types: ['approval.decided'] })[0]?.payload).toMatchObject({
+      outcome: 'allow',
+      decidedBy: 'policy',
+      policyRuleId: 'allow-read-only-inspection',
+    })
+    expect(s.decisions.at(-1)?.decision).toMatchObject({ outcome: 'allow' })
+    expect(service.pendingApprovals()).toHaveLength(0)
+  })
+
+  it('queues anything policy will not decide, and answers it on the wire', async () => {
+    const s = session()
+    s.emit({
+      type: 'approval.requested',
+      request: {
+        id: 'ap-ask' as never,
+        agentId: 'claude',
+        kind: 'command',
+        command: ['npm', 'install'],
+        cwd: '/repo',
+        withNetwork: false,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
+    })
+    await tick()
+
+    expect(service.pendingApprovals().map((p) => p.id)).toEqual(['ap-ask'])
+    expect(store.read(CONV, { types: ['approval.decided'] })).toHaveLength(0)
+
+    await service.decideApproval('ap-ask', { outcome: 'allow', scope: 'session' })
+    expect(store.read(CONV, { types: ['approval.decided'] })[0]?.payload).toMatchObject({
+      outcome: 'allow',
+      decidedBy: 'user',
+    })
+    // Granted for the session, so the same command is not asked again.
+    expect(service.sessionGrants()).toHaveLength(1)
   })
 
   it('flushes pending deltas before recording the decision', async () => {

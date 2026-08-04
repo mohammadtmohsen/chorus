@@ -685,3 +685,26 @@ input::placeholder {
     animation: none;
   }
 }
+
+/* The active profile is worth seeing at a glance — it decides what happens
+   without asking. */
+.profile-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.cast-member:has(input[type='radio']) {
+  grid-template-columns: auto auto 1fr;
+}
+
+.cast-summary {
+  text-align: right;
+  white-space: normal;
+  line-height: 1.4;
+}

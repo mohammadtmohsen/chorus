@@ -76,6 +76,47 @@ describe('reduceEvents', () => {
     expect(view.messages.at(-1)?.text).toBe('Stopped.')
   })
 
+  it('announces an automatic decision, even though the request was pending first', () => {
+    // The request is logged before policy evaluates, so an auto-decided approval
+    // does briefly show as pending. Skipping the notice in that case made every
+    // automatic decision invisible — a live run caught it.
+    let view = reduceEvents(EMPTY_VIEW, [
+      event('approval.requested', {
+        approvalId: 'a9',
+        kind: 'command',
+        expiresAt: 0,
+        request: { command: ['rm', '-rf', './x'] },
+      }),
+    ])
+    expect(view.approvals).toHaveLength(1)
+
+    view = reduceEvents(view, [
+      event('approval.decided', {
+        approvalId: 'a9',
+        outcome: 'deny',
+        decidedBy: 'policy',
+        policyRuleId: 'deny-recursive-delete',
+      }),
+    ])
+    expect(view.approvals).toHaveLength(0)
+    expect(view.messages.at(-1)?.text).toBe('Denied automatically · deny-recursive-delete')
+  })
+
+  it('says plainly when nobody answered in time', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.decided', { approvalId: 'a', outcome: 'timeout', decidedBy: 'system' }),
+    ])
+    expect(view.messages.at(-1)?.text).toBe('Denied — nobody answered in time.')
+  })
+
+  it('stays quiet when the user decided it themselves', () => {
+    // They just clicked the button; narrating it back is noise.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.decided', { approvalId: 'a', outcome: 'allow', decidedBy: 'user' }),
+    ])
+    expect(view.messages).toHaveLength(0)
+  })
+
   it('surfaces and then clears an approval', () => {
     let view = reduceEvents(EMPTY_VIEW, [
       event('approval.requested', {

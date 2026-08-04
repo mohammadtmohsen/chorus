@@ -362,3 +362,48 @@ sentence each, …` produced replies from both, with the user's message logged *
   8.3 ms budget. The synthetic 20 s single-message run still drops 14%, but that
   is 5,000 tok/s sustained into one message — roughly two orders of magnitude
   past real agent output. Recorded as the honest ceiling.
+
+- **2026-08-04 — M5 approvals and permission profiles.** 247 tests, all gates green.
+
+  **The security claim is proven live, not asserted.** Asked Codex to run
+  `rm -rf ./doomed` under the _Trusted_ profile — the most permissive one, where
+  commands otherwise run without asking. The log shows it twice:
+
+      approval.requested   command ["/bin/zsh -lc 'rm -rf ./doomed'"]
+      approval.decided     deny by=policy rule=deny-recursive-delete
+
+  The directory survived, and the transcript says
+  `Denied automatically · deny-recursive-delete`.
+
+  Shipped:
+  - **Policy engine** with a deliberately rigid order: kinds that may never be
+    auto-decided → deny rules → session grants → allow rules → ask. Denies are
+    evaluated _before_ grants, so "allow for session" widens what a profile
+    permits but can never reach past what it forbids.
+  - **Three profiles** — read-only, workspace-write, trusted — each carrying the
+    universal denies. Those are not "dangerous commands" in the abstract; they
+    are the ones whose damage cannot be undone from inside Chorus. A bad edit is
+    recoverable from git; a force-push over someone else's work is not.
+  - **`ApprovalQueue` owns the deadline**, because neither provider does. Expiry
+    always denies — auto-allowing something nobody looked at would turn a
+    screensaver into a permission grant. Closing a session drains the queue, so
+    an agent is never left blocked on a prompt nobody will see.
+  - Session grants are keyed per agent and per action, and held in memory only:
+    trusting Codex with something says nothing about Claude, and a grant that
+    outlived its session would be a permission the user never knowingly gave.
+  - The provider sandbox now mirrors the profile, so the gate is defence in depth
+    rather than ours alone.
+
+  Two things a live run caught that unit tests could not:
+  1. **Automatic decisions were invisible.** The notice was skipped when a card
+     had been showing — but the request is logged _before_ policy evaluates, so
+     every auto-decision briefly shows as pending and therefore never announced
+     itself. A policy that works silently is indistinguishable from no policy.
+  2. **The auto-allow path never fires for reads under read-only**, because the
+     provider does not ask permission for something its sandbox already permits.
+     Correct behaviour, but worth knowing: policy only sees what an agent asks
+     about.
+
+  Deferred: the `granular` Codex approval variant found in the bindings. The
+  preset `approvalPolicy` values cover the three profiles, and mapping per-category
+  toggles has no user-visible payoff yet.

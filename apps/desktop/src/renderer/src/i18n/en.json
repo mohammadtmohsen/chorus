@@ -24,6 +24,10 @@
     "showThinking": "Show thinking",
     "hideThinking": "Hide thinking"
   },
+  "policy": {
+    "heading": "What agents may do without asking",
+    "footnote": "Anything a profile does not cover still asks. Slack, Jira and the like always ask."
+  },
   "approval": {
     "heading": "Approval",
     "wants": "{{agent}} needs approval",

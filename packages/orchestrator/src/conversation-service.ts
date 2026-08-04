@@ -9,6 +9,9 @@ import type {
 import type { ApprovalId } from '@chorus/shared'
 import type { AppendInput, ChorusEventPayload, EventStore } from '@chorus/event-store'
 import { DeltaBuffer, type Scheduler } from './delta-buffer.js'
+import { describeRequest, evaluate, SessionGrants } from './policy/engine.js'
+import { ApprovalQueue } from './policy/queue.js'
+import { DEFAULT_PROFILE_ID, profileById, type PermissionProfile } from './policy/rules.js'
 
 /**
  * Drives one agent session and turns its normalized `AgentEvent` stream into
@@ -36,6 +39,10 @@ export interface ConversationServiceOptions {
   readonly scheduler?: Scheduler
   readonly maxChars?: number
   readonly maxAgeMs?: number
+  /** Defaults to read-only. Starting permissive is how permissive defaults ship. */
+  readonly profile?: PermissionProfile
+  /** Shared across agents in a conversation, so a grant is not re-asked per agent. */
+  readonly grants?: SessionGrants
 }
 
 export class ConversationService {
@@ -43,6 +50,9 @@ export class ConversationService {
   private readonly conversationId: string
   private readonly adapter: AgentAdapter
   private readonly buffer: DeltaBuffer<DeltaMeta>
+  private readonly profile: PermissionProfile
+  private readonly grants: SessionGrants
+  private readonly queue: ApprovalQueue
   private session: AgentSession | null = null
   private pump: Promise<void> | null = null
   /** Set when *we* asked to stop, so an interrupt is not reported as a failure. */
@@ -52,6 +62,13 @@ export class ConversationService {
     this.store = options.store
     this.conversationId = options.conversationId
     this.adapter = options.adapter
+    this.profile = options.profile ?? profileById(DEFAULT_PROFILE_ID)
+    this.grants = options.grants ?? new SessionGrants()
+    this.queue = new ApprovalQueue({
+      ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
+      onResolved: (entry, decision, decidedBy) =>
+        this.recordAndAnswer(entry.request.id, decision, decidedBy, null),
+    })
     this.buffer = new DeltaBuffer<DeltaMeta>({
       ...(options.maxChars === undefined ? {} : { maxChars: options.maxChars }),
       ...(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs }),
@@ -137,8 +154,42 @@ export class ConversationService {
   async decideApproval(
     approvalId: string,
     decision: ApprovalDecision,
-    decidedBy: 'user' | 'policy' | 'system' = 'user',
-    policyRuleId: string | null = null
+    decidedBy: 'user' | 'policy' | 'system' = 'user'
+  ): Promise<void> {
+    // "Allow for session" is remembered before the queue forgets the request,
+    // so the same action does not ask again. Outward-facing kinds refuse to be
+    // remembered — `SessionGrants.add` returns false for them (plan §2.6).
+    const entry = this.queue.get(approvalId)
+    if (entry !== undefined && decision.outcome === 'allow' && decision.scope === 'session') {
+      this.grants.add(entry.request)
+    }
+
+    const handled = await this.queue.resolve(approvalId, decision, decidedBy)
+    if (!handled) {
+      // Not queued — an auto-decided or already-settled approval. Still log it.
+      await this.recordAndAnswer(approvalId, decision, decidedBy, null)
+    }
+  }
+
+  /** Everything a person or a rule may grant this session, for the audit view. */
+  sessionGrants(): { key: string; describe: string }[] {
+    return this.grants.list()
+  }
+
+  pendingApprovals(): { id: string; describe: string; expiresAt: number }[] {
+    return this.queue.list().map((e) => ({
+      id: e.request.id,
+      describe: describeRequest(e.request),
+      expiresAt: e.request.expiresAt,
+    }))
+  }
+
+  /** The single place a decision becomes both a log entry and a wire response. */
+  private async recordAndAnswer(
+    approvalId: string,
+    decision: ApprovalDecision,
+    decidedBy: 'user' | 'policy' | 'system',
+    policyRuleId: string | null
   ): Promise<void> {
     this.lifecycle({
       type: 'approval.decided',
@@ -148,7 +199,12 @@ export class ConversationService {
       decidedBy,
       policyRuleId,
     })
-    await this.session?.respondToApproval(approvalId as ApprovalId, decision)
+    // A timeout is a denial on the wire; the log keeps the distinction.
+    const answer: ApprovalDecision =
+      decision.outcome === 'timeout'
+        ? { outcome: 'deny', message: 'Timed out waiting for a decision' }
+        : decision
+    await this.session?.respondToApproval(approvalId as ApprovalId, answer)
   }
 
   /** Resolves once the event stream has ended and everything is durable. */
@@ -158,12 +214,16 @@ export class ConversationService {
   }
 
   async close(reason: 'closed' | 'crashed' | 'replaced' = 'closed'): Promise<void> {
+    // Anything still waiting is denied, or the agent blocks on a prompt nobody
+    // will ever see.
+    await this.queue.drain('Session closed')
     this.buffer.flushAll()
     const ref = this.session?.sessionRef
     await this.session?.close()
     await this.pump
     this.buffer.flushAll()
     this.buffer.dispose()
+    this.queue.dispose()
     if (ref !== undefined) {
       this.appendOne({
         actor: 'system',
@@ -265,7 +325,7 @@ export class ConversationService {
         this.lifecycle({ type: 'diff.updated', unifiedDiff: event.unifiedDiff })
         return
 
-      case 'approval.requested':
+      case 'approval.requested': {
         this.lifecycle({
           type: 'approval.requested',
           approvalId: event.request.id,
@@ -273,7 +333,36 @@ export class ConversationService {
           request: event.request,
           expiresAt: event.request.expiresAt,
         })
+
+        /*
+         * Policy decides before the user ever sees a card. An auto-decision is
+         * logged with the rule that made it — an allow nobody can trace back to
+         * a rule is indistinguishable from no policy at all (plan §4.4).
+         */
+        const verdict = evaluate(event.request, this.profile, this.grants)
+        if (verdict.decision === 'allow') {
+          void this.recordAndAnswer(
+            event.request.id,
+            { outcome: 'allow', scope: verdict.scope },
+            'policy',
+            verdict.ruleId
+          )
+          return
+        }
+        if (verdict.decision === 'deny') {
+          void this.recordAndAnswer(
+            event.request.id,
+            { outcome: 'deny', message: verdict.reason },
+            'policy',
+            verdict.ruleId
+          )
+          return
+        }
+
+        // Nobody but a person can settle this one; the queue owns its deadline.
+        this.queue.add(this.conversationId, event.request)
         return
+      }
 
       case 'usage.updated':
         this.lifecycle({

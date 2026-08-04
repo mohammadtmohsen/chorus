@@ -26,8 +26,16 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'agents:probe': () => probeAgents(),
 
-    'conversation:start': (request: { agents: ('codex' | 'claude')[]; cwd: string }) =>
-      runtime.startConversation({ agents: request.agents, cwd: request.cwd }),
+    'conversation:start': (request: {
+      agents: ('codex' | 'claude')[]
+      cwd: string
+      profileId?: string
+    }) =>
+      runtime.startConversation({
+        agents: request.agents,
+        cwd: request.cwd,
+        ...(request.profileId === undefined ? {} : { profileId: request.profileId }),
+      }),
 
     'conversation:send': async (request: { conversationId: string; text: string }) => {
       const { targets } = await runtime.send(request.conversationId, request.text)
@@ -62,6 +70,8 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       )
       return OK
     },
+
+    'policy:profiles': () => Promise.resolve(runtime.availableProfiles()),
   }
 }
 

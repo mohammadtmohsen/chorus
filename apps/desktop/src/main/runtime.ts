@@ -5,7 +5,15 @@ import { ClaudeAdapter } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type { AgentAdapter, ApprovalDecision, SessionOpts } from '@chorus/agent-protocol'
 import { EventStore, openSqlite, type SqliteHandle, type StoredEvent } from '@chorus/event-store'
-import { ConversationService, parseMentions, SupervisedSession } from '@chorus/orchestrator'
+import {
+  ConversationService,
+  parseMentions,
+  profileById,
+  PROFILES,
+  SessionGrants,
+  SupervisedSession,
+  type PermissionProfile,
+} from '@chorus/orchestrator'
 import { newConversationId, type AgentId } from '@chorus/shared'
 
 /**
@@ -27,6 +35,8 @@ export interface StartConversationOptions {
   readonly cwd: string
   readonly projectId?: string
   readonly title?: string
+  /** Defaults to read-only. Permissive defaults ship by accident, not on purpose. */
+  readonly profileId?: string
 }
 
 interface Participant {
@@ -38,6 +48,7 @@ interface Participant {
 interface ActiveConversation {
   readonly conversationId: string
   readonly participants: Map<AgentId, Participant>
+  readonly profile: PermissionProfile
   /** Who the user last addressed, so an unaddressed follow-up stays with them. */
   lastAddressed: AgentId | undefined
 }
@@ -72,9 +83,19 @@ export class ChorusRuntime {
     return [...this.adapters.keys()]
   }
 
+  availableProfiles(): { id: string; name: string; summary: string }[] {
+    return PROFILES.map(({ id, name, summary }) => ({ id, name, summary }))
+  }
+
+  /** Everything the user has granted for this session, for the audit view. */
+  sessionGrants(conversationId: string): { key: string; describe: string }[] {
+    const first = [...this.require(conversationId).participants.values()][0]
+    return first?.service.sessionGrants() ?? []
+  }
+
   async startConversation(
     options: StartConversationOptions
-  ): Promise<{ conversationId: string; participants: AgentId[] }> {
+  ): Promise<{ conversationId: string; participants: AgentId[]; profileId: string }> {
     if (options.agents.length === 0) throw new Error('A conversation needs at least one agent')
 
     const conversationId = newConversationId()
@@ -88,22 +109,33 @@ export class ChorusRuntime {
       },
     })
 
+    const profile = profileById(options.profileId ?? '')
     const sessionOpts: SessionOpts = {
       cwd: options.cwd,
-      // Read-only until the policy engine lands in M5. Starting permissive and
-      // tightening later is how permissive defaults ship by accident.
-      sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
+      // The provider sandbox mirrors the profile, so we get defence in depth
+      // rather than relying only on our own gate (plan §4.4).
+      sandbox:
+        profile.id === 'read-only'
+          ? { mode: 'readOnly', writableRoots: [], networkAccess: false }
+          : { mode: 'workspaceWrite', writableRoots: [options.cwd], networkAccess: false },
     }
+
+    // One set of grants for the whole conversation: allowing something for
+    // Codex should not mean being asked again the moment Claude does the same.
+    const grants = new SessionGrants()
 
     // Started in parallel: two agents booting sequentially doubles the wait for
     // no reason, and one failing should not hide the other.
     const started = await Promise.allSettled(
-      options.agents.map((agentId) => this.startParticipant(agentId, conversationId, sessionOpts))
+      options.agents.map((agentId) =>
+        this.startParticipant(agentId, conversationId, sessionOpts, profile, grants)
+      )
     )
 
     const conversation: ActiveConversation = {
       conversationId,
       participants: new Map(),
+      profile,
       lastAddressed: undefined,
     }
     const failures: string[] = []
@@ -133,7 +165,11 @@ export class ChorusRuntime {
     }
 
     this.active.set(conversationId, conversation)
-    return { conversationId, participants: [...conversation.participants.keys()] }
+    return {
+      conversationId,
+      participants: [...conversation.participants.keys()],
+      profileId: profile.id,
+    }
   }
 
   /**
@@ -199,7 +235,9 @@ export class ChorusRuntime {
   private async startParticipant(
     agentId: AgentId,
     conversationId: string,
-    sessionOpts: SessionOpts
+    sessionOpts: SessionOpts,
+    profile: PermissionProfile,
+    grants: SessionGrants
   ): Promise<Participant> {
     const adapter = this.adapters.get(agentId)
     if (adapter === undefined) throw new Error(`No adapter registered for "${agentId}"`)
@@ -211,7 +249,13 @@ export class ChorusRuntime {
     }
 
     const session = await SupervisedSession.start(adapter, sessionOpts)
-    const service = new ConversationService({ store: this.store, conversationId, adapter })
+    const service = new ConversationService({
+      store: this.store,
+      conversationId,
+      adapter,
+      profile,
+      grants,
+    })
     await service.attach(session, sessionOpts, health)
     return { agentId, service, session }
   }

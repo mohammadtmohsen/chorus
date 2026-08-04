@@ -34,6 +34,7 @@ const api: ChorusApi = {
   interrupt: invoke('conversation:interrupt'),
   history: invoke('conversation:history'),
   decideApproval: invoke('approval:decide'),
+  profiles: invoke('policy:profiles'),
 
   onEvents: (listener) => {
     // The payload is validated before it reaches renderer code: main is

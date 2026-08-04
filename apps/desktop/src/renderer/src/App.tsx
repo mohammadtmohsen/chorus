@@ -23,6 +23,8 @@ const AGENTS: AgentId[] = ['codex', 'claude']
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
   const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
+  const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
+  const [profileId, setProfileId] = useState('read-only')
   const [chosen, setChosen] = useState<AgentId[]>(['codex', 'claude'])
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [participants, setParticipants] = useState<AgentId[]>([])
@@ -35,6 +37,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
+    window.chorus.profiles().then(setProfiles).catch(fail(setError))
   }, [])
 
   useEffect(
@@ -53,7 +56,7 @@ export function App(): React.JSX.Element {
     setError(null)
     setStarting(true)
     window.chorus
-      .startConversation({ agents: chosen, cwd })
+      .startConversation({ agents: chosen, cwd, profileId })
       .then(async ({ conversationId: id, participants: joined }) => {
         setConversationId(id)
         setParticipants(joined)
@@ -64,7 +67,7 @@ export function App(): React.JSX.Element {
       .finally(() => {
         setStarting(false)
       })
-  }, [chosen, cwd])
+  }, [chosen, cwd, profileId])
 
   const send = useCallback(() => {
     if (conversationId === null || draft.trim() === '') return
@@ -101,6 +104,9 @@ export function App(): React.JSX.Element {
         }}
         cwd={cwd}
         onCwd={setCwd}
+        profiles={profiles}
+        profileId={profileId}
+        onProfile={setProfileId}
         onStart={start}
         starting={starting}
         error={error}
@@ -114,6 +120,9 @@ export function App(): React.JSX.Element {
         <h1 className="wordmark">{t('app.name')}</h1>
         <span className="path" title={cwd}>
           {shortenPath(cwd)}
+        </span>
+        <span className="profile-chip" title={profiles.find((p) => p.id === profileId)?.summary}>
+          {profiles.find((p) => p.id === profileId)?.name ?? profileId}
         </span>
         <ul className="voices">
           {participants.map((id) => (
@@ -239,6 +248,9 @@ function Setup(props: {
   onToggle: (id: AgentId) => void
   cwd: string
   onCwd: (value: string) => void
+  profiles: { id: string; name: string; summary: string }[]
+  profileId: string
+  onProfile: (id: string) => void
   onStart: () => void
   starting: boolean
   error: string | null
@@ -299,6 +311,28 @@ function Setup(props: {
           />
         </label>
 
+        <fieldset className="cast">
+          <legend>{t('policy.heading')}</legend>
+          {props.profiles.map((profile) => (
+            <label
+              key={profile.id}
+              className="cast-member"
+              data-on={props.profileId === profile.id}
+            >
+              <input
+                type="radio"
+                name="profile"
+                checked={props.profileId === profile.id}
+                onChange={() => {
+                  props.onProfile(profile.id)
+                }}
+              />
+              <span className="cast-name">{profile.name}</span>
+              <span className="cast-version cast-summary">{profile.summary}</span>
+            </label>
+          ))}
+        </fieldset>
+
         {props.error !== null && (
           <p className="notice notice--bad" role="alert">
             {props.error}
@@ -313,7 +347,7 @@ function Setup(props: {
         >
           {props.starting ? t('conversation.starting') : t('conversation.start')}
         </button>
-        <p className="footnote">{t('conversation.readOnlyNotice')}</p>
+        <p className="footnote">{t('policy.footnote')}</p>
       </div>
     </div>
   )

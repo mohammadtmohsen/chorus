@@ -66,10 +66,12 @@ export const IPC_CONTRACT = {
     request: z.object({
       agents: z.array(z.enum(['codex', 'claude'])).min(1),
       cwd: z.string().min(1),
+      profileId: z.string().optional(),
     }),
     response: z.object({
       conversationId: z.string(),
       participants: z.array(z.enum(['codex', 'claude'])),
+      profileId: z.string(),
     }),
   },
   'conversation:send': {
@@ -92,6 +94,11 @@ export const IPC_CONTRACT = {
   'approval:decide': {
     request: ApprovalChoice,
     response: z.object({ ok: z.literal(true) }),
+  },
+  /** The permission profiles a conversation can be started under. */
+  'policy:profiles': {
+    request: z.void(),
+    response: z.array(z.object({ id: z.string(), name: z.string(), summary: z.string() })),
   },
 } as const
 
@@ -134,6 +141,7 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:history'>
   ) => Promise<IpcResponse<'conversation:history'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
+  readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
   /** Returns an unsubscribe function. */
   readonly onEvents: (listener: (events: TranscriptEvent[]) => void) => () => void
 }
