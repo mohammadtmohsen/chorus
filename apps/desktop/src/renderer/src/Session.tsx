@@ -562,8 +562,18 @@ export function Session(props: {
           following.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 32
         }}
       >
-        <div className="rail" aria-hidden="true" />
         <div className="score-content" ref={transcript}>
+          {/*
+            Inside the entries, not beside them.
+            
+            Positioned against the scroller it was measured from the padding
+            edge, while every dot is measured from its own entry — so the line
+            sat 15px to the left of the dots it was supposed to run through, and
+            carried on into empty space below the last message. Sharing an origin
+            with the entries fixes both: it lines up, and it is exactly as long as
+            the conversation.
+          */}
+          <div className="rail" aria-hidden="true" />
           {view.messages.map((message) => (
             <Entry
               key={message.key}

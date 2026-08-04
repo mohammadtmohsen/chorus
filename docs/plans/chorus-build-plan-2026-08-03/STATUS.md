@@ -1581,7 +1581,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   A path in the draft was honest and unreadable — you could not tell a screenshot
   from a log without reading the filename, and could not tell whether it was the
-  *right* screenshot at all. The path is still exactly what the agent receives;
+  _right_ screenshot at all. The path is still exactly what the agent receives;
   it joins the message on the way out rather than while you are writing it, so a
   draft is no longer forty characters of noise. Send now works with an attachment
   and nothing typed.
@@ -1597,3 +1597,27 @@ sentence each, …` produced replies from both, with the user's message logged *
   file showing none; the draft staying empty; the viewer opening on the right
   file and closing; removing one chip leaving the other; the sent message
   carrying the quoted path; and the chips clearing afterwards.
+
+- **2026-08-04 — the voice rail never lined up with its own dots.** Reported as
+  a vertical line "out of pattern". Measured: rail at x=59, every dot at x=75 —
+  **16px apart**, which is the scroller's left padding.
+
+  The rail was positioned against `.score`, and an absolutely positioned child is
+  measured from the padding *edge*, ignoring the padding itself. Every dot is
+  positioned against its own entry, which starts inside that padding. They have
+  never shared an origin — the gap was 24px before the layout was compacted, and
+  shrinking the gutter from 88 to 60 is what made it obvious.
+
+  The rail now lives inside the entries and is measured from the same box they
+  are, so its centre and every dot's centre land on 74.5. It is also exactly as
+  long as the conversation instead of running on into empty space below the last
+  message, which was the other half of "out of pattern".
+
+  That exposed a second thing: the fades at each end were a fixed 40px, sized for
+  a rail that spanned the whole scroller. On a 62px rail the two ends met in the
+  middle and the line all but vanished. They are capped at a fifth of the length
+  now.
+
+  Verified live: rail x=74 against dot centres at 75 — a 1px line and a 7px dot
+  sharing a centre — and the rail ending at 173, exactly the last entry's bottom,
+  rather than at the scroller's 770.

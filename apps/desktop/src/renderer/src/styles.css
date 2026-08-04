@@ -551,6 +551,11 @@ body {
   padding: calc(var(--step) * 5) calc(var(--step) * 5) calc(var(--step) * 7);
 }
 
+/* The origin the rail and every dot now share. */
+.score-content {
+  position: relative;
+}
+
 /* The shared timeline every voice is measured against. */
 .rail {
   position: absolute;
@@ -558,11 +563,18 @@ body {
   top: 0;
   bottom: 0;
   width: 1px;
+  /*
+   * Fades at both ends, but never more than a fifth of the line.
+   *
+   * A fixed 40px was fine when the rail ran the whole scroller. Now that it is
+   * exactly as long as the conversation, a two-message exchange is shorter than
+   * the fades and the line all but disappears — the ends met in the middle.
+   */
   background: linear-gradient(
     to bottom,
     transparent,
-    var(--line) 40px,
-    var(--line) calc(100% - 40px),
+    var(--line) min(40px, 20%),
+    var(--line) calc(100% - min(40px, 20%)),
     transparent
   );
 }
