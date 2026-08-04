@@ -103,8 +103,19 @@ export class ConversationService {
     return Promise.resolve()
   }
 
+  /**
+   * Logs the message and delivers it. Only correct when this service is the
+   * conversation's sole agent — with several, the runtime logs once and calls
+   * `deliver` on each recipient, or the transcript shows the user repeating
+   * themselves once per agent.
+   */
   async sendUserMessage(text: string): Promise<void> {
     this.appendOne({ actor: 'user', payload: { type: 'user.message', text } })
+    await this.deliver(text)
+  }
+
+  /** Delivers without logging — the shared-conversation path. */
+  async deliver(text: string): Promise<void> {
     await this.session?.send({ text })
   }
 

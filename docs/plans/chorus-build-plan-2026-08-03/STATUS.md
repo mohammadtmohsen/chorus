@@ -276,3 +276,46 @@ Plan: [plan.md](./plan.md)
   What "agent independent" means at this point: one `AgentAdapter` port, one
   `AgentEvent` union, one approval card, one conformance suite — and two real
   providers whose wire protocols have almost nothing in common passing it.
+
+- **2026-08-04 — M4 shared conversation.** Two agents in one room, verified live.
+  202 tests, all gates green.
+
+  **Multi-agent is a runtime change, not a UI one.** A conversation now holds
+  several agents at once: each gets its own `ConversationService` writing into
+  one conversation id, and the log's global sequence interleaves them. Agents
+  start in parallel, a partial start is recorded in the transcript rather than
+  silently dropping an agent, and `send` logs the user's message **once** before
+  routing — logging per participant would show the user repeating themselves.
+
+  `parseMentions` decides who answers: explicit `@codex`/`@claude` wins,
+  otherwise the conversation continues with whoever was last addressed. Silently
+  switching agents would send a follow-up to one that never saw what it follows.
+  Mid-sentence mentions stay in the text, since "ask @codex to review this" reads
+  differently without the name.
+
+  **Markdown is parsed to a typed tree and rendered as React elements.** No HTML
+  string exists anywhere in the pipeline, so injection is impossible by
+  construction rather than filtered — a stronger guarantee than a sanitizer, and
+  the reason there is no markdown dependency. `javascript:` and `data:` links
+  degrade to inert text rather than being dropped, so the user can see what the
+  model tried.
+
+  **The design.** A voice rail runs the length of the transcript with a dot per
+  message coloured by speaker — the shape of an exchange is legible before you
+  read a word. Type encodes kind: serif for what agents _say_, mono for what they
+  _do_. Violet-slate ground with complementary jade/amber voices, deliberately
+  avoiding both dev-tool defaults.
+
+  Two bugs the live run caught that no unit test would have:
+  1. **Send was replaced by Stop while any agent worked**, so Codex being busy
+     blocked you from addressing Claude — wrong in a shared room. They coexist now.
+  2. **Claude's replies rendered twice.** Keying message blocks by index looked
+     right and was not: the stream's `event.index` counts every content block
+     including thinking, while the final message's array often omits them, so the
+     same reply streamed as `msg:1` and completed as `msg:0`. Found by querying
+     the event log rather than guessing. Text blocks now key on the message id
+     alone and join into one entry, which removes the class of bug.
+
+  Remaining for M4: transcript virtualisation, and the S5 re-measurement against
+  real markdown rendering as the exit gate. The 8.3 ms budget was measured on
+  plain text nodes and means little until it is re-run against this.

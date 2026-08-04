@@ -40,6 +40,8 @@ export type TranscriptEvent = z.infer<typeof TranscriptEvent>
 
 export const ApprovalChoice = z.object({
   conversationId: z.string(),
+  /** Which agent asked — several can have approvals pending at once. */
+  agentId: z.enum(['codex', 'claude']),
   approvalId: z.string(),
   outcome: z.enum(['allow', 'deny', 'cancel']),
   scope: z.enum(['once', 'session']),
@@ -60,12 +62,20 @@ export const IPC_CONTRACT = {
   'agents:probe': { request: z.void(), response: z.array(AgentProbeResult) },
 
   'conversation:start': {
-    request: z.object({ agentId: z.enum(['codex', 'claude']), cwd: z.string().min(1) }),
-    response: z.object({ conversationId: z.string() }),
+    /** Several agents share one conversation — that is the point of Chorus. */
+    request: z.object({
+      agents: z.array(z.enum(['codex', 'claude'])).min(1),
+      cwd: z.string().min(1),
+    }),
+    response: z.object({
+      conversationId: z.string(),
+      participants: z.array(z.enum(['codex', 'claude'])),
+    }),
   },
   'conversation:send': {
     request: z.object({ conversationId: z.string(), text: z.string().min(1) }),
-    response: z.object({ ok: z.literal(true) }),
+    /** Which agents the mention router picked, so the UI can show it. */
+    response: z.object({ targets: z.array(z.enum(['codex', 'claude'])) }),
   },
   'conversation:interrupt': {
     request: z.object({ conversationId: z.string() }),
@@ -116,7 +126,9 @@ export interface ChorusApi {
   readonly startConversation: (
     request: IpcRequest<'conversation:start'>
   ) => Promise<IpcResponse<'conversation:start'>>
-  readonly sendMessage: (request: IpcRequest<'conversation:send'>) => Promise<{ ok: true }>
+  readonly sendMessage: (
+    request: IpcRequest<'conversation:send'>
+  ) => Promise<IpcResponse<'conversation:send'>>
   readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
   readonly history: (
     request: IpcRequest<'conversation:history'>

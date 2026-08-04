@@ -1,21 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
-import { EMPTY_VIEW, reduceEvents, type TranscriptView } from './transcript.js'
+import { MarkdownView } from './MarkdownView.js'
+import {
+  EMPTY_VIEW,
+  reduceEvents,
+  type PendingApproval,
+  type TranscriptMessage,
+  type TranscriptView,
+} from './transcript.js'
+
+type AgentId = 'codex' | 'claude'
+const AGENTS: AgentId[] = ['codex', 'claude']
 
 /**
- * M2 vertical slice: enough UI to drive a real Codex session end to end.
+ * The shared conversation.
  *
- * Deliberately plain — M4 owns the actual conversation surface, mentions,
- * handoffs and approval cards. What matters here is that the wiring is real:
- * every line of transcript below came out of the event log, not out of a
- * provider callback.
+ * The organising idea is the voice rail down the left: one continuous line for
+ * the shared timeline, a dot per message coloured by who spoke. Reading the dots
+ * tells you the shape of an exchange before you read a word — which is the first
+ * question a multi-agent transcript has to answer.
  */
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
-  const [agents, setAgents] = useState<AgentProbeResult[] | null>(null)
+  const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
+  const [chosen, setChosen] = useState<AgentId[]>(['codex', 'claude'])
   const [conversationId, setConversationId] = useState<string | null>(null)
-  const [agentId, setAgentId] = useState<'codex' | 'claude'>('codex')
+  const [participants, setParticipants] = useState<AgentId[]>([])
   const [view, setView] = useState<TranscriptView>(EMPTY_VIEW)
   const [cwd, setCwd] = useState('')
   const [draft, setDraft] = useState('')
@@ -24,194 +35,340 @@ export function App(): React.JSX.Element {
   const bottom = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    window.chorus
-      .probeAgents()
-      .then(setAgents)
-      .catch((e: unknown) => {
-        setError(describe(e))
-      })
+    window.chorus.probeAgents().then(setProbes).catch(fail(setError))
   }, [])
 
-  useEffect(() => {
-    // Subscribed before any conversation exists, so nothing is missed between
-    // starting one and the first event landing.
-    return window.chorus.onEvents((events) => {
-      setView((current) => reduceEvents(current, events))
-    })
-  }, [])
+  useEffect(
+    () =>
+      window.chorus.onEvents((events) => {
+        setView((current) => reduceEvents(current, events))
+      }),
+    []
+  )
 
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [view.messages.length])
+    bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [view.messages.length, view.approvals.length])
 
   const start = useCallback(() => {
     setError(null)
     setStarting(true)
     window.chorus
-      .startConversation({ agentId, cwd })
-      .then(({ conversationId: id }) => {
+      .startConversation({ agents: chosen, cwd })
+      .then(async ({ conversationId: id, participants: joined }) => {
         setConversationId(id)
-        return window.chorus.history({ conversationId: id })
-      })
-      .then((history) => {
+        setParticipants(joined)
+        const history = await window.chorus.history({ conversationId: id })
         setView((current) => reduceEvents(current, history))
       })
-      .catch((e: unknown) => {
-        setError(describe(e))
-      })
+      .catch(fail(setError))
       .finally(() => {
         setStarting(false)
       })
-  }, [agentId, cwd])
+  }, [chosen, cwd])
 
   const send = useCallback(() => {
     if (conversationId === null || draft.trim() === '') return
     const text = draft
     setDraft('')
-    window.chorus.sendMessage({ conversationId, text }).catch((e: unknown) => {
-      setError(describe(e))
-    })
+    window.chorus.sendMessage({ conversationId, text }).catch(fail(setError))
   }, [conversationId, draft])
 
   const decide = useCallback(
-    (approvalId: string, outcome: 'allow' | 'deny') => {
+    (approval: PendingApproval, outcome: 'allow' | 'deny') => {
       if (conversationId === null) return
       window.chorus
-        .decideApproval({ conversationId, approvalId, outcome, scope: 'once' })
-        .catch((e: unknown) => {
-          setError(describe(e))
+        .decideApproval({
+          conversationId,
+          agentId: approval.agentId === 'claude' ? 'claude' : 'codex',
+          approvalId: approval.approvalId,
+          outcome,
+          scope: 'once',
         })
+        .catch(fail(setError))
     },
     [conversationId]
   )
 
-  const selected = agents?.find((a) => a.id === agentId)
+  if (conversationId === null) {
+    return (
+      <Setup
+        probes={probes}
+        chosen={chosen}
+        onToggle={(id) => {
+          setChosen((current) =>
+            current.includes(id) ? current.filter((a) => a !== id) : [...current, id]
+          )
+        }}
+        cwd={cwd}
+        onCwd={setCwd}
+        onStart={start}
+        starting={starting}
+        error={error}
+      />
+    )
+  }
 
   return (
-    <main className="shell">
-      <header className="bar">
-        <h1>{t('app.name')}</h1>
-        <span className="muted">
-          {selected === undefined
-            ? t('agents.probing')
-            : selected.installed
-              ? `${agentId} ${selected.version ?? ''}`
-              : t('agents.notFound', { agent: agentId })}
+    <div className="stage">
+      <header className="masthead">
+        <h1 className="wordmark">{t('app.name')}</h1>
+        <span className="path" title={cwd}>
+          {shortenPath(cwd)}
         </span>
+        <ul className="voices">
+          {participants.map((id) => (
+            <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
+              <span className="voice-dot" aria-hidden="true" />
+              {id}
+            </li>
+          ))}
+        </ul>
       </header>
 
       {error !== null && (
-        <p className="error" role="alert">
+        <p className="notice notice--bad" role="alert">
           {error}
         </p>
       )}
 
-      {conversationId === null ? (
-        <section className="starter">
-          <label htmlFor="agent">{t('conversation.agent')}</label>
-          <select
-            id="agent"
-            value={agentId}
-            onChange={(e) => {
-              setAgentId(e.target.value === 'claude' ? 'claude' : 'codex')
-            }}
-          >
-            <option value="codex">Codex</option>
-            <option value="claude">Claude</option>
-          </select>
+      <main className="score" aria-label={t('conversation.transcript')}>
+        <div className="rail" aria-hidden="true" />
+        {view.messages.map((message) => (
+          <Entry key={message.key} message={message} />
+        ))}
+        <div ref={bottom} />
+      </main>
 
-          <label htmlFor="cwd">{t('conversation.projectPath')}</label>
-          <input
-            id="cwd"
-            value={cwd}
-            placeholder="/Users/you/code/some-project"
-            onChange={(e) => {
-              setCwd(e.target.value)
+      <div className="dock">
+        {view.approvals.map((approval) => (
+          <ApprovalCard
+            key={approval.approvalId}
+            approval={approval}
+            onAllow={() => {
+              decide(approval, 'allow')
+            }}
+            onDeny={() => {
+              decide(approval, 'deny')
             }}
           />
-          <button type="button" onClick={start} disabled={cwd.trim() === '' || starting}>
-            {starting ? t('conversation.starting') : t('conversation.start')}
-          </button>
-          <p className="muted small">{t('conversation.readOnlyNotice')}</p>
-        </section>
-      ) : (
-        <>
-          <section className="transcript">
-            {view.messages.map((m) => (
-              <article key={m.key} className={`msg ${m.actor} ${m.kind}`}>
-                <span className="who">{m.actor}</span>
-                <pre>{m.text}</pre>
-              </article>
-            ))}
-            {view.busy && <p className="muted small">{t('conversation.working')}</p>}
-            <div ref={bottom} />
-          </section>
+        ))}
 
-          {view.approvals.map((a) => (
-            <section
-              key={a.approvalId}
-              className="approval"
-              role="group"
-              aria-label={t('approval.heading')}
-            >
-              <strong>{t('approval.heading')}</strong>
-              <pre>{a.summary}</pre>
-              <div className="actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    decide(a.approvalId, 'allow')
-                  }}
-                >
-                  {t('approval.allowOnce')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    decide(a.approvalId, 'deny')
-                  }}
-                >
-                  {t('approval.deny')}
-                </button>
-              </div>
-            </section>
-          ))}
-
-          <section className="composer">
-            <textarea
-              value={draft}
-              rows={3}
-              placeholder={t('conversation.placeholder')}
-              onChange={(e) => {
-                setDraft(e.target.value)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send()
-              }}
-            />
-            <div className="actions">
-              <button type="button" onClick={send} disabled={draft.trim() === ''}>
-                {t('conversation.send')}
-              </button>
+        <form
+          className="composer"
+          onSubmit={(e) => {
+            e.preventDefault()
+            send()
+          }}
+        >
+          <textarea
+            value={draft}
+            rows={2}
+            aria-label={t('conversation.messageLabel')}
+            placeholder={t('conversation.placeholder', { agents: participants.join(', ') })}
+            onChange={(e) => {
+              setDraft(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                send()
+              }
+            }}
+          />
+          <div className="composer-actions">
+            <span className="hint">{t('conversation.hint')}</span>
+            {/*
+              Stop appears alongside Send, never instead of it. One agent being
+              mid-turn must not stop you addressing another — that is the whole
+              point of a shared room.
+            */}
+            {view.busy && (
               <button
                 type="button"
-                disabled={!view.busy}
+                className="btn btn--stop"
                 onClick={() => {
-                  window.chorus.interrupt({ conversationId }).catch((e: unknown) => {
-                    setError(describe(e))
-                  })
+                  window.chorus.interrupt({ conversationId }).catch(fail(setError))
                 }}
               >
-                {t('conversation.stop')}
+                {t('conversation.stopAll', { agents: view.working.join(', ') })}
               </button>
-            </div>
-          </section>
-        </>
-      )}
-    </main>
+            )}
+            <button type="submit" className="btn btn--go" disabled={draft.trim() === ''}>
+              {t('conversation.send')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+/** One entry on the score: a dot on the rail, a name, and what was said. */
+function Entry({ message }: { message: TranscriptMessage }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+
+  if (message.kind === 'reasoning') {
+    return (
+      <article className={`entry entry--${message.actor} entry--reasoning`}>
+        <span className="tick" aria-hidden="true" />
+        <button
+          type="button"
+          className="reasoning-toggle"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(!open)
+          }}
+        >
+          {open ? t('conversation.hideThinking') : t('conversation.showThinking')}
+        </button>
+        {open && <div className="reasoning-body">{message.text}</div>}
+      </article>
+    )
+  }
+
+  return (
+    <article className={`entry entry--${message.actor} entry--${message.kind}`}>
+      <span className="tick" aria-hidden="true" />
+      <span className="speaker">{message.actor}</span>
+      <div className="said" data-streaming={message.status === 'streaming'}>
+        {message.kind === 'command' ? (
+          <pre className="command">{message.text}</pre>
+        ) : message.kind === 'notice' ? (
+          <p className="notice-line">{message.text}</p>
+        ) : (
+          <MarkdownView source={message.text} />
+        )}
+      </div>
+    </article>
+  )
+}
+
+function ApprovalCard({
+  approval,
+  onAllow,
+  onDeny,
+}: {
+  approval: PendingApproval
+  onAllow: () => void
+  onDeny: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <section className="approval" aria-label={t('approval.heading')}>
+      <header className="approval-head">
+        <span className={`voice-dot voice--${approval.agentId}`} aria-hidden="true" />
+        <strong>{t('approval.wants', { agent: approval.agentId })}</strong>
+      </header>
+      <pre className="approval-summary">{approval.summary}</pre>
+      {approval.detail !== null && <pre className="approval-detail">{approval.detail}</pre>}
+      <div className="approval-actions">
+        <button type="button" className="btn btn--go" onClick={onAllow}>
+          {t('approval.allowOnce')}
+        </button>
+        <button type="button" className="btn" onClick={onDeny}>
+          {t('approval.deny')}
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function Setup(props: {
+  probes: AgentProbeResult[] | null
+  chosen: AgentId[]
+  onToggle: (id: AgentId) => void
+  cwd: string
+  onCwd: (value: string) => void
+  onStart: () => void
+  starting: boolean
+  error: string | null
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const ready = props.cwd.trim() !== '' && props.chosen.length > 0 && !props.starting
+
+  return (
+    <div className="setup">
+      <div className="setup-inner">
+        <h1 className="wordmark wordmark--large">{t('app.name')}</h1>
+        <p className="lede">{t('app.tagline')}</p>
+
+        <fieldset className="cast">
+          <legend>{t('conversation.cast')}</legend>
+          {AGENTS.map((id) => {
+            const probe = props.probes?.find((p) => p.id === id)
+            const installed = probe?.installed ?? false
+            return (
+              <label
+                key={id}
+                className={`cast-member voice--${id}`}
+                data-on={props.chosen.includes(id)}
+              >
+                <input
+                  type="checkbox"
+                  checked={props.chosen.includes(id)}
+                  disabled={props.probes !== null && !installed}
+                  onChange={() => {
+                    props.onToggle(id)
+                  }}
+                />
+                <span className="voice-dot" aria-hidden="true" />
+                <span className="cast-name">{id}</span>
+                <span className="cast-version">
+                  {props.probes === null
+                    ? t('agents.probing')
+                    : installed
+                      ? (probe?.version ?? t('agents.unknownVersion'))
+                      : t('agents.notFound', { agent: id })}
+                </span>
+              </label>
+            )
+          })}
+        </fieldset>
+
+        <label className="field">
+          <span>{t('conversation.projectPath')}</span>
+          <input
+            value={props.cwd}
+            placeholder="/Users/you/code/project"
+            onChange={(e) => {
+              props.onCwd(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && ready) props.onStart()
+            }}
+          />
+        </label>
+
+        {props.error !== null && (
+          <p className="notice notice--bad" role="alert">
+            {props.error}
+          </p>
+        )}
+
+        <button
+          type="button"
+          className="btn btn--go btn--wide"
+          onClick={props.onStart}
+          disabled={!ready}
+        >
+          {props.starting ? t('conversation.starting') : t('conversation.start')}
+        </button>
+        <p className="footnote">{t('conversation.readOnlyNotice')}</p>
+      </div>
+    </div>
+  )
+}
+
+const fail =
+  (setError: (message: string) => void) =>
+  (error: unknown): void => {
+    setError(error instanceof Error ? error.message : String(error))
+  }
+
+/** Keeps the tail of a long path, which is the part that identifies it. */
+function shortenPath(path: string): string {
+  const parts = path.split('/').filter(Boolean)
+  return parts.length <= 2 ? path : `…/${parts.slice(-2).join('/')}`
 }

@@ -18,14 +18,19 @@ export interface TranscriptMessage {
 
 export interface PendingApproval {
   readonly approvalId: string
+  /** Which agent asked — several can be waiting at once in a shared conversation. */
+  readonly agentId: TranscriptEvent['actor']
   readonly kind: string
   readonly summary: string
+  readonly detail: string | null
   readonly expiresAt: number
 }
 
 export interface TranscriptView {
   readonly messages: readonly TranscriptMessage[]
   readonly approvals: readonly PendingApproval[]
+  /** Agents currently mid-turn. Drives the live indicator on each voice. */
+  readonly working: readonly TranscriptEvent['actor'][]
   readonly busy: boolean
   readonly lastSeq: number
 }
@@ -33,6 +38,7 @@ export interface TranscriptView {
 export const EMPTY_VIEW: TranscriptView = {
   messages: [],
   approvals: [],
+  working: [],
   busy: false,
   lastSeq: 0,
 }
@@ -40,6 +46,7 @@ export const EMPTY_VIEW: TranscriptView = {
 interface Mutable {
   messages: TranscriptMessage[]
   approvals: PendingApproval[]
+  working: TranscriptEvent['actor'][]
   busy: boolean
   lastSeq: number
 }
@@ -51,6 +58,7 @@ export function reduceEvents(
   const next: Mutable = {
     messages: [...view.messages],
     approvals: [...view.approvals],
+    working: [...view.working],
     busy: view.busy,
     lastSeq: view.lastSeq,
   }
@@ -63,6 +71,7 @@ export function reduceEvents(
     apply(next, event)
   }
 
+  next.busy = next.working.length > 0
   return next
 }
 
@@ -115,11 +124,13 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       return
 
     case 'turn.started':
-      view.busy = true
+      // Tracked per agent: in a shared conversation one can be thinking while
+      // another is idle, and a single boolean would flatten that away.
+      if (!view.working.includes(event.actor)) view.working.push(event.actor)
       return
 
     case 'turn.completed':
-      view.busy = false
+      view.working = view.working.filter((a) => a !== event.actor)
       if (p['status'] === 'interrupted') {
         view.messages.push({
           key: event.id,
@@ -134,8 +145,10 @@ function apply(view: Mutable, event: TranscriptEvent): void {
     case 'approval.requested':
       view.approvals.push({
         approvalId: str('approvalId'),
+        agentId: event.actor,
         kind: str('kind'),
         summary: summarize(p),
+        detail: detailOf(p),
         expiresAt: typeof p['expiresAt'] === 'number' ? p['expiresAt'] : 0,
       })
       return
@@ -178,6 +191,24 @@ function appendStreamed(
   view.messages[index] = { ...previous, text: previous.text + text }
 }
 
+/** The diff or arguments behind an approval, shown under the summary line. */
+function detailOf(payload: Record<string, unknown>): string | null {
+  const request = payload['request']
+  if (typeof request !== 'object' || request === null) return null
+  const r = request as Record<string, unknown>
+
+  if (Array.isArray(r['files'])) {
+    const patches = r['files']
+      .map((f) =>
+        typeof f === 'object' && f !== null ? ((f as { patch?: string }).patch ?? '') : ''
+      )
+      .filter((patch) => patch !== '')
+    return patches.length > 0 ? patches.join('\n') : null
+  }
+  if (r['input'] !== undefined) return JSON.stringify(r['input'], null, 2)
+  return null
+}
+
 function summarize(payload: Record<string, unknown>): string {
   const kind = typeof payload['kind'] === 'string' ? payload['kind'] : 'approval'
   const request = payload['request']
@@ -188,7 +219,7 @@ function summarize(payload: Record<string, unknown>): string {
   if (Array.isArray(r['files'])) {
     const paths = r['files']
       .map((f) =>
-        typeof f === 'object' && f !== null ? String((f as { path?: string }).path) : ''
+        typeof f === 'object' && f !== null ? ((f as { path?: string }).path ?? '') : ''
       )
       .filter(Boolean)
     return `Edit ${paths.join(', ')}`

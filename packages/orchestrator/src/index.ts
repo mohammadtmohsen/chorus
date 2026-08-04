@@ -7,5 +7,6 @@
  */
 export * from './conversation-service.js'
 export * from './delta-buffer.js'
+export * from './mentions.js'
 export * from './supervisor.js'
 export * from './testing/fake-adapter.js'

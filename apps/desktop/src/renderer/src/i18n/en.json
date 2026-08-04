@@ -1,36 +1,33 @@
 {
   "app": {
     "name": "Chorus",
-    "tagline": "A local-first workspace for collaborating with multiple coding agents."
+    "tagline": "Work with several coding agents in one conversation, on your own machine."
   },
   "agents": {
-    "heading": "Agents",
-    "probing": "Probing…",
-    "notFound": "{{agent}} not found on PATH",
-    "unknownVersion": "unknown version"
+    "probing": "checking…",
+    "notFound": "not installed",
+    "unknownVersion": "installed"
   },
   "conversation": {
-    "agent": "Agent",
+    "cast": "Agents",
     "projectPath": "Project directory",
-    "start": "Start session",
-    "starting": "Starting…",
-    "readOnlyNotice": "Sessions start read-only until the permission engine lands.",
-    "placeholder": "Ask Codex something… (⌘↵ to send)",
+    "start": "Open the room",
+    "starting": "Opening…",
+    "readOnlyNotice": "Agents start read-only. They ask before running or changing anything.",
+    "transcript": "Conversation",
+    "messageLabel": "Message",
+    "placeholder": "Say something. Start with @{{agents}} to pick who answers.",
+    "hint": "⌘↵ to send",
     "send": "Send",
     "stop": "Stop",
-    "working": "Working…"
+    "stopAll": "Stop {{agents}}",
+    "showThinking": "Show thinking",
+    "hideThinking": "Hide thinking"
   },
   "approval": {
-    "heading": "Approval required",
+    "heading": "Approval",
+    "wants": "{{agent}} needs approval",
     "allowOnce": "Allow once",
     "deny": "Deny"
-  },
-  "runtime": {
-    "heading": "Runtime",
-    "loading": "Loading…",
-    "electron": "Electron",
-    "chromium": "Chromium",
-    "node": "Node",
-    "platform": "Platform"
   }
 }

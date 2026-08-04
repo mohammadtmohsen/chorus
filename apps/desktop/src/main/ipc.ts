@@ -26,12 +26,13 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'agents:probe': () => probeAgents(),
 
-    'conversation:start': (request: { agentId: 'codex' | 'claude'; cwd: string }) =>
-      runtime.startConversation({ agentId: request.agentId, cwd: request.cwd }),
+    'conversation:start': (request: { agents: ('codex' | 'claude')[]; cwd: string }) =>
+      runtime.startConversation({ agents: request.agents, cwd: request.cwd }),
 
     'conversation:send': async (request: { conversationId: string; text: string }) => {
-      await runtime.send(request.conversationId, request.text)
-      return OK
+      const { targets } = await runtime.send(request.conversationId, request.text)
+      // Copied out of the readonly domain type; the IPC boundary is plain JSON.
+      return { targets: [...targets] }
     },
 
     'conversation:interrupt': async (request: { conversationId: string }) => {
@@ -44,12 +45,14 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'approval:decide': async (request: {
       conversationId: string
+      agentId: 'codex' | 'claude'
       approvalId: string
       outcome: 'allow' | 'deny' | 'cancel'
       scope: 'once' | 'session'
     }) => {
       await runtime.decideApproval(
         request.conversationId,
+        request.agentId,
         request.approvalId,
         request.outcome === 'allow'
           ? { outcome: 'allow', scope: request.scope }

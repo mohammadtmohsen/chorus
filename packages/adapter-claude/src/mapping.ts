@@ -105,7 +105,7 @@ function mapStreamEvent(
 
   // Keyed on the enclosing message, never on `msg.uuid` — every stream_event
   // has its own uuid, so that would give each token its own message row.
-  const itemRef = blockRef(messageRef ?? msg.session_id ?? 'stream', msg.event?.index ?? 0)
+  const itemRef = messageRef ?? msg.session_id ?? 'stream'
 
   if (delta.type === 'text_delta' && typeof delta.text === 'string') {
     return [{ ...base, type: 'message.delta', itemRef, text: delta.text }]
@@ -114,11 +114,6 @@ function mapStreamEvent(
     return [{ ...base, type: 'reasoning.delta', itemRef, text: delta.thinking }]
   }
   return []
-}
-
-/** Streamed deltas and the final message must agree on this key, or they duplicate. */
-function blockRef(messageId: string, index: number): string {
-  return `${messageId}:${String(index)}`
 }
 
 /** Reads the message id out of a `message_start`, so deltas can be attributed. */
@@ -136,27 +131,38 @@ function mapAssistant(
   const blocks = (msg.message?.content ?? []) as ContentBlock[]
   const events: AgentEvent[] = []
 
+  /*
+   * All text blocks of one message become ONE completed event, keyed on the
+   * message id alone.
+   *
+   * Indexing by block was wrong in a way only a live run exposed: the stream's
+   * `event.index` counts every content block including thinking, while the
+   * final message's array often omits them — so a reply preceded by thinking
+   * streamed as `msg:1` and completed as `msg:0`, and the transcript showed the
+   * same answer twice. Keying on the message removes the whole class of
+   * misalignment, and joining the text is what a reader wants anyway.
+   */
+  const text = blocks
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text ?? '')
+    .join('')
+
+  if (text !== '') {
+    events.push({
+      ...base,
+      seq: ctx.seq,
+      type: 'message.completed',
+      itemRef: msg.message?.id ?? msg.uuid ?? '',
+      text,
+    })
+  }
+
   for (const block of blocks) {
-    const seq = ctx.seq + events.length
-
-    if (block.type === 'text' && typeof block.text === 'string') {
-      events.push({
-        ...base,
-        seq,
-        type: 'message.completed',
-        // Same key the deltas used, so the authoritative text replaces the
-        // streamed fragments instead of appearing beside them.
-        itemRef: blockRef(msg.message?.id ?? msg.uuid ?? '', blocks.indexOf(block)),
-        text: block.text,
-      })
-      continue
-    }
-
     if (block.type === 'tool_use' && block.name === 'Bash') {
       const command = block.input?.['command']
       events.push({
         ...base,
-        seq,
+        seq: ctx.seq + events.length,
         type: 'command.started',
         itemRef: block.id ?? '',
         command: typeof command === 'string' ? [command] : [],

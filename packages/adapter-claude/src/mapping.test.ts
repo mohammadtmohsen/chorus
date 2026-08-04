@@ -73,26 +73,53 @@ describe('message mapping', () => {
     )
   })
 
-  it('keys deltas by block index so two blocks do not merge', () => {
-    // Partial messages carry no per-block id; without the index every block in a
-    // message would stitch into one run of text.
-    const a = mapSdkMessage(
+  it('keeps stream and completed aligned when thinking precedes the text', () => {
+    // The live bug: the stream counts every content block including thinking,
+    // while the final message's array often omits them — so the same reply
+    // streamed as msg:1 and completed as msg:0 and rendered twice.
+    const ref = trackStreamMessage(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_3' } } },
+      null
+    )
+    const streamed = mapSdkMessage(
       {
         type: 'stream_event',
-        uuid: 'u1',
-        event: { index: 0, delta: { type: 'text_delta', text: 'a' } },
+        uuid: 'u-a',
+        // index 1: a thinking block occupied index 0 in the stream.
+        event: { index: 1, delta: { type: 'text_delta', text: 'Answer' } },
+      },
+      { ...CTX, streamMessageRef: ref }
+    )
+    const completed = mapSdkMessage(
+      {
+        type: 'assistant',
+        uuid: 'u-b',
+        message: { id: 'msg_3', content: [{ type: 'text', text: 'Answer' }] },
       },
       CTX
     )
-    const b = mapSdkMessage(
+    expect((completed[0] as { itemRef: string }).itemRef).toBe(
+      (streamed[0] as { itemRef: string }).itemRef
+    )
+  })
+
+  it('joins several text blocks of one message into one entry', () => {
+    const events = mapSdkMessage(
       {
-        type: 'stream_event',
-        uuid: 'u1',
-        event: { index: 1, delta: { type: 'text_delta', text: 'b' } },
+        type: 'assistant',
+        uuid: 'u',
+        message: {
+          id: 'msg_4',
+          content: [
+            { type: 'text', text: 'first ' },
+            { type: 'text', text: 'second' },
+          ],
+        },
       },
       CTX
     )
-    expect((a[0] as { itemRef: string }).itemRef).not.toBe((b[0] as { itemRef: string }).itemRef)
+    expect(events.filter((e) => e.type === 'message.completed')).toHaveLength(1)
+    expect(events[0]).toMatchObject({ text: 'first second' })
   })
 
   it('maps thinking deltas to reasoning, not to message text', () => {
