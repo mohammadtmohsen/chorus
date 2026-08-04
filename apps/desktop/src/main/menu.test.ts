@@ -8,7 +8,7 @@ const { menuTemplate } = await import('./menu.js')
 const { stepScale } = await import('./scale.js')
 
 function view(): MenuItemConstructorOptions[] {
-  const found = menuTemplate('/tmp/x').find((item) => item.label === 'View')
+  const found = menuTemplate().find((item) => item.label === 'View')
   return (found?.submenu ?? []) as MenuItemConstructorOptions[]
 }
 
@@ -38,15 +38,15 @@ describe('menuTemplate', () => {
       item?.click?.(undefined as never, undefined, undefined as never)
     }
     click('Zoom In', 'CommandOrControl+Plus')
-    expect(stepScale).toHaveBeenLastCalledWith('/tmp/x', 1)
+    expect(stepScale).toHaveBeenLastCalledWith(1)
     click('Zoom Out', 'CommandOrControl+-')
-    expect(stepScale).toHaveBeenLastCalledWith('/tmp/x', -1)
+    expect(stepScale).toHaveBeenLastCalledWith(-1)
     click('Actual Size', 'CommandOrControl+0')
-    expect(stepScale).toHaveBeenLastCalledWith('/tmp/x', 0)
+    expect(stepScale).toHaveBeenLastCalledWith(0)
   })
 
   it('keeps the edit menu, or the app loses copy and paste', () => {
     // Replacing Electron's default menu means inheriting what it gave for free.
-    expect(menuTemplate('/tmp/x').map((item) => item.role)).toContain('editMenu')
+    expect(menuTemplate().map((item) => item.role)).toContain('editMenu')
   })
 })

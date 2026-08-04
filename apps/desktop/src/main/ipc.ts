@@ -11,7 +11,6 @@ import {
 } from '../shared/ipc.js'
 import { probeAgents } from './agent-probe.js'
 import type { ChorusRuntime } from './runtime.js'
-import { applyScale } from './scale.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
 
 type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>> }
@@ -90,9 +89,7 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       // Merged over what is on disk, so a field the renderer did not send keeps
       // whatever the menu or a previous session left there. Zod drops absent
       // keys rather than passing them as undefined, so the spread is safe.
-      const saved = writeSettings(path, { ...readSettings(path), ...request })
-      applyScale(saved.scale)
-      return Promise.resolve(saved)
+      return Promise.resolve(writeSettings(path, { ...readSettings(path), ...request }))
     },
 
     'diagnostics:read': () =>

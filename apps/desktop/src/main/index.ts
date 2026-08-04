@@ -3,8 +3,7 @@ import { app, BrowserWindow, session } from 'electron'
 import { forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
 import { createLogger } from './logging.js'
 import { installMenu } from './menu.js'
-import { applyScale } from './scale.js'
-import { readSettings } from './settings.js'
+import { applyScale, currentScale } from './scale.js'
 import { reapOrphanedAgents } from './reap.js'
 import { ChorusRuntime } from './runtime.js'
 import { applyContentSecurityPolicy, lockDownNavigation } from './security.js'
@@ -45,12 +44,12 @@ function createWindow(): BrowserWindow {
   })
 
   /*
-   * Zoom is applied per navigation, not once per window: Electron resets the
-   * factor on every load, so setting it at creation survives until the first
-   * reload and then silently reverts.
+   * Reapplied per navigation, not once per window: Electron resets the factor on
+   * every load, so a reload mid-session would silently drop back to 100% while
+   * the app still believed it was zoomed.
    */
   window.webContents.on('did-finish-load', () => {
-    applyScale(readSettings(app.getPath('userData')).scale)
+    applyScale(currentScale())
   })
 
   if (devServerUrl !== undefined) {
@@ -84,7 +83,7 @@ void app.whenReady().then(() => {
   runtime = ChorusRuntime.open(app.getPath('userData'), log)
   registerIpcHandlers(runtime)
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
-  installMenu(app.getPath('userData'))
+  installMenu()
   forwardEventsToRenderer(runtime)
 
   createWindow()

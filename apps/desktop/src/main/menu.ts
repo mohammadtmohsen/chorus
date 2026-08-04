@@ -14,9 +14,9 @@ import { stepScale } from './scale.js'
  * in the app at all.
  */
 
-export function menuTemplate(userDataPath: string): MenuItemConstructorOptions[] {
+export function menuTemplate(): MenuItemConstructorOptions[] {
   const zoom = (direction: -1 | 0 | 1) => (): void => {
-    stepScale(userDataPath, direction)
+    stepScale(direction)
   }
 
   return [
@@ -47,6 +47,6 @@ export function menuTemplate(userDataPath: string): MenuItemConstructorOptions[]
   ]
 }
 
-export function installMenu(userDataPath: string): void {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(userDataPath)))
+export function installMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate()))
 }

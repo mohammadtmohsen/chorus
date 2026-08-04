@@ -1,7 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /*
  * `electron` is not importable outside an Electron process, and `scale.ts` needs
@@ -14,80 +11,53 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [{ webContents: { setZoomFactor, send } }] },
 }))
 
-const { applyScale, stepScale } = await import('./scale.js')
-const { DEFAULT_SETTINGS, writeSettings } = await import('./settings.js')
-
-let dir = ''
+const { applyScale, currentScale, stepScale } = await import('./scale.js')
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'chorus-scale-'))
+  // The size is module state with a one-launch lifetime; this is what a launch
+  // looks like to a test.
+  stepScale(0)
   setZoomFactor.mockClear()
   send.mockClear()
 })
 
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
-})
-
-const stored = (): number =>
-  (JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')) as { scale: number }).scale
-
 describe('stepScale', () => {
+  it('starts at 100%', () => {
+    expect(currentScale()).toBe(1)
+  })
+
   it('steps up and down by 5%', () => {
-    writeSettings(dir, DEFAULT_SETTINGS)
-    expect(stepScale(dir, 1)).toBe(1.05)
-    expect(stepScale(dir, 1)).toBe(1.1)
-    expect(stepScale(dir, -1)).toBe(1.05)
+    expect(stepScale(1)).toBe(1.05)
+    expect(stepScale(1)).toBe(1.1)
+    expect(stepScale(-1)).toBe(1.05)
+  })
+
+  it('returns to actual size', () => {
+    stepScale(1)
+    stepScale(1)
+    expect(stepScale(0)).toBe(1)
   })
 
   it('stays on whole percents through a long run of presses', () => {
     // 0.85 + 0.05 is 0.8999999999999999 in binary floating point, and a badge
     // reading 89% would be the arithmetic showing through.
-    writeSettings(dir, { ...DEFAULT_SETTINGS, scale: 0.85 })
-    const seen = Array.from({ length: 8 }, () => stepScale(dir, 1))
+    for (let i = 0; i < 3; i++) stepScale(-1)
+    const seen = Array.from({ length: 8 }, () => stepScale(1))
     expect(seen).toEqual([0.9, 0.95, 1, 1.05, 1.1, 1.15, 1.2, 1.25])
-  })
-
-  it('returns to actual size', () => {
-    writeSettings(dir, { ...DEFAULT_SETTINGS, scale: 1.5 })
-    expect(stepScale(dir, 0)).toBe(1)
   })
 
   it('stops at each end rather than wrapping', () => {
     // Wrapping from largest to smallest on one extra press is the kind of thing
     // that makes people think the shortcut is broken.
-    writeSettings(dir, { ...DEFAULT_SETTINGS, scale: 1.5 })
-    expect(stepScale(dir, 1)).toBe(1.5)
-    writeSettings(dir, { ...DEFAULT_SETTINGS, scale: 0.8 })
-    expect(stepScale(dir, -1)).toBe(0.8)
+    for (let i = 0; i < 40; i++) stepScale(1)
+    expect(stepScale(1)).toBe(1.5)
+    for (let i = 0; i < 40; i++) stepScale(-1)
+    expect(stepScale(-1)).toBe(0.8)
   })
 
-  it('pulls a value off the grid back onto it', () => {
-    // A hand-edited settings file should still land on whole percents.
-    writeSettings(dir, { ...DEFAULT_SETTINGS, scale: 1.234 })
-    expect(stepScale(dir, 1)).toBe(1.28)
-  })
-
-  it('persists, so the size survives a relaunch', () => {
-    writeSettings(dir, DEFAULT_SETTINGS)
-    stepScale(dir, 1)
-    expect(stored()).toBe(1.05)
-  })
-
-  it('applies to the window as well as the file', () => {
-    writeSettings(dir, DEFAULT_SETTINGS)
-    stepScale(dir, -1)
+  it('applies to the window', () => {
+    stepScale(-1)
     expect(setZoomFactor).toHaveBeenCalledWith(0.95)
-  })
-
-  it('starts from the default when there is no settings file', () => {
-    expect(stepScale(dir, 1)).toBe(1.05)
-  })
-
-  it('starts from the default when the file is corrupt', () => {
-    // Refusing to zoom because a JSON file is broken would be a strange failure.
-    writeFileSync(join(dir, 'settings.json'), '{ not json', 'utf8')
-    expect(stepScale(dir, 1)).toBe(1.05)
   })
 })
 

@@ -38,12 +38,11 @@ export const TranscriptEvent = z.object({
 })
 export type TranscriptEvent = z.infer<typeof TranscriptEvent>
 
-/** Defaults for a new session, plus how big the window draws everything. */
+/** Defaults for a new session. Zoom is not here: it lasts one launch. */
 export const SettingsShape = z.object({
   agents: z.array(z.enum(['codex', 'claude'])),
   cwd: z.string(),
   profileId: z.string(),
-  scale: z.number(),
 })
 
 export const ApprovalChoice = z.object({
@@ -202,13 +201,7 @@ export const IPC_CONTRACT = {
     request: z.object({}),
     response: SettingsShape,
   },
-  /**
-   * A patch, not a whole object.
-   *
-   * Zoom is changed from the menu, so the renderer's copy of `scale` goes stale
-   * the moment ⌘− is pressed. Sending only what changed means a stale field
-   * cannot overwrite a fresh one.
-   */
+  /** A patch: sending only what changed keeps one field from clobbering another. */
   'settings:write': {
     request: SettingsShape.partial(),
     response: SettingsShape,

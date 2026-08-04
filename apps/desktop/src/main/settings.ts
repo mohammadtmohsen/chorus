@@ -12,29 +12,18 @@ import { z } from 'zod'
  * Everything here is a *default*, never a constraint — each session still
  * chooses its own agents, directory and profile when it starts. That is what
  * keeps this file safe to lose.
+ *
+ * Zoom is deliberately **not** here. It is a per-launch adjustment, not a
+ * preference: the app opens at 100% every time, and a size you set to read one
+ * long diff should not be waiting for you tomorrow. An older file may still
+ * carry a `scale` key; the schema drops it on the next read.
  */
-
-/** The range the layout was checked at; past either end it stops being a layout. */
-export const MIN_SCALE = 0.8
-export const MAX_SCALE = 1.5
-
-/** One press, 5%: fine enough to land on the size you want, coarse enough to feel. */
-export const SCALE_STEP = 0.05
 
 export const Settings = z.object({
   agents: z.array(z.enum(['codex', 'claude'])),
   /** Empty means "start at home", the same as leaving the field blank. */
   cwd: z.string(),
   profileId: z.string(),
-  /**
-   * Zoom factor for the whole window, not a font size.
-   *
-   * Scaling type alone would leave every border, gutter and control where it
-   * was, so larger text would arrive in a layout built for smaller text. Zoom
-   * moves all of it together, and the responsive breakpoints come along —
-   * at 1.5 the window holds fewer columns, which is the truth.
-   */
-  scale: z.number().min(MIN_SCALE).max(MAX_SCALE),
 })
 export type Settings = z.infer<typeof Settings>
 
@@ -43,7 +32,6 @@ export const DEFAULT_SETTINGS: Settings = {
   cwd: '',
   // Permissive defaults ship by accident, not on purpose (plan §4.4).
   profileId: 'read-only',
-  scale: 1,
 }
 
 function settingsPath(userDataPath: string): string {

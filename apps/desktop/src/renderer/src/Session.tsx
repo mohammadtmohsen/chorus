@@ -49,8 +49,6 @@ export function Session(props: {
   index: number
   profileName: string
   profileSummary: string
-  /** Hidden when this is the only session; there is nothing to distinguish. */
-  showClose: boolean
   onClose: (conversationId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -215,46 +213,47 @@ export function Session(props: {
           >
             {t('review.open')}
           </button>
-          {props.showClose &&
-            /*
-             * Confirmed only while an agent is mid-turn. That is the one moment
-             * ending costs something — the rest of the time the log is already
-             * durable and the session can be started again.
-             */
-            (confirmingClose ? (
-              <>
-                <button
-                  type="button"
-                  className="btn btn--chip btn--stop"
-                  onClick={() => {
-                    props.onClose(conversationId)
-                  }}
-                >
-                  {t('conversation.endNow')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--chip"
-                  onClick={() => {
-                    setConfirmingClose(false)
-                  }}
-                >
-                  {t('conversation.keep')}
-                </button>
-              </>
-            ) : (
+          {/*
+            Shown even when this is the only session: ending the last one lands
+            on the start screen, which is a place to be rather than a dead end.
+            Confirmed only while an agent is mid-turn — the one moment ending
+            costs something, since the rest of the time the log is already
+            durable and the session can be started again.
+          */}
+          {confirmingClose ? (
+            <>
+              <button
+                type="button"
+                className="btn btn--chip btn--stop"
+                onClick={() => {
+                  props.onClose(conversationId)
+                }}
+              >
+                {t('conversation.endNow')}
+              </button>
               <button
                 type="button"
                 className="btn btn--chip"
-                aria-label={t('conversation.endLabel')}
                 onClick={() => {
-                  if (view.busy) setConfirmingClose(true)
-                  else props.onClose(conversationId)
+                  setConfirmingClose(false)
                 }}
               >
-                {t('conversation.end')}
+                {t('conversation.keep')}
               </button>
-            ))}
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--chip"
+              aria-label={t('conversation.endLabel')}
+              onClick={() => {
+                if (view.busy) setConfirmingClose(true)
+                else props.onClose(conversationId)
+              }}
+            >
+              {t('conversation.end')}
+            </button>
+          )}
         </div>
       </header>
 

@@ -258,7 +258,6 @@ export function App(): React.JSX.Element {
               profiles.find((p) => p.id === session.profileId)?.name ?? session.profileId
             }
             profileSummary={profiles.find((p) => p.id === session.profileId)?.summary ?? ''}
-            showClose={sessions.length > 1}
             onClose={close}
           />
         ))}

@@ -814,7 +814,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
 - **2026-08-04 — one typeface: the terminal's own.** Everything is monospace now
   — prose, chrome and machine output alike. The design's second idea was "type
-  encodes kind": serif for what agents *say*, mono for what they *do*. That idea
+  encodes kind": serif for what agents _say_, mono for what they _do_. That idea
   survives, but it is carried by weight, colour and case instead of by family:
   agents' words at full brightness, reasoning italic and dim, chrome small and
   upper-cased. Ligatures off, as in every terminal.
@@ -844,3 +844,24 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   Verified live: wordmark in mono, badge reading 105% then 110%, still up
   mid-run, gone after ~1.4s idle. 380 tests.
+
+- **2026-08-04 — zoom lasts one launch; End is always offered.**
+
+  Zoom left `settings.json` entirely. It is an adjustment rather than a
+  preference: the app opens at 100% every time, and a size set to read one long
+  diff should not be waiting for you tomorrow. The size is now module state in
+  `scale.ts` with exactly the lifetime of the process, and **nothing reads it
+  from disk**, so there is no path by which a previous session's zoom could come
+  back. An older file carrying `scale` has the key dropped on the next read.
+
+  `did-finish-load` still reapplies it, for a different reason than before:
+  Electron resets the factor on every navigation, so a reload mid-session would
+  drop silently back to 100% while the app still believed it was zoomed.
+
+  **End** now appears on a single session too. It was hidden when there was only
+  one because ending it had nowhere to land — that stopped being true when the
+  start screen arrived, and the guard outlived its reason.
+
+  Verified live: 100% at launch, End present with one pane, ending the last pane
+  landing on the start screen, no `scale` key written, and 100% again after a
+  full relaunch. 377 tests.
