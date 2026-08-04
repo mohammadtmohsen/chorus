@@ -213,30 +213,68 @@ body {
  *
  * Panes are equal, never a main one and some others: each has its own agents,
  * its own approvals and its own composer, and the grid says so by giving them
- * the same weight. Two side by side is the case that matters — a pane narrower
- * than about 380px stops being a place you can read a transcript, so beyond
- * four the grid stays at two columns and scrolls rather than shrinking further.
+ * the same weight.
+ *
+ * Four columns is the ceiling, and only on a display wide enough to give each
+ * one a readable measure. Past that a pane is narrower than the sentence it is
+ * holding, and a transcript you cannot read is not a session you are running.
+ * Columns collapse with the window rather than forcing a sideways scroll — a
+ * pane half off-screen is the same problem in a different direction.
  */
 .grid {
+  --columns: 1;
   display: grid;
+  grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+  grid-auto-rows: minmax(300px, 1fr);
   gap: 1px;
   background: var(--line);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
 }
 
-.grid[data-count='1'] {
-  grid-template-columns: 1fr;
-}
-
 .grid[data-count='2'] {
-  grid-template-columns: repeat(2, minmax(380px, 1fr));
+  --columns: 2;
 }
 
-.grid[data-count='3'],
+.grid[data-count='3'] {
+  --columns: 3;
+}
+
 .grid[data-count='4'] {
-  grid-template-columns: repeat(2, minmax(380px, 1fr));
-  grid-auto-rows: minmax(320px, 1fr);
+  --columns: 4;
+}
+
+/* Each step down is the width at which the columns above it stop being legible. */
+@media (max-width: 1680px) {
+  .grid[data-count='4'] {
+    --columns: 3;
+  }
+}
+
+@media (max-width: 1280px) {
+  .grid[data-count='3'],
+  .grid[data-count='4'] {
+    --columns: 2;
+  }
+}
+
+@media (max-width: 820px) {
+  .grid[data-count='2'],
+  .grid[data-count='3'],
+  .grid[data-count='4'] {
+    --columns: 1;
+  }
+
+  /*
+   * One pane per screen once they are stacked. Four sessions sharing a phone's
+   * height gives each a transcript three lines tall, which is a list of
+   * sessions rather than a set of usable ones; a full screen each and a scroll
+   * between them keeps every pane the thing it was.
+   */
+  .grid {
+    grid-auto-rows: 100%;
+  }
 }
 
 .pane {
@@ -246,6 +284,26 @@ body {
   min-height: 0;
   background: var(--sunken);
   position: relative;
+  /* Queried on its own width, not the window's: three panes on a wide screen
+     are each as cramped as one pane on a narrow one. */
+  container-type: inline-size;
+}
+
+/* What a pane sheds as it narrows, in the order it can afford to lose it. */
+@container (max-width: 460px) {
+  .pane-head .profile-chip {
+    display: none;
+  }
+}
+
+@container (max-width: 360px) {
+  .pane-head .path {
+    display: none;
+  }
+
+  .composer .hint {
+    display: none;
+  }
 }
 
 /* Which pane your next keystroke goes to, without a click-to-focus model. */
@@ -1302,4 +1360,61 @@ input::placeholder {
   grid-column: 3;
   color: var(--faint);
   word-break: break-all;
+}
+
+/* ------------------------------------------------------------------ phone */
+
+/*
+ * The window goes down to phone width, and the layout has to still be a layout
+ * there rather than a desktop one clipped.
+ *
+ * What changes is spacing and the speaker gutter: the rail is the one thing
+ * worth its width at any size, but 88px of it on a 390px screen is a third of
+ * the line. Everything that survives here does so because it is load-bearing.
+ */
+@media (max-width: 560px) {
+  :root {
+    --gutter: 46px;
+  }
+
+  .masthead {
+    gap: calc(var(--step) * 3);
+    padding: calc(var(--step) * 3) calc(var(--step) * 3);
+    /* Still under the traffic lights, which do not shrink with the window. */
+    padding-left: 80px;
+  }
+
+  .session-count {
+    display: none;
+  }
+
+  .score {
+    padding: calc(var(--step) * 5) calc(var(--step) * 3) calc(var(--step) * 6);
+  }
+
+  .entry {
+    column-gap: calc(var(--step) * 3);
+  }
+
+  .dock {
+    padding: calc(var(--step) * 3);
+  }
+
+  .pane-head {
+    gap: calc(var(--step) * 2);
+    padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  }
+
+  .setup {
+    padding: calc(var(--step) * 4);
+    align-items: start;
+  }
+
+  .sheet-backdrop {
+    padding: calc(var(--step) * 3);
+  }
+
+  .sheet-backdrop .setup {
+    padding: calc(var(--step) * 4);
+  }
 }

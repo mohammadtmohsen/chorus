@@ -132,6 +132,7 @@ export function App(): React.JSX.Element {
         </p>
       )}
 
+      {/* Capped at four; the stylesheet steps it down as the window narrows. */}
       <main className="grid" data-count={Math.min(sessions.length, 4)}>
         {sessions.map((session, index) => (
           <Session

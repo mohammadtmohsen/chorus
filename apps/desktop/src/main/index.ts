@@ -12,8 +12,10 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1_280,
     height: 860,
-    minWidth: 940,
-    minHeight: 600,
+    // Down to phone width: the layout reflows there, and a floor of 940 was
+    // stopping a window that renders perfectly well at 390.
+    minWidth: 380,
+    minHeight: 480,
     show: false,
     titleBarStyle: 'hiddenInset',
     webPreferences: {

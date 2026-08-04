@@ -707,7 +707,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   Stop whenever an agent is mid-turn and Send otherwise, replacing the separate
   text Stop chip.
 
-  This reverses a decision made in M4 — Stop used to appear *alongside* Send
+  This reverses a decision made in M4 — Stop used to appear _alongside_ Send
   precisely because replacing it blocked addressing the other agent mid-turn. The
   keyboard is what makes the reversal safe now: ↵ sends whether or not anyone is
   working, so the button showing Stop closes nothing off. Confirmed live rather
@@ -717,3 +717,25 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live: Send disabled on an empty box, Stop while working, exactly one
   round button and no text Stop anywhere, and the button returning to Send once
   the turn ends. 365 tests.
+
+- **2026-08-04 — the grid is responsive, up to four columns, down to a phone.**
+  Column count is capped at four and steps down with the window: 4 above 1680px,
+  3 above 1280, 2 above 820, and a single stack below that. Columns collapse
+  rather than forcing a sideways scroll — a pane half off-screen is the same
+  problem in a different direction.
+
+  Once stacked, each pane takes a full screen and you scroll between them. Four
+  sessions sharing a phone's height gives each a transcript three lines tall,
+  which is a list of sessions rather than a set of usable ones.
+
+  Panes shed detail by their **own** width, not the window's, using container
+  queries: three panes on a wide display are each as cramped as one pane on a
+  narrow one. Below 460px a pane drops its profile chip, below 360px its path and
+  the keyboard hint.
+
+  `minWidth` came down from 940 to 380. It was the only thing stopping a window
+  that renders perfectly well at 390.
+
+  Verified live with four sessions: 4 → 3 → 2 → 1 columns across 1900/1500/1100/
+  700px, no horizontal overflow at 390px, composer on screen, profile chip shed.
+  365 tests.
