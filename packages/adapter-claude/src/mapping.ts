@@ -309,24 +309,70 @@ export function trackBashTools(msg: SdkMessageLike, current: ReadonlySet<string>
  * seconds. Both are converted once, so nothing downstream has to know.
  */
 function mapRateLimits(msg: SdkMessageLike, base: Omit<AgentEvent, 'type'>): AgentEvent[] {
-  const info = msg.rate_limit_info
-  if (info === undefined) return []
+  const windows = usageWindows(msg.rate_limit_info)
+  return windows.length === 0 ? [] : [{ ...base, type: 'limits', windows }]
+}
 
+/**
+ * The `/usage` payload → every window the plan has.
+ *
+ * `rate_limit_event` only fires once usage crosses a warning threshold, and it
+ * carries the single window that tripped it — so the five-hour figure was
+ * invisible until you were already near the end of it, which is too late to be
+ * worth showing. Asking gives both windows whenever we like.
+ *
+ * The method is marked experimental and says it may be removed without notice,
+ * so it is called defensively and its absence is not an error: the event path
+ * still works, and the header simply says less.
+ */
+export function mapPlanUsage(usage: unknown, base: Omit<AgentEvent, 'type'>): AgentEvent[] {
+  const info = usage as
+    { rate_limits_available?: boolean; rate_limits?: RateLimitRecord } | undefined
+  if (info?.rate_limits_available !== true) return []
+
+  const windows = usageWindows(info)
+  return windows.length === 0 ? [] : [{ ...base, type: 'limits', windows }]
+}
+
+type RateLimitRecord = Record<
+  string,
+  { utilization?: number | null; resets_at?: string | number | null } | null | undefined
+>
+
+/**
+ * Both shapes, because the SDK sends one and documents the other.
+ *
+ * The flat one arrives on `rate_limit_event` with `utilization` as a fraction;
+ * the nested one comes back from `/usage` with it as a percentage. Converting
+ * each where it is recognised is why nothing downstream has to know.
+ */
+function usageWindows(
+  info:
+    | {
+        rateLimitType?: string
+        utilization?: number
+        resetsAt?: number
+        rate_limits?: RateLimitRecord
+      }
+    | undefined
+): UsageWindow[] {
+  if (info === undefined) return []
   const windows: UsageWindow[] = []
 
-  // What the SDK actually sends: one window, named by `rateLimitType`.
   if (typeof info.rateLimitType === 'string') {
     windows.push({
       id: info.rateLimitType,
+      // A fraction here; a percentage in the other shape.
       usedPercent: typeof info.utilization === 'number' ? info.utilization * 100 : null,
       windowMinutes: WINDOW_MINUTES[info.rateLimitType] ?? null,
       resetsAt: toEpochMs(info.resetsAt),
     })
   }
 
-  // What the types describe, should it ever arrive.
   for (const [id, window] of Object.entries(info.rate_limits ?? {})) {
+    // Most of the named windows are null for any given plan.
     if (window == null || windows.some((w) => w.id === id)) continue
+    if (WINDOW_MINUTES[id] === undefined) continue
     windows.push({
       id,
       usedPercent: typeof window.utilization === 'number' ? window.utilization : null,
@@ -337,7 +383,8 @@ function mapRateLimits(msg: SdkMessageLike, base: Omit<AgentEvent, 'type'>): Age
     })
   }
 
-  return windows.length === 0 ? [] : [{ ...base, type: 'limits', windows }]
+  // Shortest first: the window that runs out soonest is the one you plan around.
+  return windows.sort((a, b) => (a.windowMinutes ?? 0) - (b.windowMinutes ?? 0))
 }
 
 /** The windows Claude names, in minutes, so the UI can label them itself. */

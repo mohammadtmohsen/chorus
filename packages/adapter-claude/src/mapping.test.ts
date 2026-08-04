@@ -1,6 +1,12 @@
 import type { ApprovalId } from '@chorus/shared'
 import { describe, expect, it } from 'vitest'
-import { mapSdkMessage, mapToolPermission, trackBashTools, trackStreamMessage } from './mapping.js'
+import {
+  mapPlanUsage,
+  mapSdkMessage,
+  mapToolPermission,
+  trackBashTools,
+  trackStreamMessage,
+} from './mapping.js'
 
 const CTX = {
   seq: 1,
@@ -382,5 +388,52 @@ describe('rate limits', () => {
 
   it('says nothing when there is nothing to say', () => {
     expect(mapSdkMessage({ type: 'rate_limit_event' }, CTX)).toEqual([])
+  })
+})
+
+describe('plan usage', () => {
+  const BASE = { agentId: 'claude' as const, seq: 1, at: 1_000 }
+
+  /* Captured from the SDK's own `/usage` response on a Max plan. */
+  const LIVE = {
+    subscription_type: 'max',
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: { utilization: 2, resets_at: '2026-08-04T23:50:00.163284+00:00' },
+      seven_day: { utilization: 86, resets_at: '2026-08-06T17:59:59.163318+00:00' },
+      seven_day_opus: null,
+      tangelo: null,
+    },
+  }
+
+  it('reports both windows, shortest first', () => {
+    const [event] = mapPlanUsage(LIVE, BASE)
+    expect(event?.type === 'limits' && event.windows).toEqual([
+      {
+        id: 'five_hour',
+        // Already a percentage here, unlike the fraction on rate_limit_event.
+        usedPercent: 2,
+        windowMinutes: 300,
+        resetsAt: Date.parse('2026-08-04T23:50:00.163284+00:00'),
+      },
+      {
+        id: 'seven_day',
+        usedPercent: 86,
+        windowMinutes: 10_080,
+        resetsAt: Date.parse('2026-08-06T17:59:59.163318+00:00'),
+      },
+    ])
+  })
+
+  it('ignores the windows a plan does not have', () => {
+    // Most of the named ones are null, and a couple are not windows we know.
+    const [event] = mapPlanUsage(LIVE, BASE)
+    expect(event?.type === 'limits' && event.windows.map((w) => w.id)).not.toContain('tangelo')
+  })
+
+  it('says nothing for an account with no plan windows', () => {
+    // API key, Bedrock, Vertex: `rate_limits_available` is false.
+    expect(mapPlanUsage({ rate_limits_available: false, rate_limits: null }, BASE)).toEqual([])
+    expect(mapPlanUsage(undefined, BASE)).toEqual([])
   })
 })

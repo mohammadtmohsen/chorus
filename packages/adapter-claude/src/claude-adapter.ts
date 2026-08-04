@@ -18,7 +18,13 @@ import type {
   SessionOpts,
 } from '@chorus/agent-protocol'
 import { AsyncQueue, newApprovalId, type AgentId, type ApprovalId } from '@chorus/shared'
-import { mapSdkMessage, mapToolPermission, trackBashTools, trackStreamMessage } from './mapping.js'
+import {
+  mapPlanUsage,
+  mapSdkMessage,
+  mapToolPermission,
+  trackBashTools,
+  trackStreamMessage,
+} from './mapping.js'
 
 const run = promisify(execFile)
 
@@ -189,6 +195,11 @@ export class ClaudeSession implements AgentSession {
         // message that has to be mapped with the id already known.
         this.bashToolIds = trackBashTools(message as never, this.bashToolIds)
 
+        const kind = (message as { type?: string; subtype?: string }).type
+        // Both moments the plan windows are worth re-reading: when a session
+        // opens, and when a turn has just spent something.
+        if (kind === 'system' || kind === 'result') void this.readPlanUsage()
+
         for (const event of mapSdkMessage(message as never, {
           seq: this.seq + 1,
           now: this.now(),
@@ -223,6 +234,40 @@ export class ClaudeSession implements AgentSession {
     if (!this.interruptRequested || event.status === 'completed') return event
     this.interruptRequested = false
     return { ...event, status: 'interrupted' }
+  }
+
+  /**
+   * Asks for the plan's usage windows.
+   *
+   * `rate_limit_event` only fires once a threshold is crossed, and carries the
+   * one window that tripped it — so the five-hour figure was invisible until it
+   * was nearly gone. This gives both windows on demand.
+   *
+   * The method is explicitly experimental and may be removed without notice, so
+   * its absence is a normal outcome rather than an error: the event path still
+   * works and the header just says less.
+   */
+  private async readPlanUsage(): Promise<void> {
+    const ask = (
+      this.q as unknown as {
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<unknown>
+      }
+    ).usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET
+    if (typeof ask !== 'function') return
+
+    try {
+      const usage = await ask.call(this.q)
+      for (const event of mapPlanUsage(usage, {
+        agentId: 'claude',
+        seq: this.seq + 1,
+        at: this.now(),
+      })) {
+        this.emit(event)
+      }
+    } catch {
+      // Experimental, and answered only while the query is open. Neither is
+      // worth a word in the transcript.
+    }
   }
 
   private emit(event: AgentEvent): void {

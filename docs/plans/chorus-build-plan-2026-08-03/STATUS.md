@@ -1711,6 +1711,32 @@ joined | claude joined` once Claude was added by hand in the second, and
 
   Verified live: `1w 55% resets in 3d 12h` for Codex before any turn — matching
   the raw `usedPercent: 55, resetsAt: 1786176677` — and `1w 86%` for Claude from
-  `utilization: 0.86`. A new e2e spec asserts the *shape*: percentages in range,
+  `utilization: 0.86`. A new e2e spec asserts the _shape_: percentages in range,
   and nothing resetting "now", which is exactly what seconds-as-milliseconds
   looks like. 8 specs pass.
+
+- **2026-08-04 — the five-hour window, and both of Claude's.** Asked for rather
+  than waited on.
+
+  `rate_limit_event` only fires once usage crosses a warning threshold, and it
+  carries the one window that tripped it — so the five-hour figure was invisible
+  until it was nearly gone, which is exactly too late to be useful. The SDK has
+  a method that returns every window a plan has; it is named
+  `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`, and the name is
+  taken at its word: feature-detected, wrapped, and its absence treated as a
+  normal outcome rather than an error. If it disappears, the event path still
+  works and the header simply says less.
+
+  It is asked at session start and after each turn — the two moments the numbers
+  can have changed. It also has to be asked while the query is open, which cost a
+  probe to learn: called after consuming `result`, it answers "Query closed
+  before response received".
+
+  Two shapes now, from the same provider: `rate_limit_event` sends `utilization`
+  as a **fraction**, `/usage` sends it as a **percentage**. Each is converted
+  where it is recognised. Windows are sorted shortest first, because the one
+  that runs out soonest is the one you plan around.
+
+  Verified live, all three rows at once:
+  `codex 1w 55% resets in 3d 12h · claude 5h 2% resets in 4h 14m · claude 1w 86%
+  resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
