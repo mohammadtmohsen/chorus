@@ -476,6 +476,7 @@ body {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--faint);
+  white-space: nowrap;
 }
 
 .voices {
@@ -1561,9 +1562,45 @@ input::placeholder {
   padding: calc(var(--step) * 4) 0;
 }
 
-/* The path reads as text until you click it, then it is a field in the same place. */
+.path-pair {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.path-edit {
+  flex: none;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 3px);
+  background: transparent;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+/* Present but quiet: it appears when you are already near the path. */
+.path-pair:hover .path-edit,
+.path-edit:focus-visible {
+  opacity: 1;
+}
+
+.path-edit:hover {
+  border-color: var(--line);
+  color: var(--bone);
+}
+
+/* The path reads as text until you edit it, then it is a field in the same place. */
 .path--button {
   max-width: 22ch;
+  /* Never wraps: it is one line of a single-line row, and a second line here
+     changes the height of the whole composer. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 2px 4px;
   border: 1px solid transparent;
   border-radius: calc(var(--radius) - 3px);

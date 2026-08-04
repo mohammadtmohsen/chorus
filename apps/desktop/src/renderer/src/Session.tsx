@@ -439,16 +439,35 @@ export function Session(props: {
               does, and the change is replayed to whoever is addressed next.
             */}
             {pathDraft === null ? (
-              <button
-                type="button"
-                className="path path--button"
-                title={t('conversation.editPath', { path: cwd })}
-                onClick={() => {
-                  setPathDraft(cwd)
-                }}
-              >
-                {shortenPath(cwd)}
-              </button>
+              <span className="path-pair">
+                <button
+                  type="button"
+                  className="path path--button"
+                  title={t('conversation.revealPath', { path: cwd })}
+                  onClick={() => {
+                    window.chorus.revealProjectDirectory({ conversationId }).catch(fail(setError))
+                  }}
+                >
+                  {shortenPath(cwd)}
+                </button>
+                {/*
+                  Separate from the path itself. Clicking a path should do the
+                  obvious thing — show you the folder — and a control that both
+                  opens Finder and starts an edit depending on where you land is
+                  a control you have to aim at.
+                */}
+                <button
+                  type="button"
+                  className="path-edit"
+                  aria-label={t('conversation.editPath', { path: cwd })}
+                  title={t('conversation.editPath', { path: cwd })}
+                  onClick={() => {
+                    setPathDraft(cwd)
+                  }}
+                >
+                  <span aria-hidden="true">✎</span>
+                </button>
+              </span>
             ) : (
               <input
                 className="path path--input"

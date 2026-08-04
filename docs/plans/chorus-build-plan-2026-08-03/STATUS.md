@@ -1038,3 +1038,24 @@ sentence each, …` produced replies from both, with the user's message logged *
   meta, operator, property and string runs in five distinct colours, and a real
   command entry showing `--files`, `--max-count` and `1` coloured inside the
   wrapper. 391 tests.
+
+- **2026-08-04 — the path opens Finder, and never wraps.** Clicking it opens the
+  directory in Finder; a quiet ✎ beside it, appearing on hover, still opens the
+  inline editor.
+
+  Two controls rather than one, because clicking a path should do the obvious
+  thing — show you the folder — and a control that either opens Finder or starts
+  an edit depending on where you land is a control you have to aim at.
+
+  `conversation:reveal` takes a **conversation id, not a path**. The renderer
+  naming a directory for the main process to open is a hole, and it never needs
+  to: main already knows where the conversation is. `shell.openPath` resolves
+  with a message rather than rejecting, so an unopenable directory is turned into
+  a thrown error — otherwise it would look like success.
+
+  The path is `nowrap` with an ellipsis: it is one line of a single-line row, and
+  a second line there changes the height of the whole composer.
+
+  Verified live: Finder windows 0 → 1 on click, the editor still opening from ✎,
+  and a 68-character path clipping to one 24px line with the composer row
+  unchanged. 391 tests.

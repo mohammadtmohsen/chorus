@@ -60,6 +60,14 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       agentId: 'codex' | 'claude'
     }) => runtime.removeParticipant(request.conversationId, request.agentId),
 
+    'conversation:reveal': async (request: { conversationId: string }) => {
+      const failure = await shell.openPath(runtime.projectDirectory(request.conversationId))
+      // `openPath` resolves with a message rather than rejecting, so an
+      // unopenable directory would otherwise look like success.
+      if (failure !== '') throw new Error(failure)
+      return OK
+    },
+
     'conversation:setCwd': (request: { conversationId: string; cwd: string }) =>
       Promise.resolve(runtime.setProjectDirectory(request.conversationId, request.cwd)),
 

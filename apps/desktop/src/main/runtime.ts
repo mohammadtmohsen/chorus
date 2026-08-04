@@ -505,6 +505,11 @@ export class ChorusRuntime {
     }
   }
 
+  /** Where a conversation is, for anything that needs the path rather than the id. */
+  projectDirectory(conversationId: string): string {
+    return this.require(conversationId).cwd
+  }
+
   /**
    * Points the conversation at another directory.
    *

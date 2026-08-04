@@ -114,6 +114,18 @@ export const IPC_CONTRACT = {
     response: z.object({ agentId: z.enum(['codex', 'claude']) }),
   },
 
+  /**
+   * Opens the conversation's directory in Finder.
+   *
+   * Takes a conversation rather than a path: the renderer naming a directory for
+   * the main process to open is a hole, and it never needs to — main already
+   * knows where this conversation is.
+   */
+  'conversation:reveal': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
   /** Repoints the conversation's project directory while it is open. */
   'conversation:setCwd': {
     request: z.object({ conversationId: z.string(), cwd: z.string() }),
@@ -302,6 +314,9 @@ export interface ChorusApi {
   readonly removeAgent: (
     request: IpcRequest<'conversation:removeAgent'>
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
+  readonly revealProjectDirectory: (
+    request: IpcRequest<'conversation:reveal'>
+  ) => Promise<{ ok: true }>
   readonly setProjectDirectory: (
     request: IpcRequest<'conversation:setCwd'>
   ) => Promise<IpcResponse<'conversation:setCwd'>>
