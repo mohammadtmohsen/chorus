@@ -101,6 +101,11 @@ export const IPC_CONTRACT = {
    * Ends one conversation. Others keep running — the grid holds several at once,
    * and closing one pane must not touch the agents in the next.
    */
+  /** Repoints the conversation's project directory while it is open. */
+  'conversation:setCwd': {
+    request: z.object({ conversationId: z.string(), cwd: z.string() }),
+    response: z.object({ cwd: z.string() }),
+  },
   'conversation:close': {
     request: z.object({ conversationId: z.string() }),
     response: z.object({ ok: z.literal(true) }),
@@ -278,6 +283,9 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:send'>>
   readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
   readonly closeConversation: (request: IpcRequest<'conversation:close'>) => Promise<{ ok: true }>
+  readonly setProjectDirectory: (
+    request: IpcRequest<'conversation:setCwd'>
+  ) => Promise<IpcResponse<'conversation:setCwd'>>
   readonly onScale: (listener: (scale: number) => void) => () => void
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (

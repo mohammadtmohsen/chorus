@@ -50,6 +50,7 @@ export function Session(props: {
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
+  onCwd: (cwd: string) => void
   onClose: (conversationId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -62,6 +63,8 @@ export function Session(props: {
   const [reviewing, setReviewing] = useState(false)
   const [confirmingClose, setConfirmingClose] = useState(false)
   const [pickingProfile, setPickingProfile] = useState(false)
+  /** Non-null while the path is being edited; holds the draft, not the truth. */
+  const [pathDraft, setPathDraft] = useState<string | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
   const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
@@ -371,9 +374,60 @@ export function Session(props: {
                 </li>
               ))}
             </ul>
-            <span className="path" title={cwd}>
-              {shortenPath(cwd)}
-            </span>
+            {/*
+              The path edits in place.
+              
+              It decides what "the diff" means — the review panel and any handoff
+              brief follow it — so being able to correct it without ending the
+              session is the difference between a wrong panel and a right one. It
+              does not move an agent's shell; that is what telling the agent
+              does, and the change is replayed to whoever is addressed next.
+            */}
+            {pathDraft === null ? (
+              <button
+                type="button"
+                className="path path--button"
+                title={t('conversation.editPath', { path: cwd })}
+                onClick={() => {
+                  setPathDraft(cwd)
+                }}
+              >
+                {shortenPath(cwd)}
+              </button>
+            ) : (
+              <input
+                className="path path--input"
+                value={pathDraft}
+                autoFocus
+                spellCheck={false}
+                aria-label={t('conversation.projectPath')}
+                onChange={(e) => {
+                  setPathDraft(e.target.value)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setPathDraft(null)
+                    return
+                  }
+                  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+                  e.preventDefault()
+                  const next = pathDraft
+                  setPathDraft(null)
+                  window.chorus
+                    .setProjectDirectory({ conversationId, cwd: next })
+                    .then(({ cwd: applied }) => {
+                      props.onCwd(applied)
+                    })
+                    .catch(fail(setError))
+                }}
+                // Cancels rather than commits: leaving a field is not agreement,
+                // and a half-typed path is exactly what a stray click produces.
+                onBlur={() => {
+                  setPathDraft(null)
+                }}
+              />
+            )}
             {/*
               The chip is the control, not a label.
               

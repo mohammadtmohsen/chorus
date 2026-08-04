@@ -1505,6 +1505,36 @@ input::placeholder {
   padding: calc(var(--step) * 4) 0;
 }
 
+/* The path reads as text until you click it, then it is a field in the same place. */
+.path--button {
+  max-width: 22ch;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 3px);
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: text;
+}
+
+.path--button:hover {
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.path--input {
+  width: 28ch;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 3px);
+  background: var(--ground);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--bone);
+}
+
 /* What agents may do without asking, changeable from inside the room. */
 .profile-picker {
   position: relative;

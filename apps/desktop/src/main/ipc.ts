@@ -52,6 +52,9 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       return OK
     },
 
+    'conversation:setCwd': (request: { conversationId: string; cwd: string }) =>
+      Promise.resolve(runtime.setProjectDirectory(request.conversationId, request.cwd)),
+
     'conversation:close': async (request: { conversationId: string }) => {
       await runtime.closeConversation(request.conversationId)
       return OK

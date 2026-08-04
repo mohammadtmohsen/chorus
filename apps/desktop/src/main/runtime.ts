@@ -65,7 +65,7 @@ interface ActiveConversation {
   readonly conversationId: string
   readonly participants: Map<AgentId, Participant>
   profile: PermissionProfile
-  readonly cwd: string
+  cwd: string
   /** Who the user last addressed, so an unaddressed follow-up stays with them. */
   lastAddressed: AgentId | undefined
 }
@@ -414,6 +414,34 @@ export class ChorusRuntime {
       participants: [...c.participants.keys()],
       cwd: c.cwd,
     }))
+  }
+
+  /**
+   * Points the conversation at another directory.
+   *
+   * This moves what *Chorus* means by the project — the review panel and the
+   * handoff brief follow it. It does not move an agent's shell: those were
+   * started with a working directory and keep it. The filesystem is not scoped
+   * (§4.4), so the agent can work anywhere it is told to, and the change is
+   * replayed as catch-up so the next one addressed is told.
+   */
+  setProjectDirectory(conversationId: string, cwd: string): { cwd: string } {
+    const conversation = this.require(conversationId)
+    const next = cwd.trim() === '' ? homedir() : cwd.trim()
+    const problem = describeDirectory(next)
+    if (problem !== null) throw new Error(problem)
+
+    const previous = conversation.cwd
+    if (next === previous) return { cwd: previous }
+
+    this.store.append({
+      conversationId,
+      actor: 'system',
+      payload: { type: 'project.changed', cwd: next, previousCwd: previous },
+    })
+    conversation.cwd = next
+    this.log.info('project directory changed', { conversationId, from: previous, to: next })
+    return { cwd: next }
   }
 
   /**

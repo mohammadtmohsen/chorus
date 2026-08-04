@@ -130,6 +130,19 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
    * Logged rather than kept in memory: "human controlled" is only auditable if
    * widening what agents may do leaves a mark next to what they then did.
    */
+  /**
+   * The project directory changed mid-session.
+   *
+   * Recorded because it changes what "the diff" means: the review panel and any
+   * handoff brief follow it, so a diff read later is only interpretable against
+   * the directory in force at the time.
+   */
+  z.object({
+    type: z.literal('project.changed'),
+    cwd: z.string(),
+    previousCwd: z.string(),
+  }),
+
   z.object({
     type: z.literal('policy.changed'),
     profileId: z.string(),

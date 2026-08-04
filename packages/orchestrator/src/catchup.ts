@@ -172,6 +172,18 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
        * that changed while it was not being addressed, and "you may run
        * commands without asking" is a fact about the room, not about one turn.
        */
+      /*
+       * Where the project is counts as a fact about the room. An agent asked to
+       * "check the tests" needs to know the answer moved.
+       */
+      case 'project.changed':
+        lines.push({
+          seq: event.seq,
+          kind: 'activity',
+          text: `· the user set the project directory to ${payload.cwd}`,
+        })
+        break
+
       case 'policy.changed':
         lines.push({
           seq: event.seq,

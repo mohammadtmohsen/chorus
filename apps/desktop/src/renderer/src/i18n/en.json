@@ -28,6 +28,7 @@
     "openCount": "{{count}} session open",
     "openCount_other": "{{count}} sessions open",
     "sessionLabel": "Session in {{path}}",
+    "editPath": "{{path}} — click to change",
     "end": "End",
     "endLabel": "End this session",
     "endNow": "End now",

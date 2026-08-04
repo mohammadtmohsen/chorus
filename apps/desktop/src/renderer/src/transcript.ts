@@ -198,6 +198,17 @@ function apply(view: Mutable, event: TranscriptEvent): void {
      * it permitted. A permission change that left no mark would make the log an
      * incomplete account of why something was allowed.
      */
+    case 'project.changed':
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: 'system',
+        kind: 'notice',
+        text: `Project directory: ${str('cwd')}`,
+        status: 'complete',
+      })
+      return
+
     case 'policy.changed':
       view.messages.push({
         key: event.id,

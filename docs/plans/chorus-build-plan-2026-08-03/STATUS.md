@@ -934,11 +934,11 @@ sentence each, …` produced replies from both, with the user's message logged *
   rather than by eye, and checked against a number: how many transcript entries
   fit on one screen.
 
-  | | before | after |
-  |---|---|---|
-  | per entry | 53px | 47px |
-  | chrome (masthead + dock) | 186px | 151px |
-  | entries visible at once | 12 | **15** |
+  |                          | before | after  |
+  | ------------------------ | ------ | ------ |
+  | per entry                | 53px   | 47px   |
+  | chrome (masthead + dock) | 186px  | 151px  |
+  | entries visible at once  | 12     | **15** |
 
   Two tokens did most of it. `--step` went 4px → 3px: every padding and gap in
   the app is a multiple of it, so it is the one lever that decides how much of
@@ -954,3 +954,25 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   Verified live after the change: no entry overlapping its neighbour, every
   speaker label clear of the text column, prose still 14px on a 21.7px line.
+
+- **2026-08-04 — the project directory edits in place.** Click the path in the
+  composer row and it becomes a field there; Enter commits, Escape cancels, and
+  leaving the field cancels too — a half-typed path is exactly what a stray click
+  produces, and leaving a field is not agreement.
+
+  This matters because the path decides what "the diff" means. The review panel
+  and any handoff brief follow it, so being able to correct it without ending the
+  session is the difference between a panel pointed at the wrong tree and a right
+  one. A bad path is refused with the reason rather than accepted quietly.
+
+  It does **not** move an agent's shell — those were started with a working
+  directory and keep it. What moves an agent's work is telling the agent, and the
+  change is replayed in catch-up so the next one addressed is told. The new
+  `project.changed` event carries it: recorded because a diff read later is only
+  interpretable against the directory in force at the time.
+
+  Verified live: click opens a field prefilled with the current path; Escape
+  leaves it untouched; `/definitely/not/here` refused with "That directory does
+  not exist"; a real path committing, appearing in the transcript as "Project
+  directory: …", and the review panel then reading that repository's actual diff.
+  378 tests.

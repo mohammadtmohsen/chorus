@@ -211,6 +211,13 @@ export function App(): React.JSX.Element {
                 )
               )
             }}
+            onCwd={(cwd) => {
+              setSessions((current) =>
+                current.map((s) =>
+                  s.conversationId === session.conversationId ? { ...s, cwd } : s
+                )
+              )
+            }}
             onClose={close}
           />
         ))}
