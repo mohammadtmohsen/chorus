@@ -1811,6 +1811,117 @@ input::placeholder {
 }
 
 /*
+ * What is about to be sent, above the box you are typing in.
+ *
+ * A thumbnail rather than a path: you can tell a screenshot from a log without
+ * reading, and tell whether it is the *right* screenshot at all.
+ */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--step) * 2);
+  padding-bottom: var(--step);
+}
+
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 1.5);
+  max-width: 15rem;
+  padding: 2px 2px 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--ground);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.attachment-thumb {
+  display: block;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--sunken);
+  cursor: zoom-in;
+}
+
+.attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.attachment-file {
+  width: 22px;
+  text-align: center;
+  color: var(--faint);
+}
+
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.attachment-remove:hover {
+  background: color-mix(in srgb, var(--alert) 16%, transparent);
+  color: var(--alert);
+}
+
+/* The picture, as large as the window allows and nothing competing with it. */
+.viewer {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 3);
+  max-width: min(92vw, 1200px);
+  max-height: 90vh;
+  padding: calc(var(--step) * 3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+}
+
+.viewer img {
+  max-width: 100%;
+  max-height: 76vh;
+  object-fit: contain;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--sunken);
+}
+
+.viewer-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+}
+
+.viewer-foot .hint {
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
  * The size, shown for a moment after it changes.
  *
  * ⌘− has no visible control behind it, so without this the only feedback is the

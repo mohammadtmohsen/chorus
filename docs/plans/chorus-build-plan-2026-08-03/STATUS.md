@@ -1573,3 +1573,27 @@ sentence each, …` produced replies from both, with the user's message logged *
   synthesised, so a driver's `File` has no path and always takes the fallback.
   Worth confirming by hand that a dropped file references its own location
   instead of being copied.
+
+- **2026-08-04 — attachments look like what they are, and open.** A dropped or
+  pasted file now sits above the composer as a chip: a thumbnail for an image, a
+  mark for anything else, its name, and an ✕. Clicking a thumbnail opens it as
+  large as the window allows.
+
+  A path in the draft was honest and unreadable — you could not tell a screenshot
+  from a log without reading the filename, and could not tell whether it was the
+  *right* screenshot at all. The path is still exactly what the agent receives;
+  it joins the message on the way out rather than while you are writing it, so a
+  draft is no longer forty characters of noise. Send now works with an attachment
+  and nothing typed.
+
+  The preview is a `data:` URL made in the main process, not a path the renderer
+  loads. The CSP is `img-src 'self' data:` on purpose: a renderer that can fetch
+  arbitrary local files is one that could exfiltrate them if anything were ever
+  injected into it. Reading in main keeps that door shut, at the cost of one copy
+  in memory for something the size of a screenshot — and anything over 12MB, or
+  not an image, simply has no preview rather than a slow one.
+
+  Verified live: a pasted PNG showing a thumbnail with real image data and a text
+  file showing none; the draft staying empty; the viewer opening on the right
+  file and closing; removing one chip leaving the other; the sent message
+  carrying the quoted path; and the chips clearing afterwards.

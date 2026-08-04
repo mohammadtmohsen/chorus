@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { withPaths } from './attach.js'
+import { quotePath } from './attach.js'
+import { Attachments, type Attachment } from './Attachments.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import {
@@ -81,6 +82,8 @@ export function Session(props: {
   const [restarting, setRestarting] = useState(false)
   /** True while a file from outside is over this pane. */
   const [fileOver, setFileOver] = useState(false)
+  /** Files waiting to be sent, shown above the box rather than typed into it. */
+  const [attached, setAttached] = useState<Attachment[]>([])
   /** Non-null while the path is being edited; holds the draft, not the truth. */
   const [pathDraft, setPathDraft] = useState<string | null>(null)
   /** The agent currently joining or leaving, so its chip can say so. */
@@ -260,18 +263,34 @@ export function Session(props: {
       })
     )
 
-    setDraft((current) => withPaths(current, paths))
+    const previews = await Promise.all(
+      paths.map(async (path) => ({ path, ...(await window.chorus.previewFile({ path })) }))
+    )
+    setAttached((current) => [
+      ...current,
+      ...previews.filter((p) => !current.some((c) => c.path === p.path)),
+    ])
     input.current?.focus()
   }, [])
 
   const send = useCallback(() => {
-    if (draft.trim() === '') return
+    /*
+     * The paths join the message on the way out, not while you are writing it.
+     *
+     * The agent still receives text with paths in it — that has not changed —
+     * but a draft is no longer a place where a screenshot looks like forty
+     * characters of noise.
+     */
+    const paths = attached.map((item) => quotePath(item.path)).join(' ')
+    const text = [draft.trim(), paths].filter((part) => part !== '').join(' ')
+    if (text === '') return
+
     // You just spoke; you want to see the answer.
     following.current = true
-    const text = draft
     setDraft('')
+    setAttached([])
     window.chorus.sendMessage({ conversationId, text }).catch(fail(setError))
-  }, [conversationId, draft])
+  }, [conversationId, draft, attached])
 
   const decide = useCallback(
     (approval: PendingApproval, outcome: 'allow' | 'deny') => {
@@ -677,6 +696,12 @@ export function Session(props: {
               ))}
             </ul>
           )}
+          <Attachments
+            items={attached}
+            onRemove={(path) => {
+              setAttached((current) => current.filter((item) => item.path !== path))
+            }}
+          />
           <textarea
             ref={input}
             value={draft}
@@ -984,7 +1009,9 @@ export function Session(props: {
                   type="submit"
                   className="send"
                   aria-label={t('conversation.send')}
-                  disabled={draft.trim() === '' || participants.length === 0}
+                  disabled={
+                    (draft.trim() === '' && attached.length === 0) || participants.length === 0
+                  }
                 >
                   <span aria-hidden="true">↑</span>
                 </button>

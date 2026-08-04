@@ -47,6 +47,11 @@
     "paneNote": "Agents, folder and permissions belong to each session — change them in its own bar. A new session starts where the last one was.",
     "done": "Done"
   },
+  "attachments": {
+    "view": "Open {{name}}",
+    "remove": "Remove {{name}}",
+    "done": "Close"
+  },
   "policy": {
     "heading": "What agents may do without asking",
     "footnote": "Anything a profile does not cover still asks. Slack, Jira and the like always ask."

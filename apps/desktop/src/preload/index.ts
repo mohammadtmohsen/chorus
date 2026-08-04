@@ -38,6 +38,7 @@ const api: ChorusApi = {
   removeAgent: invoke('conversation:removeAgent'),
   restoreConversations: () => invoke('conversation:restore')({}),
   restartConversation: invoke('conversation:restart'),
+  previewFile: invoke('files:preview'),
   stashFile: invoke('files:stash'),
   // Renderers cannot read a File's path any more; only the bridge can.
   pathForFile: (file: File) => webUtils.getPathForFile(file),

@@ -171,6 +171,16 @@ export const IPC_CONTRACT = {
     response: z.object({ path: z.string() }),
   },
 
+  /** Enough to show an attachment: its name, its size, and a preview if it has one. */
+  'files:preview': {
+    request: z.object({ path: z.string() }),
+    response: z.object({
+      name: z.string(),
+      bytes: z.number(),
+      dataUrl: z.string().nullable(),
+    }),
+  },
+
   /** Records the order the panes were arranged into, so a restore keeps it. */
   'conversation:reorder': {
     request: z.object({ order: z.array(z.string()) }),
@@ -381,6 +391,9 @@ export interface ChorusApi {
   readonly restartConversation: (
     request: IpcRequest<'conversation:restart'>
   ) => Promise<IpcResponse<'conversation:restart'>>
+  readonly previewFile: (
+    request: IpcRequest<'files:preview'>
+  ) => Promise<IpcResponse<'files:preview'>>
   readonly stashFile: (request: IpcRequest<'files:stash'>) => Promise<IpcResponse<'files:stash'>>
   /** The real path of a dropped file; `File.path` was removed in Electron 32. */
   readonly pathForFile: (file: File) => string
