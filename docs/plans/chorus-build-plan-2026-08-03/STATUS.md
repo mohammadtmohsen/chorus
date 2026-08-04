@@ -1769,12 +1769,12 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
   Codex's own session rollouts, which it writes to `~/.codex/sessions`, record
   the rate-limit snapshot for every turn. Across ten months of them:
 
-  | | `primary.window_minutes` | `secondary.window_minutes` |
-  |---|---|---|
-  | Oct 2025 – Jun 2026 | 300 (five hours) | 10080 (a week) |
-  | 20 Jul 2026, 18:36 | 300 | 10080 |
-  | 20 Jul 2026, 18:44 | **10080** | **null** |
-  | Aug 2026 | 10080 | null |
+  |                     | `primary.window_minutes` | `secondary.window_minutes` |
+  | ------------------- | ------------------------ | -------------------------- |
+  | Oct 2025 – Jun 2026 | 300 (five hours)         | 10080 (a week)             |
+  | 20 Jul 2026, 18:36  | 300                      | 10080                      |
+  | 20 Jul 2026, 18:44  | **10080**                | **null**                   |
+  | Aug 2026            | 10080                    | null                       |
 
   Codex changed on **20 July 2026**, between two sessions eight minutes apart:
   `primary` stopped being the five-hour window and became the weekly one, and
@@ -1788,3 +1788,47 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
   Nothing to fix here: if Codex starts sending a 300-minute window again, in
   `primary` or `secondary`, it appears on its own. The mapping already handles
   both slots and names each by its own duration.
+
+- **2026-08-05 — v0.1.0: packaged, and the four things that only break once
+  packaged.** `pnpm package` builds an unsigned arm64 DMG via electron-builder
+  (`apps/desktop/electron-builder.yml`). The app ran perfectly under `pnpm dev`
+  and did nothing at all from Finder, four times over, each for a different
+  reason:
+
+  1. **`require("@chorus/*")` inside the asar.** Left as dependencies, the
+     workspace packages stayed runtime requires, and `node_modules` is not
+     shipped. The app exited before any logging existed: no window, no log, no
+     crash report. Neither `externalizeDepsPlugin({ exclude })` nor
+     `ssr.noExternal` undid it — electron-vite decides externals itself.
+     Aliasing the names to their sources sidesteps the question entirely.
+
+  2. **…which moved two `require`s to a package that had never declared them.**
+     Inlining the adapters means `apps/desktop` now makes the calls for
+     `better-sqlite3` and `@anthropic-ai/claude-agent-sdk`, and under pnpm's
+     isolated `node_modules` neither was resolvable from there. This broke
+     `pnpm dev` too — caught by the E2E suite, which failed all 8 with "the app
+     never opened a window", not by the packaged build, which worked because
+     electron-builder copies both in by name.
+
+  3. **No PATH.** A Finder launch gets `/usr/bin:/bin:…`, so spawning `codex`
+     by name gave "spawn codex ENOENT" — which reads as "not installed" for
+     something the user runs in their terminal every day.
+
+  4. **The wrong PATH, then the wrong binary.** With a PATH, this machine chose
+     Homebrew's `codex` 0.42.0 over npm's 0.146.0 and got `app-server exited
+     (code=1)`. Two causes stacked: `zsh -lc` does not read `.zshrc`, where nvm
+     is set up; and the npm one is a `#!/usr/bin/env node` script, so it failed
+     its own `--version` with no `node` on PATH and dropped out of the running.
+     `which.ts` now adopts the shell's PATH at startup, asks both `-lic` and
+     `-lc`, and picks the **newest** of every install it finds — the only rule
+     that survives a machine with history on it.
+
+  Verified by driving the real `.app` through `open --env` (a launchd launch,
+  as a double-click is) rather than a spawned process: both agents answer, the
+  `@` route reaches the one addressed, and limits arrive from both providers.
+  An `env -i` harness is *harsher* than Finder — it cost an hour chasing a
+  "Not logged in" that was only the Keychain being absent.
+
+  Not signed and not notarized (M9): Gatekeeper will refuse it on another Mac
+  until the user right-clicks → Open. Apple Silicon only, and each user needs
+  their own logged-in `codex` and `claude`.

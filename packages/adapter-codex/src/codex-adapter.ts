@@ -58,6 +58,14 @@ const MAX_REMEMBERED_ITEMS = 200
 
 export interface CodexAdapterOptions {
   readonly command?: string
+  /**
+   * Finds the binary when it is not simply on PATH.
+   *
+   * Asked once, lazily. A packaged app inherits a minimal PATH from the Finder
+   * and would otherwise fail with "spawn codex ENOENT" — which reads as "not
+   * installed" for something the user can run in their terminal.
+   */
+  readonly resolveCommand?: () => Promise<string | null>
   readonly approvalTtlMs?: number
   readonly createTransport?: () => Transport
   readonly now?: () => number
@@ -244,7 +252,10 @@ export class CodexAdapter implements AgentAdapter {
   readonly id: AgentId = 'codex'
   readonly capabilities = CODEX_CAPABILITIES
 
-  private readonly command: string
+  /** Mutable: replaced by an absolute path the first time one is found. */
+  private command: string
+  private readonly resolveCommand: (() => Promise<string | null>) | undefined
+  private resolved = false
   private readonly approvalTtlMs: number
   private readonly createTransport: () => Transport
   private readonly now: () => number
@@ -252,6 +263,7 @@ export class CodexAdapter implements AgentAdapter {
 
   constructor(options: CodexAdapterOptions = {}) {
     this.command = options.command ?? 'codex'
+    this.resolveCommand = options.resolveCommand
     this.approvalTtlMs = options.approvalTtlMs ?? 5 * 60_000
     this.now = options.now ?? (() => Date.now())
     this.createTransport =
@@ -259,6 +271,9 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async health(): Promise<HealthStatus> {
+    // Health runs before any session, and it is the first thing to fail with
+    // "spawn codex ENOENT" when the command has not been resolved yet.
+    await this.resolveCommandOnce()
     try {
       const { stdout } = await run(this.command, ['--version'], { timeout: 10_000 })
       const version = /\d+\.\d+\.\d+[\w.-]*/.exec(stdout.trim())?.[0]
@@ -307,7 +322,16 @@ export class CodexAdapter implements AgentAdapter {
     this.sessions.length = 0
   }
 
+  /** Asked once, and only if nobody supplied an explicit command. */
+  private async resolveCommandOnce(): Promise<void> {
+    if (this.resolved || this.resolveCommand === undefined) return
+    this.resolved = true
+    const found = await this.resolveCommand()
+    if (found !== null) this.command = found
+  }
+
   private async handshake(): Promise<JsonRpcClient> {
+    await this.resolveCommandOnce()
     const rpc = new JsonRpcClient({ transport: this.createTransport() })
     // The server rejects everything sent before this completes.
     await rpc.request('initialize', {

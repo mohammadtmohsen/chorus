@@ -9,6 +9,9 @@ allowBuilds:
   esbuild: true
   electron: true
   better-sqlite3: true
+  # A Windows installer builder pulled in by electron-builder. macOS only for
+  # v1.0 (plan §10), so it has nothing to do here.
+  electron-winstaller: false
 
 # The Claude Agent SDK ships its CLI as per-platform optional dependencies, and
 # the darwin-arm64 one unpacks to ~257 MB. We drive the user's installed

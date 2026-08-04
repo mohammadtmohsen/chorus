@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { AgentProbeResult } from '../shared/ipc.js'
+import { findExecutable } from './which.js'
 
 const run = promisify(execFile)
 
@@ -20,7 +21,9 @@ export async function probeAgents(): Promise<AgentProbeResult[]> {
 
 async function probeOne(probe: (typeof PROBES)[number]): Promise<AgentProbeResult> {
   try {
-    const { stdout } = await run(probe.command, [...probe.args], { timeout: 10_000 })
+    // By absolute path: a packaged app has no terminal's PATH to inherit.
+    const command = (await findExecutable(probe.command)) ?? probe.command
+    const { stdout } = await run(command, [...probe.args], { timeout: 10_000 })
     return {
       id: probe.id,
       installed: true,

@@ -28,6 +28,7 @@ import {
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
+import { findExecutable } from './which.js'
 
 /**
  * Wires the domain to real agents inside the main process.
@@ -1070,7 +1071,10 @@ function describeDirectory(cwd: string): string | null {
 
 function defaultAdapters(): Map<AgentId, AgentAdapter> {
   return new Map<AgentId, AgentAdapter>([
-    ['codex', new CodexAdapter()],
+    // The command is resolved lazily, on first use: asking a login shell at
+    // module load would delay the window for something not needed until a
+    // session starts.
+    ['codex', new CodexAdapter({ resolveCommand: () => findExecutable('codex') })],
     ['claude', new ClaudeAdapter(claudeOptions())],
   ])
 }
@@ -1078,15 +1082,14 @@ function defaultAdapters(): Map<AgentId, AgentAdapter> {
 /**
  * The SDK needs an absolute path; `claude` on PATH is not enough once the app
  * runs outside a login shell, where PATH is much smaller than a terminal's.
- * Falls back to the SDK's own lookup when none of the usual locations exist.
+ *
+ * The same lookup as Codex's, deliberately: taking the first install that
+ * happens to exist is what picked a `codex` too old to start, and there is no
+ * reason `claude` cannot end up in the same state. Falls back to the SDK's own
+ * lookup when nothing is found.
  */
-function claudeOptions(): { executablePath?: string } {
-  const found = [
-    join(homedir(), '.local/bin/claude'),
-    '/opt/homebrew/bin/claude',
-    '/usr/local/bin/claude',
-  ].find((p) => existsSync(p))
-  return found === undefined ? {} : { executablePath: found }
+function claudeOptions(): { resolveExecutablePath: () => Promise<string | null> } {
+  return { resolveExecutablePath: () => findExecutable('claude') }
 }
 
 export interface Diagnostics {

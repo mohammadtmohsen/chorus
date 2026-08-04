@@ -7,6 +7,7 @@ import { applyScale, currentScale } from './scale.js'
 import { reapOrphanedAgents } from './reap.js'
 import { ChorusRuntime } from './runtime.js'
 import { applyContentSecurityPolicy, lockDownNavigation } from './security.js'
+import { adoptShellPath } from './which.js'
 
 const devServerUrl = process.env['ELECTRON_RENDERER_URL']
 
@@ -63,8 +64,13 @@ function createWindow(): BrowserWindow {
 
 let runtime: ChorusRuntime | null = null
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   applyContentSecurityPolicy(session.defaultSession, devServerUrl !== undefined)
+
+  // Before anything is spawned: launched from Finder we get `/usr/bin:/bin:…`,
+  // and the agent CLIs are not there — nor, for a shebang script, is the `node`
+  // that runs one. Awaited, so no session can start on the bare PATH.
+  await adoptShellPath()
 
   /*
    * Backstop for agents orphaned by a previous crash.

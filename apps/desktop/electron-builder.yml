@@ -1,0 +1,42 @@
+# Packaging Chorus into something you can double-click.
+#
+# Unsigned on purpose for now: signing needs a Developer ID, and notarization
+# needs an Apple account — the M9 gate, which only opens if this is ever handed
+# to someone who is not us. Until then macOS will call it damaged on first
+# launch, and the release notes say how to get past that rather than pretending
+# it will not happen.
+appId: dev.chorus.desktop
+productName: Chorus
+copyright: Chorus
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+  # Bundled into out/ by electron-vite, so node_modules is mostly dead weight.
+  # The two exceptions cannot be bundled: better-sqlite3 is native, and the
+  # Claude SDK resolves its own files at runtime.
+  - '!node_modules/**'
+  - node_modules/better-sqlite3/**
+  - node_modules/@anthropic-ai/claude-agent-sdk/**
+
+# better-sqlite3 ships N-API prebuilds, so nothing is compiled at pack time —
+# but it must stay outside the asar to be loadable.
+asarUnpack:
+  - node_modules/better-sqlite3/**
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64]
+  # Ad-hoc signing: enough for the app to run locally, not enough for Gatekeeper
+  # on someone else's machine. Deliberate, and stated in the release.
+  identity: null
+  hardenedRuntime: false
+
+dmg:
+  title: Chorus ${version}

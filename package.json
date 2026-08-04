@@ -1,6 +1,6 @@
 {
   "name": "chorus",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "A local-first workspace for collaborating with multiple coding agents in one shared conversation.",
@@ -22,7 +22,8 @@
     "errors": "turbo run typecheck",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test",
     "clean": "turbo run clean && rm -rf node_modules",
-    "e2e": "pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e"
+    "e2e": "pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e",
+    "package": "pnpm --filter @chorus/desktop run package"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

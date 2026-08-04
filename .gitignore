@@ -9,6 +9,8 @@ coverage/
 # Electron packaging output
 apps/desktop/out/
 apps/desktop/dist/
+# Built apps and DMGs — attached to a GitHub release, never committed.
+apps/desktop/release/
 
 # Generated Codex protocol bindings are committed on purpose (see plan §6.1).
 # Nothing else generated should be.

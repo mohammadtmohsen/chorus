@@ -57,6 +57,14 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
 export interface ClaudeAdapterOptions {
   readonly command?: string
   readonly executablePath?: string
+  /**
+   * Finds the binary when the usual places do not have it.
+   *
+   * Asked once, lazily, for the same reason Codex's is: a packaged app has no
+   * terminal PATH, and the SDK's own failure for a missing binary blames the
+   * architecture rather than the lookup.
+   */
+  readonly resolveExecutablePath?: () => Promise<string | null>
   readonly approvalTtlMs?: number
   readonly now?: () => number
   /** Injected in tests so no real CLI is spawned. */
@@ -280,7 +288,9 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly capabilities = CLAUDE_CAPABILITIES
 
   private readonly command: string
-  private readonly executablePath: string | undefined
+  private executablePath: string | undefined
+  private readonly resolveExecutablePath: (() => Promise<string | null>) | undefined
+  private resolved = false
   private readonly approvalTtlMs: number
   private readonly now: () => number
   private readonly createQuery:
@@ -290,12 +300,23 @@ export class ClaudeAdapter implements AgentAdapter {
   constructor(options: ClaudeAdapterOptions = {}) {
     this.command = options.command ?? 'claude'
     this.executablePath = options.executablePath
+    this.resolveExecutablePath = options.resolveExecutablePath
     this.approvalTtlMs = options.approvalTtlMs ?? 5 * 60_000
     this.now = options.now ?? (() => Date.now())
     this.createQuery = options.createQuery
   }
 
+  /** Asked once, and only when the usual locations came up empty. */
+  private async resolveOnce(): Promise<void> {
+    if (this.resolved || this.resolveExecutablePath === undefined) return
+    this.resolved = true
+    const found = await this.resolveExecutablePath()
+    if (found !== null) this.executablePath = found
+  }
+
   async health(): Promise<HealthStatus> {
+    // Health runs before any session, so this is where the lookup lands.
+    await this.resolveOnce()
     try {
       const { stdout } = await run(this.executablePath ?? this.command, ['--version'], {
         timeout: 10_000,
@@ -312,11 +333,13 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
-  start(opts: SessionOpts): Promise<AgentSession> {
+  async start(opts: SessionOpts): Promise<AgentSession> {
+    await this.resolveOnce()
     return Promise.resolve(this.spawn(opts, undefined))
   }
 
-  resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession> {
+  async resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession> {
+    await this.resolveOnce()
     return Promise.resolve(this.spawn(opts, sessionRef))
   }
 
