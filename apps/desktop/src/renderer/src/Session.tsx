@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { quotePath } from './attach.js'
 import { Attachments, type Attachment } from './Attachments.js'
 import { Entry } from './Entry.js'
+import { compactTokens, money } from './format.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import {
   applyMention,
@@ -484,6 +485,19 @@ export function Session(props: {
               setTitleDraft(null)
             }}
           />
+        )}
+        {view.spend.inputTokens + view.spend.outputTokens > 0 && (
+          <span
+            className="spend"
+            title={t('spend.tokens', {
+              input: view.spend.inputTokens.toLocaleString(),
+              output: view.spend.outputTokens.toLocaleString(),
+            })}
+            aria-label={t('spend.label')}
+          >
+            {compactTokens(view.spend.inputTokens + view.spend.outputTokens)}
+            {view.spend.costUsd !== null && ` · ${money(view.spend.costUsd)}`}
+          </span>
         )}
         {titleDraft === null && (
           <span className="pane-title-actions">

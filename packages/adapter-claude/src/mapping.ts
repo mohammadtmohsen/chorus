@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest } from '@chorus/agent-protocol'
+import type { AgentEvent, ApprovalRequest, UsageWindow } from '@chorus/agent-protocol'
 import type { AgentId, ApprovalId } from '@chorus/shared'
 
 /**
@@ -32,6 +32,13 @@ export interface MapContext {
    * command output rather than as an anonymous tool result.
    */
   readonly bashToolIds?: ReadonlySet<string>
+  /**
+   * The session's running totals, so usage reads the same as Codex's.
+   *
+   * Optional because `mapToolPermission` shares this context and a permission
+   * request has no usage to accumulate.
+   */
+  readonly usageSoFar?: { inputTokens: number; outputTokens: number }
 }
 
 /** Structurally what we need, without importing the SDK's full message union. */
@@ -56,6 +63,10 @@ interface SdkMessageLike {
   usage?: { input_tokens?: number; output_tokens?: number }
   total_cost_usd?: number
   errors?: string[]
+  rate_limit_info?: {
+    rate_limits_available?: boolean
+    rate_limits?: Record<string, { utilization?: number | null; resets_at?: string | null } | null>
+  }
 }
 
 interface ContentBlock {
@@ -98,6 +109,9 @@ export function mapSdkMessage(msg: SdkMessageLike, ctx: MapContext): AgentEvent[
       // Claude command hanging in the transcript with no result, and left the
       // other agent nothing to read when asked why something failed.
       return mapToolResults(msg, base, ctx)
+
+    case 'rate_limit_event':
+      return mapRateLimits(msg, at(0))
 
     case 'result':
       return mapResult(msg, ctx)
@@ -265,17 +279,66 @@ export function trackBashTools(msg: SdkMessageLike, current: ReadonlySet<string>
   return next
 }
 
+/**
+ * `rate_limit_event` → the normalised windows.
+ *
+ * Only the two windows a person plans around: the five-hour one, which decides
+ * whether to keep going now, and the seven-day one, which decides whether to
+ * keep going this week. The per-model windows the SDK also reports are real but
+ * are detail nobody is watching a header for.
+ *
+ * Absent for API-key and Bedrock sessions, where `rate_limits_available` is
+ * false — those accounts have no plan window, and inventing one would be worse
+ * than showing nothing.
+ */
+function mapRateLimits(msg: SdkMessageLike, base: Omit<AgentEvent, 'type'>): AgentEvent[] {
+  // False for API-key, Bedrock and Vertex sessions: no plan window exists, and
+  // inventing one would be worse than showing nothing.
+  if (msg.rate_limit_info?.rate_limits_available !== true) return []
+
+  const limits = msg.rate_limit_info.rate_limits ?? {}
+  const windows: UsageWindow[] = []
+  for (const [id, minutes] of [
+    ['five_hour', 300],
+    ['seven_day', 10_080],
+  ] as const) {
+    const window = limits[id]
+    if (window == null) continue
+    const resets = typeof window.resets_at === 'string' ? Date.parse(window.resets_at) : Number.NaN
+    windows.push({
+      id,
+      usedPercent: typeof window.utilization === 'number' ? window.utilization : null,
+      windowMinutes: minutes,
+      resetsAt: Number.isFinite(resets) ? resets : null,
+    })
+  }
+
+  return windows.length === 0 ? [] : [{ ...base, type: 'limits', windows }]
+}
+
 function mapResult(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {
   const base = { agentId: AGENT, at: ctx.now, raw: msg } as const
   const events: AgentEvent[] = []
 
   if (msg.usage !== undefined) {
+    /*
+     * Cumulative, to match Codex.
+     *
+     * A `result` carries one turn's usage while Codex reports a running total,
+     * and a reader cannot be expected to know which is which. Adding them up
+     * here means `usage.updated` always means "this session so far", whoever
+     * sent it. `total_cost_usd` is already cumulative, which is the shape being
+     * matched.
+     */
+    const running = ctx.usageSoFar ?? { inputTokens: 0, outputTokens: 0 }
+    running.inputTokens += msg.usage.input_tokens ?? 0
+    running.outputTokens += msg.usage.output_tokens ?? 0
     events.push({
       ...base,
       seq: ctx.seq,
       type: 'usage.updated',
-      inputTokens: msg.usage.input_tokens ?? 0,
-      outputTokens: msg.usage.output_tokens ?? 0,
+      inputTokens: running.inputTokens,
+      outputTokens: running.outputTokens,
       ...(typeof msg.total_cost_usd === 'number' ? { costUsd: msg.total_cost_usd } : {}),
     })
   }

@@ -78,6 +78,8 @@ export class ClaudeSession implements AgentSession {
   private streamMessageRef: string | null = null
   /** `tool_use` ids that were Bash calls, so their results read as commands. */
   private bashToolIds: ReadonlySet<string> = new Set()
+  /** Running totals, so usage means the same thing here as it does for Codex. */
+  private readonly usageSoFar = { inputTokens: 0, outputTokens: 0 }
 
   constructor(
     sessionRef: string,
@@ -191,6 +193,7 @@ export class ClaudeSession implements AgentSession {
           seq: this.seq + 1,
           now: this.now(),
           approvalTtlMs: this.approvalTtlMs,
+          usageSoFar: this.usageSoFar,
           streamMessageRef: this.streamMessageRef,
           bashToolIds: this.bashToolIds,
         })) {

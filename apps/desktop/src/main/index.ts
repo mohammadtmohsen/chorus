@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
-import { forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
+import { forwardEventsToRenderer, forwardLimitsToRenderer, registerIpcHandlers } from './ipc.js'
 import { createLogger } from './logging.js'
 import { installMenu } from './menu.js'
 import { applyScale, currentScale } from './scale.js'
@@ -82,6 +82,7 @@ void app.whenReady().then(() => {
 
   runtime = ChorusRuntime.open(app.getPath('userData'), log)
   registerIpcHandlers(runtime)
+  forwardLimitsToRenderer(runtime)
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
   installMenu()
   forwardEventsToRenderer(runtime)
@@ -92,6 +93,20 @@ void app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+/*
+ * A different data directory, when asked for.
+ *
+ * The end-to-end tests drive the real app, and a real app writes real files —
+ * the log, the database, what was open last time. Without this they would read
+ * and overwrite whatever the person running them had open, which is both a
+ * broken test and a rude one. Set before anything reads a path, because Electron
+ * caches them.
+ */
+const overrideUserData = process.env['CHORUS_USER_DATA']
+if (overrideUserData !== undefined && overrideUserData !== '') {
+  app.setPath('userData', overrideUserData)
+}
 
 app.on('window-all-closed', () => {
   // Chorus supervises agent child processes; on macOS the app staying resident

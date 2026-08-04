@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest } from '@chorus/agent-protocol'
+import type { AgentEvent, ApprovalRequest, UsageWindow } from '@chorus/agent-protocol'
 import type { AgentId, ApprovalId } from '@chorus/shared'
 
 /**
@@ -110,13 +110,51 @@ export function mapNotification(n: Notification, ctx: MapContext): AgentEvent | 
     case 'item/completed':
       return mapItem(p, base, 'completed')
 
+    /*
+     * `primary` and `secondary`, named by their own durations.
+     *
+     * Codex does not say which window is which — only how long each is — so the
+     * id comes from `windowDurationMins` when it is there. That is also the
+     * honest mapping: a "5h limit" is a five-hour window whatever the provider
+     * happens to call the slot it arrived in.
+     */
+    case 'account/rateLimits/updated': {
+      const snapshot = record(p['rateLimits'])
+      const windows: UsageWindow[] = []
+      for (const slot of ['primary', 'secondary'] as const) {
+        const window = record(snapshot[slot])
+        if (Object.keys(window).length === 0) continue
+        const minutes =
+          typeof window['windowDurationMins'] === 'number' ? window['windowDurationMins'] : null
+        windows.push({
+          id: minutes === null ? slot : `${String(minutes)}m`,
+          usedPercent: typeof window['usedPercent'] === 'number' ? window['usedPercent'] : null,
+          windowMinutes: minutes,
+          resetsAt: typeof window['resetsAt'] === 'number' ? window['resetsAt'] : null,
+        })
+      }
+      return windows.length === 0 ? null : { ...base, type: 'limits', windows }
+    }
+
+    /*
+     * `tokenUsage.total`, not `usage`.
+     *
+     * There is no `usage` key on this notification — the counts live under
+     * `tokenUsage`, split into `total` for the thread and `last` for the turn.
+     * Reading the wrong one meant every Codex usage event carried zero, silently,
+     * for as long as this adapter has existed. It was found by putting the number
+     * on screen: nothing ever appeared.
+     *
+     * `total` because it is cumulative and idempotent — a notification arriving
+     * twice cannot inflate it, which per-turn deltas would.
+     */
     case 'thread/tokenUsage/updated': {
-      const usage = (p['usage'] ?? p) as Record<string, unknown>
+      const total = record(record(p['tokenUsage'])['total'])
       return {
         ...base,
         type: 'usage.updated',
-        inputTokens: Number(usage['inputTokens'] ?? 0),
-        outputTokens: Number(usage['outputTokens'] ?? 0),
+        inputTokens: Number(total['inputTokens'] ?? 0),
+        outputTokens: Number(total['outputTokens'] ?? 0),
       }
     }
 
@@ -298,6 +336,11 @@ function turnIdOf(p: Record<string, unknown>): string {
  * which would land verbatim in a transcript; an unexpected shape should read as
  * absent, not as garbage.
  */
+/** A plain object, or an empty one — a sparse update may omit anything. */
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
 function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
 }

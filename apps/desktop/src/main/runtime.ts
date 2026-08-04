@@ -3,7 +3,12 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
-import type { AgentAdapter, ApprovalDecision, SessionOpts } from '@chorus/agent-protocol'
+import type {
+  AgentAdapter,
+  ApprovalDecision,
+  SessionOpts,
+  UsageWindow,
+} from '@chorus/agent-protocol'
 import { EventStore, openSqlite, type SqliteHandle, type StoredEvent } from '@chorus/event-store'
 import {
   composeBrief,
@@ -119,6 +124,9 @@ export interface SendResult {
 
 export class ChorusRuntime {
   private readonly active = new Map<string, ActiveConversation>()
+  /** The latest windows each provider reported, for a window opened later. */
+  private readonly limits = new Map<AgentId, readonly UsageWindow[]>()
+  private onLimits: ((push: { agentId: AgentId; windows: UsageWindow[] }) => void) | undefined
 
   private constructor(
     private readonly db: SqliteHandle,
@@ -150,6 +158,16 @@ export class ChorusRuntime {
     log.info('runtime ready', { events: store.lastSeq() })
 
     return new ChorusRuntime(db, store, adapters ?? defaultAdapters(), log, userDataPath)
+  }
+
+  /** Told whenever a provider reports its account limits. */
+  onLimitsReported(listener: (push: { agentId: AgentId; windows: UsageWindow[] }) => void): void {
+    this.onLimits = listener
+  }
+
+  /** What each provider last reported, so a new window is not born blank. */
+  knownLimits(): { agentId: AgentId; windows: UsageWindow[] }[] {
+    return [...this.limits].map(([agentId, windows]) => ({ agentId, windows: [...windows] }))
   }
 
   /** Push target for the renderer. Fires only after a commit. */
@@ -982,6 +1000,11 @@ export class ChorusRuntime {
       adapter,
       profile,
       grants,
+      // Account state, not conversation history: it goes to the window, not the log.
+      onLimits: (windows) => {
+        this.limits.set(agentId, windows)
+        this.onLimits?.({ agentId, windows: [...windows] })
+      },
     })
     await service.attach(session, sessionOpts, health, reopening)
     // Joining mid-conversation is not a case yet, but starting at the current

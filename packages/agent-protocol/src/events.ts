@@ -107,7 +107,41 @@ export interface AgentError extends AgentEventBase {
   readonly recoverable: boolean
 }
 
+/**
+ * One of an account's usage windows, as the provider reports it.
+ *
+ * Both providers publish this and neither calls it the same thing: Codex sends
+ * `primary`/`secondary` with a duration in minutes, Claude sends `five_hour` and
+ * `seven_day` with a percentage. Normalising to "how full, how long, when it
+ * resets" is the whole job — the UI should not have to know whose limits it is
+ * drawing.
+ */
+export interface UsageWindow {
+  /** Stable enough to key a list on, and to tell two windows apart. */
+  readonly id: string
+  /** How full, 0-100. Null when the provider reports a window but not its use. */
+  readonly usedPercent: number | null
+  /** Length of the window in minutes, when known — 300 for five hours. */
+  readonly windowMinutes: number | null
+  /** Epoch milliseconds, or null when the provider did not say. */
+  readonly resetsAt: number | null
+}
+
+export interface LimitsUpdated extends AgentEventBase {
+  readonly type: 'limits'
+  readonly windows: readonly UsageWindow[]
+}
+
 export type AgentEvent =
+  /*
+   * Account-wide usage limits, not conversation history.
+   *
+   * Deliberately never written to the event log: the log records what happened
+   * in a conversation, and how full an account's weekly window is happened to
+   * the account. It is state, and stale state read back a week later would be
+   * worse than none.
+   */
+  | LimitsUpdated
   | TurnStarted
   | MessageDelta
   | MessageCompleted

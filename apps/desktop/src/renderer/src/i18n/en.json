@@ -52,6 +52,13 @@
     "remove": "Remove {{name}}",
     "done": "Close"
   },
+  "limits": {
+    "resets": "resets in {{time}}"
+  },
+  "spend": {
+    "tokens": "{{input}} in · {{output}} out",
+    "label": "What this conversation has used"
+  },
   "policy": {
     "heading": "What agents may do without asking",
     "footnote": "Anything a profile does not cover still asks. Slack, Jira and the like always ask."

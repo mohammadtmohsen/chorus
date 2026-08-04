@@ -10,7 +10,8 @@
     "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "test": "vitest run --config vitest.config.mts",
-    "clean": "rm -rf out dist *.tsbuildinfo"
+    "clean": "rm -rf out dist *.tsbuildinfo",
+    "e2e": "node e2e/run.mjs"
   },
   "dependencies": {
     "@chorus/adapter-claude": "workspace:*",

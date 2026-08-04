@@ -21,7 +21,8 @@
     "test:watch": "vitest",
     "errors": "turbo run typecheck",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "e2e": "pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -2,7 +2,12 @@ import type { ApprovalId } from '@chorus/shared'
 import { describe, expect, it } from 'vitest'
 import { mapSdkMessage, mapToolPermission, trackBashTools, trackStreamMessage } from './mapping.js'
 
-const CTX = { seq: 1, now: 1_000, approvalTtlMs: 60_000 }
+const CTX = {
+  seq: 1,
+  now: 1_000,
+  approvalTtlMs: 60_000,
+  usageSoFar: { inputTokens: 0, outputTokens: 0 },
+}
 const ID = 'ap-1' as ApprovalId
 const perm = (tool: string, input: Record<string, unknown> = {}) =>
   mapToolPermission(tool, input, CTX, ID)
@@ -252,7 +257,12 @@ describe('tool permission mapping', () => {
 })
 
 describe('tool results', () => {
-  const CTX = { seq: 0, now: 1_000, approvalTtlMs: 60_000 }
+  const CTX = {
+    seq: 0,
+    now: 1_000,
+    approvalTtlMs: 60_000,
+    usageSoFar: { inputTokens: 0, outputTokens: 0 },
+  }
 
   const bashCall = (id: string, command: string): Record<string, unknown> => ({
     type: 'assistant',

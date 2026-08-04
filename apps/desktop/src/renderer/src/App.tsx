@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
+import { Limits } from './Limits.js'
 import { LogViewer } from './LogViewer.js'
 import { fail, Session, type SessionInfo } from './Session.js'
 import { Settings, type Defaults } from './Settings.js'
@@ -385,6 +386,7 @@ export function App(): React.JSX.Element {
         <h1 className="wordmark">
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
         </h1>
+        <Limits />
         <div className="masthead-actions">
           <button type="button" className="btn btn--chip" disabled={starting} onClick={start}>
             {starting ? t('conversation.starting') : t('conversation.newSession')}

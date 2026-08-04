@@ -1636,11 +1636,47 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   One subtlety cost a second pass. `resumed` was first derived from "did we have
   a thread to resume", which is a different question: an agent that never spoke
-  has no thread and is started fresh, but the app is still *reopening*. That put
+  has no thread and is started fresh, but the app is still _reopening_. That put
   a "claude joined" in the transcript on every launch. It is passed explicitly
   now.
 
   Verified live across four launches: `codex joined` after the first, `codex
-  joined | claude joined` once Claude was added by hand in the second, and
+joined | claude joined` once Claude was added by hand in the second, and
   exactly that on the third and fourth — a real cast change still announced,
   nothing accumulating.
+
+- **2026-08-04 — an end-to-end suite in the repo, and usage you can see.**
+
+  **`pnpm e2e`** runs seven specs against the built app over CDP — no test build,
+  no mocked main process. Each corresponds to a bug that actually reached the
+  app, written as the smallest question that would have caught it: a blank
+  window, sessions multiplying across restarts, a drag axis from the wrong box, a
+  rail 15px from its own dots, a database closed under a live event pump.
+
+  Every spec gets its own `userData` via a new `CHORUS_USER_DATA` override, so a
+  run cannot inherit yesterday's open sessions or overwrite yours — which is what
+  I had been doing by hand, and got wrong once.
+
+  **It found a real bug on its first run.** Nothing appeared where the spend
+  should be, because Codex's usage lives under `tokenUsage.total` and the adapter
+  read `usage` — so every Codex usage event has carried **zero tokens since M2**,
+  silently, into the log. It was invisible until the number was put on screen.
+
+  That fix exposed a second thing: Codex reports a running total while Claude
+  reports one turn's usage. Both now mean "this session so far" — Claude
+  accumulates in the adapter — and the transcript keeps the latest total *per
+  agent* and sums those, rather than adding every report up.
+
+  **Spend** sits beside the session name: total tokens, plus cost when an agent
+  prices it. Cost stays absent rather than showing `$0`, because Codex does not
+  always report one and a zero would be a claim.
+
+  **Account limits** sit in the masthead: a bar, a percentage and "resets in 2h"
+  per window, per agent. Both providers publish this and neither calls it the
+  same thing — Codex sends `primary`/`secondary` with a duration in minutes,
+  Claude `five_hour`/`seven_day` with a percentage — so the protocol gained a
+  normalised `limits` event and the window's name comes from its own duration.
+
+  Deliberately **never written to the event log**: the log records what happened
+  in a conversation, and how full an account's weekly window is happened to the
+  account. Stale state read back a week later would be worse than none.

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
+  LIMITS_PUSH_CHANNEL,
+  LimitsPush,
   SCALE_PUSH_CHANNEL,
   EventsPush,
   IPC_CONTRACT,
@@ -68,6 +70,16 @@ const api: ChorusApi = {
     ipcRenderer.on(EVENTS_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(EVENTS_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onLimits: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = LimitsPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(LIMITS_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(LIMITS_PUSH_CHANNEL, wrapped)
     }
   },
   onScale: (listener) => {

@@ -153,3 +153,50 @@ describe('reduceEvents', () => {
     expect(view.lastSeq).toBeGreaterThan(0)
   })
 })
+
+describe('spend', () => {
+  it('starts at nothing, and at no price at all', () => {
+    // Zero cost would be a claim; "not reported" is the truth.
+    expect(EMPTY_VIEW.spend).toEqual({ inputTokens: 0, outputTokens: 0, costUsd: null })
+  })
+
+  it('takes the latest total from an agent rather than adding reports up', () => {
+    // Both adapters report a running total, so summing every report would count
+    // the same tokens again each time.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('usage.updated', { inputTokens: 100, outputTokens: 20 }),
+      event('usage.updated', { inputTokens: 150, outputTokens: 25 }),
+    ])
+    expect(view.spend.inputTokens).toBe(150)
+    expect(view.spend.outputTokens).toBe(25)
+  })
+
+  it('counts each agent once and adds them together', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      { ...event('usage.updated', { inputTokens: 100, outputTokens: 10 }), actor: 'codex' },
+      { ...event('usage.updated', { inputTokens: 40, outputTokens: 4 }), actor: 'claude' },
+      { ...event('usage.updated', { inputTokens: 120, outputTokens: 12 }), actor: 'codex' },
+    ])
+    expect(view.spend.inputTokens).toBe(160)
+    expect(view.spend.outputTokens).toBe(16)
+  })
+
+  it('prices only from agents that reported one', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      {
+        ...event('usage.updated', { inputTokens: 1, outputTokens: 1, costUsd: 0.02 }),
+        actor: 'claude',
+      },
+      { ...event('usage.updated', { inputTokens: 1, outputTokens: 1 }), actor: 'codex' },
+    ])
+    expect(view.spend.costUsd).toBeCloseTo(0.02)
+  })
+
+  it('leaves cost unreported when no agent priced anything', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('usage.updated', { inputTokens: 9, outputTokens: 9 }),
+    ])
+    expect(view.spend.costUsd).toBeNull()
+    expect(view.spend.inputTokens).toBe(9)
+  })
+})

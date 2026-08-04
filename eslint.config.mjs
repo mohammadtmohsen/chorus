@@ -135,6 +135,32 @@ export default tseslint.config(
   /* Config files run in Node and sit outside the type-aware project graph, so
      the typed rules have to be switched off explicitly — merged into `rules`
      rather than spread over it, or they would be clobbered and then crash. */
+  /* The end-to-end drivers are plain Node scripts that talk to a built app over
+     a socket. They are outside the type-aware graph for the same reason config
+     files are, and they print — that is their whole output. */
+  {
+    files: ['apps/desktop/e2e/**/*.mjs'],
+    languageOptions: {
+      parserOptions: { projectService: false, project: null },
+      /* Node, plus the web globals it now ships. Listed rather than pulled from
+         a package, because six names are cheaper than a dependency. */
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        WebSocket: 'readonly',
+        URL: 'readonly',
+        setTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+      },
+    },
+    rules: {
+      ...tseslint.configs.disableTypeChecked.rules,
+      'no-console': 'off',
+    },
+  },
+
   {
     files: ['**/*.config.{js,mjs,ts,mts}', '**/*.setup.ts'],
     languageOptions: { parserOptions: { projectService: false, project: null } },

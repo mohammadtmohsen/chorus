@@ -4,6 +4,7 @@ import { buildDiagnostics } from '@chorus/shared'
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
+  LIMITS_PUSH_CHANNEL,
   IPC_CONTRACT,
   type IpcChannel,
   type IpcResponse,
@@ -330,6 +331,15 @@ export function registerIpcHandlers(runtime: ChorusRuntime): void {
  * always fall back to `conversation:history` — the log is authoritative, so a
  * dropped push is a recoverable gap rather than lost data.
  */
+/** Sends account usage windows to every window as providers report them. */
+export function forwardLimitsToRenderer(runtime: ChorusRuntime): void {
+  runtime.onLimitsReported((push) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(LIMITS_PUSH_CHANNEL, push)
+    }
+  })
+}
+
 export function forwardEventsToRenderer(runtime: ChorusRuntime): () => void {
   return runtime.subscribe((events) => {
     const payload = events.map(toTranscript)

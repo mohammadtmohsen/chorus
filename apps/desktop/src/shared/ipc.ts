@@ -350,6 +350,29 @@ export const EVENTS_PUSH_CHANNEL = 'conversation:events'
  * it needs to, in order to say what just happened.
  */
 export const SCALE_PUSH_CHANNEL = 'settings:scale'
+
+/**
+ * Account usage windows, pushed as providers report them.
+ *
+ * A push rather than a query because nothing asks: the numbers arrive when an
+ * agent happens to talk to its provider, and a header that only updated when you
+ * opened something would be showing you yesterday.
+ */
+export const LIMITS_PUSH_CHANNEL = 'agents:limits'
+
+export const UsageWindowShape = z.object({
+  id: z.string(),
+  usedPercent: z.number().nullable(),
+  windowMinutes: z.number().nullable(),
+  resetsAt: z.number().nullable(),
+})
+export type UsageWindowShape = z.infer<typeof UsageWindowShape>
+
+export const LimitsPush = z.object({
+  agentId: z.enum(['codex', 'claude']),
+  windows: z.array(UsageWindowShape),
+})
+export type LimitsPush = z.infer<typeof LimitsPush>
 export const EventsPush = z.array(TranscriptEvent)
 export type EventsPush = z.infer<typeof EventsPush>
 
@@ -410,6 +433,7 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:setCwd'>
   ) => Promise<IpcResponse<'conversation:setCwd'>>
   readonly onScale: (listener: (scale: number) => void) => () => void
+  readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

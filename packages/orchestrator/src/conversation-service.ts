@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   HealthStatus,
   SessionOpts,
+  UsageWindow,
 } from '@chorus/agent-protocol'
 import type { ApprovalId } from '@chorus/shared'
 import type { AppendInput, ChorusEventPayload, EventStore } from '@chorus/event-store'
@@ -43,6 +44,8 @@ export interface ConversationServiceOptions {
   readonly profile?: PermissionProfile
   /** Shared across agents in a conversation, so a grant is not re-asked per agent. */
   readonly grants?: SessionGrants
+  /** Told when the provider reports its account limits. Not persisted. */
+  readonly onLimits?: (windows: readonly UsageWindow[]) => void
 }
 
 export class ConversationService {
@@ -53,6 +56,7 @@ export class ConversationService {
   private profile: PermissionProfile
   private readonly grants: SessionGrants
   private readonly queue: ApprovalQueue
+  private readonly onLimits: ((windows: readonly UsageWindow[]) => void) | undefined
   private session: AgentSession | null = null
   private pump: Promise<void> | null = null
   /** Set when *we* asked to stop, so an interrupt is not reported as a failure. */
@@ -64,6 +68,7 @@ export class ConversationService {
     this.adapter = options.adapter
     this.profile = options.profile ?? profileById(DEFAULT_PROFILE_ID)
     this.grants = options.grants ?? new SessionGrants()
+    this.onLimits = options.onLimits
     this.queue = new ApprovalQueue({
       ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
       onResolved: (entry, decision, decidedBy) =>
@@ -386,6 +391,18 @@ export class ConversationService {
         this.queue.add(this.conversationId, event.request)
         return
       }
+
+      /*
+       * Handed on, never written down.
+       *
+       * The log records what happened in a conversation; how full an account's
+       * weekly window is happened to the account, and reading it back a week
+       * later would be worse than not having it. It goes straight to whoever
+       * asked to be told.
+       */
+      case 'limits':
+        this.onLimits?.(event.windows)
+        return
 
       case 'usage.updated':
         this.lifecycle({

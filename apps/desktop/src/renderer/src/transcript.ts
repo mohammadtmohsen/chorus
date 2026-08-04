@@ -30,6 +30,14 @@ export interface PendingApproval {
   readonly expiresAt: number
 }
 
+/** What this conversation has cost so far, as the agents reported it. */
+export interface Spend {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  /** Null when no agent reported a price; a zero would be a claim we cannot make. */
+  readonly costUsd: number | null
+}
+
 export interface TranscriptView {
   readonly messages: readonly TranscriptMessage[]
   readonly approvals: readonly PendingApproval[]
@@ -37,6 +45,9 @@ export interface TranscriptView {
   readonly working: readonly TranscriptEvent['actor'][]
   readonly busy: boolean
   readonly lastSeq: number
+  readonly spend: Spend
+  /** The latest total each agent reported, which `spend` is the sum of. */
+  readonly usageByActor: Readonly<Record<string, Spend>>
 }
 
 export const EMPTY_VIEW: TranscriptView = {
@@ -45,9 +56,13 @@ export const EMPTY_VIEW: TranscriptView = {
   working: [],
   busy: false,
   lastSeq: 0,
+  spend: { inputTokens: 0, outputTokens: 0, costUsd: null },
+  usageByActor: {},
 }
 
 interface Mutable {
+  spend: Spend
+  usageByActor: Record<string, Spend>
   messages: TranscriptMessage[]
   approvals: PendingApproval[]
   working: TranscriptEvent['actor'][]
@@ -65,6 +80,8 @@ export function reduceEvents(
     working: [...view.working],
     busy: view.busy,
     lastSeq: view.lastSeq,
+    spend: view.spend,
+    usageByActor: { ...view.usageByActor },
   }
 
   for (const event of events) {
@@ -82,6 +99,7 @@ export function reduceEvents(
 function apply(view: Mutable, event: TranscriptEvent): void {
   const p = event.payload
   const str = (key: string): string => (typeof p[key] === 'string' ? p[key] : '')
+  const num = (key: string): number => (typeof p[key] === 'number' ? p[key] : 0)
 
   switch (event.type) {
     case 'user.message':
@@ -256,6 +274,39 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         status: 'complete',
       })
       return
+
+    /*
+     * What it cost, accumulated rather than shown per turn.
+     *
+     * Agents report usage at the end of each turn; the interesting number is the
+     * running total for the conversation, which is the one that decides whether
+     * to keep going. Cost stays null until an agent actually reports a price —
+     * Codex does not always — because a zero would be a claim we cannot make.
+     */
+    case 'usage.updated': {
+      /*
+       * Each agent reports its own running total, so the latest wins per agent
+       * and the conversation is their sum. Adding every report up would count
+       * the same tokens again each time one arrived.
+       */
+      view.usageByActor = {
+        ...view.usageByActor,
+        [event.actor]: {
+          inputTokens: num('inputTokens'),
+          outputTokens: num('outputTokens'),
+          costUsd: typeof p['costUsd'] === 'number' ? p['costUsd'] : null,
+        },
+      }
+
+      const totals = Object.values(view.usageByActor)
+      const priced = totals.filter((t) => t.costUsd !== null)
+      view.spend = {
+        inputTokens: totals.reduce((sum, t) => sum + t.inputTokens, 0),
+        outputTokens: totals.reduce((sum, t) => sum + t.outputTokens, 0),
+        costUsd: priced.length === 0 ? null : priced.reduce((sum, t) => sum + (t.costUsd ?? 0), 0),
+      }
+      return
+    }
 
     case 'error.raised':
       view.messages.push({

@@ -428,6 +428,75 @@ body {
   flex: none;
 }
 
+/*
+ * Account windows, in the masthead.
+ *
+ * A bar rather than a number alone: "72%" needs reading, a bar that is nearly
+ * full does not. The percentage stays for when the difference between 88 and 94
+ * matters, and the reset time is what turns a warning into a plan.
+ */
+.limits {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 4);
+  margin: 0 0 0 calc(var(--step) * 4);
+  padding: 0;
+  list-style: none;
+  -webkit-app-region: no-drag;
+}
+
+.limit {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 1.5);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.limit-window {
+  color: var(--muted);
+}
+
+.limit-bar {
+  display: block;
+  width: 34px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.limit-bar i {
+  display: block;
+  height: 100%;
+  background: var(--voice, var(--muted));
+}
+
+/* Nearly gone: the one state worth a colour of its own. */
+.limit-bar[data-full='true'] i {
+  background: var(--alert);
+}
+
+.limit-percent {
+  color: var(--muted);
+}
+
+/* The session's own usage, beside its name. */
+.spend {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* The name should still take the space it needs when both are present. */
+.spend + .pane-title-actions {
+  margin-left: calc(var(--step) * 2);
+}
+
 .masthead-actions {
   display: flex;
   align-items: center;
