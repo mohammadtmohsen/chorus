@@ -256,3 +256,23 @@ Plan: [plan.md](./plan.md)
   Remaining for M3: a live Claude approval round-trip (Codex's is verified), and
   running the conformance suite against `CodexAdapter` with an injected
   transport — currently only Fake and Claude run it.
+
+- **2026-08-04 — M3 complete.** Both remaining gaps closed. 169 tests, all gates
+  green.
+
+  **All three adapters now run the shared conformance suite.** `CodexAdapter`
+  joins `FakeAdapter` and `ClaudeAdapter` via a fake transport that answers the
+  handshake and `thread/start` the way the real server does, so the adapter is
+  exercised rather than stubbed. Two Codex-specific checks ride along: the
+  handshake completes before any thread is started, and the sandbox goes over
+  the wire as the kebab-case string enum the server actually accepts — the shape
+  the published docs got wrong.
+
+  **A live Claude approval round-trip is verified.** Card showed the real path,
+  cleared on decision, and the file landed on disk. Claude's `canUseTool` and
+  Codex's server-initiated request now both drive the same card and the same
+  audit trail.
+
+  What "agent independent" means at this point: one `AgentAdapter` port, one
+  `AgentEvent` union, one approval card, one conformance suite — and two real
+  providers whose wire protocols have almost nothing in common passing it.
