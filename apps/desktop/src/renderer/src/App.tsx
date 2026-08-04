@@ -42,6 +42,8 @@ export function App(): React.JSX.Element {
    * and refuse the drop. A ref is readable the instant it is set.
    */
   const dragging = useRef<string | null>(null)
+  /** The same id as `dragging`, in state, purely so the pane can look lifted. */
+  const [lifted, setLifted] = useState<string | null>(null)
   /** The size, shown briefly after it changes. Null when nothing to say. */
   const [zoom, setZoom] = useState<number | null>(null)
 
@@ -133,11 +135,20 @@ export function App(): React.JSX.Element {
   }, [defaults])
 
   /**
-   * Moves the dragged pane to where it was dropped.
+   * Moves the dragged pane as it passes over another, not on drop.
    *
-   * Insertion before the target rather than a swap: dragging one pane onto
-   * another reads as "put it here", and a swap would fling the target across the
-   * grid to a place nobody pointed at.
+   * The grid rearranges under the cursor, so what you see while dragging is
+   * what you get — a drop that only reveals the result at the end asks you to
+   * predict it.
+   *
+   * Removing then inserting at the target's original index lands the pane after
+   * the target when it came from the left and before it when it came from the
+   * right, which is what "past it" means in each direction. It is also stable:
+   * once moved, the pane *is* at that index, so hovering the same target again
+   * does nothing rather than oscillating.
+   *
+   * Nothing is written to disk here — a drag across three panes would be three
+   * writes for one decision. `commitOrder` does it once the drag ends.
    */
   const reorder = useCallback((movedId: string, ontoId: string) => {
     setSessions((current) => {
@@ -149,11 +160,16 @@ export function App(): React.JSX.Element {
       const [moved] = next.splice(from, 1)
       if (moved === undefined) return current
       next.splice(onto, 0, moved)
-
-      window.chorus
-        .reorderConversations({ order: next.map((s) => s.conversationId) })
-        .catch(fail(setError))
       return next
+    })
+  }, [])
+
+  const commitOrder = useCallback(() => {
+    setSessions((current) => {
+      window.chorus
+        .reorderConversations({ order: current.map((s) => s.conversationId) })
+        .catch(fail(setError))
+      return current
     })
   }, [])
 
@@ -253,15 +269,20 @@ export function App(): React.JSX.Element {
             dragging={dragging}
             onDragStart={(id) => {
               dragging.current = id
+              setLifted(id)
             }}
             onDragEnd={() => {
               dragging.current = null
+              setLifted(null)
+              // The grid already looks right; this is the one write that makes
+              // it survive a relaunch.
+              commitOrder()
             }}
-            onDropOn={(ontoId) => {
+            onDragOverPane={(ontoId) => {
               const moved = dragging.current
-              dragging.current = null
               if (moved !== null) reorder(moved, ontoId)
             }}
+            lifted={lifted === session.conversationId}
             onTitle={(title) => {
               // Names belong to one conversation; they are not a starting point.
               setSessions((current) =>

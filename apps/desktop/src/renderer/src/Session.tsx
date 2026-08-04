@@ -46,7 +46,9 @@ export function Session(props: {
   dragging: { current: string | null }
   onDragStart: (conversationId: string) => void
   onDragEnd: () => void
-  onDropOn: (conversationId: string) => void
+  /** Called as a dragged pane passes over this one; the grid sorts live. */
+  onDragOverPane: (conversationId: string) => void
+  lifted: boolean
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
@@ -73,8 +75,6 @@ export function Session(props: {
   const [moving, setMoving] = useState<AgentId | null>(null)
   /** Non-null while the title is being edited; holds the draft, not the truth. */
   const [titleDraft, setTitleDraft] = useState<string | null>(null)
-  /** True while a dragged pane is over this one, for the line showing where. */
-  const [dropTarget, setDropTarget] = useState(false)
   /** The pane itself, so dragging its bar carries the whole thing. */
   const pane = useRef<HTMLElement | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
@@ -219,26 +219,21 @@ export function Session(props: {
       // Which conversation this pane is, for anything outside React that needs
       // to address it — a driver, a bug report, the element inspector.
       data-conversation={conversationId}
-      data-drop-target={dropTarget}
+      data-lifted={props.lifted}
       aria-label={t('conversation.sessionLabel', { path: cwd })}
       onDragOver={(e) => {
         // Only a pane being dragged counts; a file dropped from Finder is not a
         // reorder, and preventing default on it would swallow it silently.
         const moved = props.dragging.current
-        if (moved === null || moved === conversationId) return
+        if (moved === null) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
-        setDropTarget(true)
-      }}
-      onDragLeave={() => {
-        setDropTarget(false)
+        if (moved !== conversationId) props.onDragOverPane(conversationId)
       }}
       onDrop={(e) => {
-        const moved = props.dragging.current
-        if (moved === null || moved === conversationId) return
-        e.preventDefault()
-        setDropTarget(false)
-        props.onDropOn(conversationId)
+        // The grid sorted itself on the way here; this only stops the browser
+        // treating the drop as navigation.
+        if (props.dragging.current !== null) e.preventDefault()
       }}
     >
       {error !== null && (

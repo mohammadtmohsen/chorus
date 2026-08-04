@@ -1594,10 +1594,15 @@ input::placeholder {
   cursor: grabbing;
 }
 
-/* Where the dragged pane will land. One edge, not a glow: the question is
-   "which side of this one", and a border answers it. */
-.pane[data-drop-target='true'] {
-  box-shadow: inset 3px 0 0 var(--codex);
+/*
+ * The pane being carried.
+ *
+ * Dimmed rather than outlined: the grid rearranges under the cursor, so the
+ * question is no longer "where will it land" — you can see that — but "which one
+ * am I holding".
+ */
+.pane[data-lifted='true'] {
+  opacity: 0.45;
 }
 
 .pane-title-name,

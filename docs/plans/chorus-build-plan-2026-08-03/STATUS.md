@@ -1194,11 +1194,22 @@ sentence each, …` produced replies from both, with the user's message logged *
   which would fight a drag. Dragging is off while the name is being edited, or a
   caret drag inside the field would pick the pane up instead.
 
-  Dropping inserts before the target rather than swapping: dragging one pane onto
-  another reads as "put it here", and a swap would fling the target across the
-  grid to a place nobody pointed at. `conversation:reorder` rebuilds the runtime's
-  map in that order, and since the map's order is what gets written to
-  `open-sessions.json`, the grid you arranged is the grid that comes back.
+  **The grid sorts live**, as the pane passes over another, rather than on drop —
+  what you see while dragging is what you get, and a drop that only reveals the
+  result at the end asks you to predict it. The carried pane is dimmed rather
+  than the target outlined: you can already see where it will land, so the
+  question left is which one you are holding.
+
+  Removing then inserting at the target's original index lands the pane *after*
+  the target when it came from the left and *before* it when it came from the
+  right — what "past it" means in each direction. It is also stable: once moved,
+  the pane is at that index, so hovering the same target again does nothing
+  instead of oscillating.
+
+  Nothing is written while dragging: a drag across three panes would be three
+  writes for one decision. The order is recorded once, on release.
+  `conversation:reorder` rebuilds the runtime's map, and since that map's order
+  is what `open-sessions.json` records, the grid you arranged comes back.
 
   Two bugs, both found by driving it:
   - **The dragged pane was tracked in state**, and `dragover` can fire in the
