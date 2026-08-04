@@ -659,6 +659,40 @@ export class ChorusRuntime {
     this.rememberOpen()
   }
 
+  /**
+   * Starts the same room again, empty.
+   *
+   * A new conversation rather than a cleared one: the old transcript stays in
+   * the log, where it is still the record of what happened, and the agents get
+   * genuinely fresh sessions rather than a context we asked them to forget.
+   * Same folder, same cast, same permissions, same name — the only thing that
+   * changes is that nothing has been said yet.
+   *
+   * It keeps its place in the grid, because a pane that jumps to the end when
+   * you restart it is a pane you then have to find again.
+   */
+  async restartConversation(conversationId: string): Promise<{
+    conversationId: string
+    participants: AgentId[]
+    profileId: string
+    cwd: string
+    title: string
+  }> {
+    const existing = this.require(conversationId)
+    const agents = [...existing.participants.keys()]
+    const { cwd, title } = existing
+    const profileId = existing.profile.id
+    const order = [...this.active.keys()]
+
+    await this.closeConversation(conversationId)
+    const started = await this.startConversation({ agents, cwd, profileId, title })
+    this.reorderConversations(
+      order.map((id) => (id === conversationId ? started.conversationId : id))
+    )
+    this.log.info('conversation restarted', { from: conversationId, to: started.conversationId })
+    return started
+  }
+
   /** Conversations with live agents right now, newest last. */
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {
     return [...this.active.values()].map((c) => ({

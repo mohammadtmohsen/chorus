@@ -1358,7 +1358,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   - **The shutdown order was wrong.** Disposing an adapter emits a session's last
     events, and the database was closed before those pumps had finished. Services
-    are now drained *after* the adapters are disposed, so the log gets the end of
+    are now drained _after_ the adapters are disposed, so the log gets the end of
     the story instead of an exception.
   - **`append` refuses once closed** rather than throwing at a dead handle,
     returning `null` and counting what it dropped. A pump has nobody to catch a
@@ -1371,3 +1371,24 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   Verified live: both agents set counting to 60, the app killed mid-turn — no
   "not open" errors, no unhandled rejections, and nothing dropped. 398 tests.
+
+- **2026-08-04 — Restart: the same room, with nothing said in it.** A button
+  beside each session's name, quiet until the bar is under the cursor — a rare
+  thing to press and a bad thing to press by accident, but it belongs next to
+  what it acts on rather than among the controls at the far end of the pane.
+
+  It starts a **new conversation** rather than clearing the old one. The previous
+  transcript stays in the log, where it is still the record of what happened, and
+  the agents get genuinely fresh sessions rather than a context they were asked
+  to ignore — which is the difference between this and telling an agent to forget
+  something. Same folder, same cast, same permissions, same name; only the id and
+  the emptiness change.
+
+  It keeps its place in the grid, because a pane that jumps to the end when you
+  restart it is a pane you then have to find again.
+
+  Verified live: the button in the title bar and to the right of the name, the
+  conversation id changing while position, title, folder, permission profile and
+  both agents survive, the transcript back to nothing, and a fresh Claude
+  answering "there's no earlier message in it" when asked about a word the
+  previous session had been told to remember.

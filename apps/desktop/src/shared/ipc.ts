@@ -142,6 +142,24 @@ export const IPC_CONTRACT = {
     ),
   },
 
+  /**
+   * Starts the same room again with nothing said in it.
+   *
+   * Returns a *new* conversation: the old transcript stays in the log rather
+   * than being erased, and the agents get fresh sessions rather than a context
+   * they were asked to ignore.
+   */
+  'conversation:restart': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({
+      conversationId: z.string(),
+      participants: z.array(z.enum(['codex', 'claude'])),
+      profileId: z.string(),
+      cwd: z.string(),
+      title: z.string(),
+    }),
+  },
+
   /** Records the order the panes were arranged into, so a restore keeps it. */
   'conversation:reorder': {
     request: z.object({ order: z.array(z.string()) }),
@@ -349,6 +367,9 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:removeAgent'>
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
+  readonly restartConversation: (
+    request: IpcRequest<'conversation:restart'>
+  ) => Promise<IpcResponse<'conversation:restart'>>
   readonly reorderConversations: (
     request: IpcRequest<'conversation:reorder'>
   ) => Promise<{ ok: true }>

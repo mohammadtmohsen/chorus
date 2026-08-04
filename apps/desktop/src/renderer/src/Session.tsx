@@ -53,6 +53,7 @@ export function Session(props: {
   onDragOverPane: (conversationId: string, after: boolean) => void
   lifted: boolean
   onMove: (conversationId: string, delta: -1 | 1) => void
+  onRestart: (was: string, session: SessionInfo) => void
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
@@ -73,6 +74,8 @@ export function Session(props: {
   const [reviewing, setReviewing] = useState(false)
   const [confirmingClose, setConfirmingClose] = useState(false)
   const [pickingProfile, setPickingProfile] = useState(false)
+  /** Set once Restart has been asked for and is being answered. */
+  const [restarting, setRestarting] = useState(false)
   /** Non-null while the path is being edited; holds the draft, not the truth. */
   const [pathDraft, setPathDraft] = useState<string | null>(null)
   /** The agent currently joining or leaving, so its chip can say so. */
@@ -374,6 +377,29 @@ export function Session(props: {
               setTitleDraft(null)
             }}
           />
+        )}
+        {titleDraft === null && (
+          <button
+            type="button"
+            className="btn btn--chip pane-title-restart"
+            disabled={restarting}
+            aria-label={t('conversation.restartLabel')}
+            title={t('conversation.restartLabel')}
+            onClick={() => {
+              setRestarting(true)
+              window.chorus
+                .restartConversation({ conversationId })
+                .then((session) => {
+                  props.onRestart(conversationId, session)
+                })
+                .catch(fail(setError))
+                .finally(() => {
+                  setRestarting(false)
+                })
+            }}
+          >
+            {restarting ? t('conversation.restarting') : t('conversation.restart')}
+          </button>
         )}
       </header>
 

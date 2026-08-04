@@ -395,6 +395,13 @@ export function App(): React.JSX.Element {
             }}
             lifted={lifted === session.conversationId}
             onMove={movePane}
+            onRestart={(was, restarted) => {
+              // Replaced in place: the pane keeps its position, and its key
+              // changes with the conversation id, so it remounts empty.
+              setSessions((current) =>
+                current.map((s) => (s.conversationId === was ? restarted : s))
+              )
+            }}
             onTitle={(title) => {
               // Names belong to one conversation; they are not a starting point.
               setSessions((current) =>

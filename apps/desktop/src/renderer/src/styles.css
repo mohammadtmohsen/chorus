@@ -1626,6 +1626,26 @@ input::placeholder {
   cursor: text;
 }
 
+/*
+ * Restart, beside the name it restarts.
+ *
+ * Quiet until the bar is under the cursor: it is a rare thing to press and a
+ * bad thing to press by accident, but it belongs next to what it acts on rather
+ * than among the session's other controls at the far end of the pane.
+ */
+.pane-title-restart {
+  margin-left: calc(var(--step) * 2);
+  flex: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.pane-title:hover .pane-title-restart,
+.pane-title-restart:focus-visible,
+.pane-title-restart:disabled {
+  opacity: 1;
+}
+
 .pane-title-name:hover {
   border-color: var(--line);
   color: var(--bone);
