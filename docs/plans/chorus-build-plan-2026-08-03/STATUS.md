@@ -1504,3 +1504,25 @@ sentence each, …` produced replies from both, with the user's message logged *
   Measured, because re-parsing markdown every frame is a real risk: **2,732
   characters typed out over 3,022 frames, median 8ms, p95 9ms, worst 16ms.** The
   parser is small enough that a frame never missed.
+
+- **2026-08-04 — the transcript follows the typing, until you scroll away.** It
+  stays pinned to the bottom while text is written, stops the moment you scroll
+  up, and starts again when you come back down. Sending also re-pins it: you have
+  just spoken, so you want to see the answer.
+
+  The old rule scrolled on **message count**, which cannot work now that replies
+  type themselves out — the thing that changes is the height of a message already
+  on screen. No new entry, no new event, nothing in the component to hang an
+  effect on. A `ResizeObserver` over the entries sees exactly what a reader sees:
+  the page got taller. That needed the entries wrapped in a box of their own,
+  since the scroller's own size never changes.
+
+  "At the bottom" allows 32px, so rounding or a scroll that lands just short
+  still counts as following. And it is still `scrollTop` rather than
+  `scrollIntoView`, which walks every scrollable ancestor and would drag the
+  whole grid when panes sit side by side.
+
+  Verified live on an overflowing transcript: the gap from the bottom staying at
+  0–1px through twelve samples while typing; scrolling up 400px and the gap
+  holding at 155 → 198 rather than snapping back; and returning to the bottom
+  putting it back to 1px.

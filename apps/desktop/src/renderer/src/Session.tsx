@@ -89,6 +89,8 @@ export function Session(props: {
   const [mention, setMention] = useState<MentionQuery | null>(null)
   const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
+  /** The growing part, which is what a resize observer has to watch. */
+  const transcript = useRef<HTMLDivElement | null>(null)
   const input = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(
@@ -121,17 +123,41 @@ export function Session(props: {
       .catch(fail(setError))
   }, [conversationId])
 
+  /**
+   * Whether the transcript is following what is being written.
+   *
+   * True while the view is at the bottom, false the moment you scroll up — and
+   * true again when you come back down. A transcript that yanks you to the
+   * bottom while you are reading something further up is worse than one that
+   * never follows at all, and one that stops following for good is worse than
+   * either.
+   */
+  const following = useRef(true)
+
   useEffect(() => {
-    /*
-     * Scrolls this pane's own transcript, not the page.
-     *
-     * `scrollIntoView` walks every scrollable ancestor, so with panes side by
-     * side one agent's reply would drag the whole grid around while you were
-     * reading another. Setting `scrollTop` cannot reach past this element.
-     */
     const el = score.current
-    if (el !== null) el.scrollTop = el.scrollHeight
-  }, [view.messages.length, view.approvals.length])
+    const content = transcript.current
+    if (el === null || content === null) return
+
+    /*
+     * Watching the content grow, not the message count.
+     *
+     * Text types itself out character by character, so the thing that changes is
+     * the height of a message already on screen — no new entry, no new event, no
+     * state change in this component to hang an effect on. The observer sees
+     * exactly what a reader sees: the page got taller.
+     *
+     * `scrollTop` rather than `scrollIntoView`: the latter walks every scrollable
+     * ancestor and would drag the whole grid around when panes sit side by side.
+     */
+    const follow = new ResizeObserver(() => {
+      if (following.current) el.scrollTop = el.scrollHeight
+    })
+    follow.observe(content)
+    return () => {
+      follow.disconnect()
+    }
+  }, [])
 
   useEffect(() => {
     /*
@@ -201,6 +227,8 @@ export function Session(props: {
 
   const send = useCallback(() => {
     if (draft.trim() === '') return
+    // You just spoke; you want to see the answer.
+    following.current = true
     const text = draft
     setDraft('')
     window.chorus.sendMessage({ conversationId, text }).catch(fail(setError))
@@ -446,27 +474,39 @@ export function Session(props: {
         )}
       </header>
 
-      <div className="score" ref={score} aria-label={t('conversation.transcript')}>
+      <div
+        className="score"
+        ref={score}
+        aria-label={t('conversation.transcript')}
+        onScroll={(e) => {
+          // "At the bottom" with room to spare: a couple of pixels of rounding,
+          // or a scroll that lands just short, should still count as following.
+          const el = e.currentTarget
+          following.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 32
+        }}
+      >
         <div className="rail" aria-hidden="true" />
-        {view.messages.map((message) => (
-          <Entry
-            key={message.key}
-            message={message}
-            onHandOff={
-              // Only offered when there is somebody to hand to, and only for an
-              // agent's own words — handing the user's message back is noise.
-              participants.length > 1 && (message.actor === 'codex' || message.actor === 'claude')
-                ? (m) => {
-                    const from = m.actor === 'claude' ? 'claude' : 'codex'
-                    const to = participants.find((p) => p !== from)
-                    if (to !== undefined) {
-                      setHandoff({ from, to, sourceEventIds: [m.eventId] })
+        <div className="score-content" ref={transcript}>
+          {view.messages.map((message) => (
+            <Entry
+              key={message.key}
+              message={message}
+              onHandOff={
+                // Only offered when there is somebody to hand to, and only for an
+                // agent's own words — handing the user's message back is noise.
+                participants.length > 1 && (message.actor === 'codex' || message.actor === 'claude')
+                  ? (m) => {
+                      const from = m.actor === 'claude' ? 'claude' : 'codex'
+                      const to = participants.find((p) => p !== from)
+                      if (to !== undefined) {
+                        setHandoff({ from, to, sourceEventIds: [m.eventId] })
+                      }
                     }
-                  }
-                : undefined
-            }
-          />
-        ))}
+                  : undefined
+              }
+            />
+          ))}
+        </div>
       </div>
 
       {reviewing && (
