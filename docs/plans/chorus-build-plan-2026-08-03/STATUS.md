@@ -1476,3 +1476,31 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   Verified live: five launches in a row, each showing the same single pane with
   the same conversation id and one saved entry.
+
+- **2026-08-04 — replies type themselves out.** Text arrived in quarter-second
+  paragraphs before, because `DeltaBuffer` coalesces deltas before they are
+  persisted — writing the log per token would cost a disk write every few
+  characters, and the log is the durable record, not the animation.
+
+  So the pacing sits in the renderer, where it is presentation and costs nothing
+  durable. Nothing is invented and nothing is held back for long: it only decides
+  how much of what has **already arrived** is on screen yet.
+
+  The rate is fixed **when text arrives** rather than recomputed from what is
+  left. Recomputing looks reasonable and is not: the backlog shrinks as it
+  drains, so the rate shrinks with it and the tail crawls — an exponential
+  approach that clears about two thirds of its window and then dawdles. The first
+  version did exactly that and the tests caught it: a 4kB burst needed ~2.4s
+  instead of the 0.5s it promised.
+
+  History is never typed out. A transcript reopened at launch is something that
+  already happened, and performing it as if it were happening now would be a lie
+  about when. Reduced motion turns it off entirely.
+
+  Verified live: a reply growing 5 → 13 → 22 → 29 → 36 → 44 characters across
+  60ms samples — steady typing rather than four lumps — and a restored transcript
+  rendering whole and unchanged 400ms later.
+
+  Measured, because re-parsing markdown every frame is a real risk: **2,732
+  characters typed out over 3,022 frames, median 8ms, p95 9ms, worst 16ms.** The
+  parser is small enough that a frame never missed.

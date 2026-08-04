@@ -1,8 +1,9 @@
+import { memo, useRef, useState } from 'react'
 import { CodeRun } from './CodeRun.js'
-import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MarkdownView } from './MarkdownView.js'
 import type { TranscriptMessage } from './transcript.js'
+import { useTypewriter } from './useTypewriter.js'
 
 /**
  * One entry on the score: a dot on the rail, a speaker, and what was said.
@@ -38,6 +39,14 @@ export const Entry = memo(function Entry({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+
+  /*
+   * Messages already finished when the pane first drew them are never typed out.
+   * That is history — a transcript reopened at launch, or one just restored —
+   * and performing it as if it were happening now would be a lie about when.
+   */
+  const wasComplete = useRef(message.status !== 'streaming')
+  const typed = useTypewriter(message.text, wasComplete.current)
 
   if (message.kind === 'handoff') {
     return (
@@ -100,7 +109,7 @@ export const Entry = memo(function Entry({
         ) : message.kind === 'notice' ? (
           <p className="notice-line">{message.text}</p>
         ) : (
-          <MarkdownView source={message.text} />
+          <MarkdownView source={typed} />
         )}
       </div>
     </article>
