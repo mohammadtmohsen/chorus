@@ -10,7 +10,8 @@
   },
   "conversation": {
     "cast": "Agents",
-    "projectPath": "Project directory",
+    "projectPath": "Project directory — optional",
+    "projectPathPlaceholder": "Leave empty to start in your home folder",
     "start": "Open the room",
     "starting": "Opening…",
     "readOnlyNotice": "Agents start read-only. They ask before running or changing anything.",

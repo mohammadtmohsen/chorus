@@ -63,9 +63,10 @@ export function App(): React.JSX.Element {
     setStarting(true)
     window.chorus
       .startConversation({ agents: chosen, cwd, profileId })
-      .then(async ({ conversationId: id, participants: joined }) => {
+      .then(async ({ conversationId: id, participants: joined, cwd: startedIn }) => {
         setConversationId(id)
         setParticipants(joined)
+        setCwd(startedIn)
         const history = await window.chorus.history({ conversationId: id })
         setView((current) => reduceEvents(current, history))
       })
@@ -337,7 +338,8 @@ function Setup(props: {
   error: string | null
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const ready = props.cwd.trim() !== '' && props.chosen.length > 0 && !props.starting
+  // The directory is optional; an empty one starts at home.
+  const ready = props.chosen.length > 0 && !props.starting
 
   return (
     <div className="setup">
@@ -382,7 +384,7 @@ function Setup(props: {
           <span>{t('conversation.projectPath')}</span>
           <input
             value={props.cwd}
-            placeholder="/Users/you/code/project"
+            placeholder={t('conversation.projectPathPlaceholder')}
             onChange={(e) => {
               props.onCwd(e.target.value)
             }}

@@ -65,13 +65,16 @@ export const IPC_CONTRACT = {
     /** Several agents share one conversation — that is the point of Chorus. */
     request: z.object({
       agents: z.array(z.enum(['codex', 'claude'])).min(1),
-      cwd: z.string().min(1),
+      /** Empty means "start at home" — a directory is a starting point, not a boundary. */
+      cwd: z.string(),
       profileId: z.string().optional(),
     }),
     response: z.object({
       conversationId: z.string(),
       participants: z.array(z.enum(['codex', 'claude'])),
       profileId: z.string(),
+      /** Where the session actually started, which may not be what was asked for. */
+      cwd: z.string(),
     }),
   },
   'conversation:send': {

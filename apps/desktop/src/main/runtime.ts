@@ -118,7 +118,7 @@ export class ChorusRuntime {
 
   async startConversation(
     options: StartConversationOptions
-  ): Promise<{ conversationId: string; participants: AgentId[]; profileId: string }> {
+  ): Promise<{ conversationId: string; participants: AgentId[]; profileId: string; cwd: string }> {
     if (options.agents.length === 0) throw new Error('A conversation needs at least one agent')
 
     /*
@@ -130,7 +130,15 @@ export class ChorusRuntime {
      * user hunting a nonexistent architecture problem, and the supervisor then
      * retried it six times. Say what is actually wrong instead.
      */
-    const problem = describeDirectory(options.cwd)
+    /*
+     * An empty directory is allowed and means "start at home".
+     *
+     * The filesystem is not scoped to a project (§4.4), so a directory is a
+     * starting point rather than a boundary — and requiring one up front asks
+     * the user to decide something they can just tell the agent later.
+     */
+    const cwd = options.cwd.trim() === '' ? homedir() : options.cwd
+    const problem = describeDirectory(cwd)
     if (problem !== null) throw new Error(problem)
 
     const conversationId = newConversationId()
@@ -139,20 +147,20 @@ export class ChorusRuntime {
       actor: 'user',
       payload: {
         type: 'conversation.created',
-        projectId: options.projectId ?? options.cwd,
+        projectId: options.projectId ?? cwd,
         title: options.title ?? 'Untitled',
       },
     })
 
     const profile = profileById(options.profileId ?? '')
     const sessionOpts: SessionOpts = {
-      cwd: options.cwd,
+      cwd,
       // The provider sandbox mirrors the profile, so we get defence in depth
       // rather than relying only on our own gate (plan §4.4).
       sandbox:
         profile.id === 'read-only'
           ? { mode: 'readOnly', writableRoots: [], networkAccess: false }
-          : { mode: 'workspaceWrite', writableRoots: [options.cwd], networkAccess: false },
+          : { mode: 'workspaceWrite', writableRoots: [cwd], networkAccess: false },
     }
 
     // One set of grants for the whole conversation: allowing something for
@@ -171,7 +179,7 @@ export class ChorusRuntime {
       conversationId,
       participants: new Map(),
       profile,
-      cwd: options.cwd,
+      cwd,
       lastAddressed: undefined,
     }
     const failures: string[] = []
@@ -211,6 +219,7 @@ export class ChorusRuntime {
       conversationId,
       participants: [...conversation.participants.keys()],
       profileId: profile.id,
+      cwd,
     }
   }
 
@@ -458,7 +467,6 @@ function openOrRecover(
 
 /** Returns why a directory cannot be used, or null when it is fine. */
 function describeDirectory(cwd: string): string | null {
-  if (cwd.trim() === '') return 'Choose a project directory first.'
   if (!existsSync(cwd)) return `That directory does not exist: ${cwd}`
   try {
     if (!statSync(cwd).isDirectory()) return `That path is a file, not a directory: ${cwd}`
