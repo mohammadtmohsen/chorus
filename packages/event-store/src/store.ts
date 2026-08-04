@@ -27,6 +27,9 @@ export interface ReadOptions {
  */
 export class EventStore {
   private readonly listeners = new Set<(events: readonly StoredEvent[]) => void>()
+  /** Set by `close`, so a late write is refused rather than hitting a dead handle. */
+  private closed = false
+  private droppedAfterClose = 0
 
   private constructor(private readonly db: Database) {}
 
@@ -55,7 +58,25 @@ export class EventStore {
    * Validates, assigns position and time, writes, and projects — atomically.
    * `now` is injectable so tests are not at the mercy of the clock.
    */
-  append(input: AppendInput, now: number = Date.now()): StoredEvent {
+  /**
+   * Returns `null` once the store is closed.
+   *
+   * Agents keep talking while the app is shutting down — a session being torn
+   * down still emits `turn.completed`, and its event pump is a loop nobody
+   * awaits. Those writes used to reach a closed database and throw
+   * "The database connection is not open" as an unhandled rejection, out of a
+   * pump with no catch, which is a crash report for an app that was quitting
+   * anyway.
+   *
+   * Refusing is the honest answer: the log's job is done, and what is being
+   * dropped is the tail of a session that is ending regardless. It is counted,
+   * so "we lost some" is a number rather than a shrug.
+   */
+  append(input: AppendInput, now: number = Date.now()): StoredEvent | null {
+    if (this.closed) {
+      this.droppedAfterClose += 1
+      return null
+    }
     const stored = this.appendInTransaction(input, now)
     this.notify([stored])
     return stored
@@ -107,6 +128,10 @@ export class EventStore {
 
   /** One transaction for the whole batch — used by the delta buffer's flush. */
   appendMany(inputs: readonly AppendInput[], now: number = Date.now()): StoredEvent[] {
+    if (this.closed) {
+      this.droppedAfterClose += inputs.length
+      return []
+    }
     const run = this.db.transaction(() => inputs.map((i) => this.appendInTransaction(i, now)))
     const stored = run()
     this.notify(stored)
@@ -223,7 +248,14 @@ export class EventStore {
     }).filter((s) => s.lastSeq !== logSeq)
   }
 
+  /** How many writes arrived after closing; zero unless shutdown raced a turn. */
+  droppedWrites(): number {
+    return this.droppedAfterClose
+  }
+
   close(): void {
+    // Flagged before the handle goes, so nothing can slip between the two.
+    this.closed = true
     this.db.close()
   }
 

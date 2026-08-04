@@ -74,8 +74,8 @@ describe('append', () => {
       actor: 'user',
       payload: { type: 'user.message', text: 'two' },
     })
-    expect(b.seq).toBeGreaterThan(a.seq)
-    expect(store.lastSeq()).toBe(b.seq)
+    expect(b?.seq).toBeGreaterThan(a?.seq ?? 0)
+    expect(store.lastSeq()).toBe(b?.seq)
   })
 
   it('records the CLI version on session.started', () => {
@@ -419,5 +419,37 @@ describe('reconcileOrphanedSessions', () => {
     startSession('s1')
     startSession('s2')
     expect(store.reconcileOrphanedSessions()).toEqual({ closed: 2 })
+  })
+})
+
+describe('after close', () => {
+  it('refuses writes instead of throwing at a dead handle', () => {
+    /*
+     * Agents keep talking while the app shuts down, and their event pumps have
+     * nobody to catch a throw — a late `turn.completed` reaching a closed
+     * database surfaced as "The database connection is not open" as an
+     * unhandled rejection, which is a crash report for an app that was quitting
+     * anyway. Refusing is the honest answer, and the count says how much.
+     */
+    const closing = EventStore.open(openSqlite({ path: ':memory:' })).store
+    closing.close()
+
+    expect(
+      closing.append({
+        conversationId: CONV,
+        actor: 'user',
+        payload: { type: 'user.message', text: 'late' },
+      })
+    ).toBeNull()
+    expect(
+      closing.appendMany([
+        { conversationId: CONV, actor: 'user', payload: { type: 'user.message', text: 'later' } },
+      ])
+    ).toEqual([])
+    expect(closing.droppedWrites()).toBe(2)
+  })
+
+  it('counts nothing while it is open', () => {
+    expect(store.droppedWrites()).toBe(0)
   })
 })

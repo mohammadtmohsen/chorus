@@ -309,6 +309,9 @@ export class ChorusRuntime {
       actor: 'user',
       payload: { type: 'user.message', text },
     })
+    // Null only once the store is closed, which means the app is quitting.
+    // Delivering a message the log has no record of would be worse than not.
+    if (stored === null) throw new Error('Chorus is shutting down')
     conversation.lastAddressed = route.targets.at(-1)
 
     // Filtered rather than optional-chained: `Promise.all` over a list that can
@@ -867,11 +870,26 @@ export class ChorusRuntime {
      * memory of the conversation it was supposedly continuing.
      */
     this.rememberOpen()
-    for (const conversation of this.active.values()) {
-      await Promise.all([...conversation.participants.values()].map((p) => p.service.close()))
-    }
+
+    const services = [...this.active.values()].flatMap((c) =>
+      [...c.participants.values()].map((p) => p.service)
+    )
+    await Promise.all(services.map((service) => service.close()))
     this.active.clear()
     await Promise.all([...this.adapters.values()].map((a) => a.dispose()))
+
+    /*
+     * Drained after the adapters are gone, not before.
+     *
+     * Disposing a session emits its last events, and those travel through a
+     * pump nobody awaits. Closing the database first left them writing into a
+     * dead handle. This waits for each pump to finish, so the log gets the end
+     * of the story rather than an exception.
+     */
+    await Promise.all(services.map((service) => service.drain()))
+
+    const dropped = this.store.droppedWrites()
+    if (dropped > 0) this.log.warn('events arrived after the log closed', { dropped })
     this.db.close()
   }
 

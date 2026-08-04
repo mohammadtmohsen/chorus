@@ -1330,7 +1330,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   The axis was chosen from the **pane's own shape** — `width >= height` meant
   "side by side". Two panes in a 1280×860 window are **640×799 each**: taller
-  than wide, so the code decided them *vertically* while they sat side by side.
+  than wide, so the code decided them _vertically_ while they sat side by side.
   Left-to-right drags landed in a vertical dead band and did nothing at all;
   diagonal ones crossed the vertical midpoint on a whim and flipped about. It
   came from the grid's **column count** now, which is what actually says how the
@@ -1347,3 +1347,27 @@ sentence each, …` produced replies from both, with the user's message logged *
   One run in the middle failed to swap and then passed three times unchanged —
   a stale Electron holding the debug port, which has caught this project before.
   Worth remembering as a diagnosis before believing a one-off failure.
+
+- **2026-08-04 — fixed: "The database connection is not open" on quit.** Reported
+  from a real shutdown. Agents keep talking while the app is closing — a session
+  being torn down still emits `turn.completed` — and those writes travel through
+  an event pump that **nobody awaits**, so reaching a closed database surfaced as
+  an unhandled rejection. A crash report for an app that was quitting anyway.
+
+  Two changes, because either alone leaves a hole:
+
+  - **The shutdown order was wrong.** Disposing an adapter emits a session's last
+    events, and the database was closed before those pumps had finished. Services
+    are now drained *after* the adapters are disposed, so the log gets the end of
+    the story instead of an exception.
+  - **`append` refuses once closed** rather than throwing at a dead handle,
+    returning `null` and counting what it dropped. A pump has nobody to catch a
+    throw; there is no honest way to make it handle one. `send` treats a `null`
+    as "Chorus is shutting down" and refuses, since delivering a message the log
+    has no record of is worse than not delivering it.
+
+  The count is logged on the way out, so "we lost some" is a number rather than a
+  shrug. It was zero in every run since.
+
+  Verified live: both agents set counting to 60, the app killed mid-turn — no
+  "not open" errors, no unhandled rejections, and nothing dropped. 398 tests.
