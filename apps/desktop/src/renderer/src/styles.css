@@ -423,12 +423,6 @@ body {
   flex: none;
 }
 
-.session-count {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--faint);
-}
-
 .masthead-actions {
   display: flex;
   align-items: center;
@@ -1828,10 +1822,6 @@ input::placeholder {
     padding: calc(var(--step) * 3) calc(var(--step) * 3);
     /* Still under the traffic lights, which do not shrink with the window. */
     padding-left: 80px;
-  }
-
-  .session-count {
-    display: none;
   }
 
   .score {

@@ -171,9 +171,6 @@ export function App(): React.JSX.Element {
         <h1 className="wordmark">
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
         </h1>
-        <span className="session-count">
-          {t('conversation.openCount', { count: sessions.length })}
-        </span>
         <div className="masthead-actions">
           <button type="button" className="btn btn--chip" disabled={starting} onClick={start}>
             {starting ? t('conversation.starting') : t('conversation.newSession')}
