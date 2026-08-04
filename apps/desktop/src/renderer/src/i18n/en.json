@@ -16,6 +16,7 @@
     "starting": "Opening…",
     "readOnlyNotice": "Agents start read-only. They ask before running or changing anything.",
     "transcript": "Conversation",
+    "thinking": "thinking",
     "messageLabel": "Message",
     "placeholder": "Say something. Type @ to choose who answers.",
     "send": "Send",

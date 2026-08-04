@@ -204,6 +204,11 @@ export function Session(props: {
     setMention(found)
   }, [])
 
+  /** Agents already writing: their words say more than a label would. */
+  const streaming = new Set(
+    view.messages.filter((m) => m.status === 'streaming').map((m) => m.actor)
+  )
+
   const options = mention === null ? [] : mentionOptions(participants, mention.query)
   const menuOpen = options.length > 0
 
@@ -506,6 +511,39 @@ export function Session(props: {
               }
             />
           ))}
+
+          {/*
+          Who is thinking, at the foot of the transcript.
+          
+          The dots in the bar have always breathed for whoever is mid-turn, but
+          they are chrome — small, at the edge, and easy to miss while reading.
+          This sits where the answer will appear, in the voice's own colour, so
+          the question "is anything happening, and from whom" is answered where
+          you are already looking. It follows the scroll for the same reason.
+          
+          Only until the first words arrive: once an agent is writing, its text
+          is a better indicator than any label, and leaving both would say the
+          same thing twice.
+        */}
+          {view.working
+            .filter((agent) => !streaming.has(agent))
+            .map((agent) => (
+              <article
+                key={`thinking:${agent}`}
+                className={`entry entry--${agent} entry--thinking`}
+              >
+                <span className="tick" aria-hidden="true" />
+                <span className="speaker">{agent}</span>
+                <p className="said thinking" role="status">
+                  <span className="thinking-word">{t('conversation.thinking')}</span>
+                  <span className="thinking-dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </p>
+              </article>
+            ))}
         </div>
       </div>
 

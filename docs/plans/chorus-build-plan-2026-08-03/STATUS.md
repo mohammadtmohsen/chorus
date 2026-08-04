@@ -1526,3 +1526,21 @@ sentence each, …` produced replies from both, with the user's message logged *
   0–1px through twelve samples while typing; scrolling up 400px and the gap
   holding at 155 → 198 rather than snapping back; and returning to the bottom
   putting it back to 1px.
+
+- **2026-08-04 — you can see who is thinking.** A line at the foot of the
+  transcript per waiting agent: its name, the word, and three dots breathing in
+  sequence — in that agent's own colour, so *who* is legible without reading.
+
+  The voice dots in the bar have always breathed for whoever is mid-turn, but
+  they are chrome: small, at the edge, and easy to miss while reading. This sits
+  where the answer will appear, which is where you are already looking, and it
+  follows the scroll for the same reason.
+
+  It lasts only until the first words arrive. Once an agent is writing, its text
+  is a better indicator than any label, and showing both would say the same thing
+  twice — so the indicator is drawn for agents that are working *and not yet
+  streaming*.
+
+  Verified live with both agents asked at once: `codex:thinking | claude:thinking`
+  while waiting, each in its own hue (`#7fd1c1` and `#e9a05c`), nothing at all
+  when idle, and nothing left once the answers had arrived.

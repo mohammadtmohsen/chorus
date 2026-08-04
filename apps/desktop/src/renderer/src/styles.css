@@ -1847,6 +1847,67 @@ input::placeholder {
   }
 }
 
+/*
+ * "codex thinking …" — where the answer is about to be.
+ *
+ * The word carries the voice's colour, so who is thinking is legible without
+ * reading it. The dots are the waiting: three, in sequence, slow enough to read
+ * as breathing rather than a loading spinner.
+ */
+.entry--thinking .said {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  margin: 0;
+  color: var(--voice, var(--muted));
+  font-size: 13px;
+}
+
+.thinking-word {
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+
+.thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.thinking-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: thinking 1.25s ease-in-out infinite;
+}
+
+.thinking-dots i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.thinking-dots i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes thinking {
+  0%,
+  70%,
+  100% {
+    opacity: 0.25;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+/* Still says who is thinking; it just stops moving. */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots i {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
 /* ----------------------------------------------------------------- syntax */
 
 .tok--comment {
