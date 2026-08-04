@@ -233,3 +233,49 @@ describe('decision translation', () => {
     expect(toCodexDecision('cancel', 'once')).toBe('cancel')
   })
 })
+
+describe('account rate limits', () => {
+  const CTX = { seq: 1, now: 1_000, approvalTtlMs: 60_000 }
+
+  /* Captured from a live `account/rateLimits/read` on a Plus plan. */
+  const LIVE = {
+    method: 'account/rateLimits/updated',
+    params: {
+      rateLimits: {
+        primary: { usedPercent: 55, windowDurationMins: 10_080, resetsAt: 1_786_176_677 },
+        secondary: null,
+      },
+    },
+  }
+
+  it('names a window by its own duration and fixes the units', () => {
+    const event = mapNotification(LIVE, CTX)
+    expect(event?.type).toBe('limits')
+    expect(event?.type === 'limits' && event.windows).toEqual([
+      // Seconds on the wire; milliseconds everywhere else.
+      { id: '10080m', usedPercent: 55, windowMinutes: 10_080, resetsAt: 1_786_176_677_000 },
+    ])
+  })
+
+  it('reports both windows when both are there', () => {
+    const event = mapNotification(
+      {
+        method: 'account/rateLimits/updated',
+        params: {
+          rateLimits: {
+            primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1_786_000_000 },
+            secondary: { usedPercent: 60, windowDurationMins: 10_080, resetsAt: 1_786_100_000 },
+          },
+        },
+      },
+      CTX
+    )
+    expect(event?.type === 'limits' && event.windows.map((w) => w.id)).toEqual(['300m', '10080m'])
+  })
+
+  it('says nothing when the account has no windows', () => {
+    expect(
+      mapNotification({ method: 'account/rateLimits/updated', params: { rateLimits: {} } }, CTX)
+    ).toBeNull()
+  })
+})

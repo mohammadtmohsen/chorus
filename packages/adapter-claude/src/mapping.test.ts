@@ -324,3 +324,63 @@ describe('tool results', () => {
     expect(events.map((e) => e.type)).toEqual(['command.completed'])
   })
 })
+
+describe('rate limits', () => {
+  const CTX = { seq: 0, now: 1_000, approvalTtlMs: 60_000 }
+
+  /*
+   * Captured from a live `rate_limit_event`, not written from sdk.d.ts.
+   *
+   * The types describe `rate_limits_available` and a nested `rate_limits`
+   * object; this is what actually arrives. Mapping from the types alone meant
+   * Claude's limits never appeared at all.
+   */
+  const LIVE = {
+    type: 'rate_limit_event',
+    rate_limit_info: {
+      status: 'allowed_warning',
+      resetsAt: 1_786_039_200,
+      rateLimitType: 'seven_day',
+      utilization: 0.85,
+      isUsingOverage: false,
+      surpassedThreshold: 0.75,
+    },
+  }
+
+  it('reads the shape the SDK actually sends', () => {
+    const [event] = mapSdkMessage(LIVE, CTX)
+    expect(event?.type).toBe('limits')
+    expect(event?.type === 'limits' && event.windows).toEqual([
+      {
+        id: 'seven_day',
+        // A fraction on the wire, a percentage everywhere else.
+        usedPercent: 85,
+        windowMinutes: 10_080,
+        // Seconds on the wire, milliseconds everywhere else.
+        resetsAt: 1_786_039_200_000,
+      },
+    ])
+  })
+
+  it('still reads the shape the types describe', () => {
+    const [event] = mapSdkMessage(
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          rate_limits: { five_hour: { utilization: 42, resets_at: '2026-08-05T10:00:00.000Z' } },
+        },
+      },
+      CTX
+    )
+    expect(event?.type === 'limits' && event.windows[0]).toEqual({
+      id: 'five_hour',
+      usedPercent: 42,
+      windowMinutes: 300,
+      resetsAt: Date.parse('2026-08-05T10:00:00.000Z'),
+    })
+  })
+
+  it('says nothing when there is nothing to say', () => {
+    expect(mapSdkMessage({ type: 'rate_limit_event' }, CTX)).toEqual([])
+  })
+})

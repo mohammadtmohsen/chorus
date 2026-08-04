@@ -1,4 +1,9 @@
-import type { AgentEvent, ApprovalRequest, UsageWindow } from '@chorus/agent-protocol'
+import {
+  toEpochMs,
+  type AgentEvent,
+  type ApprovalRequest,
+  type UsageWindow,
+} from '@chorus/agent-protocol'
 import type { AgentId, ApprovalId } from '@chorus/shared'
 
 /**
@@ -130,7 +135,8 @@ export function mapNotification(n: Notification, ctx: MapContext): AgentEvent | 
           id: minutes === null ? slot : `${String(minutes)}m`,
           usedPercent: typeof window['usedPercent'] === 'number' ? window['usedPercent'] : null,
           windowMinutes: minutes,
-          resetsAt: typeof window['resetsAt'] === 'number' ? window['resetsAt'] : null,
+          // Seconds on the wire; the helper recognises which it was given.
+          resetsAt: toEpochMs(window['resetsAt'] as number | null | undefined),
         })
       }
       return windows.length === 0 ? null : { ...base, type: 'limits', windows }

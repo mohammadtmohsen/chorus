@@ -1,4 +1,9 @@
-import type { AgentEvent, ApprovalRequest, UsageWindow } from '@chorus/agent-protocol'
+import {
+  toEpochMs,
+  type AgentEvent,
+  type ApprovalRequest,
+  type UsageWindow,
+} from '@chorus/agent-protocol'
 import type { AgentId, ApprovalId } from '@chorus/shared'
 
 /**
@@ -64,8 +69,15 @@ interface SdkMessageLike {
   total_cost_usd?: number
   errors?: string[]
   rate_limit_info?: {
-    rate_limits_available?: boolean
-    rate_limits?: Record<string, { utilization?: number | null; resets_at?: string | null } | null>
+    /** The flat shape the SDK really sends. */
+    rateLimitType?: string
+    utilization?: number
+    resetsAt?: number
+    /** The nested shape the types describe, kept in case it ever arrives. */
+    rate_limits?: Record<
+      string,
+      { utilization?: number | null; resets_at?: string | number | null } | null
+    >
   }
 }
 
@@ -280,40 +292,61 @@ export function trackBashTools(msg: SdkMessageLike, current: ReadonlySet<string>
 }
 
 /**
- * `rate_limit_event` → the normalised windows.
+ * `rate_limit_event` → the normalised window.
  *
- * Only the two windows a person plans around: the five-hour one, which decides
- * whether to keep going now, and the seven-day one, which decides whether to
- * keep going this week. The per-model windows the SDK also reports are real but
- * are detail nobody is watching a header for.
+ * The payload is **not** what `sdk.d.ts` describes. The types declare
+ * `rate_limits_available` and a nested `rate_limits.five_hour`; what the SDK
+ * actually sends is flat:
  *
- * Absent for API-key and Bedrock sessions, where `rate_limits_available` is
- * false — those accounts have no plan window, and inventing one would be worse
- * than showing nothing.
+ *   { status, resetsAt, rateLimitType: 'seven_day', utilization: 0.85, … }
+ *
+ * Read from the types alone, the mapping checked `rate_limits_available`, never
+ * found it, and returned nothing — so Claude's limits never appeared at all. The
+ * shape below was read off a live event; the documented one is still accepted in
+ * case a later SDK starts sending it.
+ *
+ * `utilization` is a fraction here and a percentage there, and `resetsAt` is in
+ * seconds. Both are converted once, so nothing downstream has to know.
  */
 function mapRateLimits(msg: SdkMessageLike, base: Omit<AgentEvent, 'type'>): AgentEvent[] {
-  // False for API-key, Bedrock and Vertex sessions: no plan window exists, and
-  // inventing one would be worse than showing nothing.
-  if (msg.rate_limit_info?.rate_limits_available !== true) return []
+  const info = msg.rate_limit_info
+  if (info === undefined) return []
 
-  const limits = msg.rate_limit_info.rate_limits ?? {}
   const windows: UsageWindow[] = []
-  for (const [id, minutes] of [
-    ['five_hour', 300],
-    ['seven_day', 10_080],
-  ] as const) {
-    const window = limits[id]
-    if (window == null) continue
-    const resets = typeof window.resets_at === 'string' ? Date.parse(window.resets_at) : Number.NaN
+
+  // What the SDK actually sends: one window, named by `rateLimitType`.
+  if (typeof info.rateLimitType === 'string') {
+    windows.push({
+      id: info.rateLimitType,
+      usedPercent: typeof info.utilization === 'number' ? info.utilization * 100 : null,
+      windowMinutes: WINDOW_MINUTES[info.rateLimitType] ?? null,
+      resetsAt: toEpochMs(info.resetsAt),
+    })
+  }
+
+  // What the types describe, should it ever arrive.
+  for (const [id, window] of Object.entries(info.rate_limits ?? {})) {
+    if (window == null || windows.some((w) => w.id === id)) continue
     windows.push({
       id,
       usedPercent: typeof window.utilization === 'number' ? window.utilization : null,
-      windowMinutes: minutes,
-      resetsAt: Number.isFinite(resets) ? resets : null,
+      windowMinutes: WINDOW_MINUTES[id] ?? null,
+      resetsAt: toEpochMs(
+        typeof window.resets_at === 'string' ? Date.parse(window.resets_at) : window.resets_at
+      ),
     })
   }
 
   return windows.length === 0 ? [] : [{ ...base, type: 'limits', windows }]
+}
+
+/** The windows Claude names, in minutes, so the UI can label them itself. */
+const WINDOW_MINUTES: Record<string, number> = {
+  five_hour: 300,
+  seven_day: 10_080,
+  seven_day_oauth_apps: 10_080,
+  seven_day_opus: 10_080,
+  seven_day_sonnet: 10_080,
 }
 
 function mapResult(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {

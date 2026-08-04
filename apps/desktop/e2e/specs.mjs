@@ -129,6 +129,45 @@ export const specs = [
   },
 
   {
+    name: 'account limits read as limits, if the account has any',
+    /*
+     * Asserted as a shape, not a value: an API-key account has no plan window
+     * and shows nothing, which is correct. What must never happen again is a
+     * number that is wrong — a fraction shown as a percentage, or seconds read
+     * as milliseconds, which put the reset time in 1970.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        await wait(6_000)
+        const windows = await app.evaluate(`(() => {
+          const now = Date.now()
+          return Array.from(document.querySelectorAll('.limit')).map(l => ({
+            percent: parseInt(l.querySelector('.limit-percent').textContent, 10),
+            reset: l.querySelector('.limit-reset')?.textContent ?? null,
+          }))
+        })()`)
+
+        if (windows.length === 0) {
+          assert(true, 'no plan window on this account, and nothing claimed')
+          return
+        }
+        assert(
+          windows.every((w) => Number.isNaN(w.percent) || (w.percent >= 0 && w.percent <= 100)),
+          `every percentage in range: ${JSON.stringify(windows)}`
+        )
+        assert(
+          windows.every((w) => w.reset === null || !w.reset.includes('now')),
+          'no window resetting "now", which is what seconds read as milliseconds looks like'
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
     name: 'the voice rail runs through its own dots',
     // It sat 15px to the left for months: the rail was measured from the
     // scroller and every dot from its entry.

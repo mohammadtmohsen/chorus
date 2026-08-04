@@ -183,6 +183,37 @@ export class CodexSession implements AgentSession {
     }
   }
 
+  /**
+   * Asks for the account's limits rather than waiting to be told.
+   *
+   * `account/rateLimits/updated` only arrives after a turn, so a header that
+   * only listened stayed empty until you had already spent something — which is
+   * exactly when it is too late to be useful. Reading once at the start fills it
+   * immediately; the notification keeps it current after that.
+   *
+   * Failure is silence on purpose: an account with no plan window answers with
+   * an error, and that is not a reason to fail a session.
+   */
+  async readLimits(): Promise<void> {
+    try {
+      /*
+       * The response already carries a `rateLimits` key, exactly like the
+       * notification — so it is passed through rather than wrapped. Wrapping it
+       * put the snapshot one level too deep, the mapper found no windows, and
+       * the header stayed empty until a turn happened to publish one. It failed
+       * silently, which is why it took a probe to see.
+       */
+      const response = await this.rpc.request('account/rateLimits/read')
+      const event = mapNotification(
+        { method: 'account/rateLimits/updated', params: response },
+        { seq: this.seq + 1, now: this.now(), approvalTtlMs: this.approvalTtlMs }
+      )
+      if (event !== null) this.emit(event)
+    } catch {
+      // No plan window, or not signed in. Nothing to show is the right answer.
+    }
+  }
+
   private emit(event: AgentEvent): void {
     this.queue.push({ ...event, seq: ++this.seq })
     this.waiter?.()
@@ -251,7 +282,11 @@ export class CodexAdapter implements AgentAdapter {
       ...(opts.model === undefined ? {} : { model: opts.model }),
     })) as { thread: { id: string } }
 
-    return this.track(new CodexSession(started.thread.id, rpc, this.approvalTtlMs, this.now))
+    const session = new CodexSession(started.thread.id, rpc, this.approvalTtlMs, this.now)
+    // Not awaited: the header can fill a moment late, but a session must not
+    // wait on an account lookup to open.
+    void session.readLimits()
+    return this.track(session)
   }
 
   async resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession> {
@@ -262,7 +297,9 @@ export class CodexAdapter implements AgentAdapter {
       approvalPolicy: 'on-request',
       sandbox: toSandboxMode(opts.sandbox),
     })
-    return this.track(new CodexSession(sessionRef, rpc, this.approvalTtlMs, this.now))
+    const session = new CodexSession(sessionRef, rpc, this.approvalTtlMs, this.now)
+    void session.readLimits()
+    return this.track(session)
   }
 
   async dispose(): Promise<void> {

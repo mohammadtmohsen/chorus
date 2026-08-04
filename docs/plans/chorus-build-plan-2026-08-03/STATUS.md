@@ -1664,8 +1664,8 @@ joined | claude joined` once Claude was added by hand in the second, and
 
   That fix exposed a second thing: Codex reports a running total while Claude
   reports one turn's usage. Both now mean "this session so far" — Claude
-  accumulates in the adapter — and the transcript keeps the latest total *per
-  agent* and sums those, rather than adding every report up.
+  accumulates in the adapter — and the transcript keeps the latest total _per
+  agent_ and sums those, rather than adding every report up.
 
   **Spend** sits beside the session name: total tokens, plus cost when an agent
   prices it. Cost stays absent rather than showing `$0`, because Codex does not
@@ -1680,3 +1680,37 @@ joined | claude joined` once Claude was added by hand in the second, and
   Deliberately **never written to the event log**: the log records what happened
   in a conversation, and how full an account's weekly window is happened to the
   account. Stale state read back a week later would be worse than none.
+
+- **2026-08-04 — fixed: limits were wrong for Codex and absent for Claude.**
+  Reported, then probed against both providers directly rather than reasoned
+  about. Three separate faults, none visible from the type definitions:
+
+  - **`resetsAt` is epoch seconds**, from both providers, typed as a bare
+    number. Read as milliseconds it lands in 1970, so every window claimed to be
+    resetting "now". A shared `toEpochMs` recognises which it was given.
+  - **Claude's payload is not what `sdk.d.ts` describes.** The types declare
+    `rate_limits_available` and a nested `rate_limits.five_hour`; what actually
+    arrives is flat — `{ status, resetsAt, rateLimitType, utilization }` — and
+    `utilization` is a **fraction**, not a percentage. The mapping checked for
+    the documented field, never found it, and returned nothing, so Claude's
+    limits never appeared at all. Both shapes are accepted now.
+  - **Codex's read was wrapped twice.** `account/rateLimits/read` already
+    returns `{ rateLimits: … }`, exactly like the notification, and wrapping it
+    again buried the snapshot a level too deep. It failed silently, which is why
+    the header stayed empty until a turn happened to publish one.
+
+  Codex is now **asked** at session start rather than only listened for, so the
+  header is populated before you have spent anything — which is when it is worth
+  reading. Claude cannot be asked: it sends a `rate_limit_event` only when usage
+  crosses its own warning threshold (0.75 on this account), so its row appears
+  when you are near a limit and not before. That is the provider's behaviour, not
+  a gap to paper over.
+
+  Both mappings are now pinned by tests using the **captured live payloads**, so
+  a shape that disagrees with its own types cannot drift back unnoticed.
+
+  Verified live: `1w 55% resets in 3d 12h` for Codex before any turn — matching
+  the raw `usedPercent: 55, resetsAt: 1786176677` — and `1w 86%` for Claude from
+  `utilization: 0.86`. A new e2e spec asserts the *shape*: percentages in range,
+  and nothing resetting "now", which is exactly what seconds-as-milliseconds
+  looks like. 8 specs pass.

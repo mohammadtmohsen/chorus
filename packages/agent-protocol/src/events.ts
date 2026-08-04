@@ -127,6 +127,18 @@ export interface UsageWindow {
   readonly resetsAt: number | null
 }
 
+/**
+ * Epoch milliseconds, whatever the provider sent.
+ *
+ * Both send seconds, and both type them as bare numbers. A value that small
+ * cannot be milliseconds — it would be 1970 — so the units are recoverable, and
+ * recovering them here means neither adapter has to remember.
+ */
+export function toEpochMs(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return value < 1e12 ? Math.round(value * 1000) : Math.round(value)
+}
+
 export interface LimitsUpdated extends AgentEventBase {
   readonly type: 'limits'
   readonly windows: readonly UsageWindow[]
