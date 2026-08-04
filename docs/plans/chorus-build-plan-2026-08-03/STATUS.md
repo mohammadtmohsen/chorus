@@ -1254,3 +1254,33 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live: ⌥→ then ⌥← returning the grid to where it started, ⌥← at the
   left edge doing nothing, focus staying on the pane that moved, two panes
   animating and settling, and the order surviving a relaunch.
+
+- **2026-08-04 — fixed: the window came up blank.** Reported live. Reproduced in
+  a second: the root held nothing but the restore placeholder, and
+  `restoreConversations()` never settled.
+
+  **Root cause, from the user's own `open-sessions.json`: `"claude": ""`.**
+  Claude's session id only arrives with its first message, so an agent that
+  joined and never spoke was written down with an empty ref. Passing that to
+  `resume` asks the provider to continue a conversation with no name — and it
+  does not answer, ever. An empty ref is now treated as no thread, and none is
+  written in the first place.
+
+  Two things made a single stuck agent fatal rather than annoying, and both are
+  fixed:
+  - **Reopening had no deadline.** A provider that never answers held the whole
+    app. Each agent now gets 20s and then gives up, costing that agent rather
+    than the session or the window.
+  - **The UI waited on restore with nothing on screen.** "A moment of nothing is
+    better than the start screen flashing past" was right; it stopped being right
+    when the wait could be unbounded. The placeholder now has a 1.5s deadline and
+    restored sessions appear whenever they arrive.
+
+  Restore is also idempotent now: called twice, it returns what is already open
+  instead of starting a second set of agents for the same conversation — found by
+  a probe that called it again while the app was running.
+
+  Verified with the exact shape from the reported file — codex with a real
+  thread, claude with `""` — the session reopens with both agents. Also verified:
+  a clean first launch still shows the start screen, and refs land in the file
+  on every send and again at quit.

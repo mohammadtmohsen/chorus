@@ -60,19 +60,31 @@ export function App(): React.JSX.Element {
       .catch(fail(setError))
 
     /*
-     * Whatever was open last time comes back before anything is drawn.
+     * Whatever was open last time comes back — but the window does not wait on
+     * it indefinitely.
      *
-     * Agents are started again by the main process as part of this, so the wait
-     * is real — showing the start screen first and replacing it a second later
-     * would be a worse lie than a moment of nothing.
+     * Reopening starts agents, and an agent that never answers used to leave a
+     * blank window with nothing on it and no way forward. A moment of nothing is
+     * worth it to avoid the start screen flashing past; a minute of nothing is
+     * an app that looks broken. So the placeholder gets a deadline, and restored
+     * sessions appear whenever they are ready.
      */
+    const grace = setTimeout(() => {
+      setRestoring(false)
+    }, 1_500)
+
     window.chorus
       .restoreConversations()
       .then(setSessions)
       .catch(fail(setError))
       .finally(() => {
+        clearTimeout(grace)
         setRestoring(false)
       })
+
+    return () => {
+      clearTimeout(grace)
+    }
   }, [])
 
   /**

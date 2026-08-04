@@ -92,6 +92,27 @@ interface ActiveConversation {
  */
 const JOINING_CATCHUP_CHARS = 60_000
 
+/** Long enough for a cold provider start, short enough not to look like a hang. */
+const REOPEN_TIMEOUT_MS = 20_000
+
+function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(message))
+    }, ms)
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    )
+  })
+}
+
 export interface SendResult {
   readonly targets: readonly AgentId[]
 }
@@ -480,6 +501,19 @@ export class ChorusRuntime {
     }[] = []
 
     for (const entry of saved) {
+      // Already open: restore is called once, but calling it twice must not
+      // start a second set of agents for the same conversation.
+      const open = this.active.get(entry.conversationId)
+      if (open !== undefined) {
+        restored.push({
+          conversationId: entry.conversationId,
+          participants: [...open.participants.keys()],
+          profileId: open.profile.id,
+          cwd: open.cwd,
+          title: open.title,
+        })
+        continue
+      }
       if (describeDirectory(entry.cwd) !== null) {
         this.log.warn('a session could not be reopened', {
           conversationId: entry.conversationId,
@@ -519,14 +553,30 @@ export class ChorusRuntime {
 
     const started = await Promise.allSettled(
       entry.agents.map(async (agentId) => {
-        const ref = entry.sessionRefs[agentId]
-        const participant = await this.startParticipant(
-          agentId,
-          entry.conversationId,
-          sessionOpts,
-          profile,
-          grants,
-          ref
+        /*
+         * An empty ref is not a thread.
+         *
+         * Claude's session id only arrives with its first message, so an agent
+         * that joined and never spoke is written down with `""`. Passing that to
+         * `resume` asks the provider to continue a conversation with no name,
+         * and it does not answer — which is what left the window blank rather
+         * than falling back to a fresh session.
+         */
+        const saved = entry.sessionRefs[agentId]
+        const ref = saved === undefined || saved.trim() === '' ? undefined : saved
+        /*
+         * Bounded, because reopening is the one place a provider can hold the
+         * whole app hostage.
+         *
+         * A stale thread does not always fail — `thread/resume` on an id the
+         * provider has forgotten can simply never answer, and the window stayed
+         * blank waiting for it. One agent taking too long now costs that agent,
+         * not the session and not the app.
+         */
+        const participant = await withTimeout(
+          this.startParticipant(agentId, entry.conversationId, sessionOpts, profile, grants, ref),
+          REOPEN_TIMEOUT_MS,
+          `${agentId} did not come back within ${String(Math.round(REOPEN_TIMEOUT_MS / 1000))}s`
         )
         /*
          * A resumed agent already holds its own side of the conversation, so it
@@ -570,8 +620,12 @@ export class ChorusRuntime {
         cwd: c.cwd,
         profileId: c.profile.id,
         title: c.title,
+        // Only real ones: an agent that has not spoken yet has no thread to
+        // resume, and writing an empty string down makes it look like it does.
         sessionRefs: Object.fromEntries(
-          [...c.participants.values()].map((p) => [p.agentId, p.session.sessionRef])
+          [...c.participants.values()]
+            .filter((p) => p.session.sessionRef.trim() !== '')
+            .map((p) => [p.agentId, p.session.sessionRef])
         ),
       }))
     )
