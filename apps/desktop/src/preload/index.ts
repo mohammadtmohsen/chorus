@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CONTRACT, type ChorusApi, type IpcChannel, type IpcResponse } from '../shared/ipc.js'
+import {
+  EVENTS_PUSH_CHANNEL,
+  EventsPush,
+  IPC_CONTRACT,
+  type ChorusApi,
+  type IpcChannel,
+  type IpcResponse,
+} from '../shared/ipc.js'
 
 /**
  * One method per IPC message, generated from the contract. `ipcRenderer` itself
@@ -22,6 +29,24 @@ function invoke<C extends IpcChannel>(channel: C) {
 const api: ChorusApi = {
   getAppInfo: invoke('app:getInfo'),
   probeAgents: invoke('agents:probe'),
+  startConversation: invoke('conversation:start'),
+  sendMessage: invoke('conversation:send'),
+  interrupt: invoke('conversation:interrupt'),
+  history: invoke('conversation:history'),
+  decideApproval: invoke('approval:decide'),
+
+  onEvents: (listener) => {
+    // The payload is validated before it reaches renderer code: main is
+    // trusted, but a shape mismatch should fail here, not three components deep.
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = EventsPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(EVENTS_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(EVENTS_PUSH_CHANNEL, wrapped)
+    }
+  },
 }
 
 contextBridge.exposeInMainWorld('chorus', api)

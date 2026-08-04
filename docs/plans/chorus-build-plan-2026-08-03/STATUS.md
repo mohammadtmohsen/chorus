@@ -2,18 +2,18 @@
 
 Plan: [plan.md](./plan.md)
 
-| Milestone                          | State                                          |
-| ---------------------------------- | ---------------------------------------------- |
-| M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes   |
-| M1 Event store & orchestrator      | **Core complete** — read API deferred to M4    |
-| M2 Codex adapter                   | **In progress** — supervisor + app wiring left |
-| M3 Claude adapter                  | Not started                                    |
-| M4 Shared conversation UI          | Not started                                    |
-| M5 Approvals & permission profiles | Not started                                    |
-| M6 Handoffs                        | Not started                                    |
-| M7 Workspace & review              | Not started                                    |
-| M8 Hardening                       | Not started                                    |
-| M9 Distribution                    | Deferred — decision point after M8 dogfooding  |
+| Milestone                          | State                                              |
+| ---------------------------------- | -------------------------------------------------- |
+| M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes       |
+| M1 Event store & orchestrator      | **Core complete** — read API deferred to M4        |
+| M2 Codex adapter                   | **Core complete** — live approval/kill checks left |
+| M3 Claude adapter                  | Not started                                        |
+| M4 Shared conversation UI          | Not started                                        |
+| M5 Approvals & permission profiles | Not started                                        |
+| M6 Handoffs                        | Not started                                        |
+| M7 Workspace & review              | Not started                                        |
+| M8 Hardening                       | Not started                                        |
+| M9 Distribution                    | Deferred — decision point after M8 dogfooding      |
 
 ## Log
 
@@ -157,3 +157,36 @@ Plan: [plan.md](./plan.md)
     Electron main process.
   - The shared adapter conformance suite, which only becomes meaningful once the
     Claude adapter exists in M3 to run against the same tests.
+
+- **2026-08-04 — M2 supervisor and app wiring.** 122 tests, all gates green.
+
+  **A live Codex session now runs through the real app.** Driven over CDP against
+  a temp git repo: typed a prompt, the agent replied, and the reply rendered as a
+  `CODEX` message. That exercises the whole chain — renderer → contextBridge →
+  IPC → runtime → supervisor → adapter → JSON-RPC → `codex app-server` → model,
+  and back through the mapping, delta buffer, SQLite, commit notification, IPC
+  push and renderer reducer.
+
+  Shipped:
+  - `AsyncQueue` in `@chorus/shared`. The queue-plus-waiter dance had been
+    hand-rolled three times; lost-wakeup bugs live in exactly that code.
+  - `SupervisedSession` — **implements `AgentSession` itself**, so
+    `ConversationService` never learns that restarts happen. A crash is inferred
+    from the event stream ending when we did not ask it to, since providers do
+    not announce their own death. Restart budget within a window, full-jitter
+    backoff, and a failed resume surfaces rather than looping. Sequence numbers
+    stay monotonic across a restart, because a restarted provider resets its own.
+  - `EventStore.subscribe` — fires only **after** commit. A listener running
+    inside the transaction could act on state a rollback then erases.
+  - Runtime, IPC (start/send/interrupt/history/approve + a push channel), and a
+    deliberately plain renderer that M4 replaces.
+  - `transcript.ts` — a pure reduction over the log, so a history replay and the
+    live push produce the same view, deduplicated by `seq`.
+
+  Sessions start **read-only** and stay there until the policy engine lands in
+  M5. Starting permissive and tightening later is how permissive defaults ship by
+  accident.
+
+  Still unverified against the live app (unit-tested only): a command approval
+  round-trip, interrupt, and recovery from a forced kill. The read-only sandbox
+  means no approval has actually fired in anger yet. Worth doing before M3.

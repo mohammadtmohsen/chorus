@@ -1,4 +1,10 @@
-import type { AgentAdapter, AgentEvent, AgentSession, SessionOpts } from '@chorus/agent-protocol'
+import type {
+  AgentAdapter,
+  AgentEvent,
+  AgentSession,
+  HealthStatus,
+  SessionOpts,
+} from '@chorus/agent-protocol'
 import type { AppendInput, ChorusEventPayload, EventStore } from '@chorus/event-store'
 import { DeltaBuffer, type Scheduler } from './delta-buffer.js'
 
@@ -62,16 +68,28 @@ export class ConversationService {
     })
   }
 
+  /** Starts a session on the adapter and consumes it. */
   async start(opts: SessionOpts): Promise<AgentSession> {
     const health = await this.adapter.health()
+    const session = await this.adapter.start(opts)
+    await this.attach(session, opts, health)
+    return session
+  }
 
-    this.session = await this.adapter.start(opts)
+  /**
+   * Consumes a session someone else created — in practice a `SupervisedSession`,
+   * which transparently restarts the provider underneath. This service is
+   * deliberately unaware of that: a restart shows up as an ordinary `error`
+   * event in the stream, and the transcript keeps going.
+   */
+  attach(session: AgentSession, opts: SessionOpts, health: HealthStatus): Promise<void> {
+    this.session = session
     this.appendOne({
       actor: 'system',
       payload: {
         type: 'session.started',
         agentId: this.adapter.id,
-        sessionRef: this.session.sessionRef,
+        sessionRef: session.sessionRef,
         cwd: opts.cwd,
         model: opts.model ?? null,
         // Recorded because Chorus drives the user's installed CLIs, which
@@ -79,9 +97,8 @@ export class ConversationService {
         cliVersion: health.state === 'ready' ? health.version : null,
       },
     })
-
-    this.pump = this.consume(this.session)
-    return this.session
+    this.pump = this.consume(session)
+    return Promise.resolve()
   }
 
   async sendUserMessage(text: string): Promise<void> {

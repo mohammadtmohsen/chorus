@@ -6,8 +6,23 @@
   "agents": {
     "heading": "Agents",
     "probing": "Probing…",
-    "notFound": "not found on PATH",
+    "notFound": "codex not found on PATH",
     "unknownVersion": "unknown version"
+  },
+  "conversation": {
+    "projectPath": "Project directory",
+    "start": "Start session",
+    "starting": "Starting…",
+    "readOnlyNotice": "Sessions start read-only until the permission engine lands.",
+    "placeholder": "Ask Codex something… (⌘↵ to send)",
+    "send": "Send",
+    "stop": "Stop",
+    "working": "Working…"
+  },
+  "approval": {
+    "heading": "Approval required",
+    "allowOnce": "Allow once",
+    "deny": "Deny"
   },
   "runtime": {
     "heading": "Runtime",

@@ -26,6 +26,26 @@ export const AppInfo = z.object({
 })
 export type AppInfo = z.infer<typeof AppInfo>
 
+/** Mirrors `StoredEvent` from the event store, minus its branded types. */
+export const TranscriptEvent = z.object({
+  seq: z.number().int(),
+  id: z.string(),
+  conversationId: z.string(),
+  actor: z.enum(['user', 'system', 'codex', 'claude']),
+  type: z.string(),
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: z.number().int(),
+})
+export type TranscriptEvent = z.infer<typeof TranscriptEvent>
+
+export const ApprovalChoice = z.object({
+  conversationId: z.string(),
+  approvalId: z.string(),
+  outcome: z.enum(['allow', 'deny', 'cancel']),
+  scope: z.enum(['once', 'session']),
+})
+export type ApprovalChoice = z.infer<typeof ApprovalChoice>
+
 /**
  * One entry per operation, each with its own request/response schema. Adding a
  * channel means adding it here first — `contextBridge` is generated from this.
@@ -38,7 +58,40 @@ export const IPC_CONTRACT = {
    * rather than a guess (plan §2.5).
    */
   'agents:probe': { request: z.void(), response: z.array(AgentProbeResult) },
+
+  'conversation:start': {
+    request: z.object({ agentId: z.enum(['codex', 'claude']), cwd: z.string().min(1) }),
+    response: z.object({ conversationId: z.string() }),
+  },
+  'conversation:send': {
+    request: z.object({ conversationId: z.string(), text: z.string().min(1) }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+  'conversation:interrupt': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+  /**
+   * Replays from the log rather than from provider history — Codex discards
+   * partial assistant output, so the log is the only complete record (S3).
+   */
+  'conversation:history': {
+    request: z.object({ conversationId: z.string(), afterSeq: z.number().int().optional() }),
+    response: z.array(TranscriptEvent),
+  },
+  'approval:decide': {
+    request: ApprovalChoice,
+    response: z.object({ ok: z.literal(true) }),
+  },
 } as const
+
+/**
+ * Main-to-renderer push. Separate from the request/response contract because it
+ * flows the other way and has no reply.
+ */
+export const EVENTS_PUSH_CHANNEL = 'conversation:events'
+export const EventsPush = z.array(TranscriptEvent)
+export type EventsPush = z.infer<typeof EventsPush>
 
 export type IpcContract = typeof IPC_CONTRACT
 export type IpcChannel = keyof IpcContract
@@ -60,4 +113,15 @@ export function isIpcChannel(value: string): value is IpcChannel {
 export interface ChorusApi {
   readonly getAppInfo: () => Promise<AppInfo>
   readonly probeAgents: () => Promise<AgentProbeResult[]>
+  readonly startConversation: (
+    request: IpcRequest<'conversation:start'>
+  ) => Promise<IpcResponse<'conversation:start'>>
+  readonly sendMessage: (request: IpcRequest<'conversation:send'>) => Promise<{ ok: true }>
+  readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
+  readonly history: (
+    request: IpcRequest<'conversation:history'>
+  ) => Promise<IpcResponse<'conversation:history'>>
+  readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
+  /** Returns an unsubscribe function. */
+  readonly onEvents: (listener: (events: TranscriptEvent[]) => void) => () => void
 }

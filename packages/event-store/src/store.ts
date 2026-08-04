@@ -25,6 +25,8 @@ export interface ReadOptions {
  * never be ahead of the log, and if it drifts behind it can be rebuilt.
  */
 export class EventStore {
+  private readonly listeners = new Set<(events: readonly StoredEvent[]) => void>()
+
   private constructor(private readonly db: Database) {}
 
   static open(
@@ -39,10 +41,26 @@ export class EventStore {
   }
 
   /**
+   * Notified after events are durably committed, never during the transaction.
+   * A listener that ran mid-transaction could observe — or worse, act on —
+   * state that a rollback then erases.
+   */
+  subscribe(listener: (events: readonly StoredEvent[]) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /**
    * Validates, assigns position and time, writes, and projects — atomically.
    * `now` is injectable so tests are not at the mercy of the clock.
    */
   append(input: AppendInput, now: number = Date.now()): StoredEvent {
+    const stored = this.appendInTransaction(input, now)
+    this.notify([stored])
+    return stored
+  }
+
+  private appendInTransaction(input: AppendInput, now: number): StoredEvent {
     const payload = ChorusEventPayload.parse(input.payload)
     const event = {
       id: uuidv7(),
@@ -81,8 +99,10 @@ export class EventStore {
 
   /** One transaction for the whole batch — used by the delta buffer's flush. */
   appendMany(inputs: readonly AppendInput[], now: number = Date.now()): StoredEvent[] {
-    const run = this.db.transaction(() => inputs.map((i) => this.append(i, now)))
-    return run()
+    const run = this.db.transaction(() => inputs.map((i) => this.appendInTransaction(i, now)))
+    const stored = run()
+    this.notify(stored)
+    return stored
   }
 
   read(conversationId: string, options: ReadOptions = {}): StoredEvent[] {
@@ -160,6 +180,19 @@ export class EventStore {
 
   close(): void {
     this.db.close()
+  }
+
+  /** A throwing listener must not roll back or abort a committed append. */
+  private notify(events: readonly StoredEvent[]): void {
+    if (events.length === 0) return
+    for (const listener of this.listeners) {
+      try {
+        listener(events)
+      } catch {
+        // Intentionally swallowed: the write already succeeded, and one bad
+        // subscriber should not take down the others.
+      }
+    }
   }
 
   private bumpProjectionState(seq: number): void {

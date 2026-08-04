@@ -38,6 +38,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@chorus/adapter-codex':
+        specifier: workspace:*
+        version: link:../../packages/adapter-codex
       '@chorus/agent-protocol':
         specifier: workspace:*
         version: link:../../packages/agent-protocol
