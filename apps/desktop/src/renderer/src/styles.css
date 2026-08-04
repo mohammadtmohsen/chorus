@@ -681,10 +681,74 @@ body {
   color: var(--faint);
 }
 
+/*
+ * One field, not a field with a toolbar under it.
+ *
+ * The border belongs to the whole composer so the text and its controls read as
+ * a single place you type, and the focus ring lands on the container rather than
+ * on the textarea inside it.
+ */
 .composer {
   display: flex;
   flex-direction: column;
   gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 2.5) calc(var(--step) * 3);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) * 2);
+  background: var(--sunken);
+  transition: border-color 140ms ease;
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--bone) 26%, var(--line));
+}
+
+.composer textarea {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  resize: none;
+  overflow-y: auto;
+  /* Grows with the text; past this it scrolls rather than eating the room. */
+  max-height: 28vh;
+}
+
+.composer textarea:focus {
+  outline: none;
+}
+
+/* The one filled control in the app: it is the thing you press. */
+.send {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--codex) 45%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--codex) 16%, transparent);
+  color: var(--codex);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.send:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--codex) 28%, transparent);
+  border-color: var(--codex);
+}
+
+.send:disabled {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--faint);
+  cursor: default;
 }
 
 textarea,

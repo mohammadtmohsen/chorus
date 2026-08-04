@@ -56,6 +56,7 @@ export function Session(props: {
   const [reviewing, setReviewing] = useState(false)
   const [confirmingClose, setConfirmingClose] = useState(false)
   const score = useRef<HTMLDivElement | null>(null)
+  const input = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(
     () =>
@@ -87,6 +88,20 @@ export function Session(props: {
     const el = score.current
     if (el !== null) el.scrollTop = el.scrollHeight
   }, [view.messages.length, view.approvals.length])
+
+  useEffect(() => {
+    /*
+     * The box grows with what is in it, up to a ceiling set in CSS.
+     *
+     * Collapsed to `auto` first: `scrollHeight` is the content height *or* the
+     * current box height, whichever is larger, so without the reset the field
+     * would grow and never shrink back.
+     */
+    const el = input.current
+    if (el === null) return
+    el.style.height = 'auto'
+    el.style.height = `${String(el.scrollHeight)}px`
+  }, [draft])
 
   const send = useCallback(() => {
     if (draft.trim() === '') return
@@ -258,8 +273,9 @@ export function Session(props: {
           }}
         >
           <textarea
+            ref={input}
             value={draft}
-            rows={2}
+            rows={1}
             aria-label={t('conversation.messageLabel')}
             placeholder={t('conversation.placeholder', { agents: participants.join(', ') })}
             onChange={(e) => {
@@ -296,8 +312,19 @@ export function Session(props: {
                 {t('conversation.stopAll', { agents: view.working.join(', ') })}
               </button>
             )}
-            <button type="submit" className="btn btn--go" disabled={draft.trim() === ''}>
-              {t('conversation.send')}
+            {/*
+              A glyph, not a word: the button sits inside the field where the
+              label would crowd the text being written, and ↑ is what every
+              composer of this shape uses. The name lives on `aria-label`, so a
+              screen reader still hears "Send".
+            */}
+            <button
+              type="submit"
+              className="send"
+              aria-label={t('conversation.send')}
+              disabled={draft.trim() === ''}
+            >
+              <span aria-hidden="true">↑</span>
             </button>
           </div>
         </form>
