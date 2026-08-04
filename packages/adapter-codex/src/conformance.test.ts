@@ -4,6 +4,9 @@ import {
   collectEvents,
   type ConformanceTarget,
 } from '@chorus/agent-protocol'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CodexAdapter } from './codex-adapter.js'
 import type { Transport } from './transport.js'
@@ -126,20 +129,22 @@ function codexTarget(): ConformanceTarget & { wire: () => Wire } {
   }
 }
 
+// A real adapter needs a directory that exists; several validate it.
+const OPTS = { ...CONFORMANCE_OPTS, cwd: mkdtempSync(join(tmpdir(), 'chorus-conformance-')) }
 describe('conformance: CodexAdapter', () => {
   it('declares its capabilities', () => {
     expect(CONFORMANCE_CHECKS.declaresCapabilities(codexTarget().adapter)).toBeNull()
   })
 
   it('exposes a resumable session reference', async () => {
-    const session = await codexTarget().adapter.start(CONFORMANCE_OPTS)
+    const session = await codexTarget().adapter.start(OPTS)
     expect(CONFORMANCE_CHECKS.exposesSessionRef(session)).toBeNull()
     expect(session.sessionRef).toBe('thr_conformance')
   })
 
   it('emits events with monotonic seq and its own agent id', async () => {
     const target = codexTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
 
     for (const text of ['a', 'b', 'c']) await target.emitMessage(session, text)
     await target.killProvider(session)
@@ -154,7 +159,7 @@ describe('conformance: CodexAdapter', () => {
     // The M2 bug in its original form: JsonRpcClient failed its promises but
     // nothing closed the session stream, so the supervisor never restarted it.
     const target = codexTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
     await target.emitMessage(session, 'before the crash')
     await target.killProvider(session)
 
@@ -167,29 +172,29 @@ describe('conformance: CodexAdapter', () => {
 
   it('resumes onto the same provider reference', async () => {
     const target = codexTarget()
-    const first = await target.adapter.start(CONFORMANCE_OPTS)
-    const resumed = await target.adapter.resume(first.sessionRef, CONFORMANCE_OPTS)
+    const first = await target.adapter.start(OPTS)
+    const resumed = await target.adapter.resume(first.sessionRef, OPTS)
     expect(resumed.sessionRef).toBe(first.sessionRef)
   })
 
   it('completes the handshake before starting a thread', async () => {
     // The server rejects everything sent before `initialized` (plan §2.1).
     const target = codexTarget()
-    await target.adapter.start(CONFORMANCE_OPTS)
+    await target.adapter.start(OPTS)
     const methods = target.wire().sent.map((m) => m['method'])
     expect(methods.slice(0, 3)).toEqual(['initialize', 'initialized', 'thread/start'])
   })
 
   it('sends the sandbox as the kebab-case string enum thread/start accepts', async () => {
     const target = codexTarget()
-    await target.adapter.start(CONFORMANCE_OPTS)
+    await target.adapter.start(OPTS)
     const start = target.wire().sent.find((m) => m['method'] === 'thread/start')
     expect((start?.['params'] as { sandbox?: unknown }).sandbox).toBe('read-only')
   })
 
   it('surfaces an approval request as an event', async () => {
     const target = codexTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
 
     target.wire().request(99, 'item/commandExecution/requestApproval', {
       itemId: 'i1',
@@ -206,7 +211,7 @@ describe('conformance: CodexAdapter', () => {
 
   it('answers the pending approval request on the wire', async () => {
     const target = codexTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
     target.wire().request(99, 'item/commandExecution/requestApproval', { itemId: 'i1' })
 
     const [event] = await collectEvents(session, 1)

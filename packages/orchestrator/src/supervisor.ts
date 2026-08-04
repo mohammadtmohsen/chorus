@@ -57,6 +57,8 @@ export class SupervisedSession implements AgentSession {
   private current: AgentSession
   private closing = false
   private givenUp = false
+  /** Set when the adapter reported a failure it says retrying cannot fix. */
+  private fatal: string | null = null
   private seq = 0
   private pump: Promise<void>
 
@@ -123,9 +125,22 @@ export class SupervisedSession implements AgentSession {
    */
   private async consume(session: AgentSession): Promise<void> {
     for await (const event of session.events) {
+      /*
+       * An adapter that reports `recoverable: false` is telling us retrying
+       * cannot help — a missing working directory, a binary that will not
+       * launch. Restarting anyway produced six identical failures in a row and
+       * buried the real message in the transcript.
+       */
+      if (event.type === 'error' && !event.recoverable) this.fatal = event.message
       this.queue.push({ ...event, seq: ++this.seq })
     }
     if (this.closing || this.givenUp) return
+
+    if (this.fatal !== null) {
+      this.givenUp = true
+      this.queue.close()
+      return
+    }
     await this.handleCrash()
   }
 

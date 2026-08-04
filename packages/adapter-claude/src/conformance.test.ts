@@ -6,6 +6,9 @@ import {
 } from '@chorus/agent-protocol'
 import { AsyncQueue } from '@chorus/shared'
 import type { Query } from '@anthropic-ai/claude-agent-sdk'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ClaudeAdapter } from './claude-adapter.js'
 
@@ -79,6 +82,8 @@ function stubTarget(): ConformanceTarget & { driver: () => Driver } {
   }
 }
 
+// A real adapter needs a directory that exists; several validate it.
+const OPTS = { ...CONFORMANCE_OPTS, cwd: mkdtempSync(join(tmpdir(), 'chorus-conformance-')) }
 describe('conformance: ClaudeAdapter', () => {
   it('declares its capabilities', () => {
     expect(CONFORMANCE_CHECKS.declaresCapabilities(stubTarget().adapter)).toBeNull()
@@ -86,13 +91,13 @@ describe('conformance: ClaudeAdapter', () => {
 
   it('exposes a resumable session reference', async () => {
     const target = stubTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
     expect(CONFORMANCE_CHECKS.exposesSessionRef(session)).toBeNull()
   })
 
   it('emits events with monotonic seq and its own agent id', async () => {
     const target = stubTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
 
     for (const text of ['a', 'b', 'c']) await target.emitMessage(session, text)
     await target.killProvider(session)
@@ -108,7 +113,7 @@ describe('conformance: ClaudeAdapter', () => {
     // the process dies looks alive while doing nothing, and the supervisor
     // never restarts it.
     const target = stubTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
     await target.emitMessage(session, 'before the crash')
     await target.killProvider(session)
 
@@ -121,7 +126,7 @@ describe('conformance: ClaudeAdapter', () => {
 
   it('adopts the session id the provider reports', async () => {
     const target = stubTarget()
-    const session = await target.adapter.start(CONFORMANCE_OPTS)
+    const session = await target.adapter.start(OPTS)
     target
       .driver()
       .push({ type: 'system', subtype: 'init', session_id: 'real-session', uuid: 'u1' })

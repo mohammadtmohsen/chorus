@@ -437,8 +437,21 @@ function Setup(props: {
 const fail =
   (setError: (message: string) => void) =>
   (error: unknown): void => {
-    setError(error instanceof Error ? error.message : String(error))
+    setError(readable(error))
   }
+
+/**
+ * Strips Electron's IPC wrapper from an error.
+ *
+ * A rejected `invoke` arrives as "Error invoking remote method
+ * 'conversation:start': Error: That directory does not exist" — the useful half
+ * is at the end, and the rest is plumbing the reader did not ask about.
+ */
+function readable(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const withoutChannel = raw.replace(/^Error invoking remote method '[^']*':\s*/, '')
+  return withoutChannel.replace(/^(?:Error:\s*)+/, '')
+}
 
 /** Keeps the tail of a long path, which is the part that identifies it. */
 function shortenPath(path: string): string {

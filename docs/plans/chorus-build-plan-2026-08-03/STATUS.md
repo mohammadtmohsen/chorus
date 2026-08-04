@@ -543,3 +543,32 @@ sentence each, …` produced replies from both, with the user's message logged *
   Worth noting the consequence: because redaction happens on write, the user's own
   message is stored and displayed in its redacted form. That is what §4.4 chose,
   and showing the redacted text is honest about what was actually kept.
+
+- **2026-08-04 — first real-use bug.** A conversation was started against a
+  directory that does not exist. The Claude SDK reported it as _"the native
+  binary at …/claude exists but failed to launch. This usually means the binary
+  does not match this system's libc"_ — pointing at a nonexistent architecture
+  problem — and the supervisor then retried six times, burying it.
+
+  Root cause found by reproduction rather than reading: the binary launches fine
+  from Electron, and the same adapter succeeds with a valid `cwd` and fails with
+  exactly that message when the directory is missing. A spawn `ENOENT` from a bad
+  working directory is indistinguishable, to the SDK, from a broken binary.
+
+  Three fixes:
+  1. **The runtime checks the directory before spawning anything**, and says
+     "That directory does not exist: …".
+  2. **The adapter checks too**, so the blame lands correctly even when it is
+     called directly rather than through the runtime.
+  3. **The supervisor no longer retries an unrecoverable failure.** An adapter
+     reporting `recoverable: false` is saying retrying cannot help; restarting
+     anyway produced six identical errors. It now stops on the first one.
+
+  Also strips Electron's `Error invoking remote method '…':` wrapper from errors
+  shown to the user — the useful half was at the end.
+
+  The conformance suite earned its keep here: adding `cwd` validation broke four
+  of its cases, because `CONFORMANCE_OPTS` hard-coded a path that never existed.
+  A contract change was caught by the contract.
+
+  328 tests.

@@ -1,4 +1,4 @@
-import { existsSync, renameSync } from 'node:fs'
+import { existsSync, renameSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
@@ -120,6 +120,18 @@ export class ChorusRuntime {
     options: StartConversationOptions
   ): Promise<{ conversationId: string; participants: AgentId[]; profileId: string }> {
     if (options.agents.length === 0) throw new Error('A conversation needs at least one agent')
+
+    /*
+     * Check the directory before spawning anything.
+     *
+     * A missing cwd makes the spawn fail with ENOENT, and the Claude SDK
+     * reports that as "the native binary failed to launch — this usually means
+     * the binary does not match this system's libc". That message sent a real
+     * user hunting a nonexistent architecture problem, and the supervisor then
+     * retried it six times. Say what is actually wrong instead.
+     */
+    const problem = describeDirectory(options.cwd)
+    if (problem !== null) throw new Error(problem)
 
     const conversationId = newConversationId()
     this.store.append({
@@ -442,6 +454,18 @@ function openOrRecover(
     const db = openSqlite({ path })
     return { db, store: EventStore.open(db, backupFor).store, recovered: moved }
   }
+}
+
+/** Returns why a directory cannot be used, or null when it is fine. */
+function describeDirectory(cwd: string): string | null {
+  if (cwd.trim() === '') return 'Choose a project directory first.'
+  if (!existsSync(cwd)) return `That directory does not exist: ${cwd}`
+  try {
+    if (!statSync(cwd).isDirectory()) return `That path is a file, not a directory: ${cwd}`
+  } catch (error) {
+    return `That directory cannot be read: ${error instanceof Error ? error.message : String(error)}`
+  }
+  return null
 }
 
 function defaultAdapters(): Map<AgentId, AgentAdapter> {

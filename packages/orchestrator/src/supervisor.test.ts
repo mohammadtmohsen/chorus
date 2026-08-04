@@ -145,6 +145,43 @@ describe('SupervisedSession', () => {
     expect(seen.filter((e) => e.type === 'error')).toHaveLength(0)
   })
 
+  it('does not restart when the adapter says the failure is unrecoverable', async () => {
+    // A missing working directory fails identically every time. Retrying it
+    // produced six identical errors in a row and buried the real message.
+    const adapter = new FakeAdapter({ id: 'claude' })
+    const sup = await SupervisedSession.start(adapter, OPTS, POLICY, {
+      scheduler: immediateScheduler(),
+      random: () => 0,
+    })
+
+    adapter.sessions[0]?.emit({
+      type: 'error',
+      message: 'Working directory does not exist: /nope',
+      recoverable: false,
+    })
+    adapter.sessions[0]?.end()
+    await tick()
+    await tick()
+
+    expect(adapter.sessions).toHaveLength(1)
+    expect(sup.stats()).toMatchObject({ restarts: 0, givenUp: true })
+  })
+
+  it('still restarts after a recoverable error', async () => {
+    const adapter = new FakeAdapter({ id: 'claude' })
+    const sup = await SupervisedSession.start(adapter, OPTS, POLICY, {
+      scheduler: immediateScheduler(),
+      random: () => 0,
+    })
+
+    adapter.sessions[0]?.emit({ type: 'error', message: 'transient', recoverable: true })
+    adapter.sessions[0]?.end()
+    await tick()
+
+    expect(adapter.sessions).toHaveLength(2)
+    expect(sup.stats().givenUp).toBe(false)
+  })
+
   it('surfaces a failed resume instead of looping on it', async () => {
     const adapter = new FakeAdapter({ id: 'codex' })
     adapter.resume = () => Promise.reject(new Error('thread not found'))

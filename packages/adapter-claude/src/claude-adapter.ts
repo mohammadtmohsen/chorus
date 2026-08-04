@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import {
   query,
@@ -271,6 +272,16 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   private spawn(opts: SessionOpts, resume: string | undefined): ClaudeSession {
+    /*
+     * The SDK reports a spawn ENOENT as "the native binary failed to launch —
+     * this usually means the binary does not match this system's libc", which
+     * points at the wrong thing entirely when the real cause is a missing cwd.
+     * Checking here keeps the blame where it belongs.
+     */
+    if (!existsSync(opts.cwd)) {
+      throw new Error(`Working directory does not exist: ${opts.cwd}`)
+    }
+
     // canUseTool has to be captured before the session exists, but the SDK
     // only invokes it once the query is running — by which point it is set.
     const holder: { session?: ClaudeSession } = {}

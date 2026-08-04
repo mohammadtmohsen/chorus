@@ -32,8 +32,13 @@ export interface ConformanceTarget {
   readonly dispose?: () => Promise<void>
 }
 
+/**
+ * Defaults for a fake provider. A real adapter needs a directory that exists —
+ * several validate it — so those suites override `cwd` with a temp directory.
+ * This package stays environment-agnostic and cannot create one itself.
+ */
 export const CONFORMANCE_OPTS: SessionOpts = {
-  cwd: '/tmp/conformance',
+  cwd: '/tmp',
   sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
 }
 
