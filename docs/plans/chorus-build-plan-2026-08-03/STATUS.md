@@ -1284,3 +1284,25 @@ sentence each, …` produced replies from both, with the user's message logged *
   thread, claude with `""` — the session reopens with both agents. Also verified:
   a clean first launch still shows the start screen, and refs land in the file
   on every send and again at quit.
+
+- **2026-08-04 — fixed: the grid thrashed while dragging.** Reported as "crazy
+  swapping" between the cards. It was: reordering fired the instant the cursor
+  touched any other pane, so the pane that shifted *under* the cursor immediately
+  triggered the next swap, and the grid flipped between two arrangements while
+  the mouse sat still.
+
+  A pane now has to be crossed **past its middle by a real margin** before it
+  gives way — 12% of its extent, never less than 16px — and that margin is what
+  the return trip has to re-cross. A cursor resting near a seam changes nothing,
+  which is exactly the case that used to oscillate.
+
+  The side is decided by the midpoint rather than by which pane was touched, so
+  `reorder` now takes "before or after this one" and works out the index that
+  means once the dragged pane is lifted out of the list. Measured on whichever
+  axis the panes are actually laid out along — side by side in a wide grid,
+  stacked in a narrow one.
+
+  Verified live with three panes: 12 events at the exact middle change nothing,
+  12 just past it stay inside the band and change nothing, one well past it moves
+  the pane once, 20 more at the same place leave it alone, a twitch back toward
+  the seam does nothing, and a real return trip moves it back.

@@ -46,8 +46,11 @@ export function Session(props: {
   dragging: { current: string | null }
   onDragStart: (conversationId: string) => void
   onDragEnd: () => void
-  /** Called as a dragged pane passes over this one; the grid sorts live. */
-  onDragOverPane: (conversationId: string) => void
+  /**
+   * Called as a dragged pane passes over this one; the grid sorts live.
+   * `after` says which side of this pane it should land on.
+   */
+  onDragOverPane: (conversationId: string, after: boolean) => void
   lifted: boolean
   onMove: (conversationId: string, delta: -1 | 1) => void
   profiles: { id: string; name: string; summary: string }[]
@@ -229,7 +232,31 @@ export function Session(props: {
         if (moved === null) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
-        if (moved !== conversationId) props.onDragOverPane(conversationId)
+        if (moved === conversationId) return
+
+        /*
+         * Which side, decided by the midpoint — with a dead band around it.
+         *
+         * Reordering the instant the cursor touched a pane meant the pane that
+         * shifted under the cursor immediately triggered the next swap, and the
+         * grid thrashed between two arrangements while the mouse sat still. A
+         * pane now has to be crossed past its middle by a real margin before it
+         * gives way, and the margin is what the return trip has to re-cross —
+         * so a cursor hovering near a seam changes nothing.
+         *
+         * Measured on whichever axis the panes are actually laid out along: side
+         * by side in a wide grid, stacked on a narrow one.
+         */
+        const box = e.currentTarget.getBoundingClientRect()
+        const horizontal = box.width >= box.height
+        const at = horizontal ? e.clientX : e.clientY
+        const start = horizontal ? box.left : box.top
+        const extent = horizontal ? box.width : box.height
+        const middle = start + extent / 2
+        const deadBand = Math.max(16, extent * 0.12)
+
+        if (at > middle + deadBand) props.onDragOverPane(conversationId, true)
+        else if (at < middle - deadBand) props.onDragOverPane(conversationId, false)
       }}
       onDrop={(e) => {
         // The grid sorted itself on the way here; this only stops the browser

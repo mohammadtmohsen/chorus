@@ -153,25 +153,29 @@ export function App(): React.JSX.Element {
    * what you get — a drop that only reveals the result at the end asks you to
    * predict it.
    *
-   * Removing then inserting at the target's original index lands the pane after
-   * the target when it came from the left and before it when it came from the
-   * right, which is what "past it" means in each direction. It is also stable:
-   * once moved, the pane *is* at that index, so hovering the same target again
-   * does nothing rather than oscillating.
+   * The caller says which side of the target to land on; this works out the
+   * index that means, accounting for the pane being lifted out of the list
+   * first. Returning the list unchanged when it is already there is what stops
+   * a stream of `dragover` events from churning React.
    *
    * Nothing is written to disk here — a drag across three panes would be three
    * writes for one decision. `commitOrder` does it once the drag ends.
    */
-  const reorder = useCallback((movedId: string, ontoId: string) => {
+  const reorder = useCallback((movedId: string, ontoId: string, after: boolean) => {
     setSessions((current) => {
       const from = current.findIndex((s) => s.conversationId === movedId)
       const onto = current.findIndex((s) => s.conversationId === ontoId)
       if (from === -1 || onto === -1 || from === onto) return current
 
+      // Where it should end up, once itself is out of the way.
+      let to = after ? onto + 1 : onto
+      if (from < to) to -= 1
+      if (to === from) return current
+
       const next = [...current]
       const [moved] = next.splice(from, 1)
       if (moved === undefined) return current
-      next.splice(onto, 0, moved)
+      next.splice(to, 0, moved)
       return next
     })
   }, [])
@@ -358,9 +362,9 @@ export function App(): React.JSX.Element {
               // it survive a relaunch.
               commitOrder()
             }}
-            onDragOverPane={(ontoId) => {
+            onDragOverPane={(ontoId, after) => {
               const moved = dragging.current
-              if (moved !== null) reorder(moved, ontoId)
+              if (moved !== null) reorder(moved, ontoId, after)
             }}
             lifted={lifted === session.conversationId}
             onMove={movePane}
