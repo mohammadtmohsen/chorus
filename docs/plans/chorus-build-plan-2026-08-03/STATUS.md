@@ -319,3 +319,20 @@ Plan: [plan.md](./plan.md)
   Remaining for M4: transcript virtualisation, and the S5 re-measurement against
   real markdown rendering as the exit gate. The 8.3 ms budget was measured on
   plain text nodes and means little until it is re-run against this.
+
+- **2026-08-04 — filesystem scoping dropped.** Plan §4.4 previously said "deny anything
+  outside the project root". Removed: agents may read and reach wherever the user can,
+  exactly as they do in a terminal. Same reasoning as §2.6 — Chorus drives the user's own
+  CLIs and should not invent restrictions the terminal does not have. A `cwd` is a starting
+  point, and the user points an agent at a directory by telling it, not by being fenced in.
+
+  What still gates behaviour is the approval, not the path: writes, commands and
+  outward-facing MCP calls need a decision wherever they land. `resolveWithinRoot` stays,
+  but only for paths **Chorus itself** derives — a worktree we create, a diff we read —
+  where an escape would be our bug rather than an agent's instruction.
+
+- **2026-08-04 — one sentence, both agents.** Verified live: `@codex @claude In one short
+sentence each, …` produced replies from both, with the user's message logged **once**
+  rather than duplicated per recipient. The composer's Send/Stop coexistence proved itself
+  in the same run — Codex was still mid-turn ("Stop codex") while Send stayed available.
+  Placeholder copy reworded, since "pick who answers" read as choose-exactly-one.

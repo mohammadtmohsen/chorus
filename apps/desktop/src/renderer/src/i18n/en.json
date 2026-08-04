@@ -16,7 +16,7 @@
     "readOnlyNotice": "Agents start read-only. They ask before running or changing anything.",
     "transcript": "Conversation",
     "messageLabel": "Message",
-    "placeholder": "Say something. Start with @{{agents}} to pick who answers.",
+    "placeholder": "Say something. Name @{{agents}} to choose who answers — name both to ask both.",
     "hint": "⌘↵ to send",
     "send": "Send",
     "stop": "Stop",

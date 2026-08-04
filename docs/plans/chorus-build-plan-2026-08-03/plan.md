@@ -464,8 +464,19 @@ ApprovalRequest → PermissionProfile rules → { auto-allow | auto-deny | ask-u
   `approvalPolicy`, Claude's `permissionMode` + `allowedTools` — so we get defense in depth
   rather than relying only on our own gate.
 - Rules are declarative and auditable: `{ match: {tool:'Bash', commandPattern:'^git (status|diff|log)'}, effect:'allow', scope:'session' }`.
-- **Deny by default** for: anything outside the project root, network-enabled sandboxes,
-  `rm -rf`, `git push`, `--force`, credential file paths.
+- **Deny by default** for: `rm -rf`, `git push`, `--force`, credential file paths, and
+  network-enabled sandboxes.
+- ⚠ **The filesystem is not scoped to the project root.** Decided 2026-08-04, revising an
+  earlier rule in this section. Agents may read and reach anywhere the user can, exactly as
+  they do in a terminal — which is the same reasoning that settled §2.6: Chorus drives the
+  user's own CLIs and should not invent restrictions the terminal does not have. The user
+  points an agent at a directory by telling it, not by being fenced in. A `cwd` is a
+  starting point, not a boundary.
+
+  What still gates behaviour is the approval, not the path: a write, a command, or an
+  outward-facing MCP call needs a decision regardless of where it lands. Scope was never
+  what made this safe — the visible approval is.
+
 - **Never auto-allow an outward-facing MCP tool** (§2.6). Local actions are recoverable via
   git; a sent Slack message is not. Profiles may not grant these, only the user, per call.
 - Every decision — including auto-allows — writes an `approval.decided` event with the
@@ -481,9 +492,11 @@ ApprovalRequest → PermissionProfile rules → { auto-allow | auto-deny | ask-u
 
 **Path safety**
 
-- A single `resolveWithinRoot(root, candidate)` helper is the _only_ way any layer converts
-  a user/agent path to a real path. It resolves symlinks and rejects escapes. Unit-tested
-  against a fixture list of traversal attacks.
+- `resolveWithinRoot(root, candidate)` stays, but its job is narrower than originally
+  written. It is **not** a sandbox for agent activity — see the filesystem note above.
+- It guards paths **Chorus itself** derives: a project root the user picked, a worktree we
+  create, a diff we read. Those must not escape via `..` or a symlink, because that is our
+  bug rather than an agent's instruction. Unit-tested against a traversal fixture list.
 
 **Secrets**
 
