@@ -24,7 +24,7 @@
     "showThinking": "Show thinking",
     "hideThinking": "Hide thinking",
     "newSession": "New session",
-    "startSession": "Start a session",
+    "tryAgain": "Try again",
     "sessionLabel": "Session in {{path}}",
     "editPath": "Change the project directory",
     "choosePath": "Choose the project folder",

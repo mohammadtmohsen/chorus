@@ -54,6 +54,8 @@ export function Session(props: {
   lifted: boolean
   onMove: (conversationId: string, delta: -1 | 1) => void
   onRestart: (was: string, session: SessionInfo) => void
+  /** False for the only session: there is nowhere to be with none open. */
+  canClose: boolean
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
@@ -417,27 +419,29 @@ export function Session(props: {
               and disarms itself after a few seconds so a stray click cannot lie
               in wait.
             */}
-            <button
-              type="button"
-              className="pane-title-action pane-title-action--end"
-              data-armed={confirmingClose}
-              aria-label={
-                confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')
-              }
-              title={confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')}
-              onClick={() => {
-                if (view.busy && !confirmingClose) {
-                  setConfirmingClose(true)
-                  window.setTimeout(() => {
-                    setConfirmingClose(false)
-                  }, 3_000)
-                  return
+            {props.canClose && (
+              <button
+                type="button"
+                className="pane-title-action pane-title-action--end"
+                data-armed={confirmingClose}
+                aria-label={
+                  confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')
                 }
-                props.onClose(conversationId)
-              }}
-            >
-              <span aria-hidden="true">✕</span>
-            </button>
+                title={confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')}
+                onClick={() => {
+                  if (view.busy && !confirmingClose) {
+                    setConfirmingClose(true)
+                    window.setTimeout(() => {
+                      setConfirmingClose(false)
+                    }, 3_000)
+                    return
+                  }
+                  props.onClose(conversationId)
+                }}
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
+            )}
           </span>
         )}
       </header>

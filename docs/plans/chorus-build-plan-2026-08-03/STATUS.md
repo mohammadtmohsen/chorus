@@ -1413,3 +1413,25 @@ sentence each, …` produced replies from both, with the user's message logged *
   `border-radius: 50%` matching the send button, restart still replacing the
   conversation in place with everything else intact, the first press while busy
   arming instead of ending, and the arm clearing on its own.
+
+- **2026-08-04 — the start screen is gone; the app opens a session.** Restored
+  sessions come back as before; with nothing saved, one is opened without being
+  asked for. The screen was a door whose only answer was "yes" — every choice
+  behind it was already remembered, and the app has nothing to show without a
+  session anyway.
+
+  What is left of it is where you land when starting **fails**: the wordmark, the
+  reason, Try again, and Settings. That is the one moment the screen had anything
+  to add. An error is also what stops the open-a-session effect retrying forever
+  — the panel stays until you ask again.
+
+  **End is hidden on the only pane again.** It was hidden originally, then shown
+  once the start screen existed to land on; with the screen gone, ending the last
+  session would leave nowhere to be. Restart is still there, which is the thing
+  you actually want on a session that has gone wrong.
+
+  Verified live: a first launch with nothing saved opening one pane in ~1s with
+  no button pressed and no start screen; End absent with one pane and present on
+  both with two; ending one bringing the count back to one and hiding End again;
+  and a quit and relaunch coming back to **the same conversation** rather than a
+  fresh one.

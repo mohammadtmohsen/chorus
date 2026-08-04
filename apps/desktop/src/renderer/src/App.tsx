@@ -282,6 +282,22 @@ export function App(): React.JSX.Element {
     })
   }, [])
 
+  /*
+   * Nothing restored and nothing broken: open a room.
+   *
+   * The start screen asked you to press a button whose only answer was "yes" —
+   * every choice behind it was remembered, and the app has nothing to show
+   * without a session anyway. It survives only as the place you land when
+   * starting fails, which is the one time there is something to say.
+   *
+   * `error` in the guard is what stops this retrying forever: a failure leaves
+   * the panel up until you ask again.
+   */
+  useEffect(() => {
+    if (restoring || starting || sessions.length > 0 || error !== null) return
+    start()
+  }, [restoring, starting, sessions.length, error, start])
+
   const close = useCallback((conversationId: string) => {
     // Removed from the grid first: the agents take a moment to shut down, and
     // leaving a dead pane on screen while that happens reads as a hang.
@@ -322,21 +338,24 @@ export function App(): React.JSX.Element {
     </>
   )
 
-  if (restoring) return <div className="empty" aria-busy="true" />
+  if (restoring || (sessions.length === 0 && error === null)) {
+    return <div className="empty" aria-busy="true" />
+  }
 
   if (sessions.length === 0) {
     return (
       <>
-        <Empty
-          onStart={start}
+        <Stuck
+          error={error}
           starting={starting}
+          onRetry={() => {
+            setError(null)
+          }}
           onSettings={() => {
             setShowingSettings(true)
           }}
-          error={error}
         />
         {sheets}
-        {badge}
       </>
     )
   }
@@ -394,6 +413,7 @@ export function App(): React.JSX.Element {
               if (moved !== null) reorder(moved, ontoId, after)
             }}
             lifted={lifted === session.conversationId}
+            canClose={sessions.length > 1}
             onMove={movePane}
             onRestart={(was, restarted) => {
               // Replaced in place: the pane keeps its position, and its key
@@ -451,19 +471,17 @@ export function App(): React.JSX.Element {
 }
 
 /**
- * The app with nothing open.
+ * Where you land when a session will not open.
  *
- * One thing to press. A setup form stood here once, asking three questions that
- * all had remembered answers — and none of whose answers is final: the directory
- * is a starting point the agent can be told to leave, and permissions change
- * from inside the room. Settings holds the defaults for anyone who wants to
- * change them first.
+ * This is what is left of the start screen. It stopped being a door — the app
+ * opens one for you — and became the place that says why it could not, which is
+ * the only moment the screen had anything to add.
  */
-function Empty(props: {
-  onStart: () => void
-  starting: boolean
-  onSettings: () => void
+function Stuck(props: {
   error: string | null
+  starting: boolean
+  onRetry: () => void
+  onSettings: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -472,28 +490,18 @@ function Empty(props: {
         <h1 className="wordmark wordmark--large">
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
         </h1>
-        <p className="lede">{t('app.tagline')}</p>
 
-        {props.error !== null && (
-          <p className="notice notice--bad" role="alert">
-            {props.error}
-          </p>
-        )}
+        <p className="notice notice--bad" role="alert">
+          {props.error}
+        </p>
 
-        {/*
-          Straight into a session, on the settings you last used. The form that
-          used to stand here asked three questions that all had remembered
-          answers — and none of them is final: the directory is a starting point
-          the agent can be told to leave, and permissions change from the room
-          itself.
-        */}
         <button
           type="button"
           className="btn btn--go btn--wide"
-          onClick={props.onStart}
+          onClick={props.onRetry}
           disabled={props.starting}
         >
-          {props.starting ? t('conversation.starting') : t('conversation.startSession')}
+          {props.starting ? t('conversation.starting') : t('conversation.tryAgain')}
         </button>
         <button type="button" className="btn btn--quiet" onClick={props.onSettings}>
           {t('settings.open')}
