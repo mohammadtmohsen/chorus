@@ -646,7 +646,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   a UI gap, not an architectural one.
 
   `conversation:close` ends one conversation and leaves the rest running. It
-  removes the conversation from `active` *before* closing its agents, so a
+  removes the conversation from `active` _before_ closing its agents, so a
   message sent into the gap fails loudly rather than being handed to a session on
   its way out.
 
@@ -659,7 +659,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   which is what stops four panes re-rendering on every token of one reply.
 
   Two things only building it revealed:
-  - `scrollIntoView` walks *every* scrollable ancestor, so one agent's reply
+  - `scrollIntoView` walks _every_ scrollable ancestor, so one agent's reply
     dragged the whole grid around while you read another pane. Setting
     `scrollTop` cannot reach past its own element.
   - Sessions on the same folder with the same agents are indistinguishable, so
@@ -672,3 +672,33 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live with two sessions: independent drafts, a message sent in one
   never appearing in the other, closing one leaving the other's transcript
   intact, and no console errors. 350 tests.
+
+- **2026-08-04 — the composer became one field, and `@` opens a picker.** The
+  border now belongs to the whole composer rather than the textarea inside it, so
+  the text and its controls read as a single place you type; Send became a
+  circular ↑ with its name on `aria-label`. The box starts one line and grows to
+  28vh — height collapsed to `auto` before measuring, because `scrollHeight` is
+  the content height *or* the current box height, whichever is larger, so without
+  the reset it would grow and never shrink.
+
+  Typing `@` now opens a menu of the session's agents, filtered as you type, with
+  arrows, Enter, Tab, Escape and click. It offers **both** as a last entry, which
+  expands to `@codex @claude` — one sentence reaching both agents was an explicit
+  requirement, and until now you had to know to type it. "Both" is last on
+  purpose: a first entry that costs two agents a turn gets picked by accident.
+
+  `mention-menu.ts` holds the caret arithmetic with no DOM in it, using the same
+  word-boundary rule as the router — the menu must not suggest something routing
+  would then ignore.
+
+  Two bugs found by driving it, not by reading it:
+  - **A swallowed arrow key.** The refresh runs on every selection change as well
+    as every keystroke, and it reset the highlight, so one ArrowDown of two was
+    undone. It now compares the query it last saw and only resets when the
+    mention actually changed.
+  - **Escape did not stick.** The menu closed and the next refresh reopened it.
+    A dismissed query is remembered until a different one is typed.
+
+  Verified live: filtering, Enter picking instead of sending, two arrows reaching
+  "both", Escape staying shut, no menu inside `me@c`, and plain Enter still
+  sending. 365 tests.

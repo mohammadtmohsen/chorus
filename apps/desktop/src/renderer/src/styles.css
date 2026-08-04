@@ -689,6 +689,7 @@ body {
  * on the textarea inside it.
  */
 .composer {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: calc(var(--step) * 2);
@@ -716,6 +717,61 @@ body {
 
 .composer textarea:focus {
   outline: none;
+}
+
+/*
+ * The mention picker.
+ *
+ * Sits on top of the composer rather than pushing it: the field must not move
+ * under the caret while you are typing into it.
+ */
+.mention-menu {
+  position: absolute;
+  bottom: calc(100% + var(--step) * 2);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin: 0;
+  padding: calc(var(--step));
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--sunken) 70%, transparent);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2.5);
+  width: 100%;
+  padding: calc(var(--step) * 2) calc(var(--step) * 2.5);
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--bone);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mention-option[data-on='true'] {
+  background: color-mix(in srgb, var(--bone) 8%, transparent);
+}
+
+.mention-dots {
+  display: flex;
+  gap: 3px;
+  flex: none;
+}
+
+.mention-detail {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
 }
 
 /* The one filled control in the app: it is the thing you press. */

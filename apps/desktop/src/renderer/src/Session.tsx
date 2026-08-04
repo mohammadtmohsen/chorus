@@ -2,6 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
+import {
+  applyMention,
+  findMentionQuery,
+  mentionOptions,
+  type MentionQuery,
+} from './mention-menu.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import {
   EMPTY_VIEW,
@@ -55,6 +61,8 @@ export function Session(props: {
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const [confirmingClose, setConfirmingClose] = useState(false)
+  const [mention, setMention] = useState<MentionQuery | null>(null)
+  const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
   const input = useRef<HTMLTextAreaElement | null>(null)
 
@@ -102,6 +110,58 @@ export function Session(props: {
     el.style.height = 'auto'
     el.style.height = `${String(el.scrollHeight)}px`
   }, [draft])
+
+  /** Identifies one mention being typed, so a refresh can tell it from the next. */
+  const queryKey = useRef<string | null>(null)
+  /** The query Escape dismissed; it stays shut until you type a different one. */
+  const dismissed = useRef<string | null>(null)
+
+  /**
+   * Re-reads the caret after any edit or cursor move.
+   *
+   * Runs on every keystroke *and* every selection change, so it has to be able
+   * to tell "the same mention as a moment ago" from a new one — otherwise it
+   * resets the highlight under an arrow key, and re-opens a menu that Escape
+   * just closed. Both happened.
+   */
+  const refreshMention = useCallback(() => {
+    const el = input.current
+    if (el === null) return
+    const found = findMentionQuery(el.value, el.selectionStart)
+    const key = found === null ? null : `${String(found.start)}:${found.query}`
+
+    if (key !== queryKey.current) {
+      queryKey.current = key
+      setHighlighted(0)
+    }
+    if (key !== null && key === dismissed.current) {
+      setMention(null)
+      return
+    }
+    dismissed.current = null
+    setMention(found)
+  }, [])
+
+  const options = mention === null ? [] : mentionOptions(participants, mention.query)
+  const menuOpen = options.length > 0
+
+  const choose = useCallback(
+    (index: number) => {
+      const el = input.current
+      const option = options[index]
+      if (el === null || mention === null || option === undefined) return
+      const next = applyMention(el.value, mention, el.selectionStart, option)
+      setDraft(next.text)
+      setMention(null)
+      // After React has written the new value, or the caret lands wherever the
+      // browser last left it.
+      requestAnimationFrame(() => {
+        el.focus()
+        el.setSelectionRange(next.caret, next.caret)
+      })
+    },
+    [mention, options]
+  )
 
   const send = useCallback(() => {
     if (draft.trim() === '') return
@@ -272,16 +332,81 @@ export function Session(props: {
             send()
           }}
         >
+          {menuOpen && (
+            <ul className="mention-menu" id={`mentions-${conversationId}`} role="listbox">
+              {options.map((option, i) => (
+                <li key={option.label}>
+                  <button
+                    type="button"
+                    className="mention-option"
+                    role="option"
+                    aria-selected={i === highlighted}
+                    data-on={i === highlighted}
+                    // Pointer down, not click: the textarea blurs on click and
+                    // the menu would be gone before the choice registered.
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      choose(i)
+                    }}
+                    onMouseEnter={() => {
+                      setHighlighted(i)
+                    }}
+                  >
+                    <span className="mention-dots" aria-hidden="true">
+                      {option.agents.map((agent) => (
+                        <span key={agent} className={`voice-dot voice--${agent}`} />
+                      ))}
+                    </span>
+                    <span className="mention-name">@{option.label}</span>
+                    <span className="mention-detail">{option.detail}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <textarea
             ref={input}
             value={draft}
             rows={1}
             aria-label={t('conversation.messageLabel')}
             placeholder={t('conversation.placeholder', { agents: participants.join(', ') })}
+            role="combobox"
+            aria-expanded={menuOpen}
+            aria-controls={`mentions-${conversationId}`}
+            aria-autocomplete="list"
             onChange={(e) => {
               setDraft(e.target.value)
+              refreshMention()
+            }}
+            onSelect={refreshMention}
+            onBlur={() => {
+              setMention(null)
             }}
             onKeyDown={(e) => {
+              /*
+               * The menu takes the keys it needs first — Enter in particular.
+               * Sending the message when the user meant to pick a name is the
+               * failure this whole feature exists to prevent.
+               */
+              if (menuOpen) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  const step = e.key === 'ArrowDown' ? 1 : options.length - 1
+                  setHighlighted((current) => (current + step) % options.length)
+                  return
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault()
+                  choose(highlighted)
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  dismissed.current = queryKey.current
+                  setMention(null)
+                  return
+                }
+              }
               if (e.key !== 'Enter') return
               // Mid-composition Enter commits the candidate — for Japanese,
               // Chinese or Korean input that keypress belongs to the IME, not
