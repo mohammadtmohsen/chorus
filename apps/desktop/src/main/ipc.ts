@@ -11,6 +11,7 @@ import {
 } from '../shared/ipc.js'
 import { probeAgents } from './agent-probe.js'
 import type { ChorusRuntime } from './runtime.js'
+import { readSettings, writeSettings, type Settings } from './settings.js'
 
 type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>> }
 
@@ -80,6 +81,11 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
     },
 
     'policy:profiles': () => Promise.resolve(runtime.availableProfiles()),
+
+    'settings:read': () => Promise.resolve(readSettings(app.getPath('userData'))),
+
+    'settings:write': (request: Settings) =>
+      Promise.resolve(writeSettings(app.getPath('userData'), request)),
 
     'diagnostics:read': () =>
       Promise.resolve(

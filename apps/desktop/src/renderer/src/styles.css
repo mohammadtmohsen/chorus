@@ -1362,6 +1362,49 @@ input::placeholder {
   word-break: break-all;
 }
 
+/*
+ * The app with nothing open: one thing to press.
+ *
+ * Shares the setup's centred column so arriving and returning feel like the same
+ * place, but holds a door rather than a form.
+ */
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: calc(var(--step) * 8);
+}
+
+.empty-inner {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 4);
+  text-align: center;
+}
+
+.empty-inner .lede {
+  margin-bottom: calc(var(--step) * 4);
+}
+
+.btn--quiet {
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.btn--quiet:hover {
+  border-color: var(--line);
+  color: var(--bone);
+}
+
+.sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 5);
+  overflow-y: auto;
+  padding: calc(var(--step) * 4) 0;
+}
+
 /* ------------------------------------------------------------------ phone */
 
 /*
@@ -1405,7 +1448,8 @@ input::placeholder {
     padding: calc(var(--step) * 2) calc(var(--step) * 3);
   }
 
-  .setup {
+  .setup,
+  .empty {
     padding: calc(var(--step) * 4);
     align-items: start;
   }

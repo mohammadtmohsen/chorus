@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { LogViewer } from './LogViewer.js'
 import { fail, Session, type SessionInfo } from './Session.js'
+import { Settings, type Defaults } from './Settings.js'
 
 type AgentId = 'codex' | 'claude'
 const AGENTS: AgentId[] = ['codex', 'claude']
@@ -23,25 +24,44 @@ export function App(): React.JSX.Element {
   const { t } = useTranslation()
   const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
   const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
-  const [profileId, setProfileId] = useState('read-only')
-  const [chosen, setChosen] = useState<AgentId[]>(['codex', 'claude'])
+  const [defaults, setDefaults] = useState<Defaults>({
+    agents: ['codex', 'claude'],
+    cwd: '',
+    profileId: 'read-only',
+  })
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [adding, setAdding] = useState(false)
-  const [cwd, setCwd] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
+  const [showingSettings, setShowingSettings] = useState(false)
 
   useEffect(() => {
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
+    window.chorus.readSettings().then(setDefaults).catch(fail(setError))
+  }, [])
+
+  /**
+   * Applied immediately and written in the background.
+   *
+   * Waiting for the disk before the checkbox moves would make the sheet feel
+   * broken over a write that has never once failed.
+   */
+  const changeDefaults = useCallback((next: Defaults) => {
+    setDefaults(next)
+    window.chorus.writeSettings(next).catch(fail(setError))
   }, [])
 
   const start = useCallback(() => {
     setError(null)
     setStarting(true)
     window.chorus
-      .startConversation({ agents: chosen, cwd, profileId })
+      .startConversation({
+        agents: defaults.agents,
+        cwd: defaults.cwd,
+        profileId: defaults.profileId,
+      })
       .then(({ conversationId, participants, cwd: startedIn, profileId: profile }) => {
         setSessions((current) => [
           ...current,
@@ -49,14 +69,14 @@ export function App(): React.JSX.Element {
         ])
         // Kept, not cleared: the next session is usually in the same place, and
         // retyping the path is the kind of thing that stops you opening a second.
-        setCwd(startedIn)
+        setDefaults((current) => ({ ...current, cwd: startedIn }))
         setAdding(false)
       })
       .catch(fail(setError))
       .finally(() => {
         setStarting(false)
       })
-  }, [chosen, cwd, profileId])
+  }, [defaults])
 
   const close = useCallback((conversationId: string) => {
     // Removed from the grid first: the agents take a moment to shut down, and
@@ -68,33 +88,86 @@ export function App(): React.JSX.Element {
   const setup = (
     <Setup
       probes={probes}
-      chosen={chosen}
+      chosen={defaults.agents}
       onToggle={(id) => {
-        setChosen((current) =>
-          current.includes(id) ? current.filter((a) => a !== id) : [...current, id]
-        )
+        changeDefaults({
+          ...defaults,
+          agents: defaults.agents.includes(id)
+            ? defaults.agents.filter((a) => a !== id)
+            : [...defaults.agents, id],
+        })
       }}
-      cwd={cwd}
-      onCwd={setCwd}
+      cwd={defaults.cwd}
+      onCwd={(next) => {
+        changeDefaults({ ...defaults, cwd: next })
+      }}
       profiles={profiles}
-      profileId={profileId}
-      onProfile={setProfileId}
+      profileId={defaults.profileId}
+      onProfile={(id) => {
+        changeDefaults({ ...defaults, profileId: id })
+      }}
       onStart={start}
       starting={starting}
       error={error}
-      onCancel={
-        // Nothing to go back to when the grid is empty.
-        sessions.length === 0
-          ? undefined
-          : () => {
-              setAdding(false)
-              setError(null)
-            }
-      }
+      onCancel={() => {
+        setAdding(false)
+        setError(null)
+      }}
     />
   )
 
-  if (sessions.length === 0) return setup
+  const sheets = (
+    <>
+      {adding && (
+        <div className="sheet-backdrop" role="presentation">
+          {setup}
+        </div>
+      )}
+
+      {showingSettings && (
+        <Settings
+          defaults={defaults}
+          probes={probes}
+          profiles={profiles}
+          onChange={changeDefaults}
+          onClose={() => {
+            setShowingSettings(false)
+          }}
+          onOpenLogs={() => {
+            setShowingSettings(false)
+            setShowingLogs(true)
+          }}
+        />
+      )}
+
+      {showingLogs && (
+        <LogViewer
+          onClose={() => {
+            setShowingLogs(false)
+          }}
+          onError={setError}
+        />
+      )}
+    </>
+  )
+
+  if (sessions.length === 0) {
+    return (
+      <>
+        <Empty
+          onStart={() => {
+            setError(null)
+            setAdding(true)
+          }}
+          onSettings={() => {
+            setShowingSettings(true)
+          }}
+          error={error}
+        />
+        {sheets}
+      </>
+    )
+  }
 
   return (
     <div className="stage">
@@ -118,10 +191,10 @@ export function App(): React.JSX.Element {
             type="button"
             className="btn btn--chip"
             onClick={() => {
-              setShowingLogs(true)
+              setShowingSettings(true)
             }}
           >
-            {t('logs.open')}
+            {t('settings.open')}
           </button>
         </div>
       </header>
@@ -149,20 +222,44 @@ export function App(): React.JSX.Element {
         ))}
       </main>
 
-      {adding && (
-        <div className="sheet-backdrop" role="presentation">
-          {setup}
-        </div>
-      )}
+      {sheets}
+    </div>
+  )
+}
 
-      {showingLogs && (
-        <LogViewer
-          onClose={() => {
-            setShowingLogs(false)
-          }}
-          onError={setError}
-        />
-      )}
+/**
+ * The app with nothing open.
+ *
+ * One thing to press. The setup form used to be the launch screen, which meant
+ * arriving at a wall of choices before there was any reason to make them — and
+ * every one of them already has a remembered answer. It is a sheet now, and this
+ * is the door.
+ */
+function Empty(props: {
+  onStart: () => void
+  onSettings: () => void
+  error: string | null
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <div className="empty">
+      <div className="empty-inner">
+        <h1 className="wordmark wordmark--large">{t('app.name')}</h1>
+        <p className="lede">{t('app.tagline')}</p>
+
+        {props.error !== null && (
+          <p className="notice notice--bad" role="alert">
+            {props.error}
+          </p>
+        )}
+
+        <button type="button" className="btn btn--go btn--wide" onClick={props.onStart}>
+          {t('conversation.startSession')}
+        </button>
+        <button type="button" className="btn btn--quiet" onClick={props.onSettings}>
+          {t('settings.open')}
+        </button>
+      </div>
     </div>
   )
 }

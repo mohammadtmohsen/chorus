@@ -25,6 +25,7 @@
     "showThinking": "Show thinking",
     "hideThinking": "Hide thinking",
     "newSession": "New session",
+    "startSession": "Start a session",
     "openCount": "{{count}} session open",
     "openCount_other": "{{count}} sessions open",
     "sessionLabel": "Session in {{path}}",
@@ -33,6 +34,13 @@
     "endNow": "End now",
     "keep": "Keep going",
     "cancel": "Cancel"
+  },
+  "settings": {
+    "open": "Settings",
+    "heading": "Settings",
+    "subhead": "What a new session starts with",
+    "saved": "Saved as you change them",
+    "done": "Done"
   },
   "policy": {
     "heading": "What agents may do without asking",

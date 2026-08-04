@@ -739,3 +739,30 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live with four sessions: 4 → 3 → 2 → 1 columns across 1900/1500/1100/
   700px, no horizontal overflow at 390px, composer on screen, profile chip shed.
   365 tests.
+
+- **2026-08-04 — the app opens on a door, not a form.** With nothing open there
+  is now one thing to press: **Start a session**, with **Settings** beneath it.
+  The setup form used to *be* the launch screen, which meant arriving at a wall
+  of choices before there was any reason to make them — and every one of them
+  now has a remembered answer. It became a sheet, reached from the empty screen
+  and from **New session** in the masthead.
+
+  `settings.json` in `userData` holds what a new session starts with: agents,
+  directory, permission profile. Deliberately not in the event log — the log
+  records what happened in a conversation, and a preference is neither an event
+  nor something you would want replayed. Written via a temp file and a rename, so
+  a crash mid-write cannot leave a half-written file where a valid one was; a
+  corrupt one falls back to defaults rather than stopping the app opening.
+
+  Every field is a *default*, never a constraint: a session still chooses its own
+  agents, directory and profile as it opens, which is what makes it safe to put
+  the permission profile in a settings sheet at all. Nothing there can widen what
+  an agent may do in a session already running.
+
+  Changes save as you make them. A settings sheet with a Save button is one you
+  can leave without your change taking effect.
+
+  Verified live: empty screen with exactly those two buttons and no form, Cancel
+  returning to it, a session starting from it, Settings reachable from the
+  masthead once panes exist, and a changed profile surviving a full relaunch.
+  365 tests.

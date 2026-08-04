@@ -186,6 +186,30 @@ export const IPC_CONTRACT = {
     }),
   },
   /** Recent log entries, already redacted as they were written. */
+  /**
+   * What a new session starts with. Defaults only — a session still chooses its
+   * own agents, directory and profile.
+   */
+  'settings:read': {
+    request: z.object({}),
+    response: z.object({
+      agents: z.array(z.enum(['codex', 'claude'])),
+      cwd: z.string(),
+      profileId: z.string(),
+    }),
+  },
+  'settings:write': {
+    request: z.object({
+      agents: z.array(z.enum(['codex', 'claude'])),
+      cwd: z.string(),
+      profileId: z.string(),
+    }),
+    response: z.object({
+      agents: z.array(z.enum(['codex', 'claude'])),
+      cwd: z.string(),
+      profileId: z.string(),
+    }),
+  },
   'diagnostics:read': {
     request: z.void(),
     response: z.array(
@@ -245,6 +269,10 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:send'>>
   readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
   readonly closeConversation: (request: IpcRequest<'conversation:close'>) => Promise<{ ok: true }>
+  readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
+  readonly writeSettings: (
+    request: IpcRequest<'settings:write'>
+  ) => Promise<IpcResponse<'settings:write'>>
   readonly history: (
     request: IpcRequest<'conversation:history'>
   ) => Promise<IpcResponse<'conversation:history'>>
