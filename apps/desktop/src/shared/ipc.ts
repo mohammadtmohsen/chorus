@@ -123,6 +123,25 @@ export const IPC_CONTRACT = {
    * back through the renderer, and a cancelled dialog cannot leave the two
    * halves disagreeing about where the conversation is.
    */
+  /**
+   * Reopens what was on screen when the app last ran.
+   *
+   * Called once, at startup. Returns an empty list when nothing was open, which
+   * is the same shape as a first launch.
+   */
+  'conversation:restore': {
+    request: z.object({}),
+    response: z.array(
+      z.object({
+        conversationId: z.string(),
+        participants: z.array(z.enum(['codex', 'claude'])),
+        profileId: z.string(),
+        cwd: z.string(),
+        title: z.string(),
+      })
+    ),
+  },
+
   /** Names a conversation. An empty name asks for the folder's name back. */
   'conversation:rename': {
     request: z.object({ conversationId: z.string(), title: z.string() }),
@@ -323,6 +342,7 @@ export interface ChorusApi {
   readonly removeAgent: (
     request: IpcRequest<'conversation:removeAgent'>
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
+  readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly renameConversation: (
     request: IpcRequest<'conversation:rename'>
   ) => Promise<IpcResponse<'conversation:rename'>>

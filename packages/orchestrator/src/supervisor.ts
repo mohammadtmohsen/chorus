@@ -86,6 +86,24 @@ export class SupervisedSession implements AgentSession {
     return new SupervisedSession(adapter, opts, first, policy, deps)
   }
 
+  /**
+   * Rejoins a provider thread from a previous run of the app.
+   *
+   * The same call the supervisor makes after a crash — the difference is only
+   * how long the gap was. S3a proved the capability: after a SIGKILL,
+   * `thread/resume` brings the thread back with its context intact.
+   */
+  static async resume(
+    adapter: AgentAdapter,
+    sessionRef: string,
+    opts: SessionOpts,
+    policy: SupervisorPolicy = DEFAULT_SUPERVISOR_POLICY,
+    deps: SupervisedSessionDeps = {}
+  ): Promise<SupervisedSession> {
+    const first = await adapter.resume(sessionRef, opts)
+    return new SupervisedSession(adapter, opts, first, policy, deps)
+  }
+
   /** Stable across restarts — `resume` reattaches to the same provider thread. */
   get sessionRef(): string {
     return this.current.sessionRef

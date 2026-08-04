@@ -1154,3 +1154,33 @@ sentence each, …` produced replies from both, with the user's message logged *
   checkboxes, radios or directory field in it; changing a pane to
   workspace-write, `/tmp/chorus-defaults-probe` and codex-only; and the next
   launch opening exactly there, titled `chorus-defaults-probe`. 396 tests.
+
+- **2026-08-04 — the app reopens what was on screen.** Quit with sessions open
+  and they come back: same panes, same names, same folders, same cast, same
+  transcripts — and the agents still remember the conversation.
+
+  `open-sessions.json` holds the list, next to the log and the database.
+  Deliberately not derived from the event log, though it nearly could be: the log
+  says a session started and never ended, which after a crash is
+  indistinguishable from one that was open on purpose — and
+  `reconcileOrphanedSessions` exists to close exactly those. This file answers a
+  different question, and losing it costs a click.
+
+  Agents are **resumed, not restarted**. Both adapters already had it — Codex
+  `thread/resume`, Claude's SDK `resume` — and the supervisor used it for crash
+  recovery, so the only new thing is the entry point and a persisted ref. A
+  resumed agent keeps its own reasoning; one whose thread the provider has
+  forgotten falls back to a fresh session and gets the transcript on the first
+  thing it is asked, the same path an agent joining mid-conversation takes.
+
+  **The bug worth recording**: the first working version restored everything and
+  the agent still answered "this is the first message in our conversation".
+  Claude's real session id arrives with its *first message*, not at `start`, so
+  the ref written when the conversation opened was a placeholder — a resume that
+  silently resumed nothing. Refs are now re-read on every send and again at quit,
+  which is the last and most accurate moment.
+
+  Verified live across a real quit and relaunch: a session renamed "the one to
+  remember", Claude told to say `PINEAPPLE-77`, the app quit and reopened — pane,
+  title, transcript and both agents back — and Claude asked what word it had
+  said, answering `PINEAPPLE-77` from its own resumed thread. 396 tests.

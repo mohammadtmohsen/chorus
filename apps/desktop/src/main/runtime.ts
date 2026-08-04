@@ -22,6 +22,7 @@ import {
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
+import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
 
 /**
  * Wires the domain to real agents inside the main process.
@@ -102,7 +103,9 @@ export class ChorusRuntime {
     private readonly db: SqliteHandle,
     readonly store: EventStore,
     private readonly adapters: Map<AgentId, AgentAdapter>,
-    readonly log: Logger
+    readonly log: Logger,
+    /** Where the note about what was open is kept, next to the log and the db. */
+    private readonly userDataPath: string
   ) {}
 
   static open(
@@ -125,7 +128,7 @@ export class ChorusRuntime {
     if (closed > 0) log.warn('closed sessions orphaned by a crash', { closed })
     log.info('runtime ready', { events: store.lastSeq() })
 
-    return new ChorusRuntime(db, store, adapters ?? defaultAdapters(), log)
+    return new ChorusRuntime(db, store, adapters ?? defaultAdapters(), log, userDataPath)
   }
 
   /** Push target for the renderer. Fires only after a commit. */
@@ -254,6 +257,7 @@ export class ChorusRuntime {
       profile: profile.id,
     })
     this.active.set(conversationId, conversation)
+    this.rememberOpen()
     return {
       conversationId,
       participants: [...conversation.participants.keys()],
@@ -318,6 +322,9 @@ export class ChorusRuntime {
           delete p.catchupBudget
         })
     )
+    // Cheap, and it keeps the resume refs current if the app dies without a
+    // clean quit.
+    this.rememberOpen()
     return { targets: route.targets }
   }
 
@@ -439,11 +446,135 @@ export class ChorusRuntime {
   async closeConversation(conversationId: string): Promise<void> {
     const conversation = this.require(conversationId)
     this.active.delete(conversationId)
+    this.rememberOpen()
     await Promise.all([...conversation.participants.values()].map((p) => p.service.close()))
     this.log.info('conversation closed', {
       conversationId,
       remaining: this.active.size,
     })
+  }
+
+  /**
+   * Reopens what was on screen last time.
+   *
+   * Called once at startup. A conversation whose directory has since been
+   * deleted is dropped rather than failing the restore — the others are still
+   * worth having, and the log keeps the one that could not come back.
+   */
+  async restoreOpenConversations(): Promise<
+    {
+      conversationId: string
+      participants: AgentId[]
+      profileId: string
+      cwd: string
+      title: string
+    }[]
+  > {
+    const saved = readOpenSessions(this.userDataPath)
+    const restored: {
+      conversationId: string
+      participants: AgentId[]
+      profileId: string
+      cwd: string
+      title: string
+    }[] = []
+
+    for (const entry of saved) {
+      if (describeDirectory(entry.cwd) !== null) {
+        this.log.warn('a session could not be reopened', {
+          conversationId: entry.conversationId,
+          cwd: entry.cwd,
+        })
+        continue
+      }
+      const conversation = await this.reopen(entry)
+      if (conversation === null) continue
+      restored.push({
+        conversationId: entry.conversationId,
+        participants: [...conversation.participants.keys()],
+        profileId: conversation.profile.id,
+        cwd: conversation.cwd,
+        title: conversation.title,
+      })
+    }
+
+    this.rememberOpen()
+    if (restored.length > 0) this.log.info('sessions reopened', { count: restored.length })
+    return restored
+  }
+
+  private async reopen(entry: OpenSession): Promise<ActiveConversation | null> {
+    const profile = profileById(entry.profileId)
+    const grants = new SessionGrants()
+    const conversation: ActiveConversation = {
+      conversationId: entry.conversationId,
+      participants: new Map(),
+      grants,
+      profile,
+      cwd: entry.cwd,
+      title: entry.title,
+      lastAddressed: undefined,
+    }
+    const sessionOpts = this.sessionOptsFor(conversation)
+
+    const started = await Promise.allSettled(
+      entry.agents.map(async (agentId) => {
+        const ref = entry.sessionRefs[agentId]
+        const participant = await this.startParticipant(
+          agentId,
+          entry.conversationId,
+          sessionOpts,
+          profile,
+          grants,
+          ref
+        )
+        /*
+         * A resumed agent already holds its own side of the conversation, so it
+         * starts at the end of the log. One that had to be restarted holds
+         * nothing, so it starts at zero and reads the transcript on the first
+         * thing it is asked — the same path an agent joining mid-conversation
+         * takes.
+         */
+        if (ref === undefined || participant.session.sessionRef !== ref) {
+          participant.seenSeq = 0
+          participant.catchupBudget = JOINING_CATCHUP_CHARS
+        }
+        return participant
+      })
+    )
+
+    for (const outcome of started) {
+      if (outcome.status === 'fulfilled') {
+        conversation.participants.set(outcome.value.agentId, outcome.value)
+      } else {
+        this.log.error('an agent could not be reopened', undefined, {
+          conversationId: entry.conversationId,
+          message:
+            outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+        })
+      }
+    }
+
+    if (conversation.participants.size === 0) return null
+    this.active.set(entry.conversationId, conversation)
+    return conversation
+  }
+
+  /** Written after anything that changes what is open, or what it is. */
+  private rememberOpen(): void {
+    writeOpenSessions(
+      this.userDataPath,
+      [...this.active.values()].map((c) => ({
+        conversationId: c.conversationId,
+        agents: [...c.participants.keys()],
+        cwd: c.cwd,
+        profileId: c.profile.id,
+        title: c.title,
+        sessionRefs: Object.fromEntries(
+          [...c.participants.values()].map((p) => [p.agentId, p.session.sessionRef])
+        ),
+      }))
+    )
   }
 
   /** Conversations with live agents right now, newest last. */
@@ -477,6 +608,7 @@ export class ChorusRuntime {
     participant.seenSeq = 0
     participant.catchupBudget = JOINING_CATCHUP_CHARS
     conversation.participants.set(agentId, participant)
+    this.rememberOpen()
     this.log.info('agent joined', { conversationId, agentId })
     return { agentId }
   }
@@ -495,6 +627,7 @@ export class ChorusRuntime {
     conversation.participants.delete(agentId)
     if (conversation.lastAddressed === agentId) conversation.lastAddressed = undefined
     await participant.service.close()
+    this.rememberOpen()
     this.log.info('agent left', {
       conversationId,
       agentId,
@@ -532,6 +665,7 @@ export class ChorusRuntime {
       payload: { type: 'conversation.renamed', title: next, previousTitle: conversation.title },
     })
     conversation.title = next
+    this.rememberOpen()
     return { title: next }
   }
 
@@ -574,6 +708,7 @@ export class ChorusRuntime {
     if (conversation.title === folderName(previous)) {
       this.renameConversation(conversationId, folderName(next))
     }
+    this.rememberOpen()
     this.log.info('project directory changed', { conversationId, from: previous, to: next })
     return { cwd: next, title: conversation.title }
   }
@@ -601,6 +736,7 @@ export class ChorusRuntime {
     for (const participant of conversation.participants.values()) {
       participant.service.setProfile(profile)
     }
+    this.rememberOpen()
     this.log.info('policy changed', { conversationId, from: previous.id, to: profile.id })
     return { profileId: profile.id }
   }
@@ -642,6 +778,16 @@ export class ChorusRuntime {
   }
 
   async close(): Promise<void> {
+    /*
+     * Refs are read here, not only when a session starts.
+     *
+     * Claude's real session id arrives with its first message rather than at
+     * `start`, so the list written when a conversation opened holds a
+     * placeholder. Quitting is the last and most accurate moment to record what
+     * to resume from — without this, every restored Claude began again with no
+     * memory of the conversation it was supposedly continuing.
+     */
+    this.rememberOpen()
     for (const conversation of this.active.values()) {
       await Promise.all([...conversation.participants.values()].map((p) => p.service.close()))
     }
@@ -655,7 +801,9 @@ export class ChorusRuntime {
     conversationId: string,
     sessionOpts: SessionOpts,
     profile: PermissionProfile,
-    grants: SessionGrants
+    grants: SessionGrants,
+    /** A provider thread to rejoin instead of starting a new one. */
+    resumeFrom?: string
   ): Promise<Participant> {
     const adapter = this.adapters.get(agentId)
     if (adapter === undefined) throw new Error(`No adapter registered for "${agentId}"`)
@@ -666,7 +814,20 @@ export class ChorusRuntime {
       throw new Error(`${agentId} is not ready: ${detail}`)
     }
 
-    const session = await SupervisedSession.start(adapter, sessionOpts)
+    /*
+     * Resume when there is a thread to resume.
+     *
+     * A resumed agent still has its own reasoning about the work; a restarted
+     * one has only what the transcript can tell it. Falling back rather than
+     * failing, because a thread the provider has forgotten is a normal thing to
+     * find after a day away — and a session that opens without its context beats
+     * one that refuses to open.
+     */
+    const session = await (resumeFrom === undefined
+      ? SupervisedSession.start(adapter, sessionOpts)
+      : SupervisedSession.resume(adapter, resumeFrom, sessionOpts).catch(() =>
+          SupervisedSession.start(adapter, sessionOpts)
+        ))
     const service = new ConversationService({
       store: this.store,
       conversationId,

@@ -67,6 +67,8 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       agentId: 'codex' | 'claude'
     }) => runtime.removeParticipant(request.conversationId, request.agentId),
 
+    'conversation:restore': () => runtime.restoreOpenConversations(),
+
     'conversation:rename': (request: { conversationId: string; title: string }) =>
       Promise.resolve(runtime.renameConversation(request.conversationId, request.title)),
 

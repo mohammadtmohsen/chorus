@@ -32,6 +32,8 @@ export function App(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
   const [showingSettings, setShowingSettings] = useState(false)
+  /** Null until we know whether anything was open, so the door does not flash. */
+  const [restoring, setRestoring] = useState(true)
   /** The size, shown briefly after it changes. Null when nothing to say. */
   const [zoom, setZoom] = useState<number | null>(null)
 
@@ -46,6 +48,21 @@ export function App(): React.JSX.Element {
         setDefaults({ agents, cwd, profileId })
       })
       .catch(fail(setError))
+
+    /*
+     * Whatever was open last time comes back before anything is drawn.
+     *
+     * Agents are started again by the main process as part of this, so the wait
+     * is real — showing the start screen first and replacing it a second later
+     * would be a worse lie than a moment of nothing.
+     */
+    window.chorus
+      .restoreConversations()
+      .then(setSessions)
+      .catch(fail(setError))
+      .finally(() => {
+        setRestoring(false)
+      })
   }, [])
 
   /**
@@ -146,6 +163,8 @@ export function App(): React.JSX.Element {
       )}
     </>
   )
+
+  if (restoring) return <div className="empty" aria-busy="true" />
 
   if (sessions.length === 0) {
     return (
