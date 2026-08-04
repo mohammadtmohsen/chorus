@@ -1323,3 +1323,27 @@ sentence each, …` produced replies from both, with the user's message logged *
   the bottom-right over 60 events at ~60/s, recording the order after every one.
   It changed **exactly once** and settled: `A B C D` → `B C A D`. The horizontal
   dead-band cases all still behave as before.
+
+- **2026-08-04 — the real cause of the erratic swapping: the wrong axis.**
+  Reported again for diagonal cards. The dead band and the cooldown were both
+  right, and both were being applied to the wrong dimension.
+
+  The axis was chosen from the **pane's own shape** — `width >= height` meant
+  "side by side". Two panes in a 1280×860 window are **640×799 each**: taller
+  than wide, so the code decided them *vertically* while they sat side by side.
+  Left-to-right drags landed in a vertical dead band and did nothing at all;
+  diagonal ones crossed the vertical midpoint on a whim and flipped about. It
+  came from the grid's **column count** now, which is what actually says how the
+  panes are arranged.
+
+  Found by making the probe report what the handler computes rather than only
+  what it produced: `boxWidth 640, boxHeight 799` was the whole answer, sitting
+  in a line I had been ignoring.
+
+  Verified after the fix: three runs of a two-pane swap, all three moving; the
+  dead-band cases unchanged; and the diagonal sweep still changing the order
+  exactly once across 60 events.
+
+  One run in the middle failed to swap and then passed three times unchanged —
+  a stale Electron holding the debug port, which has caught this project before.
+  Worth remembering as a diagnosis before believing a one-off failure.

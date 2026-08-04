@@ -244,11 +244,20 @@ export function Session(props: {
          * gives way, and the margin is what the return trip has to re-cross —
          * so a cursor hovering near a seam changes nothing.
          *
-         * Measured on whichever axis the panes are actually laid out along: side
-         * by side in a wide grid, stacked on a narrow one.
+         * The axis comes from the grid's column count, not the pane's shape.
+         * Two panes side by side in a tall window are each *taller than wide*,
+         * so judging by aspect ratio decided them vertically — and left-to-right
+         * drags did nothing at all while diagonal ones flipped about.
          */
         const box = e.currentTarget.getBoundingClientRect()
-        const horizontal = box.width >= box.height
+        const grid = e.currentTarget.parentElement
+        const columns =
+          grid === null
+            ? 1
+            : window.getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length
+
+        // One column means the panes are stacked, so the question is up or down.
+        const horizontal = columns > 1
         const at = horizontal ? e.clientX : e.clientY
         const start = horizontal ? box.left : box.top
         const extent = horizontal ? box.width : box.height
