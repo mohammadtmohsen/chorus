@@ -198,6 +198,29 @@ describe('process exit', () => {
     await expect(p).rejects.toThrow(/exited/)
   })
 
+  it('notifies onClose subscribers when the process dies', () => {
+    // A session that never learns the connection died never ends its event
+    // stream, so the supervisor's crash detection never fires. Killing a real
+    // app-server is how this was found.
+    const t = fakeTransport()
+    const rpc = client(t)
+    const reasons: string[] = []
+    rpc.onClose((e) => reasons.push(e.message))
+    t.exit(137)
+    t.exit(137) // a second exit must not double-notify
+    expect(reasons).toHaveLength(1)
+    expect(reasons[0]).toMatch(/exited/)
+  })
+
+  it('notifies a late onClose subscriber immediately', () => {
+    const t = fakeTransport()
+    const rpc = client(t)
+    t.exit(1)
+    const reasons: string[] = []
+    rpc.onClose((e) => reasons.push(e.message))
+    expect(reasons).toHaveLength(1)
+  })
+
   it('rejects new requests after close', async () => {
     const t = fakeTransport()
     const rpc = client(t)

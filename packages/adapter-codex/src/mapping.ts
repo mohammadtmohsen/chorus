@@ -11,7 +11,7 @@ import type { AgentId, ApprovalId } from '@chorus/shared'
 
 const AGENT: AgentId = 'codex'
 
-interface MapContext {
+export interface MapContext {
   readonly seq: number
   readonly now: number
   /** How long an unanswered approval may sit before Chorus denies it (plan §4.4). */
@@ -23,7 +23,7 @@ interface Notification {
   params: unknown
 }
 
-interface ThreadItem {
+export interface ThreadItem {
   type: string
   id: string
   text?: string
@@ -185,10 +185,20 @@ function mapItem(
 export function mapApprovalRequest(
   method: string,
   params: unknown,
-  ctx: MapContext
+  ctx: MapContext,
+  /**
+   * Looks up a previously streamed item by id. `item/fileChange/requestApproval`
+   * carries **no** changes — only `itemId` — so without this the card renders
+   * "Edit " with no paths. Verified against the generated bindings after the
+   * live app showed exactly that.
+   */
+  lookupItem?: (itemId: string) => ThreadItem | undefined
 ): ApprovalRequest | null {
   const p = (params ?? {}) as Record<string, unknown>
-  const id = str(p['itemId'] ?? p['callId'], '') as ApprovalId
+  const itemId = str(p['itemId'], '')
+  // Several approvals can share one itemId (the zsh-exec-bridge case), so a
+  // distinct approvalId wins when the server supplies one.
+  const id = (str(p['approvalId'], '') || itemId || str(p['callId'], '')) as ApprovalId
   const expiresAt = ctx.now + ctx.approvalTtlMs
   const reason = typeof p['reason'] === 'string' ? { reason: p['reason'] } : {}
 
@@ -205,20 +215,20 @@ export function mapApprovalRequest(
         withNetwork: p['networkAccess'] === true,
       }
 
-    case 'item/fileChange/requestApproval':
+    case 'item/fileChange/requestApproval': {
+      const item = lookupItem?.(itemId)
       return {
         id,
         agentId: AGENT,
         kind: 'fileChange',
         ...reason,
         expiresAt,
-        files: ((p['changes'] ?? []) as { path: string; diff?: string; patch?: string }[]).map(
-          (c) => ({
-            path: c.path,
-            patch: c.diff ?? c.patch ?? '',
-          })
-        ),
+        files: (item?.changes ?? []).map((c) => ({
+          path: c.path,
+          patch: c.diff ?? c.patch ?? '',
+        })),
       }
+    }
 
     case 'item/permissions/requestApproval': {
       const requested = (p['permissions'] ?? p['requested'] ?? {}) as Record<string, unknown>

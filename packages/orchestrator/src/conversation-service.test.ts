@@ -224,6 +224,50 @@ describe('crash recovery', () => {
   })
 })
 
+describe('approval decisions', () => {
+  it('records the decision in the log, not just on the wire', async () => {
+    // Answering the session directly would satisfy the agent while leaving no
+    // trace -- and the UI clears its card on approval.decided, so the card would
+    // also hang around forever. Both were real, found by driving the live app.
+    const s = session()
+    await service.decideApproval('ap1', { outcome: 'allow', scope: 'once' })
+
+    const decided = store.read(CONV, { types: ['approval.decided'] })[0]
+    expect(decided?.payload).toMatchObject({
+      approvalId: 'ap1',
+      outcome: 'allow',
+      scope: 'once',
+      decidedBy: 'user',
+      policyRuleId: null,
+    })
+    expect(s.decisions).toEqual([{ id: 'ap1', decision: { outcome: 'allow', scope: 'once' } }])
+  })
+
+  it('attributes an auto-decision to the rule that made it', async () => {
+    await service.decideApproval(
+      'ap2',
+      { outcome: 'deny', message: 'outside project root' },
+      'policy',
+      'deny-outside-root'
+    )
+    expect(store.read(CONV, { types: ['approval.decided'] })[0]?.payload).toMatchObject({
+      decidedBy: 'policy',
+      policyRuleId: 'deny-outside-root',
+      scope: null,
+    })
+  })
+
+  it('flushes pending deltas before recording the decision', async () => {
+    const s = session()
+    s.emit({ type: 'message.delta', itemRef: 'm1', text: 'I need to write a file.' })
+    await tick()
+    await service.decideApproval('ap3', { outcome: 'allow', scope: 'session' })
+
+    const order = types()
+    expect(order.indexOf('agent.message.delta')).toBeLessThan(order.indexOf('approval.decided'))
+  })
+})
+
 describe('close', () => {
   it('flushes pending text and records why the session ended', async () => {
     const s = session()

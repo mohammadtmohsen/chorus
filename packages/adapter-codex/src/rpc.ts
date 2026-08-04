@@ -56,6 +56,7 @@ export class JsonRpcClient {
   private readonly transport: Transport
   private readonly pending = new Map<number, Pending>()
   private readonly notificationHandlers = new Set<(method: string, params: unknown) => void>()
+  private readonly closeHandlers = new Set<(reason: Error) => void>()
   private readonly requestTimeoutMs: number
   private readonly maxOverloadRetries: number
   private readonly baseBackoffMs: number
@@ -89,6 +90,19 @@ export class JsonRpcClient {
   onNotification(handler: (method: string, params: unknown) => void): () => void {
     this.notificationHandlers.add(handler)
     return () => this.notificationHandlers.delete(handler)
+  }
+
+  /**
+   * Fires when the connection is gone — the process exited, or we closed it.
+   *
+   * Without this a session's event stream never ends, and the supervisor's crash
+   * detection (which keys on exactly that) never fires. Found by killing a real
+   * app-server and watching nothing happen.
+   */
+  onClose(handler: (reason: Error) => void): () => void {
+    this.closeHandlers.add(handler)
+    if (this.closed && this.closeReason !== null) handler(this.closeReason)
+    return () => this.closeHandlers.delete(handler)
   }
 
   /** Only one handler — approvals must have exactly one authority. */
@@ -200,6 +214,7 @@ export class JsonRpcClient {
   }
 
   private failAll(reason: Error): void {
+    const first = !this.closed
     this.closed = true
     this.closeReason = reason
     for (const [, entry] of this.pending) {
@@ -207,5 +222,6 @@ export class JsonRpcClient {
       entry.reject(reason)
     }
     this.pending.clear()
+    if (first) for (const handler of this.closeHandlers) handler(reason)
   }
 }

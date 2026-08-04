@@ -2,18 +2,18 @@
 
 Plan: [plan.md](./plan.md)
 
-| Milestone                          | State                                              |
-| ---------------------------------- | -------------------------------------------------- |
-| M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes       |
-| M1 Event store & orchestrator      | **Core complete** — read API deferred to M4        |
-| M2 Codex adapter                   | **Core complete** — live approval/kill checks left |
-| M3 Claude adapter                  | Not started                                        |
-| M4 Shared conversation UI          | Not started                                        |
-| M5 Approvals & permission profiles | Not started                                        |
-| M6 Handoffs                        | Not started                                        |
-| M7 Workspace & review              | Not started                                        |
-| M8 Hardening                       | Not started                                        |
-| M9 Distribution                    | Deferred — decision point after M8 dogfooding      |
+| Milestone                          | State                                          |
+| ---------------------------------- | ---------------------------------------------- |
+| M0 Foundations & spikes            | **Complete** — infrastructure + all 5 spikes   |
+| M1 Event store & orchestrator      | **Core complete** — read API deferred to M4    |
+| M2 Codex adapter                   | **Complete** — all exit criteria verified live |
+| M3 Claude adapter                  | Not started                                    |
+| M4 Shared conversation UI          | Not started                                    |
+| M5 Approvals & permission profiles | Not started                                    |
+| M6 Handoffs                        | Not started                                    |
+| M7 Workspace & review              | Not started                                    |
+| M8 Hardening                       | Not started                                    |
+| M9 Distribution                    | Deferred — decision point after M8 dogfooding  |
 
 ## Log
 
@@ -190,3 +190,35 @@ Plan: [plan.md](./plan.md)
   Still unverified against the live app (unit-tested only): a command approval
   round-trip, interrupt, and recovery from a forced kill. The read-only sandbox
   means no approval has actually fired in anger yet. Worth doing before M3.
+
+- **2026-08-04 — M2 complete.** All five exit criteria now verified against the
+  live app, not just unit-tested. 131 tests, all gates green.
+
+  Driving the real app end to end found **three bugs that every unit test had
+  passed over**:
+
+  1. **A file-change approval card rendered "Edit " with no path.**
+     `FileChangeRequestApprovalParams` carries _no_ changes — only an `itemId`.
+     The payload arrived earlier as a separate `item/started`. The session now
+     keeps a bounded cache of recent items so the card can be composed by
+     joining on that id. Also learned that several approvals can share one
+     `itemId` (the zsh-exec-bridge case), so a distinct `approvalId` wins when
+     the server sends one — keying on `itemId` alone would make them collide.
+  2. **Approval decisions were never written to the log.** The runtime answered
+     the session directly, which satisfied the agent but left no audit trail —
+     violating §4.4's "every decision, including auto-allows, is recorded" — and
+     left the approval card on screen forever, since the UI clears it on
+     `approval.decided`. Decisions now route through `ConversationService`.
+  3. **A killed app-server was never detected.** `JsonRpcClient` failed its
+     in-flight promises but nothing ended the session's event stream, and the
+     supervisor's crash detection keys on exactly that. The session appeared
+     alive and silently stopped working. The client now exposes `onClose`.
+
+  Verified live afterwards: an approval card showing the real path, cleared on
+  decision, with the file actually written to disk; a Stop button producing
+  "Stopped." rather than an error; and `kill -9` on the app-server producing
+  "agent codex exited unexpectedly; restarting" followed by a working session.
+
+  All three have regression tests now. The lesson worth keeping: the unit tests
+  were not wrong, they were testing shapes I had inferred from prose docs rather
+  than from the wire.

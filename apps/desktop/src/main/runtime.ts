@@ -3,7 +3,7 @@ import { CodexAdapter } from '@chorus/adapter-codex'
 import type { AgentAdapter, ApprovalDecision } from '@chorus/agent-protocol'
 import { EventStore, openSqlite, type StoredEvent, type SqliteHandle } from '@chorus/event-store'
 import { ConversationService, SupervisedSession } from '@chorus/orchestrator'
-import { newConversationId, type AgentId, type ApprovalId } from '@chorus/shared'
+import { newConversationId, type AgentId } from '@chorus/shared'
 
 /**
  * Wires the domain to a real agent inside the main process.
@@ -104,7 +104,7 @@ export class ChorusRuntime {
     approvalId: string,
     decision: ApprovalDecision
   ): Promise<void> {
-    await this.require(conversationId).session.respondToApproval(approvalId as ApprovalId, decision)
+    await this.require(conversationId).service.decideApproval(approvalId, decision)
   }
 
   /** Replays a conversation from the log — the only source of truth (S3). */

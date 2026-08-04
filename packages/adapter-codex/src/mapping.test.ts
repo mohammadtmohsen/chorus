@@ -148,6 +148,48 @@ describe('approval requests', () => {
     })
   })
 
+  it('joins a file-change approval to the item that carried the paths', () => {
+    // FileChangeRequestApprovalParams carries NO changes -- only an itemId. The
+    // live app rendered "Edit " with no path until this lookup existed.
+    const item = {
+      type: 'fileChange',
+      id: 'i9',
+      changes: [{ path: '/repo/a.ts', diff: '@@ -1 +1 @@' }],
+    }
+    const r = mapApprovalRequest('item/fileChange/requestApproval', { itemId: 'i9' }, CTX, (id) =>
+      id === 'i9' ? item : undefined
+    )
+    expect(r).toMatchObject({
+      kind: 'fileChange',
+      files: [{ path: '/repo/a.ts', patch: '@@ -1 +1 @@' }],
+    })
+  })
+
+  it('degrades to an empty file list when the item was never seen', () => {
+    const r = mapApprovalRequest('item/fileChange/requestApproval', { itemId: 'gone' }, CTX)
+    expect(r).toMatchObject({ kind: 'fileChange', files: [] })
+  })
+
+  it('prefers approvalId over itemId when the server supplies one', () => {
+    // Several approvals can share an itemId (the zsh-exec-bridge case), so
+    // keying on itemId alone would make them collide.
+    const r = mapApprovalRequest(
+      'item/commandExecution/requestApproval',
+      { itemId: 'shared', approvalId: 'cb-1', command: 'ls' },
+      CTX
+    )
+    expect(r?.id).toBe('cb-1')
+  })
+
+  it('accepts the command as a string, which is how it arrives', () => {
+    const r = mapApprovalRequest(
+      'item/commandExecution/requestApproval',
+      { itemId: 'i1', command: 'git status' },
+      CTX
+    )
+    expect(r).toMatchObject({ kind: 'command', command: ['git status'] })
+  })
+
   it('sets a deadline, because Codex imposes none', () => {
     // An unanswered requestApproval hangs the turn forever (plan §4.4).
     const r = mapApprovalRequest(

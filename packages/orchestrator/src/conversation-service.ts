@@ -2,9 +2,11 @@ import type {
   AgentAdapter,
   AgentEvent,
   AgentSession,
+  ApprovalDecision,
   HealthStatus,
   SessionOpts,
 } from '@chorus/agent-protocol'
+import type { ApprovalId } from '@chorus/shared'
 import type { AppendInput, ChorusEventPayload, EventStore } from '@chorus/event-store'
 import { DeltaBuffer, type Scheduler } from './delta-buffer.js'
 
@@ -109,6 +111,33 @@ export class ConversationService {
   async interrupt(): Promise<void> {
     this.interruptRequested = true
     await this.session?.interrupt()
+  }
+
+  /**
+   * Answers an approval **and records the decision**.
+   *
+   * Routing this through the service rather than straight to the session is what
+   * makes "human controlled" auditable (plan §4.4): every decision lands in the
+   * log with who made it and, for an auto-decision, which rule did. Talking to
+   * the session directly would answer the agent while leaving no trace — and
+   * would leave the pending card on screen forever, since the UI clears it on
+   * `approval.decided`.
+   */
+  async decideApproval(
+    approvalId: string,
+    decision: ApprovalDecision,
+    decidedBy: 'user' | 'policy' | 'system' = 'user',
+    policyRuleId: string | null = null
+  ): Promise<void> {
+    this.lifecycle({
+      type: 'approval.decided',
+      approvalId,
+      outcome: decision.outcome,
+      scope: decision.outcome === 'allow' ? decision.scope : null,
+      decidedBy,
+      policyRuleId,
+    })
+    await this.session?.respondToApproval(approvalId as ApprovalId, decision)
   }
 
   /** Resolves once the event stream has ended and everything is durable. */
