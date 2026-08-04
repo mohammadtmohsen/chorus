@@ -1452,3 +1452,27 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   Verified live: one pane in ~1s with `codex` in and `claude` out, and claude
   joining on a click.
+
+- **2026-08-04 — fixed: one session became three across restarts.** Reported with
+  a screenshot, and the saved file confirmed it: three entries, one with both
+  agents and two codex-only — the shape of a session opened automatically rather
+  than restored.
+
+  My own two changes collided. The placeholder was given a 1.5s deadline so a
+  stuck provider could not leave a blank window; the app was then made to open a
+  session when none was restored. Reopening **starts agents**, so it routinely
+  takes longer than the deadline — and "the placeholder gave up" was being read
+  as "nothing was open". A second session opened on top of the one still coming
+  back, both were saved, and every launch added another.
+
+  Two changes, because the second is what stops it being lossy:
+  - **Opening a session waits for restore to actually finish**, not for the
+    placeholder's deadline. They were the same flag and are now two: one for how
+    long to show nothing, one for whether the answer has arrived.
+  - **Restore merges rather than assigns.** A session started while restore was
+    in flight is a real session, and replacing the list dropped it from the grid
+    while leaving it running in the background — which is how the extras stayed
+    invisible until the next launch.
+
+  Verified live: five launches in a row, each showing the same single pane with
+  the same conversation id and one saved entry.

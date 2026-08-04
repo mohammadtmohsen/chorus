@@ -35,8 +35,18 @@ export function App(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
   const [showingSettings, setShowingSettings] = useState(false)
-  /** Null until we know whether anything was open, so the door does not flash. */
+  /** Holds the placeholder up briefly, so a restored grid does not flash past. */
   const [restoring, setRestoring] = useState(true)
+  /**
+   * Whether restore has actually *finished*, which is a different question.
+   *
+   * The placeholder gives up after a moment so a stuck provider cannot leave a
+   * blank window — but opening a session must wait for the real answer. Deciding
+   * "nothing was open" from the placeholder's deadline opened a second session
+   * on top of the one still being restored, and the pair were then saved, so
+   * every launch added another.
+   */
+  const [restored, setRestored] = useState(false)
   /*
    * The pane being dragged, in a ref rather than state.
    *
@@ -78,11 +88,20 @@ export function App(): React.JSX.Element {
 
     window.chorus
       .restoreConversations()
-      .then(setSessions)
+      .then((reopened) => {
+        // Merged, not assigned: a session started while this was in flight is a
+        // real session, and replacing the list would drop it from the grid while
+        // leaving it running.
+        setSessions((current) => [
+          ...reopened.filter((r) => !current.some((s) => s.conversationId === r.conversationId)),
+          ...current,
+        ])
+      })
       .catch(fail(setError))
       .finally(() => {
         clearTimeout(grace)
         setRestoring(false)
+        setRestored(true)
       })
 
     return () => {
@@ -294,9 +313,9 @@ export function App(): React.JSX.Element {
    * the panel up until you ask again.
    */
   useEffect(() => {
-    if (restoring || starting || sessions.length > 0 || error !== null) return
+    if (!restored || starting || sessions.length > 0 || error !== null) return
     start()
-  }, [restoring, starting, sessions.length, error, start])
+  }, [restored, starting, sessions.length, error, start])
 
   const close = useCallback((conversationId: string) => {
     // Removed from the grid first: the agents take a moment to shut down, and
