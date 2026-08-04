@@ -1,6 +1,6 @@
 import type { ApprovalId } from '@chorus/shared'
 import { describe, expect, it } from 'vitest'
-import { mapSdkMessage, mapToolPermission, trackStreamMessage } from './mapping.js'
+import { mapSdkMessage, mapToolPermission, trackBashTools, trackStreamMessage } from './mapping.js'
 
 const CTX = { seq: 1, now: 1_000, approvalTtlMs: 60_000 }
 const ID = 'ap-1' as ApprovalId
@@ -248,5 +248,69 @@ describe('tool permission mapping', () => {
     // sdk.d.ts: "blocked indefinitely — permission prompts have no park
     // deadline". Chorus owns the timeout on both providers (plan §4.4).
     expect(perm('Bash', { command: 'ls' }).expiresAt).toBe(CTX.now + CTX.approvalTtlMs)
+  })
+})
+
+describe('tool results', () => {
+  const CTX = { seq: 0, now: 1_000, approvalTtlMs: 60_000 }
+
+  const bashCall = (id: string, command: string): Record<string, unknown> => ({
+    type: 'assistant',
+    message: { id: 'm1', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] },
+  })
+
+  const toolResult = (id: string, content: unknown, isError = false): Record<string, unknown> => ({
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }],
+    },
+  })
+
+  it('reports a Bash result as command output and completion', () => {
+    // Without this every Claude command hung in the transcript with no result.
+    const ids = trackBashTools(bashCall('t1', 'pnpm test') as never, new Set())
+    const events = mapSdkMessage(toolResult('t1', 'all green') as never, {
+      ...CTX,
+      bashToolIds: ids,
+    })
+
+    expect(events.map((e) => e.type)).toEqual(['command.output', 'command.completed'])
+    expect(events[0]).toMatchObject({ itemRef: 't1', stream: 'stdout', chunk: 'all green' })
+    expect(events[1]).toMatchObject({ itemRef: 't1', exitCode: 0 })
+  })
+
+  it('marks a failed result as stderr and a non-zero exit', () => {
+    // Claude reports success or failure, never a number; "did it fail" is real.
+    const ids = trackBashTools(bashCall('t1', 'ls /nope') as never, new Set())
+    const events = mapSdkMessage(toolResult('t1', 'No such file or directory', true) as never, {
+      ...CTX,
+      bashToolIds: ids,
+    })
+
+    expect(events[0]).toMatchObject({ stream: 'stderr' })
+    expect(events[1]).toMatchObject({ exitCode: 1 })
+  })
+
+  it('reads content given as blocks rather than a string', () => {
+    const ids = trackBashTools(bashCall('t1', 'echo hi') as never, new Set())
+    const events = mapSdkMessage(toolResult('t1', [{ type: 'text', text: 'hi' }]) as never, {
+      ...CTX,
+      bashToolIds: ids,
+    })
+    expect(events[0]).toMatchObject({ chunk: 'hi' })
+  })
+
+  it('ignores results from tools that were not commands', () => {
+    // Another tool's result is the agent's own working, and it narrates that.
+    const ids = trackBashTools(bashCall('t1', 'ls') as never, new Set())
+    expect(
+      mapSdkMessage(toolResult('t9', 'file contents') as never, { ...CTX, bashToolIds: ids })
+    ).toEqual([])
+  })
+
+  it('emits nothing when the result carries no output', () => {
+    const ids = trackBashTools(bashCall('t1', 'true') as never, new Set())
+    const events = mapSdkMessage(toolResult('t1', '') as never, { ...CTX, bashToolIds: ids })
+    expect(events.map((e) => e.type)).toEqual(['command.completed'])
   })
 })

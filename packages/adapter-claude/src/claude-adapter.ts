@@ -18,7 +18,7 @@ import type {
   SessionOpts,
 } from '@chorus/agent-protocol'
 import { AsyncQueue, newApprovalId, type AgentId, type ApprovalId } from '@chorus/shared'
-import { mapSdkMessage, mapToolPermission, trackStreamMessage } from './mapping.js'
+import { mapSdkMessage, mapToolPermission, trackBashTools, trackStreamMessage } from './mapping.js'
 
 const run = promisify(execFile)
 
@@ -76,6 +76,8 @@ export class ClaudeSession implements AgentSession {
   private interruptRequested = false
   /** Id of the message currently streaming, from its `message_start`. */
   private streamMessageRef: string | null = null
+  /** `tool_use` ids that were Bash calls, so their results read as commands. */
+  private bashToolIds: ReadonlySet<string> = new Set()
 
   constructor(
     sessionRef: string,
@@ -181,12 +183,16 @@ export class ClaudeSession implements AgentSession {
         }
 
         this.streamMessageRef = trackStreamMessage(message as never, this.streamMessageRef)
+        // Tracked before mapping: the tool_use and its id arrive in the same
+        // message that has to be mapped with the id already known.
+        this.bashToolIds = trackBashTools(message as never, this.bashToolIds)
 
         for (const event of mapSdkMessage(message as never, {
           seq: this.seq + 1,
           now: this.now(),
           approvalTtlMs: this.approvalTtlMs,
           streamMessageRef: this.streamMessageRef,
+          bashToolIds: this.bashToolIds,
         })) {
           this.emit(this.correctInterrupt(event))
         }

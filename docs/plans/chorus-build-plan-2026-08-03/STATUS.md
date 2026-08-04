@@ -600,7 +600,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   watermark over the shared log; a handoff advances it, because the brief is
   already the context.
 
-  Only what was *said* is replayed. Commands, reasoning and approvals belong to
+  Only what was _said_ is replayed. Commands, reasoning and approvals belong to
   the agent that ran them.
 
   Verified live with both agents: Claude was asked for a specific sentence, then
@@ -609,3 +609,32 @@ sentence each, …` produced replies from both, with the user's message logged *
   correctly from context.
 
   337 tests.
+
+- **2026-08-04 — catch-up widened from speech to activity.** Replaying only what
+  was *said* was too thin: an agent's summary of a failing test run is not the
+  failing test run, and "why did that fail" is exactly the question the other
+  agent gets asked. Catch-up now also carries commands and how they exited, files
+  changed, and errors that stuck — one line each, plus the tail of the output
+  when a command failed, which is the only time anyone asks for it.
+
+  Reasoning stays out (private working, and enormous), as do deltas, approvals
+  and session bookkeeping. The switch over event types is exhaustive rather than
+  defaulted, so a new event type has to be considered here instead of silently
+  vanishing from the shared conversation. When the budget binds, activity is shed
+  before speech: losing "claude ran the tests" costs less than losing what claude
+  said about them.
+
+  Verifying it live exposed a real gap underneath: **the Claude adapter never
+  emitted command output or completion at all.** Tool results come back as a
+  `user` message, and that case was being dropped, so every Claude command sat in
+  the transcript with no result and there was nothing for catch-up to carry.
+  `mapToolResults` now maps `tool_result` blocks for known Bash calls into
+  `command.output` and `command.completed`. Claude reports success or failure and
+  never an exit code, so `is_error` becomes 1 and anything else 0 — the number is
+  not real, but "did it fail" is.
+
+  Verified live: Claude ran `ls /definitely-not-a-real-directory-xyz`, and Codex,
+  forbidden from running anything or reading any file, reported the command, exit
+  code 1, and the literal `No such file or directory`.
+
+  350 tests.

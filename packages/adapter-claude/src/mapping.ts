@@ -27,6 +27,11 @@ export interface MapContext {
    * fragments rather than appending a duplicate.
    */
   readonly streamMessageRef?: string | null
+  /**
+   * `tool_use` ids known to be Bash calls, so their results can be reported as
+   * command output rather than as an anonymous tool result.
+   */
+  readonly bashToolIds?: ReadonlySet<string>
 }
 
 /** Structurally what we need, without importing the SDK's full message union. */
@@ -60,6 +65,9 @@ interface ContentBlock {
   id?: string
   name?: string
   input?: Record<string, unknown>
+  tool_use_id?: string
+  content?: unknown
+  is_error?: boolean
 }
 
 /**
@@ -84,6 +92,12 @@ export function mapSdkMessage(msg: SdkMessageLike, ctx: MapContext): AgentEvent[
 
     case 'assistant':
       return mapAssistant(msg, base, ctx)
+
+    case 'user':
+      // Tool results come back as a user message. Dropping them left every
+      // Claude command hanging in the transcript with no result, and left the
+      // other agent nothing to read when asked why something failed.
+      return mapToolResults(msg, base, ctx)
 
     case 'result':
       return mapResult(msg, ctx)
@@ -172,6 +186,83 @@ function mapAssistant(
   }
 
   return events
+}
+
+/**
+ * `tool_result` blocks → `command.output` and `command.completed`.
+ *
+ * Only for tool calls we already reported as commands; every other tool's result
+ * is the agent's own working, and the agent narrates what it found.
+ *
+ * Claude reports success or failure, never an exit code, so `is_error` becomes 1
+ * and anything else 0. The number is not real, but "did it fail" is, and that is
+ * the question the transcript has to be able to answer.
+ */
+function mapToolResults(
+  msg: SdkMessageLike,
+  base: { agentId: AgentId; at: number; raw: unknown },
+  ctx: MapContext
+): AgentEvent[] {
+  const known = ctx.bashToolIds
+  if (known === undefined || known.size === 0) return []
+
+  const events: AgentEvent[] = []
+  for (const block of (msg.message?.content ?? []) as ContentBlock[]) {
+    const ref = block.tool_use_id
+    if (block.type !== 'tool_result' || ref === undefined || !known.has(ref)) continue
+
+    const text = readResultText(block.content)
+    if (text !== '') {
+      events.push({
+        ...base,
+        seq: ctx.seq + events.length,
+        type: 'command.output',
+        itemRef: ref,
+        stream: block.is_error === true ? 'stderr' : 'stdout',
+        chunk: text,
+      })
+    }
+    events.push({
+      ...base,
+      seq: ctx.seq + events.length,
+      type: 'command.completed',
+      itemRef: ref,
+      exitCode: block.is_error === true ? 1 : 0,
+    })
+  }
+  return events
+}
+
+/** `content` is a string on the simple path and blocks on the rich one. */
+function readResultText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((part) =>
+      typeof part === 'object' && part !== null && 'text' in part
+        ? ((part as { text?: unknown }).text ?? '')
+        : ''
+    )
+    .filter((part): part is string => typeof part === 'string')
+    .join('')
+}
+
+/**
+ * Remembers which `tool_use` ids were Bash calls.
+ *
+ * Kept for the life of the session rather than cleared on completion: a result
+ * can arrive after an interrupt, and one string per command run is not a leak
+ * worth the ordering subtleties of removing them.
+ */
+export function trackBashTools(msg: SdkMessageLike, current: ReadonlySet<string>): Set<string> {
+  const next = new Set(current)
+  if (msg.type !== 'assistant') return next
+  for (const block of (msg.message?.content ?? []) as ContentBlock[]) {
+    if (block.type === 'tool_use' && block.name === 'Bash' && block.id !== undefined) {
+      next.add(block.id)
+    }
+  }
+  return next
 }
 
 function mapResult(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {
