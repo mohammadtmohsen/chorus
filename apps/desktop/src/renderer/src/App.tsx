@@ -49,14 +49,16 @@ export function App(): React.JSX.Element {
   }, [])
 
   /**
-   * Applied immediately and written in the background.
+   * Remembers a change made inside a session as the next one's starting point.
    *
-   * Waiting for the disk before the checkbox moves would make the sheet feel
-   * broken over a write that has never once failed.
+   * With the duplicate controls gone from Settings, this is the only thing that
+   * still writes defaults — and it is the honest rule: a new session starts
+   * where the last one was, rather than snapping back to something you set once
+   * and forgot. A patch, so one field cannot overwrite another.
    */
-  const changeDefaults = useCallback((next: Defaults) => {
-    setDefaults(next)
-    window.chorus.writeSettings(next).catch(fail(setError))
+  const remember = useCallback((patch: Partial<Defaults>) => {
+    setDefaults((current) => ({ ...current, ...patch }))
+    window.chorus.writeSettings(patch).catch(fail(setError))
   }, [])
 
   useEffect(() => {
@@ -123,10 +125,7 @@ export function App(): React.JSX.Element {
     <>
       {showingSettings && (
         <Settings
-          defaults={defaults}
           probes={probes}
-          profiles={profiles}
-          onChange={changeDefaults}
           onClose={() => {
             setShowingSettings(false)
           }}
@@ -200,6 +199,7 @@ export function App(): React.JSX.Element {
             key={session.conversationId}
             session={session}
             onTitle={(title) => {
+              // Names belong to one conversation; they are not a starting point.
               setSessions((current) =>
                 current.map((s) =>
                   s.conversationId === session.conversationId ? { ...s, title } : s
@@ -213,6 +213,7 @@ export function App(): React.JSX.Element {
                   s.conversationId === session.conversationId ? { ...s, profileId } : s
                 )
               )
+              remember({ profileId })
             }}
             installed={(probes ?? []).filter((probe) => probe.installed).map((probe) => probe.id)}
             onParticipants={(participants) => {
@@ -221,6 +222,9 @@ export function App(): React.JSX.Element {
                   s.conversationId === session.conversationId ? { ...s, participants } : s
                 )
               )
+              // Only when somebody is left: an empty room is a step on the way to
+              // swapping agents, not a choice about how the next one should open.
+              if (participants.length > 0) remember({ agents: participants })
             }}
             onCwd={(cwd, title) => {
               // The title comes with it: a name nobody chose follows the folder.
@@ -229,6 +233,7 @@ export function App(): React.JSX.Element {
                   s.conversationId === session.conversationId ? { ...s, cwd, title } : s
                 )
               )
+              remember({ cwd })
             }}
             onClose={close}
           />

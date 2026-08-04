@@ -42,8 +42,9 @@
   "settings": {
     "open": "Settings",
     "heading": "Settings",
-    "subhead": "What a new session starts with",
-    "saved": "Saved as you change them",
+    "subhead": "About this machine",
+    "installed": "Agents found",
+    "paneNote": "Agents, folder and permissions belong to each session — change them in its own bar. A new session starts where the last one was.",
     "done": "Done"
   },
   "policy": {

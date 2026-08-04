@@ -1110,7 +1110,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   A title nobody has touched **follows the folder**: change the directory and it
   renames itself. One that was chosen deliberately is left alone, compared
-  against what the default *would* have been rather than against a flag.
+  against what the default _would_ have been rather than against a flag.
   `conversation.renamed` records it, and `setCwd`/`chooseCwd` return the title
   along with the path so the pane and the log cannot disagree.
 
@@ -1129,3 +1129,28 @@ sentence each, …` produced replies from both, with the user's message logged *
   "refactor the adapter", that name surviving a folder change, and a second
   untouched session renaming itself to `chorus-title-probe` when its folder
   moved. 396 tests.
+
+- **2026-08-04 — Settings holds only what a session cannot answer.** The cast,
+  the directory and the permission profile are gone from it. All three live in
+  the pane that owns them, and two controls with the same name doing different
+  things — one changing the conversation you are looking at, the other the next
+  one you open — is worse than one.
+
+  What remains is what no session can tell you: which agents this machine has and
+  at what version, and the way into the log.
+
+  The defaults did not disappear with the controls; they changed source. **A new
+  session starts where the last one was** — a pane changing its profile, folder
+  or cast writes that back as the starting point. That is the honest rule once
+  the form is gone, and it beats snapping back to something set once and
+  forgotten.
+
+  One case is deliberately excluded: emptying a room writes nothing. Removing
+  both agents is a step on the way to swapping them, not a statement about how
+  the next session should open. Names are excluded too — a title belongs to one
+  conversation.
+
+  Verified live across a relaunch: Settings showing only versions and Logs, no
+  checkboxes, radios or directory field in it; changing a pane to
+  workspace-write, `/tmp/chorus-defaults-probe` and codex-only; and the next
+  launch opening exactly there, titled `chorus-defaults-probe`. 396 tests.
