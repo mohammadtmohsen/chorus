@@ -29,7 +29,7 @@
     "openCount_other": "{{count}} sessions open",
     "sessionLabel": "Session in {{path}}",
     "editPath": "Change the project directory",
-    "revealPath": "Show {{path}} in Finder",
+    "choosePath": "Choose the project folder",
     "addAgent": "Bring {{agent}} in — it reads the conversation so far",
     "removeAgent": "Take {{agent}} out of this conversation",
     "nobodyHere": "Nobody is in this conversation. Add an agent to start again.",

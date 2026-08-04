@@ -196,7 +196,13 @@ export function Session(props: {
   )
 
   return (
-    <section className="pane" aria-label={t('conversation.sessionLabel', { path: cwd })}>
+    <section
+      className="pane"
+      // Which conversation this pane is, for anything outside React that needs
+      // to address it — a driver, a bug report, the element inspector.
+      data-conversation={conversationId}
+      aria-label={t('conversation.sessionLabel', { path: cwd })}
+    >
       {error !== null && (
         <p className="notice notice--bad" role="alert">
           {error}
@@ -443,18 +449,23 @@ export function Session(props: {
                 <button
                   type="button"
                   className="path path--button"
-                  title={t('conversation.revealPath', { path: cwd })}
+                  title={t('conversation.choosePath')}
                   onClick={() => {
-                    window.chorus.revealProjectDirectory({ conversationId }).catch(fail(setError))
+                    window.chorus
+                      .chooseProjectDirectory({ conversationId })
+                      .then(({ cwd: applied }) => {
+                        props.onCwd(applied)
+                      })
+                      .catch(fail(setError))
                   }}
                 >
                   {shortenPath(cwd)}
                 </button>
                 {/*
-                  Separate from the path itself. Clicking a path should do the
-                  obvious thing — show you the folder — and a control that both
-                  opens Finder and starts an edit depending on where you land is
-                  a control you have to aim at.
+                  Two ways in, because they suit different hands. The path opens
+                  the folder chooser, which is how you find a directory you would
+                  have to remember to type. The ✎ opens the field, which is how
+                  you paste one you already have.
                 */}
                 <button
                   type="button"

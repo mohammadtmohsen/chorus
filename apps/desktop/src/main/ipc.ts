@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildDiagnostics } from '@chorus/shared'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
   IPC_CONTRACT,
@@ -17,7 +17,14 @@ type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>>
 
 const OK = { ok: true } as const
 
-function buildHandlers(runtime: ChorusRuntime): Handlers {
+/**
+ * Exported for tests.
+ *
+ * The folder chooser is a native modal: it cannot be opened and dismissed by a
+ * driver, so the only way to exercise picking *and* cancelling is to call the
+ * handler with `dialog` stubbed.
+ */
+export function buildHandlers(runtime: ChorusRuntime): Handlers {
   return {
     'app:getInfo': () =>
       Promise.resolve({
@@ -60,12 +67,30 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       agentId: 'codex' | 'claude'
     }) => runtime.removeParticipant(request.conversationId, request.agentId),
 
-    'conversation:reveal': async (request: { conversationId: string }) => {
-      const failure = await shell.openPath(runtime.projectDirectory(request.conversationId))
-      // `openPath` resolves with a message rather than rejecting, so an
-      // unopenable directory would otherwise look like success.
-      if (failure !== '') throw new Error(failure)
-      return OK
+    'conversation:chooseCwd': async (request: { conversationId: string }) => {
+      const current = runtime.projectDirectory(request.conversationId)
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      const options: OpenDialogOptions = {
+        // `createDirectory` lets a new project be started from the panel itself,
+        // which is otherwise a trip to Finder and back.
+        properties: ['openDirectory', 'createDirectory'],
+        defaultPath: current,
+        buttonLabel: 'Use this folder',
+      }
+
+      // Attached to the window when there is one, so it arrives as a sheet
+      // rather than a panel floating loose over the desktop.
+      const result = await (window === undefined
+        ? dialog.showOpenDialog(options)
+        : dialog.showOpenDialog(window, options))
+
+      const chosen = result.canceled ? undefined : result.filePaths[0]
+      if (chosen === undefined) return { cwd: current, changed: false }
+
+      // Through the runtime, so the change is validated and recorded exactly as
+      // a typed one is.
+      const { cwd } = runtime.setProjectDirectory(request.conversationId, chosen)
+      return { cwd, changed: cwd !== current }
     },
 
     'conversation:setCwd': (request: { conversationId: string; cwd: string }) =>

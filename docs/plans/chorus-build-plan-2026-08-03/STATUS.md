@@ -1059,3 +1059,30 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live: Finder windows 0 → 1 on click, the editor still opening from ✎,
   and a 68-character path clipping to one 24px line with the composer row
   unchanged. 391 tests.
+
+- **2026-08-04 — the path opens a folder chooser.** Corrected from the previous
+  entry: clicking the path opens the system's directory picker, not Finder. The
+  ✎ beside it still opens the inline field. Two ways in because they suit
+  different hands — the chooser is how you find a directory you would otherwise
+  have to remember to type, the field is how you paste one you already have.
+
+  `conversation:chooseCwd` opens the panel **and applies the result** in one
+  call. Splitting it into "pick" then "set" would send the chosen path back
+  through the renderer for no reason, and would let a cancelled dialog leave the
+  two halves disagreeing about where the conversation is. The picked path goes
+  through `setProjectDirectory`, so it is validated and recorded exactly as a
+  typed one is. The panel opens attached to the window, starting where the
+  conversation already is, and can create a folder.
+
+  **A native modal cannot be driven.** `osascript` has no assistive access here,
+  so the panel itself is not automatable — which is precisely why `buildHandlers`
+  is now exported and tested with `dialog` stubbed. That covers the paths a
+  driver can never reach: cancelling changes nothing, an empty selection is a
+  cancel rather than `undefined` reaching the runtime, and re-picking the same
+  folder reports no change.
+
+  Live, the part that can be observed: the call stays **pending** after 2.5s,
+  which is a modal being up rather than a call that failed. `.pane` now carries
+  `data-conversation` so anything outside React can address the right one.
+
+  396 tests.

@@ -115,15 +115,15 @@ export const IPC_CONTRACT = {
   },
 
   /**
-   * Opens the conversation's directory in Finder.
+   * Asks for a directory with the system's folder chooser, and applies it.
    *
-   * Takes a conversation rather than a path: the renderer naming a directory for
-   * the main process to open is a hole, and it never needs to — main already
-   * knows where this conversation is.
+   * One call rather than "pick" then "set": the chosen path never has to cross
+   * back through the renderer, and a cancelled dialog cannot leave the two
+   * halves disagreeing about where the conversation is.
    */
-  'conversation:reveal': {
+  'conversation:chooseCwd': {
     request: z.object({ conversationId: z.string() }),
-    response: z.object({ ok: z.literal(true) }),
+    response: z.object({ cwd: z.string(), changed: z.boolean() }),
   },
 
   /** Repoints the conversation's project directory while it is open. */
@@ -314,9 +314,9 @@ export interface ChorusApi {
   readonly removeAgent: (
     request: IpcRequest<'conversation:removeAgent'>
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
-  readonly revealProjectDirectory: (
-    request: IpcRequest<'conversation:reveal'>
-  ) => Promise<{ ok: true }>
+  readonly chooseProjectDirectory: (
+    request: IpcRequest<'conversation:chooseCwd'>
+  ) => Promise<IpcResponse<'conversation:chooseCwd'>>
   readonly setProjectDirectory: (
     request: IpcRequest<'conversation:setCwd'>
   ) => Promise<IpcResponse<'conversation:setCwd'>>
