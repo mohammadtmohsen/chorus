@@ -42,6 +42,11 @@ export interface SessionInfo {
 export function Session(props: {
   session: SessionInfo
   onTitle: (title: string) => void
+  /** Which pane is being dragged. A ref, so a drop decided in the same tick sees it. */
+  dragging: { current: string | null }
+  onDragStart: (conversationId: string) => void
+  onDragEnd: () => void
+  onDropOn: (conversationId: string) => void
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
@@ -68,6 +73,10 @@ export function Session(props: {
   const [moving, setMoving] = useState<AgentId | null>(null)
   /** Non-null while the title is being edited; holds the draft, not the truth. */
   const [titleDraft, setTitleDraft] = useState<string | null>(null)
+  /** True while a dragged pane is over this one, for the line showing where. */
+  const [dropTarget, setDropTarget] = useState(false)
+  /** The pane itself, so dragging its bar carries the whole thing. */
+  const pane = useRef<HTMLElement | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
   const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
@@ -205,11 +214,32 @@ export function Session(props: {
 
   return (
     <section
+      ref={pane}
       className="pane"
       // Which conversation this pane is, for anything outside React that needs
       // to address it — a driver, a bug report, the element inspector.
       data-conversation={conversationId}
+      data-drop-target={dropTarget}
       aria-label={t('conversation.sessionLabel', { path: cwd })}
+      onDragOver={(e) => {
+        // Only a pane being dragged counts; a file dropped from Finder is not a
+        // reorder, and preventing default on it would swallow it silently.
+        const moved = props.dragging.current
+        if (moved === null || moved === conversationId) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        setDropTarget(true)
+      }}
+      onDragLeave={() => {
+        setDropTarget(false)
+      }}
+      onDrop={(e) => {
+        const moved = props.dragging.current
+        if (moved === null || moved === conversationId) return
+        e.preventDefault()
+        setDropTarget(false)
+        props.onDropOn(conversationId)
+      }}
     >
       {error !== null && (
         <p className="notice notice--bad" role="alert">
@@ -224,7 +254,39 @@ export function Session(props: {
         identical panes apart. A name does that better and says something as
         well, and the folder is the name until you choose another.
       */}
-      <header className="pane-title">
+      {/*
+        The title bar is the handle, the way a window's is.
+        
+        Not the whole pane: it holds a transcript you select text in and a field
+        you type into, and either would fight a drag. Dragging is off while the
+        name is being edited, or a caret drag inside the field would pick the
+        pane up instead.
+      */}
+      <header
+        className="pane-title"
+        draggable={titleDraft === null}
+        onDragStart={(e) => {
+          // Some engines refuse to start a drag with nothing on the transfer.
+          e.dataTransfer.setData('text/plain', conversationId)
+          e.dataTransfer.effectAllowed = 'move'
+
+          /*
+           * The whole pane follows the cursor, not the strip you grabbed.
+           *
+           * Dragging a title bar that leaves its conversation behind reads as
+           * moving the label rather than the session. Offset by where in the
+           * pane you actually took hold of it, so it does not jump under the
+           * cursor as it lifts.
+           */
+          const el = pane.current
+          if (el !== null) {
+            const box = el.getBoundingClientRect()
+            e.dataTransfer.setDragImage(el, e.clientX - box.left, e.clientY - box.top)
+          }
+          props.onDragStart(conversationId)
+        }}
+        onDragEnd={props.onDragEnd}
+      >
         {titleDraft === null ? (
           <button
             type="button"

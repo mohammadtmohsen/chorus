@@ -1581,12 +1581,23 @@ input::placeholder {
  * name lines up with the speakers below it rather than floating over them.
  */
 .pane-title {
+  cursor: grab;
   display: flex;
   align-items: center;
   min-width: 0;
   padding: calc(var(--step) * 2) calc(var(--step) * 5);
   padding-left: calc(var(--gutter) + var(--step) * 5);
   border-bottom: 1px solid var(--line);
+}
+
+.pane-title:active {
+  cursor: grabbing;
+}
+
+/* Where the dragged pane will land. One edge, not a glow: the question is
+   "which side of this one", and a border answers it. */
+.pane[data-drop-target='true'] {
+  box-shadow: inset 3px 0 0 var(--codex);
 }
 
 .pane-title-name,

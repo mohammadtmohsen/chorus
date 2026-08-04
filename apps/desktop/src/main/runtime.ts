@@ -577,6 +577,31 @@ export class ChorusRuntime {
     )
   }
 
+  /**
+   * Puts the conversations in the order the user arranged them.
+   *
+   * The map's insertion order is what gets written down and restored, so the
+   * grid you arranged is the grid you get back. Unknown ids are ignored and any
+   * conversation the caller forgot keeps its place at the end, so a stale list
+   * cannot drop a live session.
+   */
+  reorderConversations(order: readonly string[]): void {
+    const remaining = new Map(this.active)
+    const next = new Map<string, ActiveConversation>()
+
+    for (const id of order) {
+      const conversation = remaining.get(id)
+      if (conversation === undefined) continue
+      next.set(id, conversation)
+      remaining.delete(id)
+    }
+    for (const [id, conversation] of remaining) next.set(id, conversation)
+
+    this.active.clear()
+    for (const [id, conversation] of next) this.active.set(id, conversation)
+    this.rememberOpen()
+  }
+
   /** Conversations with live agents right now, newest last. */
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {
     return [...this.active.values()].map((c) => ({

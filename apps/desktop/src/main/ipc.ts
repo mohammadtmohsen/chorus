@@ -69,6 +69,11 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'conversation:restore': () => runtime.restoreOpenConversations(),
 
+    'conversation:reorder': (request: { order: string[] }) => {
+      runtime.reorderConversations(request.order)
+      return Promise.resolve(OK)
+    },
+
     'conversation:rename': (request: { conversationId: string; title: string }) =>
       Promise.resolve(runtime.renameConversation(request.conversationId, request.title)),
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
@@ -34,6 +34,14 @@ export function App(): React.JSX.Element {
   const [showingSettings, setShowingSettings] = useState(false)
   /** Null until we know whether anything was open, so the door does not flash. */
   const [restoring, setRestoring] = useState(true)
+  /*
+   * The pane being dragged, in a ref rather than state.
+   *
+   * `dragover` can fire in the same tick as `dragstart`, before React has
+   * re-rendered — so a pane asked "is something being dragged?" would answer no
+   * and refuse the drop. A ref is readable the instant it is set.
+   */
+  const dragging = useRef<string | null>(null)
   /** The size, shown briefly after it changes. Null when nothing to say. */
   const [zoom, setZoom] = useState<number | null>(null)
 
@@ -123,6 +131,31 @@ export function App(): React.JSX.Element {
         setStarting(false)
       })
   }, [defaults])
+
+  /**
+   * Moves the dragged pane to where it was dropped.
+   *
+   * Insertion before the target rather than a swap: dragging one pane onto
+   * another reads as "put it here", and a swap would fling the target across the
+   * grid to a place nobody pointed at.
+   */
+  const reorder = useCallback((movedId: string, ontoId: string) => {
+    setSessions((current) => {
+      const from = current.findIndex((s) => s.conversationId === movedId)
+      const onto = current.findIndex((s) => s.conversationId === ontoId)
+      if (from === -1 || onto === -1 || from === onto) return current
+
+      const next = [...current]
+      const [moved] = next.splice(from, 1)
+      if (moved === undefined) return current
+      next.splice(onto, 0, moved)
+
+      window.chorus
+        .reorderConversations({ order: next.map((s) => s.conversationId) })
+        .catch(fail(setError))
+      return next
+    })
+  }, [])
 
   const close = useCallback((conversationId: string) => {
     // Removed from the grid first: the agents take a moment to shut down, and
@@ -217,6 +250,18 @@ export function App(): React.JSX.Element {
           <Session
             key={session.conversationId}
             session={session}
+            dragging={dragging}
+            onDragStart={(id) => {
+              dragging.current = id
+            }}
+            onDragEnd={() => {
+              dragging.current = null
+            }}
+            onDropOn={(ontoId) => {
+              const moved = dragging.current
+              dragging.current = null
+              if (moved !== null) reorder(moved, ontoId)
+            }}
             onTitle={(title) => {
               // Names belong to one conversation; they are not a starting point.
               setSessions((current) =>

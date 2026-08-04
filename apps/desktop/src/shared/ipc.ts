@@ -142,6 +142,12 @@ export const IPC_CONTRACT = {
     ),
   },
 
+  /** Records the order the panes were arranged into, so a restore keeps it. */
+  'conversation:reorder': {
+    request: z.object({ order: z.array(z.string()) }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
   /** Names a conversation. An empty name asks for the folder's name back. */
   'conversation:rename': {
     request: z.object({ conversationId: z.string(), title: z.string() }),
@@ -343,6 +349,9 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:removeAgent'>
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
+  readonly reorderConversations: (
+    request: IpcRequest<'conversation:reorder'>
+  ) => Promise<{ ok: true }>
   readonly renameConversation: (
     request: IpcRequest<'conversation:rename'>
   ) => Promise<IpcResponse<'conversation:rename'>>

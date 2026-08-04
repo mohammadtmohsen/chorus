@@ -1175,7 +1175,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   **The bug worth recording**: the first working version restored everything and
   the agent still answered "this is the first message in our conversation".
-  Claude's real session id arrives with its *first message*, not at `start`, so
+  Claude's real session id arrives with its _first message_, not at `start`, so
   the ref written when the conversation opened was a placeholder — a resume that
   silently resumed nothing. Refs are now re-read on every send and again at quit,
   which is the last and most accurate moment.
@@ -1184,3 +1184,37 @@ sentence each, …` produced replies from both, with the user's message logged *
   remember", Claude told to say `PINEAPPLE-77`, the app quit and reopened — pane,
   title, transcript and both agents back — and Claude asked what word it had
   said, answering `PINEAPPLE-77` from its own resumed thread. 396 tests.
+
+- **2026-08-04 — panes drag to reorder, and the order is kept.** Grab a session's
+  title bar and the **whole pane** follows the cursor, offset by where you took
+  hold of it. Dropping it on another puts it there.
+
+  The title bar is the handle, the way a window's is — not the whole pane, which
+  holds a transcript you select text in and a field you type into, either of
+  which would fight a drag. Dragging is off while the name is being edited, or a
+  caret drag inside the field would pick the pane up instead.
+
+  Dropping inserts before the target rather than swapping: dragging one pane onto
+  another reads as "put it here", and a swap would fling the target across the
+  grid to a place nobody pointed at. `conversation:reorder` rebuilds the runtime's
+  map in that order, and since the map's order is what gets written to
+  `open-sessions.json`, the grid you arranged is the grid that comes back.
+
+  Two bugs, both found by driving it:
+  - **The dragged pane was tracked in state**, and `dragover` can fire in the
+    same tick as `dragstart` — before React re-renders — so every pane answered
+    "nothing is being dragged" and refused the drop. It is a ref now, readable
+    the instant it is set.
+  - **`ref={pane}` never landed**: a comment between the lines I edited meant the
+    replacement silently missed, so `setDragImage` was skipped and only the title
+    strip moved. The probe reported "never called", which is why it was found at
+    all rather than assumed working.
+
+  Two of the checks were also wrong before they were right — a marker read before
+  React re-rendered, and a spy assigned over a prototype method that is not
+  writable that way. Both were fixed to measure what they claimed.
+
+  Verified live: alpha | beta | gamma → dragging gamma onto alpha gives
+  gamma | alpha | beta, the drop target marked while hovering, the drag image
+  being the pane itself, a pane dropped on itself changing nothing, the handle
+  disabled while renaming, and the new order surviving a quit and relaunch.

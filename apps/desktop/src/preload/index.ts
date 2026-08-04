@@ -37,6 +37,7 @@ const api: ChorusApi = {
   addAgent: invoke('conversation:addAgent'),
   removeAgent: invoke('conversation:removeAgent'),
   restoreConversations: () => invoke('conversation:restore')({}),
+  reorderConversations: invoke('conversation:reorder'),
   renameConversation: invoke('conversation:rename'),
   chooseProjectDirectory: invoke('conversation:chooseCwd'),
   setProjectDirectory: invoke('conversation:setCwd'),
