@@ -9,3 +9,17 @@ allowBuilds:
   esbuild: true
   electron: true
   better-sqlite3: true
+
+# The Claude Agent SDK ships its CLI as per-platform optional dependencies, and
+# the darwin-arm64 one unpacks to ~257 MB. We drive the user's installed
+# `claude` via pathToClaudeCodeExecutable instead (plan §2.5), so the bundled
+# binary is dead weight in node_modules and in any future signed build.
+ignoredOptionalDependencies:
+  - '@anthropic-ai/claude-agent-sdk-darwin-arm64'
+  - '@anthropic-ai/claude-agent-sdk-darwin-x64'
+  - '@anthropic-ai/claude-agent-sdk-linux-arm64'
+  - '@anthropic-ai/claude-agent-sdk-linux-arm64-musl'
+  - '@anthropic-ai/claude-agent-sdk-linux-x64'
+  - '@anthropic-ai/claude-agent-sdk-linux-x64-musl'
+  - '@anthropic-ai/claude-agent-sdk-win32-arm64'
+  - '@anthropic-ai/claude-agent-sdk-win32-x64'

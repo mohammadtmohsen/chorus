@@ -1,0 +1,279 @@
+import type { AgentEvent, ApprovalRequest } from '@chorus/agent-protocol'
+import type { AgentId, ApprovalId } from '@chorus/shared'
+
+/**
+ * Claude `SDKMessage` → the normalized `AgentEvent` union.
+ *
+ * Every shape here was read out of `sdk.d.ts@0.3.220`, not out of prose docs.
+ * That distinction cost three bugs in M2, all in the places where a param shape
+ * had been inferred rather than checked.
+ *
+ * Pure, so it can be exercised by replaying recorded messages with no process.
+ */
+
+const AGENT: AgentId = 'claude'
+
+export interface MapContext {
+  readonly seq: number
+  readonly now: number
+  readonly approvalTtlMs: number
+  /**
+   * The id from the current `message_start`.
+   *
+   * Every `stream_event` carries its *own* `uuid`, so keying deltas on that
+   * gives each chunk a unique item and the transcript renders one message per
+   * token. The block id has to come from the enclosing message instead — which
+   * is also what lets the final `assistant` message replace the streamed
+   * fragments rather than appending a duplicate.
+   */
+  readonly streamMessageRef?: string | null
+}
+
+/** Structurally what we need, without importing the SDK's full message union. */
+interface SdkMessageLike {
+  type: string
+  subtype?: string
+  session_id?: string
+  message?: { id?: string; content?: unknown[] }
+  event?: {
+    type?: string
+    delta?: { type?: string; text?: string; thinking?: string }
+    index?: number
+    message?: { id?: string }
+  }
+  parent_tool_use_id?: string | null
+  uuid?: string
+  claude_code_version?: string
+  model?: string
+  mcp_servers?: { name: string; status: string }[]
+  is_error?: boolean
+  result?: string
+  usage?: { input_tokens?: number; output_tokens?: number }
+  total_cost_usd?: number
+  errors?: string[]
+}
+
+interface ContentBlock {
+  type: string
+  text?: string
+  thinking?: string
+  id?: string
+  name?: string
+  input?: Record<string, unknown>
+}
+
+/**
+ * Returns the events one SDK message produces. Unlike Codex, a single Claude
+ * message can yield several — an assistant message may carry both text and a
+ * tool_use block — so this returns an array rather than one event or null.
+ */
+export function mapSdkMessage(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {
+  const base = { agentId: AGENT, at: ctx.now, raw: msg } as const
+  const at = (i: number) => ({ ...base, seq: ctx.seq + i })
+
+  switch (msg.type) {
+    case 'system':
+      // `init` is the start of a turn's work and carries the CLI version we
+      // record on session.started (plan §2.5).
+      return msg.subtype === 'init'
+        ? [{ ...at(0), type: 'turn.started', turnRef: msg.uuid ?? msg.session_id ?? '' }]
+        : []
+
+    case 'stream_event':
+      return mapStreamEvent(msg, at(0), ctx.streamMessageRef ?? null)
+
+    case 'assistant':
+      return mapAssistant(msg, base, ctx)
+
+    case 'result':
+      return mapResult(msg, ctx)
+
+    default:
+      // Hooks, task progress, retries, rate-limit notices and the rest are not
+      // rendered. Silence here is a decision, not a gap.
+      return []
+  }
+}
+
+function mapStreamEvent(
+  msg: SdkMessageLike,
+  base: Omit<AgentEvent, 'type'> & { seq: number },
+  messageRef: string | null
+): AgentEvent[] {
+  const delta = msg.event?.delta
+  if (delta === undefined) return []
+
+  // Keyed on the enclosing message, never on `msg.uuid` — every stream_event
+  // has its own uuid, so that would give each token its own message row.
+  const itemRef = blockRef(messageRef ?? msg.session_id ?? 'stream', msg.event?.index ?? 0)
+
+  if (delta.type === 'text_delta' && typeof delta.text === 'string') {
+    return [{ ...base, type: 'message.delta', itemRef, text: delta.text }]
+  }
+  if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+    return [{ ...base, type: 'reasoning.delta', itemRef, text: delta.thinking }]
+  }
+  return []
+}
+
+/** Streamed deltas and the final message must agree on this key, or they duplicate. */
+function blockRef(messageId: string, index: number): string {
+  return `${messageId}:${String(index)}`
+}
+
+/** Reads the message id out of a `message_start`, so deltas can be attributed. */
+export function trackStreamMessage(msg: SdkMessageLike, current: string | null): string | null {
+  if (msg.type !== 'stream_event') return current
+  if (msg.event?.type === 'message_start') return msg.event.message?.id ?? current
+  return current
+}
+
+function mapAssistant(
+  msg: SdkMessageLike,
+  base: { agentId: AgentId; at: number; raw: unknown },
+  ctx: MapContext
+): AgentEvent[] {
+  const blocks = (msg.message?.content ?? []) as ContentBlock[]
+  const events: AgentEvent[] = []
+
+  for (const block of blocks) {
+    const seq = ctx.seq + events.length
+
+    if (block.type === 'text' && typeof block.text === 'string') {
+      events.push({
+        ...base,
+        seq,
+        type: 'message.completed',
+        // Same key the deltas used, so the authoritative text replaces the
+        // streamed fragments instead of appearing beside them.
+        itemRef: blockRef(msg.message?.id ?? msg.uuid ?? '', blocks.indexOf(block)),
+        text: block.text,
+      })
+      continue
+    }
+
+    if (block.type === 'tool_use' && block.name === 'Bash') {
+      const command = block.input?.['command']
+      events.push({
+        ...base,
+        seq,
+        type: 'command.started',
+        itemRef: block.id ?? '',
+        command: typeof command === 'string' ? [command] : [],
+        cwd: '',
+      })
+    }
+  }
+
+  return events
+}
+
+function mapResult(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {
+  const base = { agentId: AGENT, at: ctx.now, raw: msg } as const
+  const events: AgentEvent[] = []
+
+  if (msg.usage !== undefined) {
+    events.push({
+      ...base,
+      seq: ctx.seq,
+      type: 'usage.updated',
+      inputTokens: msg.usage.input_tokens ?? 0,
+      outputTokens: msg.usage.output_tokens ?? 0,
+      ...(typeof msg.total_cost_usd === 'number' ? { costUsd: msg.total_cost_usd } : {}),
+    })
+  }
+
+  events.push({
+    ...base,
+    seq: ctx.seq + events.length,
+    type: 'turn.completed',
+    turnRef: msg.uuid ?? msg.session_id ?? '',
+    status: msg.subtype === 'success' ? 'completed' : 'failed',
+  })
+
+  return events
+}
+
+/**
+ * `canUseTool` arguments → the unified approval card.
+ *
+ * Claude routes *everything* through one callback, so the kind is inferred from
+ * the tool name. MCP tools are namespaced `mcp__server__tool`, and those are the
+ * outward-facing ones a permission profile may never auto-allow (plan §2.6).
+ */
+export function mapToolPermission(
+  toolName: string,
+  input: Record<string, unknown>,
+  ctx: MapContext,
+  id: ApprovalId
+): ApprovalRequest {
+  const expiresAt = ctx.now + ctx.approvalTtlMs
+
+  const mcp = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(toolName)
+  if (mcp !== null) {
+    const target = describeTarget(input)
+    return {
+      id,
+      agentId: AGENT,
+      kind: 'mcpToolCall',
+      expiresAt,
+      serverName: mcp[1] ?? 'unknown',
+      toolName: mcp[2] ?? toolName,
+      ...(target === undefined ? {} : { target }),
+      input,
+    }
+  }
+
+  if (toolName === 'Bash') {
+    const command = input['command']
+    return {
+      id,
+      agentId: AGENT,
+      kind: 'command',
+      expiresAt,
+      command: typeof command === 'string' ? [command] : [],
+      cwd: typeof input['cwd'] === 'string' ? input['cwd'] : '',
+      withNetwork: false,
+    }
+  }
+
+  if (toolName === 'Edit' || toolName === 'Write' || toolName === 'NotebookEdit') {
+    const path = input['file_path'] ?? input['notebook_path']
+    return {
+      id,
+      agentId: AGENT,
+      kind: 'fileChange',
+      expiresAt,
+      files: typeof path === 'string' ? [{ path, patch: describePatch(input) }] : [],
+    }
+  }
+
+  // Anything else — WebFetch, a plugin tool, a tool added by a future release.
+  // Modelled as a permission grant so it still surfaces a card rather than
+  // silently falling through.
+  return {
+    id,
+    agentId: AGENT,
+    kind: 'permissionGrant',
+    expiresAt,
+    cwd: typeof input['cwd'] === 'string' ? input['cwd'] : '',
+    requested: { network: toolName === 'WebFetch' || toolName === 'WebSearch' },
+  }
+}
+
+function describeTarget(input: Record<string, unknown>): string | undefined {
+  for (const key of ['channel', 'channel_id', 'issueKey', 'issue_key', 'repo', 'url', 'path']) {
+    const value = input[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return undefined
+}
+
+function describePatch(input: Record<string, unknown>): string {
+  const oldText = input['old_string']
+  const newText = input['new_string'] ?? input['content']
+  if (typeof oldText === 'string' && typeof newText === 'string') {
+    return `- ${oldText}\n+ ${newText}`
+  }
+  return typeof newText === 'string' ? newText : ''
+}

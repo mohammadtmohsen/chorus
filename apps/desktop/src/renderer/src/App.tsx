@@ -15,6 +15,7 @@ export function App(): React.JSX.Element {
   const { t } = useTranslation()
   const [agents, setAgents] = useState<AgentProbeResult[] | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
+  const [agentId, setAgentId] = useState<'codex' | 'claude'>('codex')
   const [view, setView] = useState<TranscriptView>(EMPTY_VIEW)
   const [cwd, setCwd] = useState('')
   const [draft, setDraft] = useState('')
@@ -47,7 +48,7 @@ export function App(): React.JSX.Element {
     setError(null)
     setStarting(true)
     window.chorus
-      .startConversation({ agentId: 'codex', cwd })
+      .startConversation({ agentId, cwd })
       .then(({ conversationId: id }) => {
         setConversationId(id)
         return window.chorus.history({ conversationId: id })
@@ -61,7 +62,7 @@ export function App(): React.JSX.Element {
       .finally(() => {
         setStarting(false)
       })
-  }, [cwd])
+  }, [agentId, cwd])
 
   const send = useCallback(() => {
     if (conversationId === null || draft.trim() === '') return
@@ -84,18 +85,18 @@ export function App(): React.JSX.Element {
     [conversationId]
   )
 
-  const codex = agents?.find((a) => a.id === 'codex')
+  const selected = agents?.find((a) => a.id === agentId)
 
   return (
     <main className="shell">
       <header className="bar">
         <h1>{t('app.name')}</h1>
         <span className="muted">
-          {codex === undefined
+          {selected === undefined
             ? t('agents.probing')
-            : codex.installed
-              ? `codex ${codex.version ?? ''}`
-              : t('agents.notFound')}
+            : selected.installed
+              ? `${agentId} ${selected.version ?? ''}`
+              : t('agents.notFound', { agent: agentId })}
         </span>
       </header>
 
@@ -107,6 +108,18 @@ export function App(): React.JSX.Element {
 
       {conversationId === null ? (
         <section className="starter">
+          <label htmlFor="agent">{t('conversation.agent')}</label>
+          <select
+            id="agent"
+            value={agentId}
+            onChange={(e) => {
+              setAgentId(e.target.value === 'claude' ? 'claude' : 'codex')
+            }}
+          >
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+          </select>
+
           <label htmlFor="cwd">{t('conversation.projectPath')}</label>
           <input
             id="cwd"

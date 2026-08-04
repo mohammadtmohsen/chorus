@@ -1,4 +1,7 @@
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { ClaudeAdapter } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type { AgentAdapter, ApprovalDecision } from '@chorus/agent-protocol'
 import { EventStore, openSqlite, type StoredEvent, type SqliteHandle } from '@chorus/event-store'
@@ -47,7 +50,17 @@ export class ChorusRuntime {
       join(userDataPath, `chorus.pre-v${String(from)}.db`)
     )
 
-    return new ChorusRuntime(db, store, adapters ?? new Map([['codex', new CodexAdapter()]]))
+    return new ChorusRuntime(
+      db,
+      store,
+      adapters ??
+        new Map<AgentId, AgentAdapter>([
+          ['codex', new CodexAdapter()],
+          // Points at the user's installed `claude`; the SDK's own ~257 MB
+          // binary is excluded from the workspace (plan §2.5).
+          ['claude', new ClaudeAdapter(claudeOptions())],
+        ])
+    )
   }
 
   /** Push target for the renderer. Fires only after a commit. */
@@ -124,4 +137,23 @@ export class ChorusRuntime {
     if (found === undefined) throw new Error(`Conversation "${conversationId}" is not active`)
     return found
   }
+}
+
+/**
+ * The SDK needs an absolute path; `claude` on PATH is not enough once the app
+ * runs outside a login shell, where PATH is much smaller than a terminal's.
+ * Falls back to the SDK's own lookup when none of the usual locations exist.
+ */
+function claudeOptions(): { executablePath?: string } {
+  const found = resolveClaudePath()
+  return found === undefined ? {} : { executablePath: found }
+}
+
+function resolveClaudePath(): string | undefined {
+  const candidates = [
+    join(homedir(), '.local/bin/claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ]
+  return candidates.find((p) => existsSync(p))
 }

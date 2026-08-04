@@ -247,3 +247,12 @@ button:disabled {
   flex-direction: column;
   gap: 8px;
 }
+
+.starter select {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+}

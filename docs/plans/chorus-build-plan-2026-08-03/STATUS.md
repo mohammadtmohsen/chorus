@@ -222,3 +222,37 @@ Plan: [plan.md](./plan.md)
   All three have regression tests now. The lesson worth keeping: the unit tests
   were not wrong, they were testing shapes I had inferred from prose docs rather
   than from the wire.
+
+- **2026-08-04 — M3 Claude adapter.** 160 tests, all gates green. A live Claude
+  session runs through the real app, selected from an agent picker beside Codex.
+
+  Shipped:
+  - `ClaudeAdapter` over `query()` in streaming-input mode — which is also what
+    makes `interrupt()` and `setModel()` available at all. `canUseTool` bridges
+    into the same approval queue Codex uses, and a user-initiated stop is
+    relabelled `interrupted` rather than surfacing as the failure the wire
+    reports (S3b).
+  - The SDK's ~257 MB per-platform binary is excluded via
+    `ignoredOptionalDependencies`; the package installs at 4.1 MB and
+    `pathToClaudeCodeExecutable` points at the user's installed `claude`.
+  - **The shared conformance suite** (`@chorus/agent-protocol/conformance`),
+    now run by both `FakeAdapter` and the real `ClaudeAdapter`. It lives in the
+    port package rather than a test folder because it is part of the port's
+    definition. One check exists purely to stop an M2 bug recurring: a dead
+    provider must end its event stream, or the supervisor never restarts it.
+
+  **A rendering bug the unit tests could not have caught.** The live transcript
+  showed `P`, `ONG`, `PONG` as three separate messages. Every Claude
+  `stream_event` carries its _own_ `uuid`, so keying deltas on it gave each
+  token its own message row — and the final `assistant` message, keyed
+  differently again, appeared beside the fragments instead of replacing them.
+  Deltas are now keyed on the enclosing `message_start` id plus block index, and
+  the final message reuses that key. Both are regression-tested.
+
+  Also fixed: crashed E2E drivers were leaving Electron alive holding the CDP
+  port, so the next run silently inspected a _stale_ app. Two debugging rounds
+  went into that before I looked at the DOM instead of guessing.
+
+  Remaining for M3: a live Claude approval round-trip (Codex's is verified), and
+  running the conformance suite against `CodexAdapter` with an injected
+  transport — currently only Fake and Claude run it.

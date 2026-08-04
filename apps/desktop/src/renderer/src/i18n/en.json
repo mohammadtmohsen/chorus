@@ -6,10 +6,11 @@
   "agents": {
     "heading": "Agents",
     "probing": "Probing…",
-    "notFound": "codex not found on PATH",
+    "notFound": "{{agent}} not found on PATH",
     "unknownVersion": "unknown version"
   },
   "conversation": {
+    "agent": "Agent",
     "projectPath": "Project directory",
     "start": "Start session",
     "starting": "Starting…",

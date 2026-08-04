@@ -13,6 +13,7 @@
     "clean": "rm -rf out dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@chorus/adapter-claude": "workspace:*",
     "@chorus/adapter-codex": "workspace:*",
     "@chorus/agent-protocol": "workspace:*",
     "@chorus/event-store": "workspace:*",

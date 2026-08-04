@@ -1,13 +1,14 @@
 /**
  * AgentAdapter over @anthropic-ai/claude-agent-sdk.
  *
- * M3 lands `query()` with streaming input, the `canUseTool` bridge, and event
- * mapping here. Two settled decisions to build on (plan §2.5, §2.6):
+ * Two settled decisions this package is built on (plan §2.5, §2.6):
  *
- *   - Install the SDK with `--omit=optional` and set
- *     `options.pathToClaudeCodeExecutable` to the user's installed `claude`.
- *     The bundled binary is ~257 MB and we do not ship it.
- *   - Leave `settingSources` omitted so agents inherit the user's full config
- *     and behave exactly as they do in a terminal.
+ *   - The SDK's per-platform binary (~257 MB) is excluded via
+ *     `ignoredOptionalDependencies`; `pathToClaudeCodeExecutable` points at the
+ *     user's installed `claude` instead.
+ *   - `settingSources` is omitted, so agents inherit the user's full config and
+ *     behave exactly as they do in a terminal. The cost is inherited MCP
+ *     servers, which is why `mcpToolCall` is never auto-allowed.
  */
-export {}
+export * from './claude-adapter.js'
+export * from './mapping.js'
