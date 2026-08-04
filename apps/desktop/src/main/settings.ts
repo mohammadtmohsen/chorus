@@ -18,8 +18,8 @@ import { z } from 'zod'
 export const MIN_SCALE = 0.8
 export const MAX_SCALE = 1.5
 
-/** Offered as steps rather than a slider: five sizes, each visibly different. */
-export const SCALES = [0.85, 1, 1.15, 1.3, 1.5] as const
+/** One press, 5%: fine enough to land on the size you want, coarse enough to feel. */
+export const SCALE_STEP = 0.05
 
 export const Settings = z.object({
   agents: z.array(z.enum(['codex', 'claude'])),

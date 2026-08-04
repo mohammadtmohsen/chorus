@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
-import { readSettings, SCALES, writeSettings } from './settings.js'
+import { SCALE_PUSH_CHANNEL } from '../shared/ipc.js'
+import { MAX_SCALE, MIN_SCALE, readSettings, SCALE_STEP, writeSettings } from './settings.js'
 
 /**
  * Window zoom, owned by the main process.
@@ -12,38 +13,32 @@ import { readSettings, SCALES, writeSettings } from './settings.js'
 export function applyScale(scale: number): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.setZoomFactor(scale)
+    // Told, not inferred: the renderer cannot read the zoom factor it is being
+    // drawn at, and it is the one that has to say what just happened.
+    window.webContents.send(SCALE_PUSH_CHANNEL, scale)
   }
-}
-
-/** Nearest step to a stored value, so a hand-edited settings file still steps. */
-function indexOfScale(scale: number): number {
-  let best = SCALES.indexOf(1)
-  let closest = Infinity
-  for (const [i, candidate] of SCALES.entries()) {
-    const distance = Math.abs(candidate - scale)
-    if (distance < closest) {
-      closest = distance
-      best = i
-    }
-  }
-  return best
 }
 
 /**
- * Moves one step and remembers it. `0` returns to actual size.
+ * Moves one 5% step and remembers it. `0` returns to actual size.
+ *
+ * Rounded to whole percents at every step: 0.85 + 0.05 is 0.8999999999999999 in
+ * binary floating point, and a badge reading 89% would be the arithmetic showing
+ * through. Rounding also pulls a hand-edited value onto the grid.
  *
  * Persisting is what separates this from the zoom a browser forgets: the size
  * you chose is the size the app opens at tomorrow.
  */
 export function stepScale(userDataPath: string, direction: -1 | 0 | 1): number {
   const current = readSettings(userDataPath)
-  const index =
-    direction === 0
-      ? SCALES.indexOf(1)
-      : Math.min(Math.max(indexOfScale(current.scale) + direction, 0), SCALES.length - 1)
+  const moved = direction === 0 ? 1 : current.scale + SCALE_STEP * direction
+  const scale = Math.min(Math.max(round(moved), MIN_SCALE), MAX_SCALE)
 
-  const scale = SCALES[index] ?? 1
   writeSettings(userDataPath, { ...current, scale })
   applyScale(scale)
   return scale
+}
+
+function round(scale: number): number {
+  return Math.round(scale * 100) / 100
 }

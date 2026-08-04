@@ -7,9 +7,12 @@
  *     message, coloured by speaker. Scanning the dots tells you the shape of an
  *     exchange before you read a word, which is what a multi-agent transcript
  *     has to answer first. It is the one place boldness is spent.
- *  2. Type encodes kind. Serif for what agents *say*, mono for what they *do*
- *     (commands, paths, diffs), sans only for chrome. Prose and machine action
- *     read as different classes of thing.
+ *  2. One typeface, the terminal's own. Everything is monospace — prose, chrome
+ *     and machine output alike — because this is a room where you talk to
+ *     programs, and the grid is what that sounds like. Kind is encoded by
+ *     weight, colour and case instead of by family: agents' words sit at full
+ *     brightness, their reasoning goes italic and dim, and chrome is small and
+ *     upper-cased. Ligatures are off, as they are in every terminal.
  *
  * The ground is violet-slate rather than neutral black: warmer, and it lets two
  * complementary voice hues sit on it without either fighting the background.
@@ -31,9 +34,12 @@
   --claude: #e9a05c;
   --alert: #f2647c;
 
-  --serif: 'New York', 'Iowan Old Style', Charter, Georgia, serif;
-  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
-  --mono: 'SF Mono', ui-monospace, Menlo, monospace;
+  /*
+   * SF Mono first: it is what Terminal.app draws with on this machine, so the
+   * app reads as the same class of tool. The coding faces after it are picked up
+   * only if they are installed, and every fallback is still a grid.
+   */
+  --mono: 'SF Mono', ui-monospace, 'JetBrains Mono', 'IBM Plex Mono', Menlo, Monaco, monospace;
 
   --step: 4px;
   --gutter: 88px;
@@ -63,9 +69,11 @@ body {
   margin: 0;
   background: var(--ground);
   color: var(--bone);
-  font-family: var(--sans);
-  font-size: 14px;
+  font-family: var(--mono);
+  font-size: 13px;
   line-height: 1.6;
+  /* Off everywhere: a terminal shows you the characters you typed. */
+  font-variant-ligatures: none;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -79,30 +87,30 @@ body {
 
 .wordmark {
   margin: 0;
-  line-height: 0;
   flex: none;
 }
 
 .wordmark-logo {
-  display: block;
-  width: 96px;
-  height: auto;
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 600;
+  /* Wide tracking is what turns a monospace word into a mark. */
+  letter-spacing: 0.42em;
+  /* The tracking adds space after the last letter; this takes it back. */
+  margin-right: -0.42em;
+  color: var(--bone);
 }
 
 .wordmark--large .wordmark-logo {
-  width: min(214px, 72vw);
+  font-size: 22px;
 }
 
-.chorus-logo__ink {
-  fill: var(--bone);
-}
-
-.chorus-logo__codex {
-  fill: var(--codex);
-}
-
-.chorus-logo__claude {
-  fill: var(--claude);
+/* Three voices in one letter, the same idea the drawn mark carried. */
+.chorus-logo__voice {
+  background: linear-gradient(105deg, var(--codex), var(--claude));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* ------------------------------------------------------------------ setup */
@@ -135,9 +143,8 @@ body {
 
 .lede {
   margin: 0;
-  font-family: var(--serif);
-  font-size: 19px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.6;
   color: var(--muted);
 }
 
@@ -532,13 +539,18 @@ body {
   min-width: 0;
 }
 
-/* Prose is serif — what an agent says reads differently from what it does. */
+/*
+ * What an agent says, at full brightness and a little larger than the chrome.
+ *
+ * Monospace runs wider than prose type at the same size, so 14px here holds a
+ * comparable measure to the 16px serif it replaced — and 1.7 opens the lines up,
+ * because a wall of fixed-width text closes them.
+ */
 .said .md-p,
 .said .md-list,
 .said .md-quote {
-  font-family: var(--serif);
-  font-size: 16px;
-  line-height: 1.62;
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .said > :first-child {
@@ -599,8 +611,7 @@ body {
   margin-top: var(--step);
   padding-left: calc(var(--step) * 3);
   border-left: 1px solid var(--line);
-  font-family: var(--serif);
-  font-size: 14px;
+  font-size: 13px;
   font-style: italic;
   color: var(--muted);
   white-space: pre-wrap;
@@ -660,9 +671,12 @@ body {
 
 .md-h {
   margin: calc(var(--step) * 4) 0 var(--step);
-  font-family: var(--sans);
   font-size: 13px;
   font-weight: 600;
+  /* Headings are structure, so they take the chrome's voice, not the prose's. */
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .md-p {
@@ -1429,6 +1443,48 @@ input::placeholder {
   gap: calc(var(--step) * 5);
   overflow-y: auto;
   padding: calc(var(--step) * 4) 0;
+}
+
+/*
+ * The size, shown for a moment after it changes.
+ *
+ * ⌘− has no visible control behind it, so without this the only feedback is the
+ * whole window moving — which tells you *something* happened, not what. It sits
+ * centred and above everything, and leaves on its own.
+ */
+.zoom-badge {
+  position: fixed;
+  z-index: 60;
+  left: 50%;
+  bottom: 12%;
+  transform: translateX(-50%);
+  padding: calc(var(--step) * 2) calc(var(--step) * 5);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--raised);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--sunken) 70%, transparent);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--bone);
+  pointer-events: none;
+  animation: zoom-badge 180ms ease-out;
+}
+
+@keyframes zoom-badge {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zoom-badge {
+    animation: none;
+  }
 }
 
 /* ------------------------------------------------------------------ phone */

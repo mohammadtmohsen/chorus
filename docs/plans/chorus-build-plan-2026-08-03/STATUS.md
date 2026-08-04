@@ -811,3 +811,36 @@ sentence each, …` produced replies from both, with the user's message logged *
   The accelerators themselves are covered by unit tests over the menu template
   and the stepping — a native menu keystroke cannot be driven through CDP, so
   that last inch is structure, not a synthetic keypress. 378 tests.
+
+- **2026-08-04 — one typeface: the terminal's own.** Everything is monospace now
+  — prose, chrome and machine output alike. The design's second idea was "type
+  encodes kind": serif for what agents *say*, mono for what they *do*. That idea
+  survives, but it is carried by weight, colour and case instead of by family:
+  agents' words at full brightness, reasoning italic and dim, chrome small and
+  upper-cased. Ligatures off, as in every terminal.
+
+  Monospace runs wider at the same size, so prose went 16px serif → 14px mono to
+  hold a comparable measure, with the leading opened to 1.7 because a wall of
+  fixed-width text closes lines up.
+
+  The drawn wordmark went with it. Six Didone letterforms as SVG paths read as a
+  masthead, and a serif logo above a monospace transcript was the one element
+  announcing it came from somewhere else. It is set in the app's own face now,
+  with the O still carrying a gradient from Codex's hue to Claude's — three
+  voices in one letter, in different clothes. The paths are in git history.
+
+- **2026-08-04 — zoom in 5% steps, with a badge.** ⌘+ and ⌘− move 5% at a time
+  between 80% and 150% rather than through five fixed sizes, and every step
+  rounds to a whole percent: 0.85 + 0.05 is 0.8999999999999999 in binary floating
+  point, and a badge reading 89% would be the arithmetic showing through.
+
+  A badge shows the new size for 1.4s. Without it the only feedback is the whole
+  window moving, which says something happened rather than what — and the menu
+  item carries no visible state. Its timer restarts on each change, or holding
+  ⌘− would hide the badge partway through the run of presses that needed it most.
+
+  The renderer cannot read the zoom factor it is drawn at, so the main process
+  pushes it on `settings:scale` whenever it applies one.
+
+  Verified live: wordmark in mono, badge reading 105% then 110%, still up
+  mid-run, gone after ~1.4s idle. 380 tests.

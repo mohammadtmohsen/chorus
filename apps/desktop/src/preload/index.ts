@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
+  SCALE_PUSH_CHANNEL,
   EventsPush,
   IPC_CONTRACT,
   type ChorusApi,
@@ -54,6 +55,17 @@ const api: ChorusApi = {
     ipcRenderer.on(EVENTS_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(EVENTS_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onScale: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      // Validated like every other push: main is trusted, but a shape mismatch
+      // should fail here rather than as a NaN in the badge.
+      if (typeof payload === 'number' && Number.isFinite(payload)) listener(payload)
+    }
+    ipcRenderer.on(SCALE_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(SCALE_PUSH_CHANNEL, wrapped)
     }
   },
 }

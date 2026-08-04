@@ -241,6 +241,14 @@ export const IPC_CONTRACT = {
  * flows the other way and has no reply.
  */
 export const EVENTS_PUSH_CHANNEL = 'conversation:events'
+
+/**
+ * The window's zoom factor, pushed whenever it changes.
+ *
+ * Zoom is owned by the menu, so the renderer has no other way to learn it — and
+ * it needs to, in order to say what just happened.
+ */
+export const SCALE_PUSH_CHANNEL = 'settings:scale'
 export const EventsPush = z.array(TranscriptEvent)
 export type EventsPush = z.infer<typeof EventsPush>
 
@@ -272,6 +280,7 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:send'>>
   readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
   readonly closeConversation: (request: IpcRequest<'conversation:close'>) => Promise<{ ok: true }>
+  readonly onScale: (listener: (scale: number) => void) => () => void
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

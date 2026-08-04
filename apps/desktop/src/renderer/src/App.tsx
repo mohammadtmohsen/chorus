@@ -36,6 +36,8 @@ export function App(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
   const [showingSettings, setShowingSettings] = useState(false)
+  /** The size, shown briefly after it changes. Null when nothing to say. */
+  const [zoom, setZoom] = useState<number | null>(null)
 
   useEffect(() => {
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
@@ -59,6 +61,28 @@ export function App(): React.JSX.Element {
   const changeDefaults = useCallback((next: Defaults) => {
     setDefaults(next)
     window.chorus.writeSettings(next).catch(fail(setError))
+  }, [])
+
+  useEffect(() => {
+    /*
+     * ⌘− has no visible control behind it, so the only feedback is the whole
+     * window moving — which says something happened, not what. The badge says
+     * what, then leaves.
+     */
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stop = window.chorus.onScale((next) => {
+      setZoom(next)
+      // Restarted on every change, or holding ⌘− would hide the badge partway
+      // through the run of presses that needed it most.
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        setZoom(null)
+      }, 1_400)
+    })
+    return () => {
+      clearTimeout(timer)
+      stop()
+    }
   }, [])
 
   const start = useCallback(() => {
@@ -124,6 +148,13 @@ export function App(): React.JSX.Element {
     />
   )
 
+  const badge =
+    zoom === null ? null : (
+      <div className="zoom-badge" role="status" aria-live="polite">
+        {`${String(Math.round(zoom * 100))}%`}
+      </div>
+    )
+
   const sheets = (
     <>
       {adding && (
@@ -173,6 +204,7 @@ export function App(): React.JSX.Element {
           error={error}
         />
         {sheets}
+        {badge}
       </>
     )
   }
@@ -233,6 +265,7 @@ export function App(): React.JSX.Element {
       </main>
 
       {sheets}
+      {badge}
     </div>
   )
 }
