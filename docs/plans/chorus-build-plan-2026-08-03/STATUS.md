@@ -572,3 +572,40 @@ sentence each, …` produced replies from both, with the user's message logged *
   A contract change was caught by the contract.
 
   328 tests.
+
+- **2026-08-04 — the project directory is optional.** An empty field starts the
+  session in the user's home folder, and the header shows where it actually
+  landed rather than what was typed. Since the filesystem is not scoped to a
+  project (§4.4), a directory is a starting point rather than a boundary, and
+  demanding one before the conversation can begin was hard to justify. A
+  non-empty path is still validated.
+
+- **2026-08-04 — agents now follow the shared conversation.** Reported from a
+  live session: the user asked Claude what MCP servers were available, then asked
+  Codex "what i asked claude". Codex had never seen any of it, so it went and
+  grepped `~/.claude/projects/*.jsonl` off disk to reconstruct the answer.
+
+  The cause was routing working exactly as designed. `parseMentions` sends a
+  message only to the agent it is addressed to, which is right for cost and for
+  not having two agents answer at once — but agents keep separate contexts, so
+  each one only ever knew its own half. The transcript was shared on screen and
+  nowhere else.
+
+  `catchup.ts` closes the gap. Before an agent is asked to answer, it is handed
+  the part of the thread it has not seen — user messages and other agents'
+  completed replies, oldest dropped first under a character budget, long messages
+  trimmed from the middle. It rides along with the message being delivered, so
+  there is no extra turn, nothing at all when nothing was missed, and no second
+  agent woken up merely to listen. Each participant carries a `seenSeq`
+  watermark over the shared log; a handoff advances it, because the brief is
+  already the context.
+
+  Only what was *said* is replayed. Commands, reasoning and approvals belong to
+  the agent that ran them.
+
+  Verified live with both agents: Claude was asked for a specific sentence, then
+  Codex was asked what the user had asked Claude and what Claude replied, with
+  running commands and reading files explicitly forbidden. It answered both
+  correctly from context.
+
+  337 tests.

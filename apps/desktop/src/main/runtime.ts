@@ -15,6 +15,7 @@ import {
   SessionGrants,
   SupervisedSession,
   summariseHandoff,
+  withCatchup,
   type HandoffIntent,
   type HandoffSource,
   type PermissionProfile,
@@ -49,6 +50,15 @@ interface Participant {
   readonly agentId: AgentId
   readonly service: ConversationService
   readonly session: SupervisedSession
+  /**
+   * The last event in the shared log this agent has been shown.
+   *
+   * Agents keep separate contexts, so without this each one only knows the
+   * messages addressed to it — which makes a shared transcript that isn't
+   * actually shared. Everything past this mark is replayed as catch-up the next
+   * time the agent is addressed.
+   */
+  seenSeq: number
 }
 
 interface ActiveConversation {
@@ -231,14 +241,19 @@ export class ChorusRuntime {
    */
   async send(conversationId: string, text: string): Promise<SendResult> {
     const conversation = this.require(conversationId)
+    const participants = [...conversation.participants.keys()]
     const route = parseMentions(text, {
-      participants: [...conversation.participants.keys()],
+      participants,
       lastAddressed: conversation.lastAddressed,
     })
 
     if (route.targets.length === 0) throw new Error('No agent is available in this conversation')
 
-    this.store.append({ conversationId, actor: 'user', payload: { type: 'user.message', text } })
+    const stored = this.store.append({
+      conversationId,
+      actor: 'user',
+      payload: { type: 'user.message', text },
+    })
     conversation.lastAddressed = route.targets.at(-1)
 
     // Filtered rather than optional-chained: `Promise.all` over a list that can
@@ -247,7 +262,22 @@ export class ChorusRuntime {
       route.targets
         .map((agentId) => conversation.participants.get(agentId))
         .filter((p) => p !== undefined)
-        .map((p) => p.service.deliver(route.text))
+        .map(async (p) => {
+          /*
+           * Read up to — not including — the message being delivered: that one
+           * is the live turn, not history. Anything appended after this read
+           * keeps a higher `seq` than the watermark below, so it is caught up
+           * next time rather than lost.
+           */
+          const missed = this.store
+            .read(conversationId, { afterSeq: p.seenSeq })
+            .filter((e) => e.seq < stored.seq)
+
+          await p.service.deliver(
+            withCatchup({ recipient: p.agentId, participants, events: missed }, route.text)
+          )
+          p.seenSeq = stored.seq
+        })
     )
     return { targets: route.targets }
   }
@@ -334,6 +364,9 @@ export class ChorusRuntime {
 
     // The receiving agent is now the one an unaddressed follow-up continues with.
     conversation.lastAddressed = options.to
+    // The brief is context the user curated by hand; replaying the same events
+    // as catch-up on the next message would say it all twice.
+    target.seenSeq = this.store.lastSeq()
     await target.service.deliver(options.brief)
     return { handoffId }
   }
@@ -428,7 +461,9 @@ export class ChorusRuntime {
       grants,
     })
     await service.attach(session, sessionOpts, health)
-    return { agentId, service, session }
+    // Joining mid-conversation is not a case yet, but starting at the current
+    // end of the log is what makes it one when it is.
+    return { agentId, service, session, seenSeq: this.store.lastSeq() }
   }
 
   private require(conversationId: string): ActiveConversation {

@@ -5,6 +5,7 @@
  * dependency direction points inward (plan §3.2), enforced mechanically by
  * pnpm's `hoist=false` plus `no-restricted-imports` in eslint.config.mjs.
  */
+export * from './catchup.js'
 export * from './conversation-service.js'
 export * from './delta-buffer.js'
 export * from './handoff.js'
