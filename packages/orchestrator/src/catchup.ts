@@ -167,6 +167,19 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
         })
         break
 
+      /*
+       * Worth replaying: an agent asked to do something now works under rules
+       * that changed while it was not being addressed, and "you may run
+       * commands without asking" is a fact about the room, not about one turn.
+       */
+      case 'policy.changed':
+        lines.push({
+          seq: event.seq,
+          kind: 'activity',
+          text: `· the user changed permissions to "${payload.profileId}"`,
+        })
+        break
+
       case 'error.raised':
         // A restart notice is recoverable and is noise to everyone else; a
         // failure that stuck is why the other agent went quiet.

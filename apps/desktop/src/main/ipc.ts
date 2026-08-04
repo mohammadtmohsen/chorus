@@ -80,6 +80,9 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       return OK
     },
 
+    'policy:set': (request: { conversationId: string; profileId: string }) =>
+      Promise.resolve(runtime.setProfile(request.conversationId, request.profileId)),
+
     'policy:profiles': () => Promise.resolve(runtime.availableProfiles()),
 
     'settings:read': () => Promise.resolve(readSettings(app.getPath('userData'))),

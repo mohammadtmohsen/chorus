@@ -223,6 +223,11 @@ export const IPC_CONTRACT = {
     response: z.object({ path: z.string() }),
   },
   /** The permission profiles a conversation can be started under. */
+  /** Changes what agents may do without asking, in a conversation already open. */
+  'policy:set': {
+    request: z.object({ conversationId: z.string(), profileId: z.string() }),
+    response: z.object({ profileId: z.string() }),
+  },
   'policy:profiles': {
     request: z.void(),
     response: z.array(z.object({ id: z.string(), name: z.string(), summary: z.string() })),
@@ -283,6 +288,7 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:history'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
   readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
+  readonly setProfile: (request: IpcRequest<'policy:set'>) => Promise<IpcResponse<'policy:set'>>
   readonly readDiagnostics: () => Promise<IpcResponse<'diagnostics:read'>>
   readonly exportDiagnostics: () => Promise<IpcResponse<'diagnostics:export'>>
   readonly readWorkspace: (

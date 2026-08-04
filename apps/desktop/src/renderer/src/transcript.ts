@@ -193,6 +193,22 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       return
     }
 
+    /*
+     * Widening what agents may do belongs in the transcript, above the actions
+     * it permitted. A permission change that left no mark would make the log an
+     * incomplete account of why something was allowed.
+     */
+    case 'policy.changed':
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: 'system',
+        kind: 'notice',
+        text: `Permissions changed: ${str('previousProfileId')} → ${str('profileId')}`,
+        status: 'complete',
+      })
+      return
+
     case 'error.raised':
       view.messages.push({
         key: event.id,

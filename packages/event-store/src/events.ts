@@ -124,6 +124,18 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     outputTokens: z.number().int(),
     costUsd: z.number().nullable(),
   }),
+  /**
+   * The conversation's permission profile changed mid-session.
+   *
+   * Logged rather than kept in memory: "human controlled" is only auditable if
+   * widening what agents may do leaves a mark next to what they then did.
+   */
+  z.object({
+    type: z.literal('policy.changed'),
+    profileId: z.string(),
+    previousProfileId: z.string(),
+  }),
+
   z.object({
     type: z.literal('error.raised'),
     message: z.string(),

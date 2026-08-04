@@ -865,3 +865,38 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live: 100% at launch, End present with one pane, ending the last pane
   landing on the start screen, no `scale` key written, and 100% again after a
   full relaunch. 377 tests.
+
+- **2026-08-04 — the setup modal is gone; permissions change from inside the
+  room.** Start a session goes straight into a session on the settings you last
+  used. The form asked three questions that all had remembered answers, and none
+  of whose answers is final — the directory is a starting point the agent can be
+  told to leave (§4.4, the filesystem is not scoped), and permissions now change
+  mid-conversation. Settings still holds the defaults for anyone who wants to
+  choose before starting.
+
+  The pane's profile chip became the control. What agents may do without asking
+  is the thing you most want to change once a session is under way: you start
+  read-only, watch an agent get it right, and stop wanting to approve every
+  command. Sending someone back to a start screen for that would mean ending the
+  conversation that earned the trust.
+
+  A new durable event, `policy.changed`, records it. "Human controlled" is only
+  auditable if widening what agents may do leaves a mark next to what they then
+  did — so it is appended **before** the change takes effect, and the transcript
+  shows the widening above the actions it permitted. It is replayed in catch-up
+  too: an agent addressed later works under rules that changed while it was not
+  listening, and that is a fact about the room rather than about one turn.
+
+  Every participant moves together — two agents in one room under different rules
+  would make "what may happen here" unanswerable. Requests already on screen keep
+  the rules they were evaluated under, and session grants survive: they were
+  given deliberately, and a profile change is not a reason to re-ask.
+
+  The exhaustive switch in `catchup.ts` caught the new event type, which is what
+  it was written for.
+
+  Verified live end to end: read-only stopped to ask before a write; switching to
+  Trusted mid-conversation asked nothing; and the file was actually on disk
+  afterwards. Also: straight into a session in ~1s with no modal, the chip
+  reading Trusted, and "Permissions changed: read-only → trusted" in the
+  transcript. 378 tests.

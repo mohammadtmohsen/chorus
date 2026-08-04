@@ -47,18 +47,21 @@ export function Session(props: {
    * Position is the only thing about a pane that is true at a glance.
    */
   index: number
-  profileName: string
-  profileSummary: string
+  profiles: { id: string; name: string; summary: string }[]
+  /** Reported upward so the pane's chip and the log agree on what is in force. */
+  onProfile: (profileId: string) => void
   onClose: (conversationId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { conversationId, participants, cwd } = props.session
+  const { conversationId, participants, cwd, profileId } = props.session
+  const profile = props.profiles.find((p) => p.id === profileId)
   const [view, setView] = useState<TranscriptView>(EMPTY_VIEW)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const [confirmingClose, setConfirmingClose] = useState(false)
+  const [pickingProfile, setPickingProfile] = useState(false)
   const [mention, setMention] = useState<MentionQuery | null>(null)
   const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
@@ -200,9 +203,57 @@ export function Session(props: {
         <span className="path" title={cwd}>
           {shortenPath(cwd)}
         </span>
-        <span className="profile-chip" title={props.profileSummary}>
-          {props.profileName}
-        </span>
+        {/*
+          The chip is the control, not a label.
+          
+          What agents may do without asking is the thing you most want to change
+          once a session is under way — you start read-only, watch an agent get
+          it right, and stop wanting to approve every command. Sending someone
+          back to a start screen for that would mean ending the conversation
+          that earned the trust.
+        */}
+        <div className="profile-picker">
+          <button
+            type="button"
+            className="profile-chip"
+            title={profile?.summary}
+            aria-haspopup="listbox"
+            aria-expanded={pickingProfile}
+            onClick={() => {
+              setPickingProfile((open) => !open)
+            }}
+          >
+            {profile?.name ?? profileId}
+          </button>
+          {pickingProfile && (
+            <ul className="profile-menu" role="listbox">
+              {props.profiles.map((option) => (
+                <li key={option.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={option.id === profileId}
+                    data-on={option.id === profileId}
+                    className="profile-option"
+                    onClick={() => {
+                      setPickingProfile(false)
+                      if (option.id === profileId) return
+                      window.chorus
+                        .setProfile({ conversationId, profileId: option.id })
+                        .then(({ profileId: applied }) => {
+                          props.onProfile(applied)
+                        })
+                        .catch(fail(setError))
+                    }}
+                  >
+                    <span className="profile-option-name">{option.name}</span>
+                    <span className="profile-option-summary">{option.summary}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <div className="pane-actions">
           <button
             type="button"

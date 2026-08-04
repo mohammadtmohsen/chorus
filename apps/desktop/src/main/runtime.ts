@@ -64,7 +64,7 @@ interface Participant {
 interface ActiveConversation {
   readonly conversationId: string
   readonly participants: Map<AgentId, Participant>
-  readonly profile: PermissionProfile
+  profile: PermissionProfile
   readonly cwd: string
   /** Who the user last addressed, so an unaddressed follow-up stays with them. */
   lastAddressed: AgentId | undefined
@@ -414,6 +414,33 @@ export class ChorusRuntime {
       participants: [...c.participants.keys()],
       cwd: c.cwd,
     }))
+  }
+
+  /**
+   * Changes what agents may do without asking, mid-conversation.
+   *
+   * Every participant moves together: two agents in one room under different
+   * rules would make "what may happen here" unanswerable. Recorded in the log
+   * before it takes effect, so the transcript shows the widening above the
+   * actions it permitted rather than below them.
+   */
+  setProfile(conversationId: string, profileId: string): { profileId: string } {
+    const conversation = this.require(conversationId)
+    const profile = profileById(profileId)
+    const previous = conversation.profile
+
+    this.store.append({
+      conversationId,
+      actor: 'system',
+      payload: { type: 'policy.changed', profileId: profile.id, previousProfileId: previous.id },
+    })
+
+    conversation.profile = profile
+    for (const participant of conversation.participants.values()) {
+      participant.service.setProfile(profile)
+    }
+    this.log.info('policy changed', { conversationId, from: previous.id, to: profile.id })
+    return { profileId: profile.id }
   }
 
   /** Interrupts every agent mid-turn; the user pressed one Stop button. */

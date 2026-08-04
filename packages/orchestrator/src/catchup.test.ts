@@ -167,6 +167,17 @@ describe('composeCatchup', () => {
     expect(catchup([changed(9)])).toContain('and 6 more')
   })
 
+  it('replays a permission change, which is a fact about the room', () => {
+    const text = catchup([
+      did('policy.changed', {
+        type: 'policy.changed',
+        profileId: 'trusted',
+        previousProfileId: 'read-only',
+      }),
+    ])
+    expect(text).toContain('· the user changed permissions to "trusted"')
+  })
+
   it('reports an error that stuck, not a restart it recovered from', () => {
     const text = catchup([
       did('error.raised', {

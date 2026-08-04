@@ -50,7 +50,7 @@ export class ConversationService {
   private readonly conversationId: string
   private readonly adapter: AgentAdapter
   private readonly buffer: DeltaBuffer<DeltaMeta>
-  private readonly profile: PermissionProfile
+  private profile: PermissionProfile
   private readonly grants: SessionGrants
   private readonly queue: ApprovalQueue
   private session: AgentSession | null = null
@@ -134,6 +134,22 @@ export class ConversationService {
   /** Delivers without logging — the shared-conversation path. */
   async deliver(text: string): Promise<void> {
     await this.session?.send({ text })
+  }
+
+  /**
+   * Re-points this session at another profile.
+   *
+   * Only affects approvals asked *after* it: a request already on screen was
+   * evaluated under the old rules and is the user's to settle either way.
+   * Session grants survive too — they were given deliberately, and a profile
+   * change is not a reason to re-ask for something already allowed.
+   */
+  setProfile(profile: PermissionProfile): void {
+    this.profile = profile
+  }
+
+  profileId(): string {
+    return this.profile.id
   }
 
   async interrupt(): Promise<void> {
