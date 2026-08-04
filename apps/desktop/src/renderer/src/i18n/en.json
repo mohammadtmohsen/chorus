@@ -53,7 +53,9 @@
     "done": "Close"
   },
   "limits": {
-    "resets": "resets in {{time}}"
+    "resets": "resets in {{time}}",
+    "detail": "{{agent}} · {{percent}}% of a {{minutes}}-minute window · resets {{at}}",
+    "unknownReset": "no reset time reported"
   },
   "spend": {
     "tokens": "{{input}} in · {{output}} out",

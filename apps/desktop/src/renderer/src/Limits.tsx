@@ -40,7 +40,26 @@ export function Limits(): React.JSX.Element | null {
     <ul className="limits">
       {byAgent.map((agent) =>
         agent.windows.map((window) => (
-          <li key={`${agent.agentId}:${window.id}`} className={`limit voice--${agent.agentId}`}>
+          <li
+            key={`${agent.agentId}:${window.id}`}
+            className={`limit voice--${agent.agentId}`}
+            /*
+             * The provider's own numbers, on hover.
+             *
+             * The label is derived from the window's reported duration, and when
+             * that disagrees with what the CLI shows you, the raw figures are
+             * what settle it. Chorus should be checkable, not just believed.
+             */
+            title={t('limits.detail', {
+              agent: agent.agentId,
+              minutes: window.windowMinutes ?? '?',
+              percent: window.usedPercent === null ? '—' : Math.round(window.usedPercent),
+              at:
+                window.resetsAt === null
+                  ? t('limits.unknownReset')
+                  : new Date(window.resetsAt).toLocaleString(),
+            })}
+          >
             <span className="voice-dot" aria-hidden="true" />
             <span className="limit-window">{describeWindow(window)}</span>
             <span

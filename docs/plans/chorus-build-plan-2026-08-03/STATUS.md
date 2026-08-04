@@ -1739,4 +1739,25 @@ joined | claude joined` once Claude was added by hand in the second, and
 
   Verified live, all three rows at once:
   `codex 1w 55% resets in 3d 12h · claude 5h 2% resets in 4h 14m · claude 1w 86%
-  resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
+resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
+
+- **2026-08-04 — Codex reports no five-hour window, so none is shown.** Reported
+  as "55% is the 5h figure, and the 5h limit is missing". Checked against every
+  endpoint the app-server exposes rather than assumed:
+
+  - `account/rateLimits/read` — one window: `usedPercent 55`,
+    `windowDurationMins 10080`, `resetsAt 2026-08-08T11:11`. `secondary` is null.
+  - `account/rateLimits/updated`, after a real turn — the same single window.
+  - `account/usage/read` — lifetime and daily token history, no windows at all.
+
+  The reset time settles it independently of any label: **84 hours away**. A
+  five-hour window cannot reset in three and a half days, so the 55% is weekly,
+  and calling it "5h" would be relabelling a number to match an expectation.
+
+  Chorus shows what the provider reports and derives the label from the window's
+  own duration. If Codex's own UI says "5h" for this figure, the disagreement is
+  between Codex's interface and Codex's API — so the raw numbers are now on hover
+  (`55% of a 10080-minute window · resets 08/08/2026, 11:11`), which makes the
+  claim checkable rather than something to take on trust.
+
+  Claude does report both, and both are shown: `5h 2%` and `1w 86%`.
