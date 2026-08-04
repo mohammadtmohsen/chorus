@@ -1392,3 +1392,24 @@ sentence each, …` produced replies from both, with the user's message logged *
   both agents survive, the transcript back to nothing, and a fresh Claude
   answering "there's no earlier message in it" when asked about a word the
   previous session had been told to remember.
+
+- **2026-08-04 — Restart and End became a pair of round icons at the right of the
+  title bar.** ↻ and ✕, the same circle the send button uses — the same shape for
+  the same kind of thing. The name reads from the left; the things you do to it
+  collect at the right, where every other control in a pane already sits. End
+  left the composer row, which now holds only Review.
+
+  Glyphs rather than words because they sit beside a name that can be long, in a
+  bar that has to survive a pane a third of the window wide. The words live on
+  `aria-label` and `title`, so a screen reader and a hover both still get
+  "Restart" and "End this session".
+
+  The two-button confirm became **one button that arms**. Pressed while an agent
+  is working, ✕ turns the colour of a warning and says "press again to end"; it
+  disarms itself after three seconds, so a stray click cannot lie in wait. When
+  nothing is running it just ends, as it always did.
+
+  Verified live: both icons right of the name and at the far end of the bar,
+  `border-radius: 50%` matching the send button, restart still replacing the
+  conversation in place with everything else intact, the first press while busy
+  arming instead of ending, and the arm clearing on its own.

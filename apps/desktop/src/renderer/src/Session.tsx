@@ -379,27 +379,66 @@ export function Session(props: {
           />
         )}
         {titleDraft === null && (
-          <button
-            type="button"
-            className="btn btn--chip pane-title-restart"
-            disabled={restarting}
-            aria-label={t('conversation.restartLabel')}
-            title={t('conversation.restartLabel')}
-            onClick={() => {
-              setRestarting(true)
-              window.chorus
-                .restartConversation({ conversationId })
-                .then((session) => {
-                  props.onRestart(conversationId, session)
-                })
-                .catch(fail(setError))
-                .finally(() => {
-                  setRestarting(false)
-                })
-            }}
-          >
-            {restarting ? t('conversation.restarting') : t('conversation.restart')}
-          </button>
+          <span className="pane-title-actions">
+            {/*
+              Glyphs, not words.
+              
+              These sit beside a name that can be long, in a bar that has to
+              survive a pane a third of the window wide — and both are shapes
+              everything else uses for the same two ideas. The words live on
+              `aria-label` and `title`, so a screen reader and a hover both still
+              get "Restart" and "End".
+            */}
+            <button
+              type="button"
+              className="pane-title-action"
+              disabled={restarting}
+              aria-label={t('conversation.restartLabel')}
+              title={t('conversation.restartLabel')}
+              onClick={() => {
+                setRestarting(true)
+                window.chorus
+                  .restartConversation({ conversationId })
+                  .then((session) => {
+                    props.onRestart(conversationId, session)
+                  })
+                  .catch(fail(setError))
+                  .finally(() => {
+                    setRestarting(false)
+                  })
+              }}
+            >
+              <span aria-hidden="true">{restarting ? '…' : '↻'}</span>
+            </button>
+            {/*
+              Ending asks twice only while an agent is working — the one moment
+              there is anything to lose. Rather than a second button, the first
+              press arms this one: it turns the colour of a warning and says so,
+              and disarms itself after a few seconds so a stray click cannot lie
+              in wait.
+            */}
+            <button
+              type="button"
+              className="pane-title-action pane-title-action--end"
+              data-armed={confirmingClose}
+              aria-label={
+                confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')
+              }
+              title={confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')}
+              onClick={() => {
+                if (view.busy && !confirmingClose) {
+                  setConfirmingClose(true)
+                  window.setTimeout(() => {
+                    setConfirmingClose(false)
+                  }, 3_000)
+                  return
+                }
+                props.onClose(conversationId)
+              }}
+            >
+              <span aria-hidden="true">✕</span>
+            </button>
+          </span>
         )}
       </header>
 
@@ -774,47 +813,6 @@ export function Session(props: {
                   {t('review.openShort')}
                 </span>
               </button>
-              {/*
-                Shown even when this is the only session: ending the last one lands
-                on the start screen, which is a place to be rather than a dead end.
-                Confirmed only while an agent is mid-turn — the one moment ending
-                costs something, since the rest of the time the log is already
-                durable and the session can be started again.
-              */}
-              {confirmingClose ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn--chip btn--stop"
-                    onClick={() => {
-                      props.onClose(conversationId)
-                    }}
-                  >
-                    {t('conversation.endNow')}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--chip"
-                    onClick={() => {
-                      setConfirmingClose(false)
-                    }}
-                  >
-                    {t('conversation.keep')}
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn--chip"
-                  aria-label={t('conversation.endLabel')}
-                  onClick={() => {
-                    if (view.busy) setConfirmingClose(true)
-                    else props.onClose(conversationId)
-                  }}
-                >
-                  {t('conversation.end')}
-                </button>
-              )}
             </div>
             <div className="composer-tools">
               {/*
