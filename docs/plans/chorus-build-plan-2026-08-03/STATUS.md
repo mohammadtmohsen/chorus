@@ -1004,3 +1004,37 @@ sentence each, …` produced replies from both, with the user's message logged *
   claude taken out, codex told a passphrase claude never saw, claude brought back
   and asked for it with commands and file reads forbidden. It answered
   `velvet-otter-41`. 378 tests.
+
+- **2026-08-04 — syntax highlighting, written rather than installed.**
+  `highlight.ts` turns code into typed tokens the renderer draws as elements —
+  the same argument as the markdown parser beside it: agent output is untrusted
+  input, so nothing emits an HTML string for anyone to inject into. Injection is
+  impossible by construction rather than by filtering (§4.4).
+
+  Not a dependency, deliberately. A full highlighter is a large grammar engine
+  running over text an agent produced; this is a hundred lines readable in one
+  sitting, and the failure mode of a missed token is a word in the wrong colour.
+  It covers what agents actually emit — shell, TS/JS, JSON, Python, diffs — with
+  a generic fallback that still finds strings, numbers and comments.
+
+  Five hues, not a rainbow, drawn from the same violet family as the ground so a
+  block still belongs to this app. They answer what you ask of code at a glance:
+  what is literal, what is being called, what is commentary, what is a flag. The
+  two voice hues are reused rather than inventing more.
+
+  Two details worth their lines:
+  - **The shell wrapper is unwrapped.** Both agents run everything through
+    `/bin/zsh -lc '…'`, so taken literally the whole command is one quoted
+    string, and the half worth reading would be flat. The wrapper is tokenised as
+    itself and the body tokenised again as shell.
+  - **Unterminated strings cannot hang it.** A half-typed line arrives mid-stream
+    on every reply, so quote rules close optionally and a zero-length match is
+    treated as no match.
+
+  Every case round-trips: the tokens rejoin to exactly the input, because a
+  highlighter that drops a byte shows something other than what the agent said.
+
+  Verified live: a reply with ts/bash/json blocks rendering comment, keyword,
+  meta, operator, property and string runs in five distinct colours, and a real
+  command entry showing `--files`, `--max-count` and `1` coloured inside the
+  wrapper. 391 tests.

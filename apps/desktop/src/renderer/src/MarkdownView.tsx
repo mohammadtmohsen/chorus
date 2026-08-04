@@ -1,3 +1,4 @@
+import { CodeRun } from './CodeRun.js'
 import { memo, useMemo } from 'react'
 import { parseMarkdown, splitBlocks, type Block, type Inline } from './markdown.js'
 
@@ -68,7 +69,9 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
       return (
         <pre className="md-code">
           {block.language !== null && <span className="md-lang">{block.language}</span>}
-          <code>{block.text}</code>
+          <code>
+            <CodeRun code={block.text} language={block.language} />
+          </code>
         </pre>
       )
 

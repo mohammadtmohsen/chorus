@@ -35,6 +35,28 @@
   --alert: #f2647c;
 
   /*
+   * Syntax colours.
+   *
+   * Five hues, not a rainbow. They answer the questions you actually ask of a
+   * block at a glance — what is literal text, what is a name being called, what
+   * is commentary, what is a flag — and they are drawn from the same violet
+   * family as the ground so a code block still belongs to this app rather than
+   * looking like a screenshot from another one.
+   *
+   * The two voice hues are deliberately reused: an agent's colour meaning
+   * "called thing" inside its own code block is a coincidence a reader never
+   * has to resolve, and adding two more hues to avoid it would cost more.
+   */
+  --tok-comment: #6f6890;
+  --tok-string: #9fd39f;
+  --tok-number: #e9a05c;
+  --tok-keyword: #c39aef;
+  --tok-function: #7fd1c1;
+  --tok-property: #8fb4ef;
+  --tok-added: #7ec98a;
+  --tok-removed: #ef7f92;
+
+  /*
    * SF Mono first: it is what Terminal.app draws with on this machine, so the
    * app reads as the same class of tool. The coding faces after it are picked up
    * only if they are installed, and every fallback is still a grid.
@@ -61,6 +83,14 @@
 
 @media (prefers-color-scheme: light) {
   :root {
+    --tok-comment: #7a7392;
+    --tok-string: #2f7d43;
+    --tok-number: #a75d15;
+    --tok-keyword: #7b3fbf;
+    --tok-function: #10716a;
+    --tok-property: #2a5fa8;
+    --tok-added: #1f7a3a;
+    --tok-removed: #b32740;
     --ground: #efedf4;
     --raised: #ffffff;
     --sunken: #e5e2ee;
@@ -727,6 +757,7 @@ body {
 }
 
 .md-inline-code {
+  color: var(--tok-string);
   padding: 1px 5px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -1652,6 +1683,51 @@ input::placeholder {
   .zoom-badge {
     animation: none;
   }
+}
+
+/* ----------------------------------------------------------------- syntax */
+
+.tok--comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+
+.tok--string {
+  color: var(--tok-string);
+}
+
+.tok--number {
+  color: var(--tok-number);
+}
+
+.tok--keyword {
+  color: var(--tok-keyword);
+}
+
+.tok--function {
+  color: var(--tok-function);
+}
+
+.tok--property {
+  color: var(--tok-property);
+}
+
+/* Flags and diff headers: the part of a line you scan for, not read. */
+.tok--meta {
+  color: var(--tok-property);
+}
+
+.tok--operator {
+  color: var(--muted);
+}
+
+/* A diff's marker column carries the meaning, so the line takes the colour. */
+.tok--added {
+  color: var(--tok-added);
+}
+
+.tok--removed {
+  color: var(--tok-removed);
 }
 
 /* ------------------------------------------------------------------ phone */

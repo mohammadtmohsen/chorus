@@ -1,3 +1,4 @@
+import { CodeRun } from './CodeRun.js'
 import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MarkdownView } from './MarkdownView.js'
@@ -92,7 +93,10 @@ export const Entry = memo(function Entry({
       )}
       <div className="said" data-streaming={message.status === 'streaming'}>
         {message.kind === 'command' ? (
-          <pre className="command">{message.text}</pre>
+          /* A command is shell, wherever it is shown. */
+          <pre className="command">
+            <CodeRun code={message.text} language="shell" />
+          </pre>
         ) : message.kind === 'notice' ? (
           <p className="notice-line">{message.text}</p>
         ) : (
