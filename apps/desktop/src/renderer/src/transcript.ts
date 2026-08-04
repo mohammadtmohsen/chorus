@@ -11,9 +11,13 @@ import type { TranscriptEvent } from '../../shared/ipc.js'
 export interface TranscriptMessage {
   readonly key: string
   readonly actor: TranscriptEvent['actor']
-  readonly kind: 'message' | 'reasoning' | 'command' | 'notice'
+  readonly kind: 'message' | 'reasoning' | 'command' | 'notice' | 'handoff'
   readonly text: string
   readonly status: 'streaming' | 'complete'
+  /** The log event this came from — what a handoff selects. */
+  readonly eventId: string
+  /** Set on a handoff card: who it went to. */
+  readonly handoffTo?: TranscriptEvent['actor']
 }
 
 export interface PendingApproval {
@@ -83,6 +87,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
     case 'user.message':
       view.messages.push({
         key: event.id,
+        eventId: event.id,
         actor: 'user',
         kind: 'message',
         text: str('text'),
@@ -103,6 +108,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       const existing = view.messages.findIndex((m) => m.key === key)
       const message: TranscriptMessage = {
         key,
+        eventId: event.id,
         actor: event.actor,
         kind: 'message',
         text: str('text'),
@@ -116,6 +122,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
     case 'command.started':
       view.messages.push({
         key: event.id,
+        eventId: event.id,
         actor: event.actor,
         kind: 'command',
         text: `$ ${(Array.isArray(p['command']) ? p['command'] : []).join(' ')}`,
@@ -134,6 +141,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       if (p['status'] === 'interrupted') {
         view.messages.push({
           key: event.id,
+          eventId: event.id,
           actor: 'system',
           kind: 'notice',
           text: p['userInitiated'] === true ? 'Stopped.' : 'Interrupted.',
@@ -172,6 +180,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         const outcome = str('outcome')
         view.messages.push({
           key: event.id,
+          eventId: event.id,
           actor: 'system',
           kind: 'notice',
           text:
@@ -187,9 +196,27 @@ function apply(view: Mutable, event: TranscriptEvent): void {
     case 'error.raised':
       view.messages.push({
         key: event.id,
+        eventId: event.id,
         actor: 'system',
         kind: 'notice',
         text: str('message'),
+        status: 'complete',
+      })
+      return
+
+    /*
+     * A handoff is shown as its own entry rather than as a user message. It is
+     * the moment context crosses between two agents that otherwise cannot see
+     * each other, and the transcript should make that visible (plan §4.5).
+     */
+    case 'handoff.created':
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: str('from') as TranscriptEvent['actor'],
+        kind: 'handoff',
+        handoffTo: str('to') as TranscriptEvent['actor'],
+        text: str('brief'),
         status: 'complete',
       })
       return
@@ -208,7 +235,14 @@ function appendStreamed(
 ): void {
   const index = view.messages.findIndex((m) => m.key === key)
   if (index === -1) {
-    view.messages.push({ key, actor: event.actor, kind, text, status: 'streaming' })
+    view.messages.push({
+      key,
+      eventId: event.id,
+      actor: event.actor,
+      kind,
+      text,
+      status: 'streaming',
+    })
     return
   }
   const previous = view.messages[index]

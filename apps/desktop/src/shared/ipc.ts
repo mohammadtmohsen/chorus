@@ -95,6 +95,37 @@ export const IPC_CONTRACT = {
     request: ApprovalChoice,
     response: z.object({ ok: z.literal(true) }),
   },
+  /**
+   * Builds the packet that would cross to another agent, without sending it.
+   * The user edits this before anything moves (plan §4.5).
+   */
+  'handoff:prepare': {
+    request: z.object({
+      conversationId: z.string(),
+      from: z.enum(['codex', 'claude']),
+      to: z.enum(['codex', 'claude']),
+      sourceEventIds: z.array(z.string()).min(1),
+      includeDiff: z.boolean().optional(),
+      intent: z.enum(['implement', 'review', 'discuss']).optional(),
+      note: z.string().optional(),
+    }),
+    response: z.object({
+      brief: z.string(),
+      intent: z.enum(['implement', 'review', 'discuss']),
+      summary: z.string(),
+      sourceCount: z.number().int(),
+    }),
+  },
+  'handoff:send': {
+    request: z.object({
+      conversationId: z.string(),
+      from: z.enum(['codex', 'claude']),
+      to: z.enum(['codex', 'claude']),
+      sourceEventIds: z.array(z.string()),
+      brief: z.string().min(1),
+    }),
+    response: z.object({ handoffId: z.string() }),
+  },
   /** The permission profiles a conversation can be started under. */
   'policy:profiles': {
     request: z.void(),
@@ -142,6 +173,12 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:history'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
   readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
+  readonly prepareHandoff: (
+    request: IpcRequest<'handoff:prepare'>
+  ) => Promise<IpcResponse<'handoff:prepare'>>
+  readonly sendHandoff: (
+    request: IpcRequest<'handoff:send'>
+  ) => Promise<IpcResponse<'handoff:send'>>
   /** Returns an unsubscribe function. */
   readonly onEvents: (listener: (events: TranscriptEvent[]) => void) => () => void
 }

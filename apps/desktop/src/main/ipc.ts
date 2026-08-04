@@ -72,6 +72,40 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
     },
 
     'policy:profiles': () => Promise.resolve(runtime.availableProfiles()),
+
+    'handoff:prepare': (request: {
+      conversationId: string
+      from: 'codex' | 'claude'
+      to: 'codex' | 'claude'
+      sourceEventIds: string[]
+      includeDiff?: boolean
+      intent?: 'implement' | 'review' | 'discuss'
+      note?: string
+    }) =>
+      Promise.resolve(
+        runtime.prepareHandoff(request.conversationId, {
+          from: request.from,
+          to: request.to,
+          sourceEventIds: request.sourceEventIds,
+          ...(request.includeDiff === undefined ? {} : { includeDiff: request.includeDiff }),
+          ...(request.intent === undefined ? {} : { intent: request.intent }),
+          ...(request.note === undefined ? {} : { note: request.note }),
+        })
+      ),
+
+    'handoff:send': (request: {
+      conversationId: string
+      from: 'codex' | 'claude'
+      to: 'codex' | 'claude'
+      sourceEventIds: string[]
+      brief: string
+    }) =>
+      runtime.sendHandoff(request.conversationId, {
+        from: request.from,
+        to: request.to,
+        sourceEventIds: request.sourceEventIds,
+        brief: request.brief,
+      }),
   }
 }
 

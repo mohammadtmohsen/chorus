@@ -28,6 +28,25 @@
     "heading": "What agents may do without asking",
     "footnote": "Anything a profile does not cover still asks. Slack, Jira and the like always ask."
   },
+  "handoff": {
+    "action": "Hand off →",
+    "heading": "Hand off",
+    "title": "{{from}} → {{to}}",
+    "intent": "Ask them to",
+    "intentImplement": "Implement this",
+    "intentReview": "Review this",
+    "intentDiscuss": "Read and respond",
+    "includeDiff": "Include the current diff",
+    "note": "Add a note",
+    "notePlaceholder": "Anything they should know first",
+    "brief": "What they will receive",
+    "previewHint": "Edit anything here before it is sent.",
+    "editedHint": "Edited — this is what will be sent.",
+    "cancel": "Cancel",
+    "send": "Send to {{to}}",
+    "sending": "Sending…",
+    "card": "{{from}} handed off to {{to}}"
+  },
   "approval": {
     "heading": "Approval",
     "wants": "{{agent}} needs approval",

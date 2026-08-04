@@ -7,6 +7,7 @@
  */
 export * from './conversation-service.js'
 export * from './delta-buffer.js'
+export * from './handoff.js'
 export * from './mentions.js'
 export * from './policy/engine.js'
 export * from './policy/queue.js'

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { Entry } from './Entry.js'
+import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import {
   EMPTY_VIEW,
   reduceEvents,
@@ -33,6 +34,7 @@ export function App(): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
+  const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const bottom = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -143,10 +145,40 @@ export function App(): React.JSX.Element {
       <main className="score" aria-label={t('conversation.transcript')}>
         <div className="rail" aria-hidden="true" />
         {view.messages.map((message) => (
-          <Entry key={message.key} message={message} />
+          <Entry
+            key={message.key}
+            message={message}
+            onHandOff={
+              // Only offered when there is somebody to hand to, and only for an
+              // agent's own words — handing the user's message back is noise.
+              participants.length > 1 && (message.actor === 'codex' || message.actor === 'claude')
+                ? (m) => {
+                    const from = m.actor === 'claude' ? 'claude' : 'codex'
+                    const to = participants.find((p) => p !== from)
+                    if (to !== undefined) {
+                      setHandoff({ from, to, sourceEventIds: [m.eventId] })
+                    }
+                  }
+                : undefined
+            }
+          />
         ))}
         <div ref={bottom} />
       </main>
+
+      {handoff !== null && (
+        <HandoffComposer
+          conversationId={conversationId}
+          draft={handoff}
+          onClose={() => {
+            setHandoff(null)
+          }}
+          onSent={() => {
+            setHandoff(null)
+          }}
+          onError={setError}
+        />
+      )}
 
       <div className="dock">
         {view.approvals.map((approval) => (

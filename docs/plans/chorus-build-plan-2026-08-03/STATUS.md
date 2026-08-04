@@ -407,3 +407,34 @@ sentence each, …` produced replies from both, with the user's message logged *
   Deferred: the `granular` Codex approval variant found in the bindings. The
   preset `approvalPolicy` values cover the three profiles, and mapping per-category
   toggles has no user-visible payoff yet.
+
+- **2026-08-04 — M6 handoffs. The README's core loop runs end to end.** 259 tests,
+  all gates green.
+
+  Verified live: Codex analysed a repo, a handoff composed a brief, the brief was
+  **edited by hand**, and Claude acted on the edited version — the transcript shows
+  `USER → CODEX ×5 → CLAUDE`, with a handoff card between them.
+
+  The edit is the part that matters. Agents keep separate contexts, so the brief
+  _is_ what the receiving agent will know. Composing it silently would make Chorus
+  decide that on the user's behalf, which is exactly what "explicit context
+  sharing" exists to prevent (plan §4.5). The composer proves the point: an
+  instruction typed into the brief came out the other side in Claude's reply.
+
+  Shipped:
+  - `composeBrief` — pure, tested. Framing names the source agent, because an
+    agent told "implement this" behaves differently from one told "implement this
+    analysis from Codex". Intents are implement / review / discuss.
+  - `prepareHandoff` builds without sending; `sendHandoff` records
+    `handoff.created` and delivers what the user approved. The receiving agent
+    becomes the one an unaddressed follow-up continues with.
+  - Optional inclusion of the current aggregate diff.
+  - A handoff card in the transcript, collapsed by default, showing exactly what
+    crossed — the seam between two agents that otherwise cannot see each other.
+  - Hand-off action revealed on hover but reachable by keyboard; an action you can
+    only find with a mouse is not an action.
+
+  Not built: multi-message selection. The composer takes a list of source events
+  and the runtime already handles several, but the UI only offers one at a time.
+  Worth adding once it is clear whether handing off a _run_ of messages is
+  actually the common case.

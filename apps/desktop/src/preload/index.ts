@@ -35,6 +35,8 @@ const api: ChorusApi = {
   history: invoke('conversation:history'),
   decideApproval: invoke('approval:decide'),
   profiles: invoke('policy:profiles'),
+  prepareHandoff: invoke('handoff:prepare'),
+  sendHandoff: invoke('handoff:send'),
 
   onEvents: (listener) => {
     // The payload is validated before it reaches renderer code: main is

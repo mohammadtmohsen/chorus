@@ -6,15 +6,20 @@ import { CodexAdapter } from '@chorus/adapter-codex'
 import type { AgentAdapter, ApprovalDecision, SessionOpts } from '@chorus/agent-protocol'
 import { EventStore, openSqlite, type SqliteHandle, type StoredEvent } from '@chorus/event-store'
 import {
+  composeBrief,
   ConversationService,
+  defaultIntent,
   parseMentions,
   profileById,
   PROFILES,
   SessionGrants,
   SupervisedSession,
+  summariseHandoff,
+  type HandoffIntent,
+  type HandoffSource,
   type PermissionProfile,
 } from '@chorus/orchestrator'
-import { newConversationId, type AgentId } from '@chorus/shared'
+import { newConversationId, newHandoffId, type AgentId } from '@chorus/shared'
 
 /**
  * Wires the domain to real agents inside the main process.
@@ -49,6 +54,7 @@ interface ActiveConversation {
   readonly conversationId: string
   readonly participants: Map<AgentId, Participant>
   readonly profile: PermissionProfile
+  readonly cwd: string
   /** Who the user last addressed, so an unaddressed follow-up stays with them. */
   lastAddressed: AgentId | undefined
 }
@@ -136,6 +142,7 @@ export class ChorusRuntime {
       conversationId,
       participants: new Map(),
       profile,
+      cwd: options.cwd,
       lastAddressed: undefined,
     }
     const failures: string[] = []
@@ -199,6 +206,112 @@ export class ChorusRuntime {
         .map((p) => p.service.deliver(route.text))
     )
     return { targets: route.targets }
+  }
+
+  /**
+   * Builds the packet that would cross to another agent — without sending it.
+   *
+   * The user sees and edits this before anything moves. Agents keep separate
+   * contexts, so a handoff *is* the cross-agent context; composing it silently
+   * would be Chorus deciding what one agent knows about another (plan §4.5).
+   */
+  prepareHandoff(
+    conversationId: string,
+    options: {
+      from: AgentId
+      to: AgentId
+      sourceEventIds: readonly string[]
+      includeDiff?: boolean
+      intent?: HandoffIntent
+      note?: string
+    }
+  ): { brief: string; intent: HandoffIntent; summary: string; sourceCount: number } {
+    const conversation = this.require(conversationId)
+    if (!conversation.participants.has(options.to)) {
+      throw new Error(`"${options.to}" is not in this conversation`)
+    }
+
+    const sources = this.sourcesFor(conversationId, options.sourceEventIds)
+    if (sources.length === 0) throw new Error('Nothing was selected to hand off')
+
+    const intent = options.intent ?? defaultIntent(options.from, options.to)
+    const diff = options.includeDiff === true ? this.latestDiff(conversationId) : undefined
+
+    return {
+      intent,
+      sourceCount: sources.length,
+      brief: composeBrief({
+        from: options.from,
+        to: options.to,
+        intent,
+        sources,
+        cwd: conversation.cwd,
+        diff,
+        note: options.note,
+      }),
+      summary: summariseHandoff({
+        from: options.from,
+        to: options.to,
+        intent,
+        sourceCount: sources.length,
+        includesDiff: diff !== undefined && diff.trim() !== '',
+      }),
+    }
+  }
+
+  /** Records the handoff and delivers the brief the user approved. */
+  async sendHandoff(
+    conversationId: string,
+    options: {
+      from: AgentId
+      to: AgentId
+      sourceEventIds: readonly string[]
+      brief: string
+    }
+  ): Promise<{ handoffId: string }> {
+    const conversation = this.require(conversationId)
+    const target = conversation.participants.get(options.to)
+    if (target === undefined) throw new Error(`"${options.to}" is not in this conversation`)
+    if (options.brief.trim() === '') throw new Error('The brief is empty')
+
+    const handoffId = newHandoffId()
+    this.store.append({
+      conversationId,
+      actor: 'user',
+      payload: {
+        type: 'handoff.created',
+        handoffId,
+        from: options.from,
+        to: options.to,
+        sourceEventIds: [...options.sourceEventIds],
+        brief: options.brief,
+      },
+    })
+
+    // The receiving agent is now the one an unaddressed follow-up continues with.
+    conversation.lastAddressed = options.to
+    await target.service.deliver(options.brief)
+    return { handoffId }
+  }
+
+  private sourcesFor(conversationId: string, eventIds: readonly string[]): HandoffSource[] {
+    const wanted = new Set(eventIds)
+    const sources: HandoffSource[] = []
+
+    for (const event of this.store.read(conversationId)) {
+      if (!wanted.has(event.id)) continue
+      const payload = event.payload as { text?: string }
+      if (typeof payload.text !== 'string' || payload.text.trim() === '') continue
+      sources.push({ eventId: event.id, actor: event.actor, text: payload.text })
+    }
+    return sources
+  }
+
+  /** The most recent aggregate diff, when an agent produced one. */
+  private latestDiff(conversationId: string): string | undefined {
+    const diffs = this.store.read(conversationId, { types: ['diff.updated'] })
+    const last = diffs.at(-1)?.payload as { unifiedDiff?: string } | undefined
+    return last?.unifiedDiff
   }
 
   /** Interrupts every agent mid-turn; the user pressed one Stop button. */
