@@ -922,10 +922,35 @@ sentence each, …` produced replies from both, with the user's message logged *
   send button stays inside the box at every width and the row never wraps to two
   lines.
 
-  Two latent bugs surfaced doing it. `.voices--pane` was declared *before*
+  Two latent bugs surfaced doing it. `.voices--pane` was declared _before_
   `.voices`, so its `margin: 0` had never won against the base rule's
   `margin-left: auto` — invisible while voices lived in a strip of their own, and
   the reason the group sat centred the moment it moved. And `.composer-actions`
   carried `justify-content: flex-end` from when it held only a hint and a button.
 
   Verified live across 1400/900/620/480/390px panes. 378 tests.
+
+- **2026-08-04 — compacted, and measured.** Spacing was tightened everywhere
+  rather than by eye, and checked against a number: how many transcript entries
+  fit on one screen.
+
+  | | before | after |
+  |---|---|---|
+  | per entry | 53px | 47px |
+  | chrome (masthead + dock) | 186px | 151px |
+  | entries visible at once | 12 | **15** |
+
+  Two tokens did most of it. `--step` went 4px → 3px: every padding and gap in
+  the app is a multiple of it, so it is the one lever that decides how much of
+  the screen is transcript and how much is air. `--gutter` went 88px → 60px —
+  it was sized for a serif design with wide tracking, and the labels are short
+  monospace words now. Checked rather than guessed: the longest of them,
+  `CLAUDE`/`SYSTEM`, measures 47px.
+
+  The rest: `.score`, `.masthead` and `.dock` padding down a step or two, entry
+  padding 3 → 2 steps, column gap 6 → 4, and prose leading 1.7 → 1.55 — still
+  open enough that fixed-width text does not close up, and worth most of a line
+  per paragraph.
+
+  Verified live after the change: no entry overlapping its neighbour, every
+  speaker label clear of the text column, prose still 14px on a 21.7px line.

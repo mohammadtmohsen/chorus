@@ -41,8 +41,21 @@
    */
   --mono: 'SF Mono', ui-monospace, 'JetBrains Mono', 'IBM Plex Mono', Menlo, Monaco, monospace;
 
-  --step: 4px;
-  --gutter: 88px;
+  /*
+   * The spacing unit. Every padding and gap in the app is a multiple of it, so
+   * this is the one lever that changes how much of the screen is transcript and
+   * how much is air.
+   *
+   * 3px rather than 4: a shared room fills up, and the thing worth more room is
+   * what was said, not the space around it.
+   */
+  --step: 3px;
+  /*
+   * The speaker column. 88px was set for a serif design with wide tracking; the
+   * labels are short monospace words now, and 60 holds "CLAUDE" with the rail
+   * still reading as a margin rather than a column of its own.
+   */
+  --gutter: 60px;
   --radius: 7px;
 }
 
@@ -422,7 +435,7 @@ body {
   display: flex;
   align-items: center;
   gap: calc(var(--step) * 4);
-  padding: calc(var(--step) * 4) calc(var(--step) * 6);
+  padding: calc(var(--step) * 3) calc(var(--step) * 5);
   /* Room for the traffic lights under `titleBarStyle: hiddenInset`. */
   padding-left: 92px;
   border-bottom: 1px solid var(--line);
@@ -494,7 +507,7 @@ body {
 .score {
   position: relative;
   overflow-y: auto;
-  padding: calc(var(--step) * 7) calc(var(--step) * 6) calc(var(--step) * 10);
+  padding: calc(var(--step) * 5) calc(var(--step) * 5) calc(var(--step) * 7);
 }
 
 /* The shared timeline every voice is measured against. */
@@ -518,8 +531,8 @@ body {
   display: grid;
   grid-template-columns: var(--gutter) 1fr;
   grid-template-areas: 'speaker said';
-  column-gap: calc(var(--step) * 6);
-  padding-block: calc(var(--step) * 3);
+  column-gap: calc(var(--step) * 4);
+  padding-block: calc(var(--step) * 2);
 }
 
 .entry--user {
@@ -570,14 +583,15 @@ body {
  * What an agent says, at full brightness and a little larger than the chrome.
  *
  * Monospace runs wider than prose type at the same size, so 14px here holds a
- * comparable measure to the 16px serif it replaced — and 1.7 opens the lines up,
- * because a wall of fixed-width text closes them.
+ * comparable measure to the 16px serif it replaced.
  */
 .said .md-p,
 .said .md-list,
 .said .md-quote {
   font-size: 14px;
-  line-height: 1.7;
+  /* Open enough that a wall of fixed-width text does not close up, tight enough
+     to give back most of a line per paragraph. */
+  line-height: 1.55;
 }
 
 .said > :first-child {
@@ -730,12 +744,12 @@ body {
 /* ------------------------------------------------------------------- dock */
 
 .dock {
-  padding: calc(var(--step) * 4) calc(var(--step) * 6);
+  padding: calc(var(--step) * 3) calc(var(--step) * 5);
   border-top: 1px solid var(--line);
   background: var(--raised);
   display: flex;
   flex-direction: column;
-  gap: calc(var(--step) * 3);
+  gap: calc(var(--step) * 2);
 }
 
 /*
