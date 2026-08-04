@@ -40,6 +40,8 @@
     "heading": "Settings",
     "subhead": "What a new session starts with",
     "saved": "Saved as you change them",
+    "scale": "Size",
+    "scaleHint": "Scales the whole window, not just text. ⌘+ and ⌘− step through these too.",
     "done": "Done"
   },
   "policy": {

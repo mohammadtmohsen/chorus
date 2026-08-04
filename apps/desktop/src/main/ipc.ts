@@ -17,6 +17,19 @@ type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>>
 
 const OK = { ok: true } as const
 
+/**
+ * Zooms every open window.
+ *
+ * Lives in the main process because the renderer is sandboxed and `webFrame` is
+ * not reachable from it — and because applying it here means the same call is
+ * used on launch and on change, rather than two paths that can disagree.
+ */
+export function applyScale(scale: number): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.setZoomFactor(scale)
+  }
+}
+
 function buildHandlers(runtime: ChorusRuntime): Handlers {
   return {
     'app:getInfo': () =>
@@ -84,8 +97,11 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'settings:read': () => Promise.resolve(readSettings(app.getPath('userData'))),
 
-    'settings:write': (request: Settings) =>
-      Promise.resolve(writeSettings(app.getPath('userData'), request)),
+    'settings:write': (request: Settings) => {
+      const saved = writeSettings(app.getPath('userData'), request)
+      applyScale(saved.scale)
+      return Promise.resolve(saved)
+    },
 
     'diagnostics:read': () =>
       Promise.resolve(

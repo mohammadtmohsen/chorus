@@ -742,7 +742,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
 - **2026-08-04 — the app opens on a door, not a form.** With nothing open there
   is now one thing to press: **Start a session**, with **Settings** beneath it.
-  The setup form used to *be* the launch screen, which meant arriving at a wall
+  The setup form used to _be_ the launch screen, which meant arriving at a wall
   of choices before there was any reason to make them — and every one of them
   now has a remembered answer. It became a sheet, reached from the empty screen
   and from **New session** in the masthead.
@@ -754,7 +754,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   a crash mid-write cannot leave a half-written file where a valid one was; a
   corrupt one falls back to defaults rather than stopping the app opening.
 
-  Every field is a *default*, never a constraint: a session still chooses its own
+  Every field is a _default_, never a constraint: a session still chooses its own
   agents, directory and profile as it opens, which is what makes it safe to put
   the permission profile in a settings sheet at all. Nothing there can widen what
   an agent may do in a session already running.
@@ -766,3 +766,25 @@ sentence each, …` produced replies from both, with the user's message logged *
   returning to it, a session starting from it, Settings reachable from the
   masthead once panes exist, and a changed profile surviving a full relaunch.
   365 tests.
+
+- **2026-08-04 — size in Settings.** Five steps (85% to 150%), plus ⌘+, ⌘− and
+  ⌘0 stepping through the same sizes.
+
+  It is a **zoom factor, not a font size**. Scaling type alone would leave every
+  border, gutter and control where it was, so larger text would arrive in a
+  layout built for smaller text. Zoom moves all of it together — and the
+  responsive breakpoints come along, so at 150% the window holds fewer columns,
+  which is the truth.
+
+  Applied in the main process: the renderer is sandboxed and `webFrame` is not
+  reachable from it, and one call site means launch and change cannot disagree.
+  Hooked to `did-finish-load` rather than window creation, because Electron
+  resets the zoom factor on every navigation — set once at creation it would
+  survive until the first reload and then silently revert.
+
+  The keyboard shortcuts write the setting rather than only zooming, so they and
+  the sheet always agree. The View menu's own zoom still changes the window
+  without persisting; ours wins on the next launch.
+
+  Verified live: 1.0 at launch, 1.3 after picking 130%, ⌘0 back to 1.0, ⌘− down
+  to 0.85, and 0.85 still in force after a full relaunch. 365 tests.

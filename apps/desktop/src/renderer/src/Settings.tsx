@@ -9,7 +9,11 @@ export interface Defaults {
   agents: AgentId[]
   cwd: string
   profileId: string
+  scale: number
 }
+
+/** Steps rather than a slider: five sizes, each visibly different from the last. */
+export const SCALES = [0.85, 1, 1.15, 1.3, 1.5]
 
 /**
  * What a new session starts with.
@@ -119,6 +123,27 @@ export function Settings(props: {
                 <span className="cast-version cast-summary">{profile.summary}</span>
               </label>
             ))}
+          </fieldset>
+
+          <fieldset className="cast">
+            <legend>{t('settings.scale')}</legend>
+            <div className="scale-steps">
+              {SCALES.map((scale) => (
+                <button
+                  key={scale}
+                  type="button"
+                  className="btn btn--chip"
+                  data-on={Math.abs(defaults.scale - scale) < 0.001}
+                  aria-pressed={Math.abs(defaults.scale - scale) < 0.001}
+                  onClick={() => {
+                    props.onChange({ ...defaults, scale })
+                  }}
+                >
+                  {`${String(Math.round(scale * 100))}%`}
+                </button>
+              ))}
+            </div>
+            <p className="footnote">{t('settings.scaleHint')}</p>
           </fieldset>
 
           <p className="footnote">{t('policy.footnote')}</p>

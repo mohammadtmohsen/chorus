@@ -79,16 +79,30 @@ body {
 
 .wordmark {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.34em;
-  text-transform: uppercase;
+  line-height: 0;
+  flex: none;
 }
 
-.wordmark--large {
-  font-size: 15px;
-  letter-spacing: 0.5em;
+.wordmark-logo {
+  display: block;
+  width: 96px;
+  height: auto;
+}
+
+.wordmark--large .wordmark-logo {
+  width: min(214px, 72vw);
+}
+
+.chorus-logo__ink {
+  fill: var(--bone);
+}
+
+.chorus-logo__codex {
+  fill: var(--codex);
+}
+
+.chorus-logo__claude {
+  fill: var(--claude);
 }
 
 /* ------------------------------------------------------------------ setup */
@@ -1395,6 +1409,18 @@ input::placeholder {
 .btn--quiet:hover {
   border-color: var(--line);
   color: var(--bone);
+}
+
+.scale-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 2) 0;
+}
+
+.btn--chip[data-on='true'] {
+  border-color: color-mix(in srgb, var(--codex) 55%, transparent);
+  color: var(--codex);
 }
 
 .sheet-body {

@@ -38,6 +38,14 @@ export const TranscriptEvent = z.object({
 })
 export type TranscriptEvent = z.infer<typeof TranscriptEvent>
 
+/** Defaults for a new session, plus how big the window draws everything. */
+export const SettingsShape = z.object({
+  agents: z.array(z.enum(['codex', 'claude'])),
+  cwd: z.string(),
+  profileId: z.string(),
+  scale: z.number(),
+})
+
 export const ApprovalChoice = z.object({
   conversationId: z.string(),
   /** Which agent asked — several can have approvals pending at once. */
@@ -192,23 +200,11 @@ export const IPC_CONTRACT = {
    */
   'settings:read': {
     request: z.object({}),
-    response: z.object({
-      agents: z.array(z.enum(['codex', 'claude'])),
-      cwd: z.string(),
-      profileId: z.string(),
-    }),
+    response: SettingsShape,
   },
   'settings:write': {
-    request: z.object({
-      agents: z.array(z.enum(['codex', 'claude'])),
-      cwd: z.string(),
-      profileId: z.string(),
-    }),
-    response: z.object({
-      agents: z.array(z.enum(['codex', 'claude'])),
-      cwd: z.string(),
-      profileId: z.string(),
-    }),
+    request: SettingsShape,
+    response: SettingsShape,
   },
   'diagnostics:read': {
     request: z.void(),

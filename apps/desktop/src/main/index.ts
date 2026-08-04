@@ -1,7 +1,8 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
-import { forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
+import { applyScale, forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
 import { createLogger } from './logging.js'
+import { readSettings } from './settings.js'
 import { reapOrphanedAgents } from './reap.js'
 import { ChorusRuntime } from './runtime.js'
 import { applyContentSecurityPolicy, lockDownNavigation } from './security.js'
@@ -39,6 +40,15 @@ function createWindow(): BrowserWindow {
   // Avoids a white flash before the renderer has painted.
   window.once('ready-to-show', () => {
     window.show()
+  })
+
+  /*
+   * Zoom is applied per navigation, not once per window: Electron resets the
+   * factor on every load, so setting it at creation survives until the first
+   * reload and then silently reverts.
+   */
+  window.webContents.on('did-finish-load', () => {
+    applyScale(readSettings(app.getPath('userData')).scale)
   })
 
   if (devServerUrl !== undefined) {

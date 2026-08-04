@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
+import { ChorusLogo } from './ChorusLogo.js'
 import { LogViewer } from './LogViewer.js'
 import { fail, Session, type SessionInfo } from './Session.js'
-import { Settings, type Defaults } from './Settings.js'
+import { SCALES, Settings, type Defaults } from './Settings.js'
 
 type AgentId = 'codex' | 'claude'
 const AGENTS: AgentId[] = ['codex', 'claude']
@@ -28,6 +29,7 @@ export function App(): React.JSX.Element {
     agents: ['codex', 'claude'],
     cwd: '',
     profileId: 'read-only',
+    scale: 1,
   })
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [adding, setAdding] = useState(false)
@@ -51,6 +53,36 @@ export function App(): React.JSX.Element {
   const changeDefaults = useCallback((next: Defaults) => {
     setDefaults(next)
     window.chorus.writeSettings(next).catch(fail(setError))
+  }, [])
+
+  useEffect(() => {
+    /*
+     * ⌘+ / ⌘− / ⌘0, because a desktop app that cannot be zoomed from the
+     * keyboard is one people assume cannot be zoomed. These step through the
+     * same sizes the sheet offers and save, so the two never disagree — unlike
+     * the View menu's own zoom, which changes the window and remembers nothing.
+     */
+    const onKey = (e: KeyboardEvent): void => {
+      if (!e.metaKey && !e.ctrlKey) return
+      const step =
+        e.key === '=' || e.key === '+' ? 1 : e.key === '-' ? -1 : e.key === '0' ? 0 : null
+      if (step === null) return
+      e.preventDefault()
+      setDefaults((current) => {
+        const at = SCALES.findIndex((s) => Math.abs(s - current.scale) < 0.001)
+        const index =
+          step === 0
+            ? SCALES.indexOf(1)
+            : Math.min(Math.max((at === -1 ? 1 : at) + step, 0), SCALES.length - 1)
+        const next = { ...current, scale: SCALES[index] ?? 1 }
+        window.chorus.writeSettings(next).catch(fail(setError))
+        return next
+      })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   const start = useCallback(() => {
@@ -172,7 +204,9 @@ export function App(): React.JSX.Element {
   return (
     <div className="stage">
       <header className="masthead">
-        <h1 className="wordmark">{t('app.name')}</h1>
+        <h1 className="wordmark">
+          <ChorusLogo className="wordmark-logo" label={t('app.name')} />
+        </h1>
         <span className="session-count">
           {t('conversation.openCount', { count: sessions.length })}
         </span>
@@ -244,7 +278,9 @@ function Empty(props: {
   return (
     <div className="empty">
       <div className="empty-inner">
-        <h1 className="wordmark wordmark--large">{t('app.name')}</h1>
+        <h1 className="wordmark wordmark--large">
+          <ChorusLogo className="wordmark-logo" label={t('app.name')} />
+        </h1>
         <p className="lede">{t('app.tagline')}</p>
 
         {props.error !== null && (
@@ -286,7 +322,9 @@ function Setup(props: {
   return (
     <div className="setup">
       <div className="setup-inner">
-        <h1 className="wordmark wordmark--large">{t('app.name')}</h1>
+        <h1 className="wordmark wordmark--large">
+          <ChorusLogo className="wordmark-logo" label={t('app.name')} />
+        </h1>
         <p className="lede">{t('app.tagline')}</p>
 
         <fieldset className="cast">

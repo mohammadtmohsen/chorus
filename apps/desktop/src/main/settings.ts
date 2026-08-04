@@ -14,11 +14,27 @@ import { z } from 'zod'
  * keeps this file safe to lose.
  */
 
+/** The range the layout was checked at; past either end it stops being a layout. */
+export const MIN_SCALE = 0.8
+export const MAX_SCALE = 1.5
+
+/** Offered as steps rather than a slider: five sizes, each visibly different. */
+export const SCALES = [0.85, 1, 1.15, 1.3, 1.5] as const
+
 export const Settings = z.object({
   agents: z.array(z.enum(['codex', 'claude'])),
   /** Empty means "start at home", the same as leaving the field blank. */
   cwd: z.string(),
   profileId: z.string(),
+  /**
+   * Zoom factor for the whole window, not a font size.
+   *
+   * Scaling type alone would leave every border, gutter and control where it
+   * was, so larger text would arrive in a layout built for smaller text. Zoom
+   * moves all of it together, and the responsive breakpoints come along —
+   * at 1.5 the window holds fewer columns, which is the truth.
+   */
+  scale: z.number().min(MIN_SCALE).max(MAX_SCALE),
 })
 export type Settings = z.infer<typeof Settings>
 
@@ -27,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cwd: '',
   // Permissive defaults ship by accident, not on purpose (plan §4.4).
   profileId: 'read-only',
+  scale: 1,
 }
 
 function settingsPath(userDataPath: string): string {
