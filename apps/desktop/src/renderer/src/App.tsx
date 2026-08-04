@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
-import { MarkdownView } from './MarkdownView.js'
+import { Entry } from './Entry.js'
 import {
   EMPTY_VIEW,
   reduceEvents,
   type PendingApproval,
-  type TranscriptMessage,
   type TranscriptView,
 } from './transcript.js'
 
@@ -201,47 +200,6 @@ export function App(): React.JSX.Element {
         </form>
       </div>
     </div>
-  )
-}
-
-/** One entry on the score: a dot on the rail, a name, and what was said. */
-function Entry({ message }: { message: TranscriptMessage }): React.JSX.Element {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-
-  if (message.kind === 'reasoning') {
-    return (
-      <article className={`entry entry--${message.actor} entry--reasoning`}>
-        <span className="tick" aria-hidden="true" />
-        <button
-          type="button"
-          className="reasoning-toggle"
-          aria-expanded={open}
-          onClick={() => {
-            setOpen(!open)
-          }}
-        >
-          {open ? t('conversation.hideThinking') : t('conversation.showThinking')}
-        </button>
-        {open && <div className="reasoning-body">{message.text}</div>}
-      </article>
-    )
-  }
-
-  return (
-    <article className={`entry entry--${message.actor} entry--${message.kind}`}>
-      <span className="tick" aria-hidden="true" />
-      <span className="speaker">{message.actor}</span>
-      <div className="said" data-streaming={message.status === 'streaming'}>
-        {message.kind === 'command' ? (
-          <pre className="command">{message.text}</pre>
-        ) : message.kind === 'notice' ? (
-          <p className="notice-line">{message.text}</p>
-        ) : (
-          <MarkdownView source={message.text} />
-        )}
-      </div>
-    </article>
   )
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSafeHref, parseInline, parseMarkdown } from './markdown.js'
+import { isSafeHref, parseInline, parseMarkdown, splitBlocks } from './markdown.js'
 
 describe('block parsing', () => {
   it('splits paragraphs on blank lines', () => {
@@ -111,5 +111,40 @@ describe('injection safety', () => {
     const blocks = parseMarkdown('<img src=x onerror="alert(1)">')
     const content = (blocks[0] as { content: { kind: string }[] }).content
     expect(content.every((i) => i.kind === 'text')).toBe(true)
+  })
+})
+
+describe('splitBlocks', () => {
+  it('splits on blank lines', () => {
+    expect(splitBlocks('one\n\ntwo\n\nthree')).toEqual(['one', 'two', 'three'])
+  })
+
+  it('keeps a fenced block whole, blank lines included', () => {
+    // Splitting inside a fence would render an unterminated fence as prose.
+    const blocks = splitBlocks('intro\n\n```ts\nconst a = 1\n\nconst b = 2\n```\n\nafter')
+    expect(blocks).toHaveLength(3)
+    expect(blocks[1]).toContain('const b = 2')
+  })
+
+  it('keeps an unterminated fence in one block', () => {
+    const blocks = splitBlocks('intro\n\n```ts\nconst a = 1\n\nstill inside')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[1]).toContain('still inside')
+  })
+
+  it('returns one block when there are no blank lines', () => {
+    expect(splitBlocks('just one paragraph')).toEqual(['just one paragraph'])
+  })
+
+  it('drops nothing — the blocks reparse to the same result', () => {
+    // The split is a performance detail; it must not change what renders.
+    for (const source of [
+      'a\n\nb\n\nc',
+      '# h\n\n- one\n- two\n\ntail',
+      '```\nx\n\ny\n```\n\nafter',
+    ]) {
+      const viaSplit = splitBlocks(source).flatMap((b) => parseMarkdown(b))
+      expect(viaSplit).toEqual(parseMarkdown(source))
+    }
   })
 })

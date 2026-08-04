@@ -547,20 +547,32 @@ Flow:
   lifecycle or approval events) and surface a "stream throttled" indicator.
 - Codex `-32001` overload → exponential backoff with jitter in the adapter's RPC client.
 
-**Revised by S5 (2026-08-03):**
+**Revised by S5, then revised again on 2026-08-04 when it was re-measured against
+the real transcript** — see [the re-measurement](../../research/s5-remeasured-2026-08-04.md).
 
-- ⚠ **Coalescing may not be built on `requestAnimationFrame` alone.** rAF stops in
-  hidden and occluded windows — which is precisely when a long agent turn is most
-  likely to be running. A pure-rAF flush stalls and buffers without bound while
-  Chorus is backgrounded. Use rAF when visible with a **time-based fallback flush
-  and a hard buffer cap** as the floor.
+- ⚠ **There is no renderer-side coalescing.** The original S5 measured plain text
+  nodes and concluded coalescing removed a tail spike. Against the real markdown
+  transcript it does the opposite — 15 dropped frames versus 2, with p95 nearly
+  doubling — because the cost here is parsing rather than React scheduling, and a
+  larger flush overruns the frame. React 19's automatic batching already handles
+  the many-small-updates case the original harness was really testing.
+- Write-side coalescing in `DeltaBuffer` is **unaffected**: it exists for
+  durability and log size (S3), not for frame time. Its rAF caveat below never
+  applied to it, since it runs in the main process on a timer.
 - The frame budget is **8.3 ms, not 16 ms** — the test machine runs at 120 Hz, and
   the original target was written for 60 Hz.
-- Coalescing's measured benefit is the tail, not the median: max frame time
-  74.6 ms → 9.5 ms, and ~40% fewer React renders. React 19's automatic batching
-  hides most of the median cost, so naive rendering looks fine right up until it
-  isn't. The measurement used plain text nodes; re-run against the real transcript
-  (markdown, highlighting, virtualization) as an M4 exit gate.
+- ⚠ **The real cost is re-parsing a growing message, not the number of entries.**
+  Every delta re-parsed the whole message, which is quadratic in its length and
+  measured 17% dropped frames on a 25k-character reply. `MarkdownView` now splits
+  into blocks and memoises each on its own text, so only the block being written
+  does any work. Same run then carried 46% more content with fewer dropped frames.
+- `Entry` is memoised. Without it, the fresh array the transcript hands down on
+  every delta re-renders every message in the conversation per token.
+- **Virtualisation is deferred, with evidence.** 201 entries render fine and
+  memoised entries do no work while another message streams; nothing measured is
+  improved by windowing. It addresses DOM size at thousands of messages, which is
+  a different problem — revisit on conversation size, watching scroll and layout
+  cost rather than streaming frame time.
 
 ---
 

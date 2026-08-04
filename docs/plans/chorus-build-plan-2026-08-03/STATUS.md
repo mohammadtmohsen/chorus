@@ -336,3 +336,29 @@ sentence each, …` produced replies from both, with the user's message logged *
   rather than duplicated per recipient. The composer's Send/Stop coexistence proved itself
   in the same run — Codex was still mid-turn ("Stop codex") while Send stayed available.
   Placeholder copy reworded, since "pick who answers" read as choose-exactly-one.
+
+- **2026-08-04 — M4 complete. S5 re-measured, and it overturned both of its own
+  earlier conclusions.** Full write-up in
+  [docs/research/s5-remeasured-2026-08-04.md](../../research/s5-remeasured-2026-08-04.md).
+
+  1. **Renderer-side coalescing makes things worse**, not better: 15 dropped
+     frames versus 2, p95 nearly doubled. The original run measured plain text
+     nodes, where the cost was React scheduling; against real markdown the cost
+     is parsing, and a larger flush simply overruns the frame. Removed. Write-side
+     coalescing in `DeltaBuffer` is untouched — it exists for durability and log
+     size, not frame time.
+  2. **The bottleneck was re-parsing a growing message, not entry count.** Every
+     delta re-parsed the whole message — quadratic in length, 17% dropped frames
+     on a 25k-character reply. Splitting settled-prefix from live-tail barely
+     helped, because the prefix invalidates whenever a block completes. Splitting
+     into blocks and memoising each on its own text worked: the same run carried
+     46% more content with fewer dropped frames.
+  3. **Virtualisation is deferred with evidence rather than skipped.** 201 entries
+     render fine, and memoised entries do no work while another message streams —
+     nothing measured is improved by windowing. It solves DOM size at thousands of
+     messages, a real but different problem. Revisit on conversation size.
+
+  Realistic streaming now sits at **0.3% dropped frames** (2/717) against the
+  8.3 ms budget. The synthetic 20 s single-message run still drops 14%, but that
+  is 5,000 tok/s sustained into one message — roughly two orders of magnitude
+  past real agent output. Recorded as the honest ceiling.
