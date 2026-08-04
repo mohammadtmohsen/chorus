@@ -1,4 +1,4 @@
-import { uuidv7 } from '@chorus/shared'
+import { redactPayload, uuidv7 } from '@chorus/shared'
 import { z } from 'zod'
 import {
   ChorusEventPayload,
@@ -8,7 +8,6 @@ import {
   type StoredEvent,
 } from './events.js'
 import { migrate, type MigrationResult } from './migrations.js'
-import { redactPayload } from './redact.js'
 import type { Database } from './port.js'
 import { applyToProjections, PROJECTION_NAMES, PROJECTION_TABLES } from './projections.js'
 

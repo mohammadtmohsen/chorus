@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
+import { LogViewer } from './LogViewer.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import {
   EMPTY_VIEW,
@@ -37,6 +38,7 @@ export function App(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
+  const [showingLogs, setShowingLogs] = useState(false)
   const bottom = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -137,6 +139,15 @@ export function App(): React.JSX.Element {
         >
           {t('review.open')}
         </button>
+        <button
+          type="button"
+          className="btn btn--chip"
+          onClick={() => {
+            setShowingLogs(true)
+          }}
+        >
+          {t('logs.open')}
+        </button>
         <ul className="voices">
           {participants.map((id) => (
             <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
@@ -176,6 +187,15 @@ export function App(): React.JSX.Element {
         ))}
         <div ref={bottom} />
       </main>
+
+      {showingLogs && (
+        <LogViewer
+          onClose={() => {
+            setShowingLogs(false)
+          }}
+          onError={setError}
+        />
+      )}
 
       {reviewing && (
         <ReviewPanel

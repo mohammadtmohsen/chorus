@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
 import { forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
+import { createLogger } from './logging.js'
 import { reapOrphanedAgents } from './reap.js'
 import { ChorusRuntime } from './runtime.js'
 import { applyContentSecurityPolicy, lockDownNavigation } from './security.js'
@@ -54,13 +55,14 @@ void app.whenReady().then(() => {
    * normally finds nothing. It stays because that cleanup is incidental rather
    * than guaranteed — see reap.ts.
    */
-  void reapOrphanedAgents().then(({ killed }) => {
-    if (killed > 0) {
-      process.stdout.write(`[chorus] boot: reaped ${String(killed)} orphaned agent(s)\n`)
-    }
+  const log = createLogger(app.getPath('userData'))
+  log.info('starting', { version: app.getVersion(), electron: process.versions.electron })
+
+  void reapOrphanedAgents().then(({ killed, inspected }) => {
+    if (killed > 0) log.warn('reaped orphaned agents', { killed, inspected })
   })
 
-  runtime = ChorusRuntime.open(app.getPath('userData'))
+  runtime = ChorusRuntime.open(app.getPath('userData'), log)
   registerIpcHandlers(runtime)
   forwardEventsToRenderer(runtime)
 

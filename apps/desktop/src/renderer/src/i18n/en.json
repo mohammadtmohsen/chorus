@@ -28,6 +28,18 @@
     "heading": "What agents may do without asking",
     "footnote": "Anything a profile does not cover still asks. Slack, Jira and the like always ask."
   },
+  "logs": {
+    "open": "Logs",
+    "heading": "What Chorus has been doing",
+    "loading": "Reading…",
+    "empty": "Nothing logged yet.",
+    "redactedHint": "Secrets are removed as the log is written.",
+    "refresh": "Refresh",
+    "export": "Export bundle",
+    "exportHint": "Writes a shareable file to your Desktop.",
+    "exported": "Saved to {{path}}",
+    "done": "Done"
+  },
   "review": {
     "open": "Review changes",
     "heading": "Changes on disk",

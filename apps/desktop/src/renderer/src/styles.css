@@ -1003,3 +1003,48 @@ input::placeholder {
   color: var(--faint);
   font-style: italic;
 }
+
+/* -------------------------------------------------------------------- logs */
+
+.log-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+  padding: calc(var(--step) * 2);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: 78px 46px 1fr;
+  gap: calc(var(--step) * 2);
+  padding: 2px 0;
+  align-items: baseline;
+}
+
+.log-time,
+.log-level {
+  color: var(--faint);
+}
+
+.log-line--warn .log-level {
+  color: var(--claude);
+}
+
+.log-line--error .log-level {
+  color: var(--alert);
+}
+
+.log-message {
+  word-break: break-word;
+}
+
+.log-fields {
+  grid-column: 3;
+  color: var(--faint);
+  word-break: break-all;
+}

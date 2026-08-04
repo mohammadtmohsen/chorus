@@ -1,6 +1,10 @@
 /**
  * Removing secrets before anything reaches disk.
  *
+ * Lives in `shared` because two things need it: the event log and the
+ * diagnostics bundle. A secret scrubbed from one and left in the other is not
+ * scrubbed.
+ *
  * Plan §4.4 requires this and, until now, nothing did it. Agents read `.env`
  * files, print environment variables, and paste tokens into commands; every one
  * of those flows through `command.output` or `agent.message.delta` straight into

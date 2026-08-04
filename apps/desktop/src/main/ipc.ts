@@ -1,4 +1,7 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { buildDiagnostics } from '@chorus/shared'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
   IPC_CONTRACT,
@@ -72,6 +75,38 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
     },
 
     'policy:profiles': () => Promise.resolve(runtime.availableProfiles()),
+
+    'diagnostics:read': () =>
+      Promise.resolve(
+        runtime.log.recent().map((e) => ({
+          at: e.at,
+          level: e.level,
+          message: e.message,
+          ...(e.fields === undefined ? {} : { fields: e.fields }),
+        }))
+      ),
+
+    'diagnostics:export': () => {
+      const path = join(app.getPath('desktop'), `chorus-diagnostics-${String(Date.now())}.md`)
+      writeFileSync(
+        path,
+        buildDiagnostics({
+          generatedAt: Date.now(),
+          entries: runtime.log.recent(500),
+          versions: {
+            chorus: app.getVersion(),
+            electron: process.versions.electron,
+            node: process.versions.node,
+          },
+          counts: { events: runtime.store.lastSeq() },
+        }),
+        'utf8'
+      )
+      // Revealed rather than opened: the user attaches it somewhere, they do
+      // not need it displayed.
+      shell.showItemInFolder(path)
+      return Promise.resolve({ path })
+    },
 
     'workspace:read': async (request: { conversationId: string }) => {
       const { status, diff, problem } = await runtime.readWorkspace(request.conversationId)

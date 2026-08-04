@@ -35,6 +35,8 @@ const api: ChorusApi = {
   history: invoke('conversation:history'),
   decideApproval: invoke('approval:decide'),
   profiles: invoke('policy:profiles'),
+  readDiagnostics: invoke('diagnostics:read'),
+  exportDiagnostics: invoke('diagnostics:export'),
   readWorkspace: invoke('workspace:read'),
   prepareHandoff: invoke('handoff:prepare'),
   sendHandoff: invoke('handoff:send'),

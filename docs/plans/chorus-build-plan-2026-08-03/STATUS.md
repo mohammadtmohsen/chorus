@@ -516,3 +516,30 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   Remaining: the diagnostics export bundle and in-app log viewer. Structured
   logging is not in yet either — boot events currently write to stdout.
+
+- **2026-08-04 — M8 complete.** Structured logging, the in-app log viewer and a
+  redacted diagnostics bundle. 326 tests, all gates green.
+
+  **The plan named pino; this is deliberately not pino.** Volume here is a few
+  hundred lines per session, so nothing pino is good at applies, and ~120 lines
+  with no dependency is easier to audit — which matters, because the log file is
+  the one artefact a user is asked to hand to someone else. `console` was never
+  an option: it bypasses redaction, and in a packaged app nobody watches stdout.
+
+  Redaction moved from `event-store` down to `shared`, because two things need
+  it — the event log and the diagnostics bundle. A secret scrubbed from one and
+  left in the other is not scrubbed. Errors log their message and name but never
+  their stack: stacks carry absolute paths, which is exactly what a shared bundle
+  should not.
+
+  **A vacuous test, caught and replaced.** The first live check asked an agent to
+  read a `.env` file and then confirmed no secret reached disk. It passed — but
+  the agent never read the file, so redaction never ran and the result proved
+  nothing. Replaced with a deterministic path: a user message containing a token
+  goes through `store.append`, which is the only write path. The transcript then
+  reads `here is my key [redacted:github-token] do not use it`, and the token is
+  absent from the database, the log file and the exported bundle.
+
+  Worth noting the consequence: because redaction happens on write, the user's own
+  message is stored and displayed in its redacted form. That is what §4.4 chose,
+  and showing the redacted text is honest about what was actually kept.

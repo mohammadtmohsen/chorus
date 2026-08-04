@@ -19,7 +19,7 @@ import {
   type HandoffSource,
   type PermissionProfile,
 } from '@chorus/orchestrator'
-import { newConversationId, newHandoffId, type AgentId } from '@chorus/shared'
+import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
 
 /**
@@ -70,12 +70,18 @@ export class ChorusRuntime {
   private constructor(
     private readonly db: SqliteHandle,
     readonly store: EventStore,
-    private readonly adapters: Map<AgentId, AgentAdapter>
+    private readonly adapters: Map<AgentId, AgentAdapter>,
+    readonly log: Logger
   ) {}
 
-  static open(userDataPath: string, adapters?: Map<AgentId, AgentAdapter>): ChorusRuntime {
+  static open(
+    userDataPath: string,
+    log: Logger,
+    adapters?: Map<AgentId, AgentAdapter>
+  ): ChorusRuntime {
     const path = join(userDataPath, 'chorus.db')
     const { db, store, recovered } = openOrRecover(path, userDataPath)
+    if (recovered !== null) log.warn('database was unreadable and was moved aside', { recovered })
 
     /*
      * Close sessions the log still believes are running.
@@ -85,14 +91,10 @@ export class ChorusRuntime {
      * the UI would show them as live.
      */
     const { closed } = store.reconcileOrphanedSessions()
-    if (closed > 0 || recovered !== null) {
-      process.stdout.write(
-        `[chorus] boot: ${String(closed)} orphaned session(s) closed` +
-          (recovered === null ? '\n' : `, unreadable database moved to ${recovered}\n`)
-      )
-    }
+    if (closed > 0) log.warn('closed sessions orphaned by a crash', { closed })
+    log.info('runtime ready', { events: store.lastSeq() })
 
-    return new ChorusRuntime(db, store, adapters ?? defaultAdapters())
+    return new ChorusRuntime(db, store, adapters ?? defaultAdapters(), log)
   }
 
   /** Push target for the renderer. Fires only after a commit. */
@@ -179,6 +181,7 @@ export class ChorusRuntime {
     // A partial start belongs in the transcript: it should say why an agent the
     // user asked for is absent, rather than silently omitting it.
     for (const message of failures) {
+      this.log.error('an agent could not be started', undefined, { conversationId, message })
       this.store.append({
         conversationId,
         actor: 'system',
@@ -186,6 +189,11 @@ export class ChorusRuntime {
       })
     }
 
+    this.log.info('conversation started', {
+      conversationId,
+      agents: [...conversation.participants.keys()].join(','),
+      profile: profile.id,
+    })
     this.active.set(conversationId, conversation)
     return {
       conversationId,
@@ -455,4 +463,9 @@ function claudeOptions(): { executablePath?: string } {
     '/usr/local/bin/claude',
   ].find((p) => existsSync(p))
   return found === undefined ? {} : { executablePath: found }
+}
+
+export interface Diagnostics {
+  readonly bundle: string
+  readonly path: string
 }

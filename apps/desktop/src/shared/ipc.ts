@@ -174,6 +174,23 @@ export const IPC_CONTRACT = {
       problem: z.string().nullable(),
     }),
   },
+  /** Recent log entries, already redacted as they were written. */
+  'diagnostics:read': {
+    request: z.void(),
+    response: z.array(
+      z.object({
+        at: z.number().int(),
+        level: z.enum(['debug', 'info', 'warn', 'error']),
+        message: z.string(),
+        fields: z.record(z.string(), z.unknown()).optional(),
+      })
+    ),
+  },
+  /** Writes a bundle to disk and returns where it landed. */
+  'diagnostics:export': {
+    request: z.void(),
+    response: z.object({ path: z.string() }),
+  },
   /** The permission profiles a conversation can be started under. */
   'policy:profiles': {
     request: z.void(),
@@ -221,6 +238,8 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:history'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
   readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
+  readonly readDiagnostics: () => Promise<IpcResponse<'diagnostics:read'>>
+  readonly exportDiagnostics: () => Promise<IpcResponse<'diagnostics:export'>>
   readonly readWorkspace: (
     request: IpcRequest<'workspace:read'>
   ) => Promise<IpcResponse<'workspace:read'>>
