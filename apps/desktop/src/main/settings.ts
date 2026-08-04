@@ -28,7 +28,16 @@ export const Settings = z.object({
 export type Settings = z.infer<typeof Settings>
 
 export const DEFAULT_SETTINGS: Settings = {
-  agents: ['codex', 'claude'],
+  /*
+   * One agent, not two.
+   *
+   * A session opens the moment the app does, so its cast is what you pay for
+   * without asking — and two agents is two provider processes and twice the
+   * wait before anything can be typed. Codex alone is the cheap start; the other
+   * can be brought in from its chip whenever the conversation needs it, and it
+   * reads everything said so far when it arrives.
+   */
+  agents: ['codex'],
   cwd: '',
   // Permissive defaults ship by accident, not on purpose (plan §4.4).
   profileId: 'read-only',

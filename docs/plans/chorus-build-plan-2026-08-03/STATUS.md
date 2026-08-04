@@ -1435,3 +1435,20 @@ sentence each, …` produced replies from both, with the user's message logged *
   both with two; ending one bringing the count back to one and hiding End again;
   and a quit and relaunch coming back to **the same conversation** rather than a
   fresh one.
+
+- **2026-08-04 — a session starts with Codex alone.** The default cast is one
+  agent rather than two.
+
+  It matters more now that the app opens a session the moment it launches: the
+  cast is what you pay for without asking, and two agents is two provider
+  processes and twice the wait before anything can be typed. Codex alone is the
+  cheap start, and Claude is one click away on its chip — arriving with the whole
+  conversation, which is what makes starting small safe rather than a decision
+  you regret.
+
+  The stored default follows the last session, as it has since Settings lost its
+  copy of these controls, so open a session with both and both is what you get
+  next time.
+
+  Verified live: one pane in ~1s with `codex` in and `claude` out, and claude
+  joining on a click.
