@@ -160,6 +160,17 @@ export const IPC_CONTRACT = {
     }),
   },
 
+  /**
+   * Writes pasted bytes down and returns the path.
+   *
+   * Base64 because the bridge carries JSON; a screenshot is a few megabytes
+   * once, which is cheaper than teaching the whole protocol about binaries.
+   */
+  'files:stash': {
+    request: z.object({ name: z.string(), base64: z.string() }),
+    response: z.object({ path: z.string() }),
+  },
+
   /** Records the order the panes were arranged into, so a restore keeps it. */
   'conversation:reorder': {
     request: z.object({ order: z.array(z.string()) }),
@@ -370,6 +381,9 @@ export interface ChorusApi {
   readonly restartConversation: (
     request: IpcRequest<'conversation:restart'>
   ) => Promise<IpcResponse<'conversation:restart'>>
+  readonly stashFile: (request: IpcRequest<'files:stash'>) => Promise<IpcResponse<'files:stash'>>
+  /** The real path of a dropped file; `File.path` was removed in Electron 32. */
+  readonly pathForFile: (file: File) => string
   readonly reorderConversations: (
     request: IpcRequest<'conversation:reorder'>
   ) => Promise<{ ok: true }>

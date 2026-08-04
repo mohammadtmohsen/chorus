@@ -391,6 +391,11 @@ body {
   }
 }
 
+/* A file is over this pane and will land in its composer. */
+.pane[data-file-over='true'] {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--codex) 60%, transparent);
+}
+
 /* Which pane your next keystroke goes to, without a click-to-focus model. */
 .pane:focus-within .pane-head {
   border-bottom-color: color-mix(in srgb, var(--bone) 30%, var(--line));

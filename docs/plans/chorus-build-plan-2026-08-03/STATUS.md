@@ -1529,7 +1529,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
 - **2026-08-04 — you can see who is thinking.** A line at the foot of the
   transcript per waiting agent: its name, the word, and three dots breathing in
-  sequence — in that agent's own colour, so *who* is legible without reading.
+  sequence — in that agent's own colour, so _who_ is legible without reading.
 
   The voice dots in the bar have always breathed for whoever is mid-turn, but
   they are chrome: small, at the edge, and easy to miss while reading. This sits
@@ -1538,9 +1538,38 @@ sentence each, …` produced replies from both, with the user's message logged *
 
   It lasts only until the first words arrive. Once an agent is writing, its text
   is a better indicator than any label, and showing both would say the same thing
-  twice — so the indicator is drawn for agents that are working *and not yet
-  streaming*.
+  twice — so the indicator is drawn for agents that are working _and not yet
+  streaming_.
 
   Verified live with both agents asked at once: `codex:thinking | claude:thinking`
   while waiting, each in its own hue (`#7fd1c1` and `#e9a05c`), nothing at all
   when idle, and nothing left once the answers had arrived.
+
+- **2026-08-04 — drop a file on a pane, or paste one.** Its path lands in that
+  pane's composer, quoted only if it needs to be, and the pane outlines itself
+  while a file is over it.
+
+  **Paths, not attachments.** The filesystem is not scoped (§4.4), so an agent
+  opens a file the same way you would — which means no upload, no copy, no change
+  to what a message is, and it works for anything: an image, a log, a whole
+  directory. It also means what you send is a reference, so an agent reads the
+  file as it is when it looks, not as it was when you dropped it.
+
+  A pasted image is the exception, because it has no path — only bytes. Those are
+  written to `pasted/` beside the log (not `/tmp`, since a conversation that
+  mentions a file should still find it tomorrow) and the path is what you get.
+
+  `File.path` was removed in Electron 32, so the real path comes from
+  `webUtils.getPathForFile` on the bridge; a file with no path falls back to
+  being written down. Dropping is kept distinct from dragging a pane: a file drag
+  is accepted as a copy, a pane drag as a move, and neither swallows the other.
+
+  Verified live: a pasted PNG becoming a path under `pasted/` and appearing in
+  the draft; a dropped file appending to an existing draft rather than replacing
+  it, quoted because its name had spaces; and the pane marking itself while the
+  file was over it.
+
+  **Not verified:** the real-path branch. A genuine Finder drag cannot be
+  synthesised, so a driver's `File` has no path and always takes the fallback.
+  Worth confirming by hand that a dropped file references its own location
+  instead of being copied.

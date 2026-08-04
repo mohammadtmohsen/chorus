@@ -12,6 +12,7 @@ import {
 import { probeAgents } from './agent-probe.js'
 import type { ChorusRuntime } from './runtime.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
+import { stashFile } from './stash.js'
 
 type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>> }
 
@@ -71,6 +72,11 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'conversation:restart': (request: { conversationId: string }) =>
       runtime.restartConversation(request.conversationId),
+
+    'files:stash': (request: { name: string; base64: string }) =>
+      Promise.resolve({
+        path: stashFile(app.getPath('userData'), request.name, request.base64),
+      }),
 
     'conversation:reorder': (request: { order: string[] }) => {
       runtime.reorderConversations(request.order)

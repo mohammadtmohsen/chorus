@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
   SCALE_PUSH_CHANNEL,
@@ -38,6 +38,9 @@ const api: ChorusApi = {
   removeAgent: invoke('conversation:removeAgent'),
   restoreConversations: () => invoke('conversation:restore')({}),
   restartConversation: invoke('conversation:restart'),
+  stashFile: invoke('files:stash'),
+  // Renderers cannot read a File's path any more; only the bridge can.
+  pathForFile: (file: File) => webUtils.getPathForFile(file),
   reorderConversations: invoke('conversation:reorder'),
   renameConversation: invoke('conversation:rename'),
   chooseProjectDirectory: invoke('conversation:chooseCwd'),

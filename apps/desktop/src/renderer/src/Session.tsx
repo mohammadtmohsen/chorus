@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { withPaths } from './attach.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import {
@@ -78,6 +79,8 @@ export function Session(props: {
   const [pickingProfile, setPickingProfile] = useState(false)
   /** Set once Restart has been asked for and is being answered. */
   const [restarting, setRestarting] = useState(false)
+  /** True while a file from outside is over this pane. */
+  const [fileOver, setFileOver] = useState(false)
   /** Non-null while the path is being edited; holds the draft, not the truth. */
   const [pathDraft, setPathDraft] = useState<string | null>(null)
   /** The agent currently joining or leaving, so its chip can say so. */
@@ -230,6 +233,37 @@ export function Session(props: {
     [mention, options]
   )
 
+  /**
+   * Files become paths in the draft, not attachments.
+   *
+   * An agent reads a file the same way you would, so a drop needs no upload and
+   * no change to what a message is. A clipboard image has no path — only bytes —
+   * so those are written down first and the path is what you get.
+   */
+  const attach = useCallback(async (items: DataTransfer): Promise<void> => {
+    const files = [...items.files]
+    if (files.length === 0) return
+
+    const paths = await Promise.all(
+      files.map(async (file) => {
+        const path = window.chorus.pathForFile(file)
+        if (path !== '') return path
+        // Pasted rather than dragged: it exists nowhere until we put it somewhere.
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let binary = ''
+        for (const byte of bytes) binary += String.fromCharCode(byte)
+        const stashed = await window.chorus.stashFile({
+          name: file.name === '' ? 'pasted' : file.name,
+          base64: btoa(binary),
+        })
+        return stashed.path
+      })
+    )
+
+    setDraft((current) => withPaths(current, paths))
+    input.current?.focus()
+  }, [])
+
   const send = useCallback(() => {
     if (draft.trim() === '') return
     // You just spoke; you want to see the answer.
@@ -267,7 +301,15 @@ export function Session(props: {
         // Only a pane being dragged counts; a file dropped from Finder is not a
         // reorder, and preventing default on it would swallow it silently.
         const moved = props.dragging.current
-        if (moved === null) return
+        if (moved === null) {
+          // A file from outside: accepted, but it is not a reorder.
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            setFileOver(true)
+          }
+          return
+        }
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
         if (moved === conversationId) return
@@ -305,11 +347,22 @@ export function Session(props: {
         if (at > middle + deadBand) props.onDragOverPane(conversationId, true)
         else if (at < middle - deadBand) props.onDragOverPane(conversationId, false)
       }}
+      onDragLeave={(e) => {
+        // Only when the pointer actually left the pane, not on every child.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFileOver(false)
+      }}
       onDrop={(e) => {
+        setFileOver(false)
+        if (e.dataTransfer.files.length > 0) {
+          e.preventDefault()
+          void attach(e.dataTransfer)
+          return
+        }
         // The grid sorted itself on the way here; this only stops the browser
         // treating the drop as navigation.
         if (props.dragging.current !== null) e.preventDefault()
       }}
+      data-file-over={fileOver}
     >
       {error !== null && (
         <p className="notice notice--bad" role="alert">
@@ -643,6 +696,12 @@ export function Session(props: {
               refreshMention()
             }}
             onSelect={refreshMention}
+            onPaste={(e) => {
+              // Text pastes as text; anything else becomes a path.
+              if (e.clipboardData.files.length === 0) return
+              e.preventDefault()
+              void attach(e.clipboardData)
+            }}
             onBlur={() => {
               setMention(null)
             }}
