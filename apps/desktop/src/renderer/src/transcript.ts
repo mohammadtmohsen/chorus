@@ -198,6 +198,33 @@ function apply(view: Mutable, event: TranscriptEvent): void {
      * it permitted. A permission change that left no mark would make the log an
      * incomplete account of why something was allowed.
      */
+    /*
+     * Joining and leaving belong in the transcript. Without them an agent's
+     * first message appears from nowhere, and its last is followed by a silence
+     * with no explanation.
+     */
+    case 'session.started':
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: 'system',
+        kind: 'notice',
+        text: `${str('agentId')} joined`,
+        status: 'complete',
+      })
+      return
+
+    case 'session.ended':
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: 'system',
+        kind: 'notice',
+        text: `${str('agentId')} left`,
+        status: 'complete',
+      })
+      return
+
     case 'project.changed':
       view.messages.push({
         key: event.id,

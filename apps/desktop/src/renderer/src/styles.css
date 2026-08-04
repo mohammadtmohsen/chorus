@@ -456,6 +456,31 @@ body {
   list-style: none;
 }
 
+/* A chip you can press: absent agents are drawn as absent, not hidden. */
+.voice {
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.42;
+  transition:
+    opacity 120ms ease,
+    border-color 120ms ease;
+}
+
+.voice[data-on='true'] {
+  opacity: 1;
+}
+
+.voice:hover:not(:disabled) {
+  border-color: var(--line);
+}
+
+.voice:disabled {
+  cursor: default;
+}
+
 .voice {
   display: flex;
   align-items: center;

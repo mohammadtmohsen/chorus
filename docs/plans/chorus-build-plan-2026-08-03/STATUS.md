@@ -976,3 +976,31 @@ sentence each, …` produced replies from both, with the user's message logged *
   not exist"; a real path committing, appearing in the transcript as "Project
   directory: …", and the review panel then reading that repository's actual diff.
   378 tests.
+
+- **2026-08-04 — the cast is a set of switches.** The agent chips in the composer
+  row toggle: take one out mid-conversation, bring one in later, and an agent
+  that joins **reads the whole transcript on the first thing it is asked** —
+  including what the agent it replaced said.
+
+  The mechanism is the catch-up already built for the shared conversation. A
+  joining participant's watermark starts at zero instead of at the current end of
+  the log, so the backlog rides along with the first message rather than costing
+  a turn on arrival: nothing is spent until the agent is actually used, and then
+  exactly one turn. Its allowance is raised for that first delivery only — the
+  per-turn budget is sized for "what you missed", not "everything", and an agent
+  that has read half a conversation is worse than one that has read none, because
+  it does not know which half it is missing.
+
+  An agent leaving closes its session, which appends `session.ended`; the
+  transcript now renders both, so a first message no longer appears from nowhere
+  and a last one is not followed by an unexplained silence. Grants and the
+  profile are the conversation's, so whoever joins arrives under the rules
+  already in force.
+
+  Removing everyone is allowed — the composer says so and Send is disabled rather
+  than failing on submit.
+
+  Verified live, which is the only way this claim means anything: both agents in,
+  claude taken out, codex told a passphrase claude never saw, claude brought back
+  and asked for it with commands and file reads forbidden. It answered
+  `velvet-otter-41`. 378 tests.

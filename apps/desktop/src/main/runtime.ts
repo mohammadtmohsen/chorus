@@ -59,16 +59,36 @@ interface Participant {
    * time the agent is addressed.
    */
   seenSeq: number
+  /**
+   * A larger catch-up allowance, used once.
+   *
+   * An agent joining an hour-old conversation has to read all of it, and the
+   * per-turn budget is sized for "what happened while you were not addressed",
+   * not "everything". Cleared after the first delivery so the next turn is
+   * ordinary again.
+   */
+  catchupBudget?: number
 }
 
 interface ActiveConversation {
   readonly conversationId: string
   readonly participants: Map<AgentId, Participant>
+  /** Shared, so a grant given to one agent is not re-asked for the next to join. */
+  readonly grants: SessionGrants
   profile: PermissionProfile
   cwd: string
   /** Who the user last addressed, so an unaddressed follow-up stays with them. */
   lastAddressed: AgentId | undefined
 }
+
+/**
+ * What a joining agent may be handed at once.
+ *
+ * Several times the ordinary per-turn allowance: it is paid once, and an agent
+ * that has read half a conversation is worse than one that has read none, because
+ * it does not know which half it is missing.
+ */
+const JOINING_CATCHUP_CHARS = 60_000
 
 export interface SendResult {
   readonly targets: readonly AgentId[]
@@ -188,6 +208,7 @@ export class ChorusRuntime {
     const conversation: ActiveConversation = {
       conversationId,
       participants: new Map(),
+      grants,
       profile,
       cwd,
       lastAddressed: undefined,
@@ -274,9 +295,18 @@ export class ChorusRuntime {
             .filter((e) => e.seq < stored.seq)
 
           await p.service.deliver(
-            withCatchup({ recipient: p.agentId, participants, events: missed }, route.text)
+            withCatchup(
+              {
+                recipient: p.agentId,
+                participants,
+                events: missed,
+                ...(p.catchupBudget === undefined ? {} : { maxTotalChars: p.catchupBudget }),
+              },
+              route.text
+            )
           )
           p.seenSeq = stored.seq
+          delete p.catchupBudget
         })
     )
     return { targets: route.targets }
@@ -414,6 +444,65 @@ export class ChorusRuntime {
       participants: [...c.participants.keys()],
       cwd: c.cwd,
     }))
+  }
+
+  /**
+   * Brings an agent into a conversation already under way.
+   *
+   * Its watermark starts at zero, so the first thing it is asked comes with the
+   * whole conversation attached — including what the agent it is replacing said.
+   * That is the point: catching up should cost nothing until the agent is
+   * actually used, and then cost exactly one turn.
+   */
+  async addParticipant(conversationId: string, agentId: AgentId): Promise<{ agentId: AgentId }> {
+    const conversation = this.require(conversationId)
+    if (conversation.participants.has(agentId)) return { agentId }
+
+    const participant = await this.startParticipant(
+      agentId,
+      conversationId,
+      this.sessionOptsFor(conversation),
+      conversation.profile,
+      conversation.grants
+    )
+    participant.seenSeq = 0
+    participant.catchupBudget = JOINING_CATCHUP_CHARS
+    conversation.participants.set(agentId, participant)
+    this.log.info('agent joined', { conversationId, agentId })
+    return { agentId }
+  }
+
+  /**
+   * Takes an agent out without ending the conversation.
+   *
+   * Its session closes, which appends `session.ended` — the transcript keeps
+   * everything it said, and the log explains the silence that follows.
+   */
+  async removeParticipant(conversationId: string, agentId: AgentId): Promise<{ agentId: AgentId }> {
+    const conversation = this.require(conversationId)
+    const participant = conversation.participants.get(agentId)
+    if (participant === undefined) return { agentId }
+
+    conversation.participants.delete(agentId)
+    if (conversation.lastAddressed === agentId) conversation.lastAddressed = undefined
+    await participant.service.close()
+    this.log.info('agent left', {
+      conversationId,
+      agentId,
+      remaining: conversation.participants.size,
+    })
+    return { agentId }
+  }
+
+  /** The provider sandbox mirrors the profile, so it is rebuilt when either moves. */
+  private sessionOptsFor(conversation: ActiveConversation): SessionOpts {
+    return {
+      cwd: conversation.cwd,
+      sandbox:
+        conversation.profile.id === 'read-only'
+          ? { mode: 'readOnly', writableRoots: [], networkAccess: false }
+          : { mode: 'workspaceWrite', writableRoots: [conversation.cwd], networkAccess: false },
+    }
   }
 
   /**

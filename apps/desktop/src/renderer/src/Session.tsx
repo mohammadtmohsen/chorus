@@ -17,6 +17,7 @@ import {
 } from './transcript.js'
 
 type AgentId = 'codex' | 'claude'
+const ALL_AGENTS: AgentId[] = ['codex', 'claude']
 
 export interface SessionInfo {
   readonly conversationId: string
@@ -51,6 +52,9 @@ export function Session(props: {
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
   onCwd: (cwd: string) => void
+  /** Which agents exist on this machine at all; an absent one cannot be added. */
+  installed: readonly AgentId[]
+  onParticipants: (participants: AgentId[]) => void
   onClose: (conversationId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -65,6 +69,8 @@ export function Session(props: {
   const [pickingProfile, setPickingProfile] = useState(false)
   /** Non-null while the path is being edited; holds the draft, not the truth. */
   const [pathDraft, setPathDraft] = useState<string | null>(null)
+  /** The agent currently joining or leaving, so its chip can say so. */
+  const [moving, setMoving] = useState<AgentId | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
   const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
@@ -302,7 +308,11 @@ export function Session(props: {
             value={draft}
             rows={1}
             aria-label={t('conversation.messageLabel')}
-            placeholder={t('conversation.placeholder')}
+            placeholder={
+              participants.length === 0
+                ? t('conversation.nobodyHere')
+                : t('conversation.placeholder')
+            }
             role="combobox"
             aria-expanded={menuOpen}
             aria-controls={`mentions-${conversationId}`}
@@ -366,13 +376,58 @@ export function Session(props: {
             <span className="pane-index" aria-hidden="true">
               {props.index}
             </span>
+            {/*
+              The cast is a set of switches, not a label.
+              
+              An agent can leave a conversation and another take its place, and
+              whoever joins reads the whole transcript on the first thing it is
+              asked — including what the one it replaced said. Which is why this
+              belongs here rather than on a start screen: who is in the room is a
+              thing you change while in it.
+            */}
             <ul className="voices voices--pane">
-              {participants.map((id) => (
-                <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
-                  <span className="voice-dot" aria-hidden="true" />
-                  {id}
-                </li>
-              ))}
+              {ALL_AGENTS.map((id) => {
+                const here = participants.includes(id)
+                const available = props.installed.includes(id)
+                return (
+                  <li key={id}>
+                    <button
+                      type="button"
+                      className={`voice voice--${id}`}
+                      data-live={view.working.includes(id)}
+                      data-on={here}
+                      aria-pressed={here}
+                      disabled={moving !== null || (!here && !available)}
+                      title={
+                        available
+                          ? t(here ? 'conversation.removeAgent' : 'conversation.addAgent', {
+                              agent: id,
+                            })
+                          : t('agents.notFound', { agent: id })
+                      }
+                      onClick={() => {
+                        setMoving(id)
+                        const move = here
+                          ? window.chorus.removeAgent({ conversationId, agentId: id })
+                          : window.chorus.addAgent({ conversationId, agentId: id })
+                        move
+                          .then(() => {
+                            props.onParticipants(
+                              here ? participants.filter((p) => p !== id) : [...participants, id]
+                            )
+                          })
+                          .catch(fail(setError))
+                          .finally(() => {
+                            setMoving(null)
+                          })
+                      }}
+                    >
+                      <span className="voice-dot" aria-hidden="true" />
+                      {id}
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
             {/*
               The path edits in place.
@@ -569,7 +624,7 @@ export function Session(props: {
                   type="submit"
                   className="send"
                   aria-label={t('conversation.send')}
-                  disabled={draft.trim() === ''}
+                  disabled={draft.trim() === '' || participants.length === 0}
                 >
                   <span aria-hidden="true">↑</span>
                 </button>

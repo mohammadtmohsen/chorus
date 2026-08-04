@@ -101,6 +101,19 @@ export const IPC_CONTRACT = {
    * Ends one conversation. Others keep running — the grid holds several at once,
    * and closing one pane must not touch the agents in the next.
    */
+  /**
+   * Brings an agent in, or takes one out, without ending the conversation.
+   * A joining agent reads the whole transcript on the first thing it is asked.
+   */
+  'conversation:addAgent': {
+    request: z.object({ conversationId: z.string(), agentId: z.enum(['codex', 'claude']) }),
+    response: z.object({ agentId: z.enum(['codex', 'claude']) }),
+  },
+  'conversation:removeAgent': {
+    request: z.object({ conversationId: z.string(), agentId: z.enum(['codex', 'claude']) }),
+    response: z.object({ agentId: z.enum(['codex', 'claude']) }),
+  },
+
   /** Repoints the conversation's project directory while it is open. */
   'conversation:setCwd': {
     request: z.object({ conversationId: z.string(), cwd: z.string() }),
@@ -283,6 +296,12 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:send'>>
   readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
   readonly closeConversation: (request: IpcRequest<'conversation:close'>) => Promise<{ ok: true }>
+  readonly addAgent: (
+    request: IpcRequest<'conversation:addAgent'>
+  ) => Promise<IpcResponse<'conversation:addAgent'>>
+  readonly removeAgent: (
+    request: IpcRequest<'conversation:removeAgent'>
+  ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly setProjectDirectory: (
     request: IpcRequest<'conversation:setCwd'>
   ) => Promise<IpcResponse<'conversation:setCwd'>>

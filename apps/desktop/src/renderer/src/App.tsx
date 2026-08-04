@@ -211,6 +211,14 @@ export function App(): React.JSX.Element {
                 )
               )
             }}
+            installed={(probes ?? []).filter((probe) => probe.installed).map((probe) => probe.id)}
+            onParticipants={(participants) => {
+              setSessions((current) =>
+                current.map((s) =>
+                  s.conversationId === session.conversationId ? { ...s, participants } : s
+                )
+              )
+            }}
             onCwd={(cwd) => {
               setSessions((current) =>
                 current.map((s) =>

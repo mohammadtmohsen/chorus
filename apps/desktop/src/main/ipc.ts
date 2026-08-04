@@ -52,6 +52,14 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       return OK
     },
 
+    'conversation:addAgent': (request: { conversationId: string; agentId: 'codex' | 'claude' }) =>
+      runtime.addParticipant(request.conversationId, request.agentId),
+
+    'conversation:removeAgent': (request: {
+      conversationId: string
+      agentId: 'codex' | 'claude'
+    }) => runtime.removeParticipant(request.conversationId, request.agentId),
+
     'conversation:setCwd': (request: { conversationId: string; cwd: string }) =>
       Promise.resolve(runtime.setProjectDirectory(request.conversationId, request.cwd)),
 

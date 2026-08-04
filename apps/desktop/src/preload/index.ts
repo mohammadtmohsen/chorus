@@ -34,6 +34,8 @@ const api: ChorusApi = {
   sendMessage: invoke('conversation:send'),
   interrupt: invoke('conversation:interrupt'),
   closeConversation: invoke('conversation:close'),
+  addAgent: invoke('conversation:addAgent'),
+  removeAgent: invoke('conversation:removeAgent'),
   setProjectDirectory: invoke('conversation:setCwd'),
   readSettings: () => invoke('settings:read')({}),
   writeSettings: invoke('settings:write'),
