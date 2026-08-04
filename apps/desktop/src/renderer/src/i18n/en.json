@@ -18,7 +18,7 @@
     "transcript": "Conversation",
     "messageLabel": "Message",
     "placeholder": "Say something. Name @{{agents}} to choose who answers — name both to ask both.",
-    "hint": "⌘↵ to send",
+    "hint": "↵ to send · ⇧↵ for a new line",
     "send": "Send",
     "stop": "Stop",
     "stopAll": "Stop {{agents}}",

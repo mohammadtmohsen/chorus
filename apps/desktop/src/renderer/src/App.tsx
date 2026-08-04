@@ -252,10 +252,16 @@ export function App(): React.JSX.Element {
               setDraft(e.target.value)
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                send()
-              }
+              if (e.key !== 'Enter') return
+              // Mid-composition Enter commits the candidate — for Japanese,
+              // Chinese or Korean input that keypress belongs to the IME, not
+              // to us, and sending there would swallow the word being typed.
+              if (e.nativeEvent.isComposing) return
+              // Shift holds the line; every other Enter sends. Cmd and Ctrl keep
+              // working because that is what they did before.
+              if (e.shiftKey) return
+              e.preventDefault()
+              send()
             }}
           />
           <div className="composer-actions">
