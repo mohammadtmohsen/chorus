@@ -1287,7 +1287,7 @@ sentence each, …` produced replies from both, with the user's message logged *
 
 - **2026-08-04 — fixed: the grid thrashed while dragging.** Reported as "crazy
   swapping" between the cards. It was: reordering fired the instant the cursor
-  touched any other pane, so the pane that shifted *under* the cursor immediately
+  touched any other pane, so the pane that shifted _under_ the cursor immediately
   triggered the next swap, and the grid flipped between two arrangements while
   the mouse sat still.
 
@@ -1306,3 +1306,20 @@ sentence each, …` produced replies from both, with the user's message logged *
   12 just past it stay inside the band and change nothing, one well past it moves
   the pane once, 20 more at the same place leave it alone, a twitch back toward
   the seam does nothing, and a real return trip moves it back.
+
+- **2026-08-04 — fixed: diagonal drags still swapped in circles.** The spatial
+  margin had not helped there, and the reason was that the geometry itself was
+  lying: the panes **slide** to their new places, and while they slide
+  `getBoundingClientRect` reports the animated box, not the resting one. A
+  `dragover` arriving mid-flight is judged against a pane that is not where it
+  will be — and diagonal moves travel furthest, so they were the worst for it.
+
+  No margin in space can fix a measurement taken during motion, so there is now a
+  matching margin in **time**: no further reorder until the last one has landed,
+  held slightly longer than the slide. A move that turns out to be a no-op clears
+  the hold immediately, so the next event still decides.
+
+  Verified with a real diagonal sweep — a 2×2 grid, the top-left pane carried to
+  the bottom-right over 60 events at ~60/s, recording the order after every one.
+  It changed **exactly once** and settled: `A B C D` → `B C A D`. The horizontal
+  dead-band cases all still behave as before.

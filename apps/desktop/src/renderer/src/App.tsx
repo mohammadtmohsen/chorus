@@ -18,6 +18,9 @@ import { Settings, type Defaults } from './Settings.js'
  * separate agents, separate approvals, separate drafts. `App` holds only the
  * list; everything a conversation knows lives in `Session`.
  */
+/** A little longer than the slide, so boxes are measured where they came to rest. */
+const MOVE_COOLDOWN_MS = 200
+
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
   const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
@@ -162,6 +165,22 @@ export function App(): React.JSX.Element {
    * writes for one decision. `commitOrder` does it once the drag ends.
    */
   const reorder = useCallback((movedId: string, ontoId: string, after: boolean) => {
+    /*
+     * Nothing moves again until the last move has landed.
+     *
+     * The panes slide to their new places, and while they slide their measured
+     * boxes are the *animated* ones — so a `dragover` arriving mid-flight is
+     * judged against a pane that is not where it will be. Diagonal moves travel
+     * furthest and were the worst for it: the grid kept re-deciding against
+     * positions in transit and swapped in circles.
+     *
+     * A spatial margin cannot fix that, because the geometry itself is lying.
+     * This is the matching margin in time, held slightly longer than the slide.
+     */
+    const now = performance.now()
+    if (now - settledAt.current < MOVE_COOLDOWN_MS) return
+    settledAt.current = now
+
     setSessions((current) => {
       const from = current.findIndex((s) => s.conversationId === movedId)
       const onto = current.findIndex((s) => s.conversationId === ontoId)
@@ -170,7 +189,11 @@ export function App(): React.JSX.Element {
       // Where it should end up, once itself is out of the way.
       let to = after ? onto + 1 : onto
       if (from < to) to -= 1
-      if (to === from) return current
+      if (to === from) {
+        // Nothing moved, so nothing has to settle; let the next event decide.
+        settledAt.current = 0
+        return current
+      }
 
       const next = [...current]
       const [moved] = next.splice(from, 1)
@@ -217,6 +240,8 @@ export function App(): React.JSX.Element {
    * as well would fight the drag. Motion is skipped entirely when the system
    * asks for less of it.
    */
+  /** When the last reorder happened, so the next waits for it to land. */
+  const settledAt = useRef(0)
   const positions = useRef(new Map<string, DOMRect>())
   const order = sessions.map((session) => session.conversationId).join(',')
 
@@ -354,6 +379,8 @@ export function App(): React.JSX.Element {
             onDragStart={(id) => {
               dragging.current = id
               setLifted(id)
+              // A fresh drag should not have to wait out the previous one.
+              settledAt.current = 0
             }}
             onDragEnd={() => {
               dragging.current = null
