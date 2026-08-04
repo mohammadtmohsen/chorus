@@ -101,7 +101,13 @@ export class ConversationService {
    * deliberately unaware of that: a restart shows up as an ordinary `error`
    * event in the stream, and the transcript keeps going.
    */
-  attach(session: AgentSession, opts: SessionOpts, health: HealthStatus): Promise<void> {
+  attach(
+    session: AgentSession,
+    opts: SessionOpts,
+    health: HealthStatus,
+    /** Set when the app is reopening this, not when an agent is joining. */
+    resumed = false
+  ): Promise<void> {
     this.session = session
     this.appendOne({
       actor: 'system',
@@ -114,6 +120,7 @@ export class ConversationService {
         // Recorded because Chorus drives the user's installed CLIs, which
         // self-update (plan §2.5).
         cliVersion: health.state === 'ready' ? health.version : null,
+        resumed,
       },
     })
     this.pump = this.consume(session)
@@ -229,7 +236,7 @@ export class ConversationService {
     this.buffer.flushAll()
   }
 
-  async close(reason: 'closed' | 'crashed' | 'replaced' = 'closed'): Promise<void> {
+  async close(reason: 'closed' | 'crashed' | 'replaced' | 'shutdown' = 'closed'): Promise<void> {
     // Anything still waiting is denied, or the agent blocks on a prompt nobody
     // will ever see.
     await this.queue.drain('Session closed')

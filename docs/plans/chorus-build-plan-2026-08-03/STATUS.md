@@ -1603,7 +1603,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   **16px apart**, which is the scroller's left padding.
 
   The rail was positioned against `.score`, and an absolutely positioned child is
-  measured from the padding *edge*, ignoring the padding itself. Every dot is
+  measured from the padding _edge_, ignoring the padding itself. Every dot is
   positioned against its own entry, which starts inside that padding. They have
   never shared an origin — the gap was 24px before the layout was compacted, and
   shrinking the gutter from 88 to 60 is what made it obvious.
@@ -1621,3 +1621,26 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live: rail x=74 against dot centres at 75 — a 1px line and a 7px dot
   sharing a centre — and the rail ending at 173, exactly the last entry's bottom,
   rather than at the scroller's 770.
+
+- **2026-08-04 — fixed: every restart wrote "left" and "joined" into the
+  transcript.** Reported after a few closes and reopens. Quitting appends
+  `session.ended` per agent and reopening appends `session.started`, so a
+  conversation collected a pair per agent per launch — the app's own lifecycle,
+  filed as if the cast had changed.
+
+  The notices are for the cast changing, which is something you did. So the
+  events now say which they are: `session.ended` gained a `shutdown` reason, and
+  `session.started` an optional `resumed` flag — optional because events written
+  before it existed have no opinion and must still parse. The transcript renders
+  neither.
+
+  One subtlety cost a second pass. `resumed` was first derived from "did we have
+  a thread to resume", which is a different question: an agent that never spoke
+  has no thread and is started fresh, but the app is still *reopening*. That put
+  a "claude joined" in the transcript on every launch. It is passed explicitly
+  now.
+
+  Verified live across four launches: `codex joined` after the first, `codex
+  joined | claude joined` once Claude was added by hand in the second, and
+  exactly that on the third and fourth — a real cast change still announced,
+  nothing accumulating.

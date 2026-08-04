@@ -577,7 +577,15 @@ export class ChorusRuntime {
          * not the session and not the app.
          */
         const participant = await withTimeout(
-          this.startParticipant(agentId, entry.conversationId, sessionOpts, profile, grants, ref),
+          this.startParticipant(
+            agentId,
+            entry.conversationId,
+            sessionOpts,
+            profile,
+            grants,
+            ref,
+            true
+          ),
           REOPEN_TIMEOUT_MS,
           `${agentId} did not come back within ${String(Math.round(REOPEN_TIMEOUT_MS / 1000))}s`
         )
@@ -908,7 +916,7 @@ export class ChorusRuntime {
     const services = [...this.active.values()].flatMap((c) =>
       [...c.participants.values()].map((p) => p.service)
     )
-    await Promise.all(services.map((service) => service.close()))
+    await Promise.all(services.map((service) => service.close('shutdown')))
     this.active.clear()
     await Promise.all([...this.adapters.values()].map((a) => a.dispose()))
 
@@ -934,7 +942,16 @@ export class ChorusRuntime {
     profile: PermissionProfile,
     grants: SessionGrants,
     /** A provider thread to rejoin instead of starting a new one. */
-    resumeFrom?: string
+    resumeFrom?: string,
+    /*
+     * Whether this is the app reopening the conversation.
+     *
+     * Not the same question as "did we have a thread to resume": an agent that
+     * never spoke has no thread and is started fresh, but the app is still
+     * reopening — and announcing it as somebody joining put a "claude joined" in
+     * the transcript on every launch.
+     */
+    reopening = false
   ): Promise<Participant> {
     const adapter = this.adapters.get(agentId)
     if (adapter === undefined) throw new Error(`No adapter registered for "${agentId}"`)
@@ -966,7 +983,7 @@ export class ChorusRuntime {
       profile,
       grants,
     })
-    await service.attach(session, sessionOpts, health)
+    await service.attach(session, sessionOpts, health, reopening)
     // Joining mid-conversation is not a case yet, but starting at the current
     // end of the log is what makes it one when it is.
     return { agentId, service, session, seenSeq: this.store.lastSeq() }

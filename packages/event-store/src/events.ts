@@ -40,12 +40,19 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     cwd: z.string(),
     model: z.string().nullable(),
     cliVersion: z.string().nullable(),
+    /**
+     * True when this is the app reopening a conversation rather than an agent
+     * joining one. Optional, because events written before it existed have no
+     * opinion and must still parse.
+     */
+    resumed: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('session.ended'),
     agentId: z.enum(['codex', 'claude']),
     sessionRef: z.string(),
-    reason: z.enum(['closed', 'crashed', 'replaced']),
+    /** `shutdown` is the app quitting; the rest are things that happened to it. */
+    reason: z.enum(['closed', 'crashed', 'replaced', 'shutdown']),
   }),
 
   z.object({ type: z.literal('user.message'), text: z.string() }),

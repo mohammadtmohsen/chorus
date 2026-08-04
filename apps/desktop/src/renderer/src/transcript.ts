@@ -203,7 +203,16 @@ function apply(view: Mutable, event: TranscriptEvent): void {
      * first message appears from nowhere, and its last is followed by a silence
      * with no explanation.
      */
+    /*
+     * Reopening the app is not somebody joining.
+     *
+     * Every launch closed and restarted each agent, so a conversation collected
+     * a "left" and a "joined" per agent per restart — a transcript that filled
+     * with the app's own lifecycle. The notices are for the cast changing, which
+     * is a thing you did, so a resumed session says nothing.
+     */
     case 'session.started':
+      if (event.payload['resumed'] === true) return
       view.messages.push({
         key: event.id,
         eventId: event.id,
@@ -215,6 +224,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       return
 
     case 'session.ended':
+      if (str('reason') === 'shutdown') return
       view.messages.push({
         key: event.id,
         eventId: event.id,
