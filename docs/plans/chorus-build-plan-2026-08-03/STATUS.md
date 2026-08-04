@@ -900,3 +900,32 @@ sentence each, …` produced replies from both, with the user's message logged *
   afterwards. Also: straight into a session in ~1s with no modal, the chip
   reading Trusted, and "Permissions changed: read-only → trusted" in the
   transcript. 378 tests.
+
+- **2026-08-04 — the pane's bar moved into the composer.** Who is here, where
+  they are, what they may do, Review and End all sit in the composer's own row
+  now. The separate strip put them at the top of the pane while the thing you act
+  with was at the bottom, so changing permissions meant crossing the whole
+  transcript to get there and back.
+
+  The keyboard hint went with it: ↵ sends is the convention, and saying so
+  forever is a label for its first minute. The placeholder shortened to "Type @
+  to choose who answers" — the picker makes the long explanation redundant, and
+  it now teaches the affordance instead of describing the syntax.
+
+  **The placeholder no longer wraps.** A wrapped one made an empty composer two
+  lines tall — the box you have not typed in bigger than the one you have — and
+  it changed height as the pane narrowed, which reads as the layout twitching.
+
+  The row sheds detail by its pane's own width: below 620px Review becomes
+  "Diff", below 520px the path goes (still on the title attribute), below 430px
+  the agent names give way to their dots, below 340px the pane number goes. The
+  send button stays inside the box at every width and the row never wraps to two
+  lines.
+
+  Two latent bugs surfaced doing it. `.voices--pane` was declared *before*
+  `.voices`, so its `margin: 0` had never won against the base rule's
+  `margin-left: auto` — invisible while voices lived in a strip of their own, and
+  the reason the group sat centred the moment it moved. And `.composer-actions`
+  carried `justify-content: flex-end` from when it held only a hint and a button.
+
+  Verified live across 1400/900/620/480/390px panes. 378 tests.

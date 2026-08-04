@@ -300,7 +300,7 @@ body {
 
 .pane {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: 1fr auto;
   min-width: 0;
   min-height: 0;
   background: var(--sunken);
@@ -311,18 +311,46 @@ body {
 }
 
 /* What a pane sheds as it narrows, in the order it can afford to lose it. */
-@container (max-width: 460px) {
-  .pane-head .profile-chip {
+/*
+ * What the composer row sheds as its pane narrows, in the order it can afford
+ * to lose it. Nothing is dropped that cannot be reached another way: the path is
+ * still on the title attribute, and Review keeps its accessible name.
+ */
+.label-short {
+  display: none;
+}
+
+@container (max-width: 620px) {
+  .label-full {
+    display: none;
+  }
+
+  .label-short {
+    display: inline;
+  }
+}
+
+@container (max-width: 520px) {
+  .composer-actions .path {
     display: none;
   }
 }
 
-@container (max-width: 360px) {
-  .pane-head .path {
-    display: none;
+@container (max-width: 430px) {
+  /* The dots stay: which agents are here outranks their names. */
+  .composer-actions .voice {
+    font-size: 0;
+    gap: 0;
   }
 
-  .composer .hint {
+  .composer-actions {
+    gap: calc(var(--step) * 1.5);
+  }
+}
+
+@container (max-width: 340px) {
+  /* One pane fills the screen at this width, so its number says nothing. */
+  .composer-actions .pane-index {
     display: none;
   }
 }
@@ -363,7 +391,6 @@ body {
 }
 
 .voices--pane {
-  margin: 0;
   flex: none;
 }
 
@@ -411,7 +438,7 @@ body {
 .voices {
   display: flex;
   gap: calc(var(--step) * 4);
-  margin: 0 0 0 auto;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -754,10 +781,8 @@ body {
   display: flex;
   align-items: center;
   gap: calc(var(--step) * 2);
-}
-
-.composer-actions {
-  justify-content: flex-end;
+  /* The session's own details read from the left; the controls sit right. */
+  justify-content: flex-start;
 }
 
 .hint {
@@ -803,6 +828,19 @@ body {
 
 .composer textarea:focus {
   outline: none;
+}
+
+/*
+ * The placeholder never wraps.
+ *
+ * A wrapped placeholder makes an empty composer two lines tall, so the box you
+ * have not typed in yet is bigger than the one you have — and it changes height
+ * as the pane narrows, which reads as the layout twitching.
+ */
+.composer textarea::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /*
@@ -1462,7 +1500,8 @@ input::placeholder {
 .profile-menu {
   position: absolute;
   z-index: 30;
-  top: calc(100% + var(--step) * 2);
+  /* Upward: the chip is at the bottom of the pane now. */
+  bottom: calc(100% + var(--step) * 2);
   left: 0;
   width: max(260px, 100%);
   margin: 0;

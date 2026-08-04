@@ -188,126 +188,6 @@ export function Session(props: {
 
   return (
     <section className="pane" aria-label={t('conversation.sessionLabel', { path: cwd })}>
-      <header className="pane-head">
-        <span className="pane-index" aria-hidden="true">
-          {props.index}
-        </span>
-        <ul className="voices voices--pane">
-          {participants.map((id) => (
-            <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
-              <span className="voice-dot" aria-hidden="true" />
-              {id}
-            </li>
-          ))}
-        </ul>
-        <span className="path" title={cwd}>
-          {shortenPath(cwd)}
-        </span>
-        {/*
-          The chip is the control, not a label.
-          
-          What agents may do without asking is the thing you most want to change
-          once a session is under way — you start read-only, watch an agent get
-          it right, and stop wanting to approve every command. Sending someone
-          back to a start screen for that would mean ending the conversation
-          that earned the trust.
-        */}
-        <div className="profile-picker">
-          <button
-            type="button"
-            className="profile-chip"
-            title={profile?.summary}
-            aria-haspopup="listbox"
-            aria-expanded={pickingProfile}
-            onClick={() => {
-              setPickingProfile((open) => !open)
-            }}
-          >
-            {profile?.name ?? profileId}
-          </button>
-          {pickingProfile && (
-            <ul className="profile-menu" role="listbox">
-              {props.profiles.map((option) => (
-                <li key={option.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={option.id === profileId}
-                    data-on={option.id === profileId}
-                    className="profile-option"
-                    onClick={() => {
-                      setPickingProfile(false)
-                      if (option.id === profileId) return
-                      window.chorus
-                        .setProfile({ conversationId, profileId: option.id })
-                        .then(({ profileId: applied }) => {
-                          props.onProfile(applied)
-                        })
-                        .catch(fail(setError))
-                    }}
-                  >
-                    <span className="profile-option-name">{option.name}</span>
-                    <span className="profile-option-summary">{option.summary}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="pane-actions">
-          <button
-            type="button"
-            className="btn btn--chip"
-            onClick={() => {
-              setReviewing(true)
-            }}
-          >
-            {t('review.open')}
-          </button>
-          {/*
-            Shown even when this is the only session: ending the last one lands
-            on the start screen, which is a place to be rather than a dead end.
-            Confirmed only while an agent is mid-turn — the one moment ending
-            costs something, since the rest of the time the log is already
-            durable and the session can be started again.
-          */}
-          {confirmingClose ? (
-            <>
-              <button
-                type="button"
-                className="btn btn--chip btn--stop"
-                onClick={() => {
-                  props.onClose(conversationId)
-                }}
-              >
-                {t('conversation.endNow')}
-              </button>
-              <button
-                type="button"
-                className="btn btn--chip"
-                onClick={() => {
-                  setConfirmingClose(false)
-                }}
-              >
-                {t('conversation.keep')}
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="btn btn--chip"
-              aria-label={t('conversation.endLabel')}
-              onClick={() => {
-                if (view.busy) setConfirmingClose(true)
-                else props.onClose(conversationId)
-              }}
-            >
-              {t('conversation.end')}
-            </button>
-          )}
-        </div>
-      </header>
-
       {error !== null && (
         <p className="notice notice--bad" role="alert">
           {error}
@@ -419,7 +299,7 @@ export function Session(props: {
             value={draft}
             rows={1}
             aria-label={t('conversation.messageLabel')}
-            placeholder={t('conversation.placeholder', { agents: participants.join(', ') })}
+            placeholder={t('conversation.placeholder')}
             role="combobox"
             aria-expanded={menuOpen}
             aria-controls={`mentions-${conversationId}`}
@@ -469,9 +349,145 @@ export function Session(props: {
               send()
             }}
           />
+          {/*
+            Everything about the session sits in the composer's own row.
+            
+            A separate strip above the transcript put who is here, where they
+            are and what they may do at the top of the pane, while the thing you
+            act with was at the bottom — so changing permissions meant crossing
+            the whole transcript. Here it is all one place, and the keyboard hint
+            that used to live in this row is gone: ↵ sends is the convention, and
+            saying so forever is a label for the first minute.
+          */}
           <div className="composer-actions">
-            <span className="hint">{t('conversation.hint')}</span>
+            <span className="pane-index" aria-hidden="true">
+              {props.index}
+            </span>
+            <ul className="voices voices--pane">
+              {participants.map((id) => (
+                <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
+                  <span className="voice-dot" aria-hidden="true" />
+                  {id}
+                </li>
+              ))}
+            </ul>
+            <span className="path" title={cwd}>
+              {shortenPath(cwd)}
+            </span>
             {/*
+              The chip is the control, not a label.
+              
+              What agents may do without asking is the thing you most want to change
+              once a session is under way — you start read-only, watch an agent get
+              it right, and stop wanting to approve every command. Sending someone
+              back to a start screen for that would mean ending the conversation
+              that earned the trust.
+            */}
+            <div className="profile-picker">
+              <button
+                type="button"
+                className="profile-chip"
+                title={profile?.summary}
+                aria-haspopup="listbox"
+                aria-expanded={pickingProfile}
+                onClick={() => {
+                  setPickingProfile((open) => !open)
+                }}
+              >
+                {profile?.name ?? profileId}
+              </button>
+              {pickingProfile && (
+                <ul className="profile-menu" role="listbox">
+                  {props.profiles.map((option) => (
+                    <li key={option.id}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={option.id === profileId}
+                        data-on={option.id === profileId}
+                        className="profile-option"
+                        onClick={() => {
+                          setPickingProfile(false)
+                          if (option.id === profileId) return
+                          window.chorus
+                            .setProfile({ conversationId, profileId: option.id })
+                            .then(({ profileId: applied }) => {
+                              props.onProfile(applied)
+                            })
+                            .catch(fail(setError))
+                        }}
+                      >
+                        <span className="profile-option-name">{option.name}</span>
+                        <span className="profile-option-summary">{option.summary}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="pane-actions">
+              {/*
+                Two labels, one button. The row has to survive a pane a third of
+                the window wide, and dropping the control would be worse than
+                naming it briefly — "Diff" is what it opens either way.
+              */}
+              <button
+                type="button"
+                className="btn btn--chip"
+                aria-label={t('review.open')}
+                onClick={() => {
+                  setReviewing(true)
+                }}
+              >
+                <span className="label-full">{t('review.open')}</span>
+                <span className="label-short" aria-hidden="true">
+                  {t('review.openShort')}
+                </span>
+              </button>
+              {/*
+                Shown even when this is the only session: ending the last one lands
+                on the start screen, which is a place to be rather than a dead end.
+                Confirmed only while an agent is mid-turn — the one moment ending
+                costs something, since the rest of the time the log is already
+                durable and the session can be started again.
+              */}
+              {confirmingClose ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn--chip btn--stop"
+                    onClick={() => {
+                      props.onClose(conversationId)
+                    }}
+                  >
+                    {t('conversation.endNow')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--chip"
+                    onClick={() => {
+                      setConfirmingClose(false)
+                    }}
+                  >
+                    {t('conversation.keep')}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn--chip"
+                  aria-label={t('conversation.endLabel')}
+                  onClick={() => {
+                    if (view.busy) setConfirmingClose(true)
+                    else props.onClose(conversationId)
+                  }}
+                >
+                  {t('conversation.end')}
+                </button>
+              )}
+            </div>
+            <div className="composer-tools">
+              {/*
               One button, both jobs: Stop while an agent is working, Send
               otherwise.
 
@@ -483,27 +499,28 @@ export function Session(props: {
               name lives on `aria-label`, so a screen reader hears "Send" or
               "Stop" rather than a shape.
             */}
-            {view.busy ? (
-              <button
-                type="button"
-                className="send send--stop"
-                aria-label={t('conversation.stopAll', { agents: view.working.join(', ') })}
-                onClick={() => {
-                  window.chorus.interrupt({ conversationId }).catch(fail(setError))
-                }}
-              >
-                <span className="send-square" aria-hidden="true" />
-              </button>
-            ) : (
-              <button
-                type="submit"
-                className="send"
-                aria-label={t('conversation.send')}
-                disabled={draft.trim() === ''}
-              >
-                <span aria-hidden="true">↑</span>
-              </button>
-            )}
+              {view.busy ? (
+                <button
+                  type="button"
+                  className="send send--stop"
+                  aria-label={t('conversation.stopAll', { agents: view.working.join(', ') })}
+                  onClick={() => {
+                    window.chorus.interrupt({ conversationId }).catch(fail(setError))
+                  }}
+                >
+                  <span className="send-square" aria-hidden="true" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="send"
+                  aria-label={t('conversation.send')}
+                  disabled={draft.trim() === ''}
+                >
+                  <span aria-hidden="true">↑</span>
+                </button>
+              )}
+            </div>
           </div>
         </form>
       </div>

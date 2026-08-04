@@ -17,8 +17,7 @@
     "readOnlyNotice": "Agents start read-only. They ask before running or changing anything.",
     "transcript": "Conversation",
     "messageLabel": "Message",
-    "placeholder": "Say something. Name @{{agents}} to choose who answers — name both to ask both.",
-    "hint": "↵ to send · ⇧↵ for a new line",
+    "placeholder": "Say something. Type @ to choose who answers.",
     "send": "Send",
     "stop": "Stop",
     "stopAll": "Stop {{agents}}",
@@ -60,6 +59,7 @@
   },
   "review": {
     "open": "Review changes",
+    "openShort": "Diff",
     "heading": "Changes on disk",
     "loading": "Reading the repository…",
     "clean": "Nothing has changed yet.",
