@@ -28,6 +28,19 @@
     "heading": "What agents may do without asking",
     "footnote": "Anything a profile does not cover still asks. Slack, Jira and the like always ask."
   },
+  "review": {
+    "open": "Review changes",
+    "heading": "Changes on disk",
+    "loading": "Reading the repository…",
+    "clean": "Nothing has changed yet.",
+    "untrackedOnly": "Only untracked files — nothing to diff yet.",
+    "files": "Changed files",
+    "binary": "Binary file.",
+    "detached": "detached",
+    "source": "Read from git, not from the transcript.",
+    "refresh": "Refresh",
+    "done": "Done"
+  },
   "handoff": {
     "action": "Hand off →",
     "heading": "Hand off",

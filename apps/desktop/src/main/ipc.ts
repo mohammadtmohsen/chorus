@@ -73,6 +73,44 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'policy:profiles': () => Promise.resolve(runtime.availableProfiles()),
 
+    'workspace:read': async (request: { conversationId: string }) => {
+      const { status, diff, problem } = await runtime.readWorkspace(request.conversationId)
+      // Copied out of the readonly domain types; the IPC boundary is plain JSON.
+      return {
+        problem,
+        status: {
+          branch: status.branch,
+          upstream: status.upstream,
+          ahead: status.ahead,
+          behind: status.behind,
+          clean: status.clean,
+          files: status.files.map((f) => ({
+            path: f.path,
+            ...(f.from === undefined ? {} : { from: f.from }),
+            state: f.state,
+            staged: f.staged,
+            unstaged: f.unstaged,
+          })),
+        },
+        diff: diff.map((f) => ({
+          path: f.path,
+          oldPath: f.oldPath,
+          added: f.added,
+          removed: f.removed,
+          binary: f.binary,
+          hunks: f.hunks.map((h) => ({
+            header: h.header,
+            lines: h.lines.map((l) => ({
+              kind: l.kind,
+              text: l.text,
+              ...(l.before === undefined ? {} : { before: l.before }),
+              ...(l.after === undefined ? {} : { after: l.after }),
+            })),
+          })),
+        })),
+      }
+    },
+
     'handoff:prepare': (request: {
       conversationId: string
       from: 'codex' | 'claude'

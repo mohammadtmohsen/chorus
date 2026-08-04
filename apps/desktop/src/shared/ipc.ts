@@ -126,6 +126,54 @@ export const IPC_CONTRACT = {
     }),
     response: z.object({ handoffId: z.string() }),
   },
+  /**
+   * The repository as it stands on disk, not as the log describes it. Those
+   * differ after a crash, a manual edit, or a denied approval.
+   */
+  'workspace:read': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({
+      status: z.object({
+        branch: z.string().nullable(),
+        upstream: z.string().nullable(),
+        ahead: z.number().int(),
+        behind: z.number().int(),
+        clean: z.boolean(),
+        files: z.array(
+          z.object({
+            path: z.string(),
+            from: z.string().optional(),
+            state: z.enum(['added', 'modified', 'deleted', 'renamed', 'untracked', 'conflicted']),
+            staged: z.boolean(),
+            unstaged: z.boolean(),
+          })
+        ),
+      }),
+      diff: z.array(
+        z.object({
+          path: z.string(),
+          oldPath: z.string(),
+          added: z.number().int(),
+          removed: z.number().int(),
+          binary: z.boolean(),
+          hunks: z.array(
+            z.object({
+              header: z.string(),
+              lines: z.array(
+                z.object({
+                  kind: z.enum(['context', 'added', 'removed', 'meta']),
+                  text: z.string(),
+                  before: z.number().int().optional(),
+                  after: z.number().int().optional(),
+                })
+              ),
+            })
+          ),
+        })
+      ),
+      problem: z.string().nullable(),
+    }),
+  },
   /** The permission profiles a conversation can be started under. */
   'policy:profiles': {
     request: z.void(),
@@ -173,6 +221,9 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:history'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
   readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
+  readonly readWorkspace: (
+    request: IpcRequest<'workspace:read'>
+  ) => Promise<IpcResponse<'workspace:read'>>
   readonly prepareHandoff: (
     request: IpcRequest<'handoff:prepare'>
   ) => Promise<IpcResponse<'handoff:prepare'>>

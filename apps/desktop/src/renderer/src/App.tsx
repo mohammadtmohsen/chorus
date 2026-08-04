@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
+import { ReviewPanel } from './ReviewPanel.js'
 import {
   EMPTY_VIEW,
   reduceEvents,
@@ -35,6 +36,7 @@ export function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
+  const [reviewing, setReviewing] = useState(false)
   const bottom = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -126,6 +128,15 @@ export function App(): React.JSX.Element {
         <span className="profile-chip" title={profiles.find((p) => p.id === profileId)?.summary}>
           {profiles.find((p) => p.id === profileId)?.name ?? profileId}
         </span>
+        <button
+          type="button"
+          className="btn btn--chip"
+          onClick={() => {
+            setReviewing(true)
+          }}
+        >
+          {t('review.open')}
+        </button>
         <ul className="voices">
           {participants.map((id) => (
             <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
@@ -165,6 +176,16 @@ export function App(): React.JSX.Element {
         ))}
         <div ref={bottom} />
       </main>
+
+      {reviewing && (
+        <ReviewPanel
+          conversationId={conversationId}
+          onClose={() => {
+            setReviewing(false)
+          }}
+          onError={setError}
+        />
+      )}
 
       {handoff !== null && (
         <HandoffComposer

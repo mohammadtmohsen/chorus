@@ -845,3 +845,161 @@ input::placeholder {
   align-items: center;
   gap: calc(var(--step) * 2);
 }
+
+/* ----------------------------------------------------------------- review */
+
+.btn--chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  -webkit-app-region: no-drag;
+}
+
+.sheet--wide {
+  width: min(1100px, 100%);
+  height: 86vh;
+}
+
+.review-branch {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.review-totals {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.added {
+  color: var(--codex);
+}
+
+.removed {
+  color: var(--alert);
+}
+
+.review-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: calc(var(--step) * 4);
+  flex: 1;
+  min-height: 0;
+}
+
+.review-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding-right: calc(var(--step) * 2);
+  border-right: 1px solid var(--line);
+}
+
+.review-file {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-file:hover {
+  color: var(--bone);
+}
+
+.review-file[data-on='true'] {
+  background: var(--sunken);
+  color: var(--bone);
+}
+
+.review-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-file-counts {
+  display: flex;
+  gap: calc(var(--step) * 1.5);
+  flex: none;
+}
+
+.review-diff {
+  overflow: auto;
+  min-width: 0;
+}
+
+.hunk {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-bottom: calc(var(--step) * 4);
+}
+
+.hunk caption {
+  text-align: left;
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+/* Line numbers on both sides: a reviewer has to be able to point at a line in
+   the file they have open. */
+.gutter {
+  width: 1%;
+  padding: 0 calc(var(--step) * 1.5);
+  text-align: right;
+  color: var(--faint);
+  user-select: none;
+  vertical-align: top;
+}
+
+.sign {
+  width: 1%;
+  padding-right: var(--step);
+  user-select: none;
+  vertical-align: top;
+}
+
+.code {
+  padding-right: calc(var(--step) * 2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.line--added {
+  background: color-mix(in srgb, var(--codex) 12%, transparent);
+}
+
+.line--added .sign {
+  color: var(--codex);
+}
+
+.line--removed {
+  background: color-mix(in srgb, var(--alert) 12%, transparent);
+}
+
+.line--removed .sign {
+  color: var(--alert);
+}
+
+.line--meta .code {
+  color: var(--faint);
+  font-style: italic;
+}

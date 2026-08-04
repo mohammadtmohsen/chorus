@@ -438,3 +438,40 @@ sentence each, …` produced replies from both, with the user's message logged *
   and the runtime already handles several, but the UI only offers one at a time.
   Worth adding once it is clear whether handing off a _run_ of messages is
   actually the common case.
+
+- **2026-08-04 — M7 workspace and review.** 282 tests, all gates green. The exit
+  criterion is met: an agent edited a file and the change was reviewed inside
+  Chorus, without opening an editor.
+
+  Verified live under the workspace-write profile: Codex changed a line in
+  `README.md`, and the review view showed `main`, `+1 −1`, the file, and the hunk
+  with line numbers on both sides.
+
+  **The review reads git, not the event log.** The log records what agents
+  _proposed_; git records what is on disk. After a denied approval, a crash, or a
+  manual edit those differ — and the one worth reviewing is the disk. Everything
+  in `@chorus/workspace` is read-only: a convenience `git add` here would be a
+  mutation with no approval behind it.
+
+  Shipped:
+  - `parseStatus` over `--porcelain=v2 --branch` — the only format git promises
+    not to change, and it carries branch and ahead/behind in the same call.
+    Handles renames, conflicts, detached head, and paths containing spaces.
+  - `parseDiff` producing per-file hunks with line numbers on **both** sides,
+    because a reviewer has to be able to point at a line in the file they have
+    open. Binary files are flagged rather than pretending to have hunks.
+  - Working and staged diffs merged into one view: after a turn the question is
+    "what did it do", and splitting that across two lists makes the reader
+    reassemble it.
+  - A review panel with per-file navigation, memoised so switching files does not
+    re-render the previous one's hunks.
+
+  One parser bug the tests caught: `split('\n')` leaves a trailing empty element,
+  which was rendering as a context line for content that is not in the file.
+
+  Deferred:
+  - **Worktree isolation per conversation.** The plan lists it as optional. It
+    adds real git complexity for a benefit that only appears once two agents write
+    to the same repo concurrently, which has not happened yet.
+  - **The terminal drawer**, cut as previously flagged. It duplicates what the
+    transcript already shows.

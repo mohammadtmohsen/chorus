@@ -20,6 +20,7 @@ import {
   type PermissionProfile,
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId } from '@chorus/shared'
+import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
 
 /**
  * Wires the domain to real agents inside the main process.
@@ -329,6 +330,20 @@ export class ChorusRuntime {
     const participant = this.require(conversationId).participants.get(agentId)
     if (participant === undefined) throw new Error(`"${agentId}" is not in this conversation`)
     await participant.service.decideApproval(approvalId, decision)
+  }
+
+  /**
+   * Reads the repository as it stands right now.
+   *
+   * Deliberately not derived from the event log: the log records what agents
+   * *proposed*, git records what is actually on disk. After a crash, a manual
+   * edit, or an approval that was denied, those differ — and the one worth
+   * reviewing is the disk.
+   */
+  async readWorkspace(
+    conversationId: string
+  ): Promise<{ status: WorkspaceStatus; diff: DiffFile[]; problem: string | null }> {
+    return readWorkspace({ cwd: this.require(conversationId).cwd })
   }
 
   /** Replays a conversation from the log — the only complete record (S3). */
