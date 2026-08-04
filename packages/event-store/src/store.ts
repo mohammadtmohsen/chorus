@@ -1,4 +1,5 @@
 import { uuidv7 } from '@chorus/shared'
+import { z } from 'zod'
 import {
   ChorusEventPayload,
   SCHEMA_VERSION,
@@ -7,6 +8,7 @@ import {
   type StoredEvent,
 } from './events.js'
 import { migrate, type MigrationResult } from './migrations.js'
+import { redactPayload } from './redact.js'
 import type { Database } from './port.js'
 import { applyToProjections, PROJECTION_NAMES, PROJECTION_TABLES } from './projections.js'
 
@@ -61,7 +63,14 @@ export class EventStore {
   }
 
   private appendInTransaction(input: AppendInput, now: number): StoredEvent {
-    const payload = ChorusEventPayload.parse(input.payload)
+    /*
+     * Redact before validate, and before anything touches disk.
+     *
+     * This is the only path into the log, which is the point: a caller cannot
+     * opt out, and a payload type added later is covered structurally rather
+     * than by remembering to list it (plan §4.4).
+     */
+    const payload = ChorusEventPayload.parse(redactPayload(input.payload).payload)
     const event = {
       id: uuidv7(),
       conversationId: input.conversationId,
@@ -167,6 +176,43 @@ export class EventStore {
     return run()
   }
 
+  /**
+   * Closes sessions the log still believes are running.
+   *
+   * A crash leaves `session.started` with no matching `session.ended`, so on the
+   * next boot the projection claims agents are alive that died with the process.
+   * Reconciling is an append, not an UPDATE: the log is the record, and quietly
+   * editing a projection would make the two disagree.
+   */
+  reconcileOrphanedSessions(now: number = Date.now()): { closed: number } {
+    const rows = this.db
+      .prepare(
+        `SELECT conversation_id, agent_id, session_ref FROM agent_sessions WHERE status = 'active'`
+      )
+      .all()
+
+    let closed = 0
+    for (const row of rows) {
+      const parsed = OrphanedSessionRow.safeParse(row)
+      if (!parsed.success) continue
+      this.append(
+        {
+          conversationId: parsed.data.conversation_id,
+          actor: 'system',
+          payload: {
+            type: 'session.ended',
+            agentId: parsed.data.agent_id,
+            sessionRef: parsed.data.session_ref,
+            reason: 'crashed',
+          },
+        },
+        now
+      )
+      closed += 1
+    }
+    return { closed }
+  }
+
   /** A projection behind the log means an append was interrupted mid-transaction. */
   projectionDrift(): { name: string; lastSeq: number; logSeq: number }[] {
     const logSeq = this.lastSeq()
@@ -203,6 +249,12 @@ export class EventStore {
     for (const name of PROJECTION_NAMES) stmt.run({ name, seq })
   }
 }
+
+const OrphanedSessionRow = z.object({
+  conversation_id: z.string(),
+  agent_id: z.enum(['codex', 'claude']),
+  session_ref: z.string(),
+})
 
 function toStoredEvent(row: unknown): StoredEvent {
   const parsed = StoredEventRow.parse(row)

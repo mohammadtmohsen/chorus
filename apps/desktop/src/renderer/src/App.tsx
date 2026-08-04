@@ -276,7 +276,15 @@ function ApprovalCard({
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <section className="approval" aria-label={t('approval.heading')}>
+    <section
+      className="approval"
+      // Assertive, not polite: an approval blocks an agent and expires. A
+      // screen-reader user hearing about it after the timeout has been told
+      // nothing useful.
+      role="alertdialog"
+      aria-live="assertive"
+      aria-label={t('approval.wants', { agent: approval.agentId })}
+    >
       <header className="approval-head">
         <span className={`voice-dot voice--${approval.agentId}`} aria-hidden="true" />
         <strong>{t('approval.wants', { agent: approval.agentId })}</strong>

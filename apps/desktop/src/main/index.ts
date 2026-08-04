@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
 import { forwardEventsToRenderer, registerIpcHandlers } from './ipc.js'
+import { reapOrphanedAgents } from './reap.js'
 import { ChorusRuntime } from './runtime.js'
 import { applyContentSecurityPolicy, lockDownNavigation } from './security.js'
 
@@ -45,6 +46,19 @@ let runtime: ChorusRuntime | null = null
 
 void app.whenReady().then(() => {
   applyContentSecurityPolicy(session.defaultSession, devServerUrl !== undefined)
+
+  /*
+   * Backstop for agents orphaned by a previous crash.
+   *
+   * Measured: stdio-connected children already exit when Electron dies, so this
+   * normally finds nothing. It stays because that cleanup is incidental rather
+   * than guaranteed — see reap.ts.
+   */
+  void reapOrphanedAgents().then(({ killed }) => {
+    if (killed > 0) {
+      process.stdout.write(`[chorus] boot: reaped ${String(killed)} orphaned agent(s)\n`)
+    }
+  })
 
   runtime = ChorusRuntime.open(app.getPath('userData'))
   registerIpcHandlers(runtime)

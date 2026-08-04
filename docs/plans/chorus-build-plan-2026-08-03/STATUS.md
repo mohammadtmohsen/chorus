@@ -475,3 +475,44 @@ sentence each, …` produced replies from both, with the user's message logged *
     to the same repo concurrently, which has not happened yet.
   - **The terminal drawer**, cut as previously flagged. It duplicates what the
     transcript already shows.
+
+- **2026-08-04 — M8 hardening.** 315 tests, all gates green.
+
+  **Secret redaction, which §4.4 required and nothing did.** Agents read `.env`
+  files, print environment variables and paste tokens into commands, and every
+  one of those flowed through `command.output` or `agent.message.delta` straight
+  into a durable file that gets backed up and attached to bug reports. Redaction
+  now runs inside `EventStore.append` — the only write path, so a caller cannot
+  opt out — and walks payloads structurally, so a field added later is covered
+  rather than silently exempt.
+
+  It is deliberately conservative. A false positive destroys content the user
+  needed, so patterns are anchored to unambiguous shapes (`sk-ant-`, a PEM
+  header, an AWS key prefix). The one rule keyed on a _name_ rather than a shape
+  declines values that look like code: `const apiKey = config.apiKey` is a
+  property access, and redacting it would eat source someone was reading. That
+  false positive was caught by a test written specifically to look for it.
+
+  **Crash recovery**, verified live:
+  - Sessions the log still believes are running are closed at boot — as an
+    _append_, not a projection edit, so a rebuild does not undo it. Confirmed:
+    `[chorus] boot: 1 orphaned session(s) closed`.
+  - An unreadable database is moved aside and a fresh one opened, rather than
+    making the app unstartable. Confirmed: the app started and
+    `chorus.unreadable-<ts>.db` was preserved. It is moved, never deleted — it is
+    the user's history, and `sqlite3 .recover` may still get it back.
+
+  **A correction worth recording.** I first measured "two orphaned app-servers
+  survived a crash" and built PPID-based reaping to fix it. That measurement was
+  wrong: the test killed the `npx` wrapper while Electron kept running, so the
+  children still had a live parent. Killing Electron itself leaves **zero**
+  survivors — stdio closure already cleans them up. The reaping stays as a
+  backstop, and its comments now say so instead of claiming a fix.
+
+  **Accessibility**: both sheets trap and restore focus and close on Escape, so a
+  keyboard user is not stranded behind an overlay. Approval cards are
+  `alertdialog` with `aria-live="assertive"` — an approval blocks an agent and
+  expires, so hearing about it politely after the timeout tells you nothing.
+
+  Remaining: the diagnostics export bundle and in-app log viewer. Structured
+  logging is not in yet either — boot events currently write to stdout.

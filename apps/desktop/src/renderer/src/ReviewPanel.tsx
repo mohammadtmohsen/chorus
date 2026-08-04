@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDialog } from './useDialog.js'
 import type { IpcResponse } from '../../shared/ipc.js'
 
 type Workspace = IpcResponse<'workspace:read'>
@@ -25,6 +26,7 @@ export function ReviewPanel({
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const dialog = useDialog<HTMLElement>(onClose)
 
   const refresh = (): void => {
     setLoading(true)
@@ -57,6 +59,7 @@ export function ReviewPanel({
   return (
     <div className="sheet-backdrop" role="presentation">
       <section
+        ref={dialog}
         className="sheet sheet--wide"
         role="dialog"
         aria-modal="true"

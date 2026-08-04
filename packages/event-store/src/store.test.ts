@@ -310,3 +310,114 @@ describe('read', () => {
     expect(deltas[0]?.payload).toEqual({ type: 'agent.message.delta', itemRef: 'm', text: 'x' })
   })
 })
+
+describe('redaction on write', () => {
+  it('never lets a secret reach the log', () => {
+    // The only path into the log, so a caller cannot opt out (plan §4.4).
+    store.append({
+      conversationId: CONV,
+      actor: 'claude',
+      payload: {
+        type: 'agent.message.completed',
+        itemRef: 'm1',
+        text: 'the token is ghp_AbCdEfGhIjKlMnOpQrStUvWxYz1234',
+      },
+    })
+
+    const raw = db.prepare('SELECT payload FROM events ORDER BY seq DESC LIMIT 1').get()
+    expect(JSON.stringify(raw)).not.toContain('ghp_AbCdEfGhIjKlMnOpQrStUvWxYz1234')
+    expect(JSON.stringify(raw)).toContain('[redacted:github-token]')
+  })
+
+  it('redacts the projection too, since it is built from the redacted event', () => {
+    store.append({
+      conversationId: CONV,
+      actor: 'claude',
+      payload: {
+        type: 'agent.message.completed',
+        itemRef: 'm2',
+        text: 'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv',
+      },
+    })
+    const row = db.prepare("SELECT content FROM messages WHERE item_ref = 'm2'").get()
+    expect(JSON.stringify(row)).not.toContain('sk-ant-api03')
+  })
+
+  it('leaves ordinary content untouched', () => {
+    store.append({
+      conversationId: CONV,
+      actor: 'codex',
+      payload: { type: 'agent.message.completed', itemRef: 'm3', text: 'git status is clean' },
+    })
+    const row = db.prepare("SELECT content FROM messages WHERE item_ref = 'm3'").get()
+    expect(row).toMatchObject({ content: 'git status is clean' })
+  })
+})
+
+describe('reconcileOrphanedSessions', () => {
+  const startSession = (ref: string): void => {
+    store.append({
+      conversationId: CONV,
+      actor: 'system',
+      payload: {
+        type: 'session.started',
+        agentId: 'codex',
+        sessionRef: ref,
+        cwd: '/x',
+        model: null,
+        cliVersion: '0.1.0',
+      },
+    })
+  }
+
+  it('closes a session the log still believes is running', () => {
+    // A crash leaves session.started with no matching session.ended, so the
+    // next boot would claim an agent is alive that died with the process.
+    startSession('s1')
+    expect(store.reconcileOrphanedSessions()).toEqual({ closed: 1 })
+
+    expect(db.prepare('SELECT status FROM agent_sessions').get()).toMatchObject({
+      status: 'crashed',
+    })
+  })
+
+  it('records the reconciliation as an event, not a silent projection edit', () => {
+    // The log is the record; editing a projection behind its back would make
+    // the two disagree, and a rebuild would undo it.
+    startSession('s1')
+    store.reconcileOrphanedSessions()
+
+    const ended = store.read(CONV, { types: ['session.ended'] })
+    expect(ended).toHaveLength(1)
+    expect(ended[0]?.payload).toMatchObject({ sessionRef: 's1', reason: 'crashed' })
+  })
+
+  it('survives a rebuild, because it is in the log', () => {
+    startSession('s1')
+    store.reconcileOrphanedSessions()
+    store.rebuildProjections()
+    expect(db.prepare('SELECT status FROM agent_sessions').get()).toMatchObject({
+      status: 'crashed',
+    })
+  })
+
+  it('leaves a cleanly ended session alone', () => {
+    startSession('s1')
+    store.append({
+      conversationId: CONV,
+      actor: 'system',
+      payload: { type: 'session.ended', agentId: 'codex', sessionRef: 's1', reason: 'closed' },
+    })
+    expect(store.reconcileOrphanedSessions()).toEqual({ closed: 0 })
+  })
+
+  it('is a no-op on a clean boot', () => {
+    expect(store.reconcileOrphanedSessions()).toEqual({ closed: 0 })
+  })
+
+  it('closes several at once', () => {
+    startSession('s1')
+    startSession('s2')
+    expect(store.reconcileOrphanedSessions()).toEqual({ closed: 2 })
+  })
+})

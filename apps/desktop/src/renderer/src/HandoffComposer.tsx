@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDialog } from './useDialog.js'
 import { useTranslation } from 'react-i18next'
 
 type AgentId = 'codex' | 'claude'
@@ -42,6 +43,7 @@ export function HandoffComposer({
   const [brief, setBrief] = useState('')
   const [edited, setEdited] = useState(false)
   const [busy, setBusy] = useState(false)
+  const dialog = useDialog<HTMLElement>(onClose)
 
   // Recompose whenever an input changes — unless the user has taken over the
   // text, in which case overwriting their edit would be the rudest possible
@@ -86,14 +88,14 @@ export function HandoffComposer({
   }
 
   return (
-    <div
-      className="sheet-backdrop"
-      role="presentation"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose()
-      }}
-    >
-      <section className="sheet" role="dialog" aria-modal="true" aria-label={t('handoff.heading')}>
+    <div className="sheet-backdrop" role="presentation">
+      <section
+        ref={dialog}
+        className="sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('handoff.heading')}
+      >
         <header className="sheet-head">
           <span className={`voice-dot voice--${draft.from}`} aria-hidden="true" />
           <strong>{t('handoff.title', { from: NAME[draft.from], to: NAME[draft.to] })}</strong>

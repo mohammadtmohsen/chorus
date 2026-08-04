@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
@@ -74,10 +74,24 @@ export class ChorusRuntime {
   ) {}
 
   static open(userDataPath: string, adapters?: Map<AgentId, AgentAdapter>): ChorusRuntime {
-    const db = openSqlite({ path: join(userDataPath, 'chorus.db') })
-    const { store } = EventStore.open(db, (from) =>
-      join(userDataPath, `chorus.pre-v${String(from)}.db`)
-    )
+    const path = join(userDataPath, 'chorus.db')
+    const { db, store, recovered } = openOrRecover(path, userDataPath)
+
+    /*
+     * Close sessions the log still believes are running.
+     *
+     * A crash leaves `session.started` with no `session.ended`, so without this
+     * the app boots claiming agents are alive that died with the process — and
+     * the UI would show them as live.
+     */
+    const { closed } = store.reconcileOrphanedSessions()
+    if (closed > 0 || recovered !== null) {
+      process.stdout.write(
+        `[chorus] boot: ${String(closed)} orphaned session(s) closed` +
+          (recovered === null ? '\n' : `, unreadable database moved to ${recovered}\n`)
+      )
+    }
+
     return new ChorusRuntime(db, store, adapters ?? defaultAdapters())
   }
 
@@ -392,6 +406,33 @@ export class ChorusRuntime {
     const found = this.active.get(conversationId)
     if (found === undefined) throw new Error(`Conversation "${conversationId}" is not active`)
     return found
+  }
+}
+
+/**
+ * Opens the database, and gets out of the way if it cannot be read.
+ *
+ * A corrupt SQLite file would otherwise make the app unstartable — the worst
+ * possible failure for a local-first tool, because the data is only here. The
+ * file is moved aside rather than deleted: it is the user's history, and a
+ * later `sqlite3 .recover` may still get it back.
+ */
+function openOrRecover(
+  path: string,
+  userDataPath: string
+): { db: SqliteHandle; store: EventStore; recovered: string | null } {
+  const backupFor = (from: number): string => join(userDataPath, `chorus.pre-v${String(from)}.db`)
+
+  try {
+    const db = openSqlite({ path })
+    return { db, store: EventStore.open(db, backupFor).store, recovered: null }
+  } catch (error) {
+    if (!existsSync(path)) throw error
+
+    const moved = join(userDataPath, `chorus.unreadable-${String(Date.now())}.db`)
+    renameSync(path, moved)
+    const db = openSqlite({ path })
+    return { db, store: EventStore.open(db, backupFor).store, recovered: moved }
   }
 }
 
