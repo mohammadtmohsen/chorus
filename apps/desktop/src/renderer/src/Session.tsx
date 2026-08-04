@@ -1,0 +1,370 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Entry } from './Entry.js'
+import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
+import { ReviewPanel } from './ReviewPanel.js'
+import {
+  EMPTY_VIEW,
+  reduceEvents,
+  type PendingApproval,
+  type TranscriptView,
+} from './transcript.js'
+
+type AgentId = 'codex' | 'claude'
+
+export interface SessionInfo {
+  readonly conversationId: string
+  readonly participants: AgentId[]
+  readonly cwd: string
+  readonly profileId: string
+}
+
+/**
+ * One conversation, whole: its transcript, its approvals, its composer.
+ *
+ * Everything a conversation needs lives in here rather than in `App`, which is
+ * what lets several run side by side. Each pane keeps its own draft, its own
+ * error and its own scroll position — a message half-typed in one must survive
+ * you reading another, and an error in one must not blank the rest.
+ *
+ * Events arrive for every conversation at once, so each pane filters the push
+ * stream down to its own. The filter returns early when nothing matched, which
+ * is what stops four panes re-rendering on every token of one agent's reply.
+ */
+export function Session(props: {
+  session: SessionInfo
+  /**
+   * Position in the grid, 1-based.
+   *
+   * Two sessions on the same folder with the same agents are otherwise
+   * indistinguishable, and "the second one" is how anyone would refer to them.
+   * Position is the only thing about a pane that is true at a glance.
+   */
+  index: number
+  profileName: string
+  profileSummary: string
+  /** Hidden when this is the only session; there is nothing to distinguish. */
+  showClose: boolean
+  onClose: (conversationId: string) => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const { conversationId, participants, cwd } = props.session
+  const [view, setView] = useState<TranscriptView>(EMPTY_VIEW)
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
+  const [reviewing, setReviewing] = useState(false)
+  const [confirmingClose, setConfirmingClose] = useState(false)
+  const score = useRef<HTMLDivElement | null>(null)
+
+  useEffect(
+    () =>
+      window.chorus.onEvents((events) => {
+        const mine = events.filter((e) => e.conversationId === conversationId)
+        if (mine.length === 0) return
+        setView((current) => reduceEvents(current, mine))
+      }),
+    [conversationId]
+  )
+
+  useEffect(() => {
+    window.chorus
+      .history({ conversationId })
+      .then((history) => {
+        setView((current) => reduceEvents(current, history))
+      })
+      .catch(fail(setError))
+  }, [conversationId])
+
+  useEffect(() => {
+    /*
+     * Scrolls this pane's own transcript, not the page.
+     *
+     * `scrollIntoView` walks every scrollable ancestor, so with panes side by
+     * side one agent's reply would drag the whole grid around while you were
+     * reading another. Setting `scrollTop` cannot reach past this element.
+     */
+    const el = score.current
+    if (el !== null) el.scrollTop = el.scrollHeight
+  }, [view.messages.length, view.approvals.length])
+
+  const send = useCallback(() => {
+    if (draft.trim() === '') return
+    const text = draft
+    setDraft('')
+    window.chorus.sendMessage({ conversationId, text }).catch(fail(setError))
+  }, [conversationId, draft])
+
+  const decide = useCallback(
+    (approval: PendingApproval, outcome: 'allow' | 'deny') => {
+      window.chorus
+        .decideApproval({
+          conversationId,
+          agentId: approval.agentId === 'claude' ? 'claude' : 'codex',
+          approvalId: approval.approvalId,
+          outcome,
+          scope: 'once',
+        })
+        .catch(fail(setError))
+    },
+    [conversationId]
+  )
+
+  return (
+    <section className="pane" aria-label={t('conversation.sessionLabel', { path: cwd })}>
+      <header className="pane-head">
+        <span className="pane-index" aria-hidden="true">
+          {props.index}
+        </span>
+        <ul className="voices voices--pane">
+          {participants.map((id) => (
+            <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
+              <span className="voice-dot" aria-hidden="true" />
+              {id}
+            </li>
+          ))}
+        </ul>
+        <span className="path" title={cwd}>
+          {shortenPath(cwd)}
+        </span>
+        <span className="profile-chip" title={props.profileSummary}>
+          {props.profileName}
+        </span>
+        <div className="pane-actions">
+          <button
+            type="button"
+            className="btn btn--chip"
+            onClick={() => {
+              setReviewing(true)
+            }}
+          >
+            {t('review.open')}
+          </button>
+          {props.showClose &&
+            /*
+             * Confirmed only while an agent is mid-turn. That is the one moment
+             * ending costs something — the rest of the time the log is already
+             * durable and the session can be started again.
+             */
+            (confirmingClose ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--chip btn--stop"
+                  onClick={() => {
+                    props.onClose(conversationId)
+                  }}
+                >
+                  {t('conversation.endNow')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--chip"
+                  onClick={() => {
+                    setConfirmingClose(false)
+                  }}
+                >
+                  {t('conversation.keep')}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn btn--chip"
+                aria-label={t('conversation.endLabel')}
+                onClick={() => {
+                  if (view.busy) setConfirmingClose(true)
+                  else props.onClose(conversationId)
+                }}
+              >
+                {t('conversation.end')}
+              </button>
+            ))}
+        </div>
+      </header>
+
+      {error !== null && (
+        <p className="notice notice--bad" role="alert">
+          {error}
+        </p>
+      )}
+
+      <div className="score" ref={score} aria-label={t('conversation.transcript')}>
+        <div className="rail" aria-hidden="true" />
+        {view.messages.map((message) => (
+          <Entry
+            key={message.key}
+            message={message}
+            onHandOff={
+              // Only offered when there is somebody to hand to, and only for an
+              // agent's own words — handing the user's message back is noise.
+              participants.length > 1 && (message.actor === 'codex' || message.actor === 'claude')
+                ? (m) => {
+                    const from = m.actor === 'claude' ? 'claude' : 'codex'
+                    const to = participants.find((p) => p !== from)
+                    if (to !== undefined) {
+                      setHandoff({ from, to, sourceEventIds: [m.eventId] })
+                    }
+                  }
+                : undefined
+            }
+          />
+        ))}
+      </div>
+
+      {reviewing && (
+        <ReviewPanel
+          conversationId={conversationId}
+          onClose={() => {
+            setReviewing(false)
+          }}
+          onError={setError}
+        />
+      )}
+
+      {handoff !== null && (
+        <HandoffComposer
+          conversationId={conversationId}
+          draft={handoff}
+          onClose={() => {
+            setHandoff(null)
+          }}
+          onSent={() => {
+            setHandoff(null)
+          }}
+          onError={setError}
+        />
+      )}
+
+      <div className="dock">
+        {view.approvals.map((approval) => (
+          <ApprovalCard
+            key={approval.approvalId}
+            approval={approval}
+            onAllow={() => {
+              decide(approval, 'allow')
+            }}
+            onDeny={() => {
+              decide(approval, 'deny')
+            }}
+          />
+        ))}
+
+        <form
+          className="composer"
+          onSubmit={(e) => {
+            e.preventDefault()
+            send()
+          }}
+        >
+          <textarea
+            value={draft}
+            rows={2}
+            aria-label={t('conversation.messageLabel')}
+            placeholder={t('conversation.placeholder', { agents: participants.join(', ') })}
+            onChange={(e) => {
+              setDraft(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              // Mid-composition Enter commits the candidate — for Japanese,
+              // Chinese or Korean input that keypress belongs to the IME, not
+              // to us, and sending there would swallow the word being typed.
+              if (e.nativeEvent.isComposing) return
+              // Shift holds the line; every other Enter sends. Cmd and Ctrl keep
+              // working because that is what they did before.
+              if (e.shiftKey) return
+              e.preventDefault()
+              send()
+            }}
+          />
+          <div className="composer-actions">
+            <span className="hint">{t('conversation.hint')}</span>
+            {/*
+              Stop appears alongside Send, never instead of it. One agent being
+              mid-turn must not stop you addressing another — that is the whole
+              point of a shared room.
+            */}
+            {view.busy && (
+              <button
+                type="button"
+                className="btn btn--stop"
+                onClick={() => {
+                  window.chorus.interrupt({ conversationId }).catch(fail(setError))
+                }}
+              >
+                {t('conversation.stopAll', { agents: view.working.join(', ') })}
+              </button>
+            )}
+            <button type="submit" className="btn btn--go" disabled={draft.trim() === ''}>
+              {t('conversation.send')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+  )
+}
+
+function ApprovalCard({
+  approval,
+  onAllow,
+  onDeny,
+}: {
+  approval: PendingApproval
+  onAllow: () => void
+  onDeny: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <section
+      className="approval"
+      // Assertive, not polite: an approval blocks an agent and expires. A
+      // screen-reader user hearing about it after the timeout has been told
+      // nothing useful.
+      role="alertdialog"
+      aria-live="assertive"
+      aria-label={t('approval.wants', { agent: approval.agentId })}
+    >
+      <header className="approval-head">
+        <span className={`voice-dot voice--${approval.agentId}`} aria-hidden="true" />
+        <strong>{t('approval.wants', { agent: approval.agentId })}</strong>
+      </header>
+      <pre className="approval-summary">{approval.summary}</pre>
+      {approval.detail !== null && <pre className="approval-detail">{approval.detail}</pre>}
+      <div className="approval-actions">
+        <button type="button" className="btn btn--go" onClick={onAllow}>
+          {t('approval.allowOnce')}
+        </button>
+        <button type="button" className="btn" onClick={onDeny}>
+          {t('approval.deny')}
+        </button>
+      </div>
+    </section>
+  )
+}
+
+export const fail =
+  (setError: (message: string) => void) =>
+  (error: unknown): void => {
+    setError(readable(error))
+  }
+
+/**
+ * Strips Electron's IPC wrapper from an error.
+ *
+ * A rejected `invoke` arrives as "Error invoking remote method
+ * 'conversation:start': Error: That directory does not exist" — the useful half
+ * is at the end, and the rest is plumbing the reader did not ask about.
+ */
+export function readable(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const withoutChannel = raw.replace(/^Error invoking remote method '[^']*':\s*/, '')
+  return withoutChannel.replace(/^(?:Error:\s*)+/, '')
+}
+
+/** Keeps the tail of a long path, which is the part that identifies it. */
+export function shortenPath(path: string): string {
+  const parts = path.split('/').filter(Boolean)
+  return parts.length <= 2 ? path : `…/${parts.slice(-2).join('/')}`
+}

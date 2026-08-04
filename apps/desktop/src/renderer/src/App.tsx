@@ -1,27 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
-import { Entry } from './Entry.js'
-import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import { LogViewer } from './LogViewer.js'
-import { ReviewPanel } from './ReviewPanel.js'
-import {
-  EMPTY_VIEW,
-  reduceEvents,
-  type PendingApproval,
-  type TranscriptView,
-} from './transcript.js'
+import { fail, Session, type SessionInfo } from './Session.js'
 
 type AgentId = 'codex' | 'claude'
 const AGENTS: AgentId[] = ['codex', 'claude']
 
 /**
- * The shared conversation.
+ * The stage: several conversations at once, side by side.
  *
- * The organising idea is the voice rail down the left: one continuous line for
- * the shared timeline, a dot per message coloured by who spoke. Reading the dots
- * tells you the shape of an exchange before you read a word — which is the first
- * question a multi-agent transcript has to answer.
+ * The organising idea inside each pane is the voice rail down the left — one
+ * continuous line for the shared timeline, a dot per message coloured by who
+ * spoke. Reading the dots tells you the shape of an exchange before you read a
+ * word, which is the first question a multi-agent transcript has to answer.
+ *
+ * Across panes the organising idea is that they are genuinely independent:
+ * separate agents, separate approvals, separate drafts. `App` holds only the
+ * list; everything a conversation knows lives in `Session`.
  */
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
@@ -29,46 +25,32 @@ export function App(): React.JSX.Element {
   const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
   const [profileId, setProfileId] = useState('read-only')
   const [chosen, setChosen] = useState<AgentId[]>(['codex', 'claude'])
-  const [conversationId, setConversationId] = useState<string | null>(null)
-  const [participants, setParticipants] = useState<AgentId[]>([])
-  const [view, setView] = useState<TranscriptView>(EMPTY_VIEW)
+  const [sessions, setSessions] = useState<SessionInfo[]>([])
+  const [adding, setAdding] = useState(false)
   const [cwd, setCwd] = useState('')
-  const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
-  const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
-  const [reviewing, setReviewing] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
-  const bottom = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
   }, [])
 
-  useEffect(
-    () =>
-      window.chorus.onEvents((events) => {
-        setView((current) => reduceEvents(current, events))
-      }),
-    []
-  )
-
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [view.messages.length, view.approvals.length])
-
   const start = useCallback(() => {
     setError(null)
     setStarting(true)
     window.chorus
       .startConversation({ agents: chosen, cwd, profileId })
-      .then(async ({ conversationId: id, participants: joined, cwd: startedIn }) => {
-        setConversationId(id)
-        setParticipants(joined)
+      .then(({ conversationId, participants, cwd: startedIn, profileId: profile }) => {
+        setSessions((current) => [
+          ...current,
+          { conversationId, participants, cwd: startedIn, profileId: profile },
+        ])
+        // Kept, not cleared: the next session is usually in the same place, and
+        // retyping the path is the kind of thing that stops you opening a second.
         setCwd(startedIn)
-        const history = await window.chorus.history({ conversationId: id })
-        setView((current) => reduceEvents(current, history))
+        setAdding(false)
       })
       .catch(fail(setError))
       .finally(() => {
@@ -76,87 +58,72 @@ export function App(): React.JSX.Element {
       })
   }, [chosen, cwd, profileId])
 
-  const send = useCallback(() => {
-    if (conversationId === null || draft.trim() === '') return
-    const text = draft
-    setDraft('')
-    window.chorus.sendMessage({ conversationId, text }).catch(fail(setError))
-  }, [conversationId, draft])
+  const close = useCallback((conversationId: string) => {
+    // Removed from the grid first: the agents take a moment to shut down, and
+    // leaving a dead pane on screen while that happens reads as a hang.
+    setSessions((current) => current.filter((s) => s.conversationId !== conversationId))
+    window.chorus.closeConversation({ conversationId }).catch(fail(setError))
+  }, [])
 
-  const decide = useCallback(
-    (approval: PendingApproval, outcome: 'allow' | 'deny') => {
-      if (conversationId === null) return
-      window.chorus
-        .decideApproval({
-          conversationId,
-          agentId: approval.agentId === 'claude' ? 'claude' : 'codex',
-          approvalId: approval.approvalId,
-          outcome,
-          scope: 'once',
-        })
-        .catch(fail(setError))
-    },
-    [conversationId]
+  const setup = (
+    <Setup
+      probes={probes}
+      chosen={chosen}
+      onToggle={(id) => {
+        setChosen((current) =>
+          current.includes(id) ? current.filter((a) => a !== id) : [...current, id]
+        )
+      }}
+      cwd={cwd}
+      onCwd={setCwd}
+      profiles={profiles}
+      profileId={profileId}
+      onProfile={setProfileId}
+      onStart={start}
+      starting={starting}
+      error={error}
+      onCancel={
+        // Nothing to go back to when the grid is empty.
+        sessions.length === 0
+          ? undefined
+          : () => {
+              setAdding(false)
+              setError(null)
+            }
+      }
+    />
   )
 
-  if (conversationId === null) {
-    return (
-      <Setup
-        probes={probes}
-        chosen={chosen}
-        onToggle={(id) => {
-          setChosen((current) =>
-            current.includes(id) ? current.filter((a) => a !== id) : [...current, id]
-          )
-        }}
-        cwd={cwd}
-        onCwd={setCwd}
-        profiles={profiles}
-        profileId={profileId}
-        onProfile={setProfileId}
-        onStart={start}
-        starting={starting}
-        error={error}
-      />
-    )
-  }
+  if (sessions.length === 0) return setup
 
   return (
     <div className="stage">
       <header className="masthead">
         <h1 className="wordmark">{t('app.name')}</h1>
-        <span className="path" title={cwd}>
-          {shortenPath(cwd)}
+        <span className="session-count">
+          {t('conversation.openCount', { count: sessions.length })}
         </span>
-        <span className="profile-chip" title={profiles.find((p) => p.id === profileId)?.summary}>
-          {profiles.find((p) => p.id === profileId)?.name ?? profileId}
-        </span>
-        <button
-          type="button"
-          className="btn btn--chip"
-          onClick={() => {
-            setReviewing(true)
-          }}
-        >
-          {t('review.open')}
-        </button>
-        <button
-          type="button"
-          className="btn btn--chip"
-          onClick={() => {
-            setShowingLogs(true)
-          }}
-        >
-          {t('logs.open')}
-        </button>
-        <ul className="voices">
-          {participants.map((id) => (
-            <li key={id} className={`voice voice--${id}`} data-live={view.working.includes(id)}>
-              <span className="voice-dot" aria-hidden="true" />
-              {id}
-            </li>
-          ))}
-        </ul>
+        <div className="masthead-actions">
+          <button
+            type="button"
+            className="btn btn--chip"
+            onClick={() => {
+              setError(null)
+              setAdding(true)
+            }}
+          >
+            {t('conversation.newSession')}
+          </button>
+          <button
+            type="button"
+            className="btn btn--chip"
+            onClick={() => {
+              setShowingLogs(true)
+            }}
+          >
+            {t('logs.open')}
+          </button>
+        </div>
       </header>
 
       {error !== null && (
@@ -165,29 +132,27 @@ export function App(): React.JSX.Element {
         </p>
       )}
 
-      <main className="score" aria-label={t('conversation.transcript')}>
-        <div className="rail" aria-hidden="true" />
-        {view.messages.map((message) => (
-          <Entry
-            key={message.key}
-            message={message}
-            onHandOff={
-              // Only offered when there is somebody to hand to, and only for an
-              // agent's own words — handing the user's message back is noise.
-              participants.length > 1 && (message.actor === 'codex' || message.actor === 'claude')
-                ? (m) => {
-                    const from = m.actor === 'claude' ? 'claude' : 'codex'
-                    const to = participants.find((p) => p !== from)
-                    if (to !== undefined) {
-                      setHandoff({ from, to, sourceEventIds: [m.eventId] })
-                    }
-                  }
-                : undefined
+      <main className="grid" data-count={Math.min(sessions.length, 4)}>
+        {sessions.map((session, index) => (
+          <Session
+            key={session.conversationId}
+            session={session}
+            index={index + 1}
+            profileName={
+              profiles.find((p) => p.id === session.profileId)?.name ?? session.profileId
             }
+            profileSummary={profiles.find((p) => p.id === session.profileId)?.summary ?? ''}
+            showClose={sessions.length > 1}
+            onClose={close}
           />
         ))}
-        <div ref={bottom} />
       </main>
+
+      {adding && (
+        <div className="sheet-backdrop" role="presentation">
+          {setup}
+        </div>
+      )}
 
       {showingLogs && (
         <LogViewer
@@ -197,136 +162,7 @@ export function App(): React.JSX.Element {
           onError={setError}
         />
       )}
-
-      {reviewing && (
-        <ReviewPanel
-          conversationId={conversationId}
-          onClose={() => {
-            setReviewing(false)
-          }}
-          onError={setError}
-        />
-      )}
-
-      {handoff !== null && (
-        <HandoffComposer
-          conversationId={conversationId}
-          draft={handoff}
-          onClose={() => {
-            setHandoff(null)
-          }}
-          onSent={() => {
-            setHandoff(null)
-          }}
-          onError={setError}
-        />
-      )}
-
-      <div className="dock">
-        {view.approvals.map((approval) => (
-          <ApprovalCard
-            key={approval.approvalId}
-            approval={approval}
-            onAllow={() => {
-              decide(approval, 'allow')
-            }}
-            onDeny={() => {
-              decide(approval, 'deny')
-            }}
-          />
-        ))}
-
-        <form
-          className="composer"
-          onSubmit={(e) => {
-            e.preventDefault()
-            send()
-          }}
-        >
-          <textarea
-            value={draft}
-            rows={2}
-            aria-label={t('conversation.messageLabel')}
-            placeholder={t('conversation.placeholder', { agents: participants.join(', ') })}
-            onChange={(e) => {
-              setDraft(e.target.value)
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter') return
-              // Mid-composition Enter commits the candidate — for Japanese,
-              // Chinese or Korean input that keypress belongs to the IME, not
-              // to us, and sending there would swallow the word being typed.
-              if (e.nativeEvent.isComposing) return
-              // Shift holds the line; every other Enter sends. Cmd and Ctrl keep
-              // working because that is what they did before.
-              if (e.shiftKey) return
-              e.preventDefault()
-              send()
-            }}
-          />
-          <div className="composer-actions">
-            <span className="hint">{t('conversation.hint')}</span>
-            {/*
-              Stop appears alongside Send, never instead of it. One agent being
-              mid-turn must not stop you addressing another — that is the whole
-              point of a shared room.
-            */}
-            {view.busy && (
-              <button
-                type="button"
-                className="btn btn--stop"
-                onClick={() => {
-                  window.chorus.interrupt({ conversationId }).catch(fail(setError))
-                }}
-              >
-                {t('conversation.stopAll', { agents: view.working.join(', ') })}
-              </button>
-            )}
-            <button type="submit" className="btn btn--go" disabled={draft.trim() === ''}>
-              {t('conversation.send')}
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
-  )
-}
-
-function ApprovalCard({
-  approval,
-  onAllow,
-  onDeny,
-}: {
-  approval: PendingApproval
-  onAllow: () => void
-  onDeny: () => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <section
-      className="approval"
-      // Assertive, not polite: an approval blocks an agent and expires. A
-      // screen-reader user hearing about it after the timeout has been told
-      // nothing useful.
-      role="alertdialog"
-      aria-live="assertive"
-      aria-label={t('approval.wants', { agent: approval.agentId })}
-    >
-      <header className="approval-head">
-        <span className={`voice-dot voice--${approval.agentId}`} aria-hidden="true" />
-        <strong>{t('approval.wants', { agent: approval.agentId })}</strong>
-      </header>
-      <pre className="approval-summary">{approval.summary}</pre>
-      {approval.detail !== null && <pre className="approval-detail">{approval.detail}</pre>}
-      <div className="approval-actions">
-        <button type="button" className="btn btn--go" onClick={onAllow}>
-          {t('approval.allowOnce')}
-        </button>
-        <button type="button" className="btn" onClick={onDeny}>
-          {t('approval.deny')}
-        </button>
-      </div>
-    </section>
   )
 }
 
@@ -342,6 +178,8 @@ function Setup(props: {
   onStart: () => void
   starting: boolean
   error: string | null
+  /** Absent for the first session — there is nothing behind it to return to. */
+  onCancel?: (() => void) | undefined
 }): React.JSX.Element {
   const { t } = useTranslation()
   // The directory is optional; an empty one starts at home.
@@ -428,41 +266,23 @@ function Setup(props: {
           </p>
         )}
 
-        <button
-          type="button"
-          className="btn btn--go btn--wide"
-          onClick={props.onStart}
-          disabled={!ready}
-        >
-          {props.starting ? t('conversation.starting') : t('conversation.start')}
-        </button>
+        <div className="setup-actions">
+          {props.onCancel !== undefined && (
+            <button type="button" className="btn" onClick={props.onCancel}>
+              {t('conversation.cancel')}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn--go btn--wide"
+            onClick={props.onStart}
+            disabled={!ready}
+          >
+            {props.starting ? t('conversation.starting') : t('conversation.start')}
+          </button>
+        </div>
         <p className="footnote">{t('policy.footnote')}</p>
       </div>
     </div>
   )
-}
-
-const fail =
-  (setError: (message: string) => void) =>
-  (error: unknown): void => {
-    setError(readable(error))
-  }
-
-/**
- * Strips Electron's IPC wrapper from an error.
- *
- * A rejected `invoke` arrives as "Error invoking remote method
- * 'conversation:start': Error: That directory does not exist" — the useful half
- * is at the end, and the rest is plumbing the reader did not ask about.
- */
-function readable(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const withoutChannel = raw.replace(/^Error invoking remote method '[^']*':\s*/, '')
-  return withoutChannel.replace(/^(?:Error:\s*)+/, '')
-}
-
-/** Keeps the tail of a long path, which is the part that identifies it. */
-function shortenPath(path: string): string {
-  const parts = path.split('/').filter(Boolean)
-  return parts.length <= 2 ? path : `…/${parts.slice(-2).join('/')}`
 }

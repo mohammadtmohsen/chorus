@@ -100,6 +100,18 @@ body {
   padding: calc(var(--step) * 8);
 }
 
+/* As an overlay it is a panel, not a page: it stops filling the viewport and
+   gets the raised surface so the grid behind reads as still there. */
+.sheet-backdrop .setup {
+  min-height: 0;
+  max-height: 86vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+  padding: calc(var(--step) * 6);
+}
+
 .setup-inner {
   width: min(420px, 100%);
   display: flex;
@@ -192,8 +204,112 @@ body {
 
 .stage {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   height: 100vh;
+}
+
+/*
+ * Several conversations at once.
+ *
+ * Panes are equal, never a main one and some others: each has its own agents,
+ * its own approvals and its own composer, and the grid says so by giving them
+ * the same weight. Two side by side is the case that matters — a pane narrower
+ * than about 380px stops being a place you can read a transcript, so beyond
+ * four the grid stays at two columns and scrolls rather than shrinking further.
+ */
+.grid {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  overflow: auto;
+  min-height: 0;
+}
+
+.grid[data-count='1'] {
+  grid-template-columns: 1fr;
+}
+
+.grid[data-count='2'] {
+  grid-template-columns: repeat(2, minmax(380px, 1fr));
+}
+
+.grid[data-count='3'],
+.grid[data-count='4'] {
+  grid-template-columns: repeat(2, minmax(380px, 1fr));
+  grid-auto-rows: minmax(320px, 1fr);
+}
+
+.pane {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--sunken);
+  position: relative;
+}
+
+/* Which pane your next keystroke goes to, without a click-to-focus model. */
+.pane:focus-within .pane-head {
+  border-bottom-color: color-mix(in srgb, var(--bone) 30%, var(--line));
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+  padding: calc(var(--step) * 2.5) calc(var(--step) * 4);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.pane-head .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-index {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  flex: none;
+}
+
+.pane-actions {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  margin-left: auto;
+  flex: none;
+}
+
+.voices--pane {
+  margin: 0;
+  flex: none;
+}
+
+.session-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.masthead-actions {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  margin-left: auto;
+  /* The masthead is a drag region; its buttons must not be. */
+  -webkit-app-region: no-drag;
+}
+
+.setup-actions {
+  display: flex;
+  gap: calc(var(--step) * 3);
+}
+
+.setup-actions .btn--wide {
+  flex: 1;
 }
 
 .masthead {

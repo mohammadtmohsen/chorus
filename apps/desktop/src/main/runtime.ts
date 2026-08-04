@@ -391,6 +391,31 @@ export class ChorusRuntime {
     return last?.unifiedDiff
   }
 
+  /**
+   * Ends one conversation, leaving every other one running.
+   *
+   * Removed from `active` before its agents are closed, so a message sent into
+   * the gap fails loudly rather than being handed to a session on its way out.
+   */
+  async closeConversation(conversationId: string): Promise<void> {
+    const conversation = this.require(conversationId)
+    this.active.delete(conversationId)
+    await Promise.all([...conversation.participants.values()].map((p) => p.service.close()))
+    this.log.info('conversation closed', {
+      conversationId,
+      remaining: this.active.size,
+    })
+  }
+
+  /** Conversations with live agents right now, newest last. */
+  openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {
+    return [...this.active.values()].map((c) => ({
+      conversationId: c.conversationId,
+      participants: [...c.participants.keys()],
+      cwd: c.cwd,
+    }))
+  }
+
   /** Interrupts every agent mid-turn; the user pressed one Stop button. */
   async interrupt(conversationId: string): Promise<void> {
     const conversation = this.require(conversationId)

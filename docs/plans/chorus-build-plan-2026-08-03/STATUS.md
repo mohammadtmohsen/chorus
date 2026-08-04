@@ -611,7 +611,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   337 tests.
 
 - **2026-08-04 — catch-up widened from speech to activity.** Replaying only what
-  was *said* was too thin: an agent's summary of a failing test run is not the
+  was _said_ was too thin: an agent's summary of a failing test run is not the
   failing test run, and "why did that fail" is exactly the question the other
   agent gets asked. Catch-up now also carries commands and how they exited, files
   changed, and errors that stuck — one line each, plus the tail of the output
@@ -638,3 +638,37 @@ sentence each, …` produced replies from both, with the user's message logged *
   code 1, and the literal `No such file or directory`.
 
   350 tests.
+
+- **2026-08-04 — several sessions at once, in a grid.** Until now there was no
+  way to end a session or start another: one conversation per launch, and
+  quitting was the only exit. The runtime was already multi-conversation — an
+  `active` map keyed by id, every method taking a `conversationId` — so this was
+  a UI gap, not an architectural one.
+
+  `conversation:close` ends one conversation and leaves the rest running. It
+  removes the conversation from `active` *before* closing its agents, so a
+  message sent into the gap fails loudly rather than being handed to a session on
+  its way out.
+
+  The renderer split: `App` now holds only a list of sessions and the grid, while
+  `Session` owns everything a conversation knows — transcript, approvals, draft,
+  errors, handoff, review. Each pane keeps its own draft and its own scroll: a
+  message half-typed in one has to survive reading another, and an error in one
+  must not blank the rest. Events arrive for every conversation at once, so each
+  pane filters the push stream to its own and returns early when nothing matched,
+  which is what stops four panes re-rendering on every token of one reply.
+
+  Two things only building it revealed:
+  - `scrollIntoView` walks *every* scrollable ancestor, so one agent's reply
+    dragged the whole grid around while you read another pane. Setting
+    `scrollTop` cannot reach past its own element.
+  - Sessions on the same folder with the same agents are indistinguishable, so
+    each pane carries its grid position. It is the only thing about a pane that
+    is true at a glance, and "the second one" is how anyone refers to them.
+
+  Ending is confirmed only while an agent is mid-turn — the one moment it costs
+  something. The rest of the time the log is already durable.
+
+  Verified live with two sessions: independent drafts, a message sent in one
+  never appearing in the other, closing one leaving the other's transcript
+  intact, and no console errors. 350 tests.

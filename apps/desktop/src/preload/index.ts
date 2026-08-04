@@ -32,6 +32,7 @@ const api: ChorusApi = {
   startConversation: invoke('conversation:start'),
   sendMessage: invoke('conversation:send'),
   interrupt: invoke('conversation:interrupt'),
+  closeConversation: invoke('conversation:close'),
   history: invoke('conversation:history'),
   decideApproval: invoke('approval:decide'),
   profiles: invoke('policy:profiles'),

@@ -90,6 +90,14 @@ export const IPC_CONTRACT = {
    * Replays from the log rather than from provider history — Codex discards
    * partial assistant output, so the log is the only complete record (S3).
    */
+  /**
+   * Ends one conversation. Others keep running — the grid holds several at once,
+   * and closing one pane must not touch the agents in the next.
+   */
+  'conversation:close': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
   'conversation:history': {
     request: z.object({ conversationId: z.string(), afterSeq: z.number().int().optional() }),
     response: z.array(TranscriptEvent),
@@ -236,6 +244,7 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:send'>
   ) => Promise<IpcResponse<'conversation:send'>>
   readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
+  readonly closeConversation: (request: IpcRequest<'conversation:close'>) => Promise<{ ok: true }>
   readonly history: (
     request: IpcRequest<'conversation:history'>
   ) => Promise<IpcResponse<'conversation:history'>>

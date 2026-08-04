@@ -51,6 +51,11 @@ function buildHandlers(runtime: ChorusRuntime): Handlers {
       return OK
     },
 
+    'conversation:close': async (request: { conversationId: string }) => {
+      await runtime.closeConversation(request.conversationId)
+      return OK
+    },
+
     'conversation:history': (request: { conversationId: string; afterSeq?: number }) =>
       Promise.resolve(runtime.history(request.conversationId, request.afterSeq).map(toTranscript)),
 

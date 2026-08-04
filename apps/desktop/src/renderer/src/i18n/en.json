@@ -23,7 +23,16 @@
     "stop": "Stop",
     "stopAll": "Stop {{agents}}",
     "showThinking": "Show thinking",
-    "hideThinking": "Hide thinking"
+    "hideThinking": "Hide thinking",
+    "newSession": "New session",
+    "openCount": "{{count}} session open",
+    "openCount_other": "{{count}} sessions open",
+    "sessionLabel": "Session in {{path}}",
+    "end": "End",
+    "endLabel": "End this session",
+    "endNow": "End now",
+    "keep": "Keep going",
+    "cancel": "Cancel"
   },
   "policy": {
     "heading": "What agents may do without asking",
