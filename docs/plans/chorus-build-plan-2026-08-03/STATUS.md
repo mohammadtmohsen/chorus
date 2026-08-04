@@ -1761,3 +1761,30 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
   claim checkable rather than something to take on trust.
 
   Claude does report both, and both are shown: `5h 2%` and `1w 86%`.
+
+- **2026-08-04 — the missing five-hour window: Codex stopped sending one.**
+  Followed up after "my VS Code extension reports it right". It does report a
+  number that is right; the window it attributes it to is not.
+
+  Codex's own session rollouts, which it writes to `~/.codex/sessions`, record
+  the rate-limit snapshot for every turn. Across ten months of them:
+
+  | | `primary.window_minutes` | `secondary.window_minutes` |
+  |---|---|---|
+  | Oct 2025 – Jun 2026 | 300 (five hours) | 10080 (a week) |
+  | 20 Jul 2026, 18:36 | 300 | 10080 |
+  | 20 Jul 2026, 18:44 | **10080** | **null** |
+  | Aug 2026 | 10080 | null |
+
+  Codex changed on **20 July 2026**, between two sessions eight minutes apart:
+  `primary` stopped being the five-hour window and became the weekly one, and
+  `secondary` went away.
+
+  So a tool that labels `primary` as "the 5h limit" — which was correct for the
+  nine months before that — now shows the weekly figure under a five-hour
+  heading. Chorus reads `window_minutes` instead of assuming, which is why it
+  says `1w`, and why the reset it shows is 84 hours out rather than a few hours.
+
+  Nothing to fix here: if Codex starts sending a 300-minute window again, in
+  `primary` or `secondary`, it appears on its own. The mapping already handles
+  both slots and names each by its own duration.
