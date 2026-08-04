@@ -678,7 +678,7 @@ sentence each, …` produced replies from both, with the user's message logged *
   the text and its controls read as a single place you type; Send became a
   circular ↑ with its name on `aria-label`. The box starts one line and grows to
   28vh — height collapsed to `auto` before measuring, because `scrollHeight` is
-  the content height *or* the current box height, whichever is larger, so without
+  the content height _or_ the current box height, whichever is larger, so without
   the reset it would grow and never shrink.
 
   Typing `@` now opens a menu of the session's agents, filtered as you type, with
@@ -702,3 +702,18 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live: filtering, Enter picking instead of sending, two arrows reaching
   "both", Escape staying shut, no menu inside `me@c`, and plain Enter still
   sending. 365 tests.
+
+- **2026-08-04 — one round button, Stop while working.** The composer's button is
+  Stop whenever an agent is mid-turn and Send otherwise, replacing the separate
+  text Stop chip.
+
+  This reverses a decision made in M4 — Stop used to appear *alongside* Send
+  precisely because replacing it blocked addressing the other agent mid-turn. The
+  keyboard is what makes the reversal safe now: ↵ sends whether or not anyone is
+  working, so the button showing Stop closes nothing off. Confirmed live rather
+  than assumed: a message typed and sent with ↵ during a turn reached the agent
+  while the button read Stop.
+
+  Verified live: Send disabled on an empty box, Stop while working, exactly one
+  round button and no text Stop anywhere, and the button returning to Send once
+  the turn ends. 365 tests.

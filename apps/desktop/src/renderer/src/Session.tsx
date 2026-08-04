@@ -422,35 +422,38 @@ export function Session(props: {
           <div className="composer-actions">
             <span className="hint">{t('conversation.hint')}</span>
             {/*
-              Stop appears alongside Send, never instead of it. One agent being
-              mid-turn must not stop you addressing another — that is the whole
-              point of a shared room.
+              One button, both jobs: Stop while an agent is working, Send
+              otherwise.
+
+              The worry with this shape is real — one agent mid-turn must not
+              stop you addressing another, which is the whole point of a shared
+              room. What saves it is the keyboard: ↵ sends whether or not anyone
+              is working, so the button showing Stop closes nothing off. A glyph,
+              not a word, because a label would crowd the text being written; the
+              name lives on `aria-label`, so a screen reader hears "Send" or
+              "Stop" rather than a shape.
             */}
-            {view.busy && (
+            {view.busy ? (
               <button
                 type="button"
-                className="btn btn--stop"
+                className="send send--stop"
+                aria-label={t('conversation.stopAll', { agents: view.working.join(', ') })}
                 onClick={() => {
                   window.chorus.interrupt({ conversationId }).catch(fail(setError))
                 }}
               >
-                {t('conversation.stopAll', { agents: view.working.join(', ') })}
+                <span className="send-square" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className="send"
+                aria-label={t('conversation.send')}
+                disabled={draft.trim() === ''}
+              >
+                <span aria-hidden="true">↑</span>
               </button>
             )}
-            {/*
-              A glyph, not a word: the button sits inside the field where the
-              label would crowd the text being written, and ↑ is what every
-              composer of this shape uses. The name lives on `aria-label`, so a
-              screen reader still hears "Send".
-            */}
-            <button
-              type="submit"
-              className="send"
-              aria-label={t('conversation.send')}
-              disabled={draft.trim() === ''}
-            >
-              <span aria-hidden="true">↑</span>
-            </button>
           </div>
         </form>
       </div>

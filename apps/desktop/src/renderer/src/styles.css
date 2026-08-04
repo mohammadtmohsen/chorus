@@ -800,6 +800,25 @@ body {
   border-color: var(--codex);
 }
 
+.send--stop {
+  border-color: color-mix(in srgb, var(--alert) 55%, transparent);
+  background: color-mix(in srgb, var(--alert) 16%, transparent);
+  color: var(--alert);
+}
+
+.send--stop:hover {
+  border-color: var(--alert);
+  background: color-mix(in srgb, var(--alert) 28%, transparent);
+}
+
+/* Drawn rather than typed: the ■ glyph sits off-centre in most faces. */
+.send-square {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
 .send:disabled {
   border-color: var(--line);
   background: transparent;
