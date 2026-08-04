@@ -49,6 +49,7 @@ export function Session(props: {
   /** Called as a dragged pane passes over this one; the grid sorts live. */
   onDragOverPane: (conversationId: string) => void
   lifted: boolean
+  onMove: (conversationId: string, delta: -1 | 1) => void
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
@@ -289,6 +290,18 @@ export function Session(props: {
             title={t('conversation.renameTitle')}
             onClick={() => {
               setTitleDraft(title)
+            }}
+            /*
+             * ⌥← and ⌥→ move the pane, so the grid can be rearranged without a
+             * mouse. On the name because it is already the focusable thing in
+             * the bar you grab — the same handle, reached the other way.
+             */
+            onKeyDown={(e) => {
+              if (!e.altKey) return
+              const delta = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : null
+              if (delta === null) return
+              e.preventDefault()
+              props.onMove(conversationId, delta)
             }}
           >
             {title}

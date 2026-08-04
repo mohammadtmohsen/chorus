@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
@@ -164,6 +164,74 @@ export function App(): React.JSX.Element {
     })
   }, [])
 
+  /**
+   * Reordering without a mouse.
+   *
+   * A drag is the only way to move a pane otherwise, which leaves the grid
+   * unreachable from the keyboard entirely. Committed immediately: a keypress
+   * has no release to wait for.
+   */
+  const movePane = useCallback((conversationId: string, delta: -1 | 1) => {
+    setSessions((current) => {
+      const from = current.findIndex((s) => s.conversationId === conversationId)
+      const to = from + delta
+      if (from === -1 || to < 0 || to >= current.length) return current
+
+      const next = [...current]
+      const [moved] = next.splice(from, 1)
+      if (moved === undefined) return current
+      next.splice(to, 0, moved)
+
+      window.chorus
+        .reorderConversations({ order: next.map((s) => s.conversationId) })
+        .catch(fail(setError))
+      return next
+    })
+  }, [])
+
+  /**
+   * Slides panes from where they were to where they now are.
+   *
+   * Reordering is a layout change, so nothing about it can be transitioned in
+   * CSS — panes simply appear somewhere else. Measuring before and after and
+   * animating the difference is what turns "two panes swapped" from a fact you
+   * have to re-read into a movement you watched.
+   *
+   * The carried pane is skipped: it is already under the cursor, and sliding it
+   * as well would fight the drag. Motion is skipped entirely when the system
+   * asks for less of it.
+   */
+  const positions = useRef(new Map<string, DOMRect>())
+  const order = sessions.map((session) => session.conversationId).join(',')
+
+  useLayoutEffect(() => {
+    const previous = positions.current
+    const next = new Map<string, DOMRect>()
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    for (const el of document.querySelectorAll<HTMLElement>('.pane[data-conversation]')) {
+      const id = el.dataset['conversation']
+      if (id === undefined) continue
+      const rect = el.getBoundingClientRect()
+      next.set(id, rect)
+
+      const was = previous.get(id)
+      if (was === undefined || still || el.dataset['lifted'] === 'true') continue
+      const dx = was.left - rect.left
+      const dy = was.top - rect.top
+      if (dx === 0 && dy === 0) continue
+
+      el.animate(
+        [{ transform: `translate(${String(dx)}px, ${String(dy)}px)` }, { transform: 'none' }],
+        {
+          duration: 160,
+          easing: 'ease-out',
+        }
+      )
+    }
+    positions.current = next
+  }, [order])
+
   const commitOrder = useCallback(() => {
     setSessions((current) => {
       window.chorus
@@ -283,6 +351,7 @@ export function App(): React.JSX.Element {
               if (moved !== null) reorder(moved, ontoId)
             }}
             lifted={lifted === session.conversationId}
+            onMove={movePane}
             onTitle={(title) => {
               // Names belong to one conversation; they are not a starting point.
               setSessions((current) =>

@@ -1200,8 +1200,8 @@ sentence each, …` produced replies from both, with the user's message logged *
   than the target outlined: you can already see where it will land, so the
   question left is which one you are holding.
 
-  Removing then inserting at the target's original index lands the pane *after*
-  the target when it came from the left and *before* it when it came from the
+  Removing then inserting at the target's original index lands the pane _after_
+  the target when it came from the left and _before_ it when it came from the
   right — what "past it" means in each direction. It is also stable: once moved,
   the pane is at that index, so hovering the same target again does nothing
   instead of oscillating.
@@ -1229,3 +1229,28 @@ sentence each, …` produced replies from both, with the user's message logged *
   gamma | alpha | beta, the drop target marked while hovering, the drag image
   being the pane itself, a pane dropped on itself changing nothing, the handle
   disabled while renaming, and the new order surviving a quit and relaunch.
+
+- **2026-08-04 — reordering finished: keyboard, and motion.**
+
+  **⌥← / ⌥→ move the focused pane.** A drag was the only way to rearrange the
+  grid, which left it unreachable without a mouse. The handler sits on the
+  session's name because that is already the focusable thing in the bar you grab
+  — the same handle, reached the other way. Committed immediately: a keypress has
+  no release to wait for, and it stops at each end rather than wrapping.
+
+  **Panes slide from where they were to where they are.** Reordering is a layout
+  change, so no CSS transition can touch it — panes simply appear somewhere else.
+  Measuring before and after and animating the difference is what turns "two
+  panes swapped" from a fact you have to re-read into a movement you watched. The
+  carried pane is skipped, since it is already under the cursor and sliding it
+  would fight the drag, and the whole thing is skipped when the system asks for
+  less motion.
+
+  Both checks were wrong before they were right, in the same way as the drag
+  probes: read synchronously after dispatching an event, before React had
+  re-rendered. `[0,0,0]` animations became `[1,1,0]` — the two that moved — once
+  sampled on the next frame.
+
+  Verified live: ⌥→ then ⌥← returning the grid to where it started, ⌥← at the
+  left edge doing nothing, focus staying on the pane that moved, two panes
+  animating and settling, and the order surviving a relaunch.
