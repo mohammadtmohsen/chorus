@@ -90,10 +90,10 @@ export function App(): React.JSX.Element {
         cwd: defaults.cwd,
         profileId: defaults.profileId,
       })
-      .then(({ conversationId, participants, cwd: startedIn, profileId: profile }) => {
+      .then(({ conversationId, participants, cwd: startedIn, profileId: profile, title }) => {
         setSessions((current) => [
           ...current,
-          { conversationId, participants, cwd: startedIn, profileId: profile },
+          { conversationId, participants, cwd: startedIn, profileId: profile, title },
         ])
         // Kept, not cleared: the next session is usually in the same place, and
         // retyping the path is the kind of thing that stops you opening a second.
@@ -198,11 +198,17 @@ export function App(): React.JSX.Element {
 
       {/* Capped at four; the stylesheet steps it down as the window narrows. */}
       <main className="grid" data-count={Math.min(sessions.length, 4)}>
-        {sessions.map((session, index) => (
+        {sessions.map((session) => (
           <Session
             key={session.conversationId}
             session={session}
-            index={index + 1}
+            onTitle={(title) => {
+              setSessions((current) =>
+                current.map((s) =>
+                  s.conversationId === session.conversationId ? { ...s, title } : s
+                )
+              )
+            }}
             profiles={profiles}
             onProfile={(profileId) => {
               setSessions((current) =>
@@ -219,10 +225,11 @@ export function App(): React.JSX.Element {
                 )
               )
             }}
-            onCwd={(cwd) => {
+            onCwd={(cwd, title) => {
+              // The title comes with it: a name nobody chose follows the folder.
               setSessions((current) =>
                 current.map((s) =>
-                  s.conversationId === session.conversationId ? { ...s, cwd } : s
+                  s.conversationId === session.conversationId ? { ...s, cwd, title } : s
                 )
               )
             }}

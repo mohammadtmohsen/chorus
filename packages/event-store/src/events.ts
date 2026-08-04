@@ -137,6 +137,13 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
    * handoff brief follow it, so a diff read later is only interpretable against
    * the directory in force at the time.
    */
+  /** The conversation was given a name. Its default is the folder it opened in. */
+  z.object({
+    type: z.literal('conversation.renamed'),
+    title: z.string(),
+    previousTitle: z.string(),
+  }),
+
   z.object({
     type: z.literal('project.changed'),
     cwd: z.string(),

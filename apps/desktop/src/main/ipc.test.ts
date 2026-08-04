@@ -12,10 +12,15 @@ vi.mock('electron', () => ({
 
 const { buildHandlers } = await import('./ipc.js')
 
-function runtimeWith(cwd: string) {
-  const setProjectDirectory = vi.fn((_id: string, next: string) => ({ cwd: next }))
+function runtimeWith(cwd: string, title = 'before') {
+  const setProjectDirectory = vi.fn((_id: string, next: string) => ({
+    cwd: next,
+    // The runtime renames an untouched conversation with the folder it moved to.
+    title: next.split('/').pop() ?? next,
+  }))
   const runtime = {
     projectDirectory: () => cwd,
+    conversationTitle: () => title,
     setProjectDirectory,
   } as unknown as ChorusRuntime
   return { runtime, setProjectDirectory }
@@ -36,7 +41,8 @@ describe('conversation:chooseCwd', () => {
       // Through the runtime, so a picked path is validated and recorded exactly
       // as a typed one is.
       expect(setProjectDirectory).toHaveBeenCalledWith('c1', '/tmp/picked')
-      expect(result).toEqual({ cwd: '/tmp/picked', changed: true })
+      // The title follows the folder's last piece, which is what names a project.
+      expect(result).toEqual({ cwd: '/tmp/picked', title: 'picked', changed: true })
     })
   })
 
@@ -45,7 +51,7 @@ describe('conversation:chooseCwd', () => {
     showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
     const { runtime, setProjectDirectory } = runtimeWith('/tmp/before')
 
-    expect(await choose(runtime)).toEqual({ cwd: '/tmp/before', changed: false })
+    expect(await choose(runtime)).toEqual({ cwd: '/tmp/before', title: 'before', changed: false })
     expect(setProjectDirectory).not.toHaveBeenCalled()
   })
 
@@ -54,7 +60,7 @@ describe('conversation:chooseCwd', () => {
     showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [] })
     const { runtime, setProjectDirectory } = runtimeWith('/tmp/before')
 
-    expect(await choose(runtime)).toEqual({ cwd: '/tmp/before', changed: false })
+    expect(await choose(runtime)).toEqual({ cwd: '/tmp/before', title: 'before', changed: false })
     expect(setProjectDirectory).not.toHaveBeenCalled()
   })
 
@@ -62,7 +68,7 @@ describe('conversation:chooseCwd', () => {
     showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/tmp/before'] })
     const { runtime } = runtimeWith('/tmp/before')
 
-    expect(await choose(runtime)).toEqual({ cwd: '/tmp/before', changed: false })
+    expect(await choose(runtime)).toEqual({ cwd: '/tmp/before', title: 'before', changed: false })
   })
 
   it('opens the panel where the conversation already is', async () => {

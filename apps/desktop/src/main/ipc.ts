@@ -67,6 +67,9 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       agentId: 'codex' | 'claude'
     }) => runtime.removeParticipant(request.conversationId, request.agentId),
 
+    'conversation:rename': (request: { conversationId: string; title: string }) =>
+      Promise.resolve(runtime.renameConversation(request.conversationId, request.title)),
+
     'conversation:chooseCwd': async (request: { conversationId: string }) => {
       const current = runtime.projectDirectory(request.conversationId)
       const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
@@ -85,12 +88,18 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         : dialog.showOpenDialog(window, options))
 
       const chosen = result.canceled ? undefined : result.filePaths[0]
-      if (chosen === undefined) return { cwd: current, changed: false }
+      if (chosen === undefined) {
+        return {
+          cwd: current,
+          title: runtime.conversationTitle(request.conversationId),
+          changed: false,
+        }
+      }
 
       // Through the runtime, so the change is validated and recorded exactly as
       // a typed one is.
-      const { cwd } = runtime.setProjectDirectory(request.conversationId, chosen)
-      return { cwd, changed: cwd !== current }
+      const { cwd, title } = runtime.setProjectDirectory(request.conversationId, chosen)
+      return { cwd, title, changed: cwd !== current }
     },
 
     'conversation:setCwd': (request: { conversationId: string; cwd: string }) =>

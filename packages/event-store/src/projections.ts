@@ -190,6 +190,7 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
     case 'file.change.proposed':
     case 'diff.updated':
     case 'usage.updated':
+    case 'conversation.renamed':
     case 'project.changed':
     case 'policy.changed':
     case 'error.raised':

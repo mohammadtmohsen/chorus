@@ -1,6 +1,6 @@
 import { existsSync, renameSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type { AgentAdapter, ApprovalDecision, SessionOpts } from '@chorus/agent-protocol'
@@ -77,6 +77,7 @@ interface ActiveConversation {
   readonly grants: SessionGrants
   profile: PermissionProfile
   cwd: string
+  title: string
   /** Who the user last addressed, so an unaddressed follow-up stays with them. */
   lastAddressed: AgentId | undefined
 }
@@ -146,9 +147,13 @@ export class ChorusRuntime {
     return first?.service.sessionGrants() ?? []
   }
 
-  async startConversation(
-    options: StartConversationOptions
-  ): Promise<{ conversationId: string; participants: AgentId[]; profileId: string; cwd: string }> {
+  async startConversation(options: StartConversationOptions): Promise<{
+    conversationId: string
+    participants: AgentId[]
+    profileId: string
+    cwd: string
+    title: string
+  }> {
     if (options.agents.length === 0) throw new Error('A conversation needs at least one agent')
 
     /*
@@ -178,7 +183,9 @@ export class ChorusRuntime {
       payload: {
         type: 'conversation.created',
         projectId: options.projectId ?? cwd,
-        title: options.title ?? 'Untitled',
+        // The folder is what a conversation is about until you say otherwise,
+        // and it is a better answer than "Untitled" for one you never rename.
+        title: options.title ?? folderName(cwd),
       },
     })
 
@@ -211,6 +218,7 @@ export class ChorusRuntime {
       grants,
       profile,
       cwd,
+      title: options.title ?? folderName(cwd),
       lastAddressed: undefined,
     }
     const failures: string[] = []
@@ -251,6 +259,7 @@ export class ChorusRuntime {
       participants: [...conversation.participants.keys()],
       profileId: profile.id,
       cwd,
+      title: conversation.title,
     }
   }
 
@@ -505,6 +514,32 @@ export class ChorusRuntime {
     }
   }
 
+  /**
+   * Names a conversation.
+   *
+   * Recorded like everything else: a name is how you will refer to this in a
+   * week, and the log is the only thing that will still have it.
+   */
+  renameConversation(conversationId: string, title: string): { title: string } {
+    const conversation = this.require(conversationId)
+    // Emptying the field is a request for the default back, not for no name.
+    const next = title.trim() === '' ? folderName(conversation.cwd) : title.trim()
+    if (next === conversation.title) return { title: next }
+
+    this.store.append({
+      conversationId,
+      actor: 'system',
+      payload: { type: 'conversation.renamed', title: next, previousTitle: conversation.title },
+    })
+    conversation.title = next
+    return { title: next }
+  }
+
+  /** What a conversation is called right now. */
+  conversationTitle(conversationId: string): string {
+    return this.require(conversationId).title
+  }
+
   /** Where a conversation is, for anything that needs the path rather than the id. */
   projectDirectory(conversationId: string): string {
     return this.require(conversationId).cwd
@@ -519,14 +554,14 @@ export class ChorusRuntime {
    * (§4.4), so the agent can work anywhere it is told to, and the change is
    * replayed as catch-up so the next one addressed is told.
    */
-  setProjectDirectory(conversationId: string, cwd: string): { cwd: string } {
+  setProjectDirectory(conversationId: string, cwd: string): { cwd: string; title: string } {
     const conversation = this.require(conversationId)
     const next = cwd.trim() === '' ? homedir() : cwd.trim()
     const problem = describeDirectory(next)
     if (problem !== null) throw new Error(problem)
 
     const previous = conversation.cwd
-    if (next === previous) return { cwd: previous }
+    if (next === previous) return { cwd: previous, title: conversation.title }
 
     this.store.append({
       conversationId,
@@ -534,8 +569,13 @@ export class ChorusRuntime {
       payload: { type: 'project.changed', cwd: next, previousCwd: previous },
     })
     conversation.cwd = next
+    // A title nobody has touched is still the folder's name, so it follows the
+    // folder. One that was chosen deliberately is left alone.
+    if (conversation.title === folderName(previous)) {
+      this.renameConversation(conversationId, folderName(next))
+    }
     this.log.info('project directory changed', { conversationId, from: previous, to: next })
-    return { cwd: next }
+    return { cwd: next, title: conversation.title }
   }
 
   /**
@@ -675,6 +715,17 @@ function openOrRecover(
 }
 
 /** Returns why a directory cannot be used, or null when it is fine. */
+/**
+ * The last piece of a path, which is what anyone calls the project.
+ *
+ * Falls back to the whole thing at the filesystem root, where there is no last
+ * piece and "/" is a better name than nothing.
+ */
+function folderName(cwd: string): string {
+  const name = basename(cwd)
+  return name === '' ? cwd : name
+}
+
 function describeDirectory(cwd: string): string | null {
   if (!existsSync(cwd)) return `That directory does not exist: ${cwd}`
   try {

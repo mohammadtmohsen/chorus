@@ -30,6 +30,8 @@
     "sessionLabel": "Session in {{path}}",
     "editPath": "Change the project directory",
     "choosePath": "Choose the project folder",
+    "renameTitle": "Rename this session",
+    "titlePlaceholder": "Empty for the folder's name",
     "addAgent": "Bring {{agent}} in — it reads the conversation so far",
     "removeAgent": "Take {{agent}} out of this conversation",
     "nobodyHere": "Nobody is in this conversation. Add an agent to start again.",

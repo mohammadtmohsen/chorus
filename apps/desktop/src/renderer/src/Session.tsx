@@ -24,6 +24,7 @@ export interface SessionInfo {
   readonly participants: AgentId[]
   readonly cwd: string
   readonly profileId: string
+  readonly title: string
 }
 
 /**
@@ -40,25 +41,19 @@ export interface SessionInfo {
  */
 export function Session(props: {
   session: SessionInfo
-  /**
-   * Position in the grid, 1-based.
-   *
-   * Two sessions on the same folder with the same agents are otherwise
-   * indistinguishable, and "the second one" is how anyone would refer to them.
-   * Position is the only thing about a pane that is true at a glance.
-   */
-  index: number
+  onTitle: (title: string) => void
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
-  onCwd: (cwd: string) => void
+  /** Carries the title too: an untouched one follows the folder. */
+  onCwd: (cwd: string, title: string) => void
   /** Which agents exist on this machine at all; an absent one cannot be added. */
   installed: readonly AgentId[]
   onParticipants: (participants: AgentId[]) => void
   onClose: (conversationId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { conversationId, participants, cwd, profileId } = props.session
+  const { conversationId, participants, cwd, profileId, title } = props.session
   const profile = props.profiles.find((p) => p.id === profileId)
   const [view, setView] = useState<TranscriptView>(EMPTY_VIEW)
   const [draft, setDraft] = useState('')
@@ -71,6 +66,8 @@ export function Session(props: {
   const [pathDraft, setPathDraft] = useState<string | null>(null)
   /** The agent currently joining or leaving, so its chip can say so. */
   const [moving, setMoving] = useState<AgentId | null>(null)
+  /** Non-null while the title is being edited; holds the draft, not the truth. */
+  const [titleDraft, setTitleDraft] = useState<string | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
   const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
@@ -219,6 +216,60 @@ export function Session(props: {
           {error}
         </p>
       )}
+
+      {/*
+        The session's name, where a name belongs — above what it names.
+        
+        It replaced the grid position, which was only ever a way to tell two
+        identical panes apart. A name does that better and says something as
+        well, and the folder is the name until you choose another.
+      */}
+      <header className="pane-title">
+        {titleDraft === null ? (
+          <button
+            type="button"
+            className="pane-title-name"
+            title={t('conversation.renameTitle')}
+            onClick={() => {
+              setTitleDraft(title)
+            }}
+          >
+            {title}
+          </button>
+        ) : (
+          <input
+            className="pane-title-input"
+            value={titleDraft}
+            autoFocus
+            spellCheck={false}
+            aria-label={t('conversation.renameTitle')}
+            placeholder={t('conversation.titlePlaceholder')}
+            onChange={(e) => {
+              setTitleDraft(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setTitleDraft(null)
+                return
+              }
+              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+              e.preventDefault()
+              const next = titleDraft
+              setTitleDraft(null)
+              window.chorus
+                .renameConversation({ conversationId, title: next })
+                .then(({ title: applied }) => {
+                  props.onTitle(applied)
+                })
+                .catch(fail(setError))
+            }}
+            onBlur={() => {
+              setTitleDraft(null)
+            }}
+          />
+        )}
+      </header>
 
       <div className="score" ref={score} aria-label={t('conversation.transcript')}>
         <div className="rail" aria-hidden="true" />
@@ -390,9 +441,6 @@ export function Session(props: {
             saying so forever is a label for the first minute.
           */}
           <div className="composer-actions">
-            <span className="pane-index" aria-hidden="true">
-              {props.index}
-            </span>
             {/*
               The cast is a set of switches, not a label.
               
@@ -464,8 +512,8 @@ export function Session(props: {
                   onClick={() => {
                     window.chorus
                       .chooseProjectDirectory({ conversationId })
-                      .then(({ cwd: applied }) => {
-                        props.onCwd(applied)
+                      .then(({ cwd: applied, title: named }) => {
+                        props.onCwd(applied, named)
                       })
                       .catch(fail(setError))
                   }}
@@ -512,8 +560,8 @@ export function Session(props: {
                   setPathDraft(null)
                   window.chorus
                     .setProjectDirectory({ conversationId, cwd: next })
-                    .then(({ cwd: applied }) => {
-                      props.onCwd(applied)
+                    .then(({ cwd: applied, title: named }) => {
+                      props.onCwd(applied, named)
                     })
                     .catch(fail(setError))
                 }}

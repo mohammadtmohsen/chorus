@@ -82,6 +82,8 @@ export const IPC_CONTRACT = {
       profileId: z.string(),
       /** Where the session actually started, which may not be what was asked for. */
       cwd: z.string(),
+      /** Defaults to the folder's name; the user can rename it. */
+      title: z.string(),
     }),
   },
   'conversation:send': {
@@ -121,15 +123,22 @@ export const IPC_CONTRACT = {
    * back through the renderer, and a cancelled dialog cannot leave the two
    * halves disagreeing about where the conversation is.
    */
+  /** Names a conversation. An empty name asks for the folder's name back. */
+  'conversation:rename': {
+    request: z.object({ conversationId: z.string(), title: z.string() }),
+    response: z.object({ title: z.string() }),
+  },
+
   'conversation:chooseCwd': {
     request: z.object({ conversationId: z.string() }),
-    response: z.object({ cwd: z.string(), changed: z.boolean() }),
+    response: z.object({ cwd: z.string(), title: z.string(), changed: z.boolean() }),
   },
 
   /** Repoints the conversation's project directory while it is open. */
   'conversation:setCwd': {
     request: z.object({ conversationId: z.string(), cwd: z.string() }),
-    response: z.object({ cwd: z.string() }),
+    /** The title comes back because an untouched one follows the folder. */
+    response: z.object({ cwd: z.string(), title: z.string() }),
   },
   'conversation:close': {
     request: z.object({ conversationId: z.string() }),
@@ -314,6 +323,9 @@ export interface ChorusApi {
   readonly removeAgent: (
     request: IpcRequest<'conversation:removeAgent'>
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
+  readonly renameConversation: (
+    request: IpcRequest<'conversation:rename'>
+  ) => Promise<IpcResponse<'conversation:rename'>>
   readonly chooseProjectDirectory: (
     request: IpcRequest<'conversation:chooseCwd'>
   ) => Promise<IpcResponse<'conversation:chooseCwd'>>

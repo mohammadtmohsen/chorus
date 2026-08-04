@@ -1097,3 +1097,35 @@ sentence each, …` produced replies from both, with the user's message logged *
   Verified live: focus on `body` before starting, in pane 1's composer after,
   text typed with no click landing in it, focus moving to pane 2 when a second
   session opens, and pane 1's half-written draft still there.
+
+- **2026-08-04 — sessions have names.** An editable title sits above each
+  transcript, replacing the grid position in the composer row. The position was
+  only ever a way to tell two identical panes apart; a name does that better and
+  says something as well.
+
+  It defaults to the **folder's last piece** — `chorus`, not
+  `/Users/…/code/chorus` — which is what anyone calls a project. Click to edit,
+  Enter commits, Escape cancels, and an empty field asks for the default back
+  rather than for no name at all.
+
+  A title nobody has touched **follows the folder**: change the directory and it
+  renames itself. One that was chosen deliberately is left alone, compared
+  against what the default *would* have been rather than against a flag.
+  `conversation.renamed` records it, and `setCwd`/`chooseCwd` return the title
+  along with the path so the pane and the log cannot disagree.
+
+  Catch-up ignores it: a name the user chose for the room is theirs, not context
+  for a turn.
+
+  One bug found by driving it. The runtime returned the new title correctly and
+  `Session` passed it up, but `App`'s `onCwd` still took a single argument and
+  dropped it — an edit that silently failed to match after a reformat. Caught by
+  the last case in the live test rather than by the type checker, which was
+  happy: passing a two-argument function where one is expected is legal
+  TypeScript.
+
+  Verified live: default `alex` for a session in the home folder, no
+  number left in the composer row, the title above the transcript, renaming to
+  "refactor the adapter", that name surviving a folder change, and a second
+  untouched session renaming itself to `chorus-title-probe` when its folder
+  moved. 396 tests.

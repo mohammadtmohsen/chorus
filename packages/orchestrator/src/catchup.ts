@@ -184,6 +184,10 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
         })
         break
 
+      /* A name the user chose for the room is theirs, not context for a turn. */
+      case 'conversation.renamed':
+        break
+
       case 'policy.changed':
         lines.push({
           seq: event.seq,
