@@ -1,22 +1,39 @@
 {
-  "name": "@chorus/desktop",
-  "version": "0.1.1",
+  "name": "chorus",
+  "version": "0.1.0",
   "private": true,
-  "description": "Work with several coding agents in one conversation, on your own machine.",
-  "main": "./out/main/index.js",
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.220",
-    "@chorus/adapter-claude": "workspace:*",
-    "@chorus/adapter-codex": "workspace:*",
-    "@chorus/agent-protocol": "workspace:*",
-    "@chorus/event-store": "workspace:*",
-    "@chorus/orchestrator": "workspace:*",
-    "@chorus/shared": "workspace:*",
-    "@chorus/workspace": "workspace:*",
-    "better-sqlite3": "^13.0.2",
-    "i18next": "^26.3.6",
-    "react-i18next": "^17.0.11",
-    "zod": "^4.4.3"
+  "type": "module",
+  "description": "A local-first workspace for collaborating with multiple coding agents in one shared conversation.",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22.13.0"
   },
-  "author": "Chorus"
+  "scripts": {
+    "dev": "pnpm --filter @chorus/desktop dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "errors": "turbo run typecheck",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "e2e": "pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e",
+    "package": "pnpm --filter @chorus/desktop run package"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.18.0",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
+    "turbo": "^2.10.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
 }
