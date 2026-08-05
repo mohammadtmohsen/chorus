@@ -159,6 +159,10 @@ export class CodexSession implements AgentSession {
   }
 
   close(): Promise<void> {
+    // Settle open questions before the transport goes, so the server request is
+    // answered rather than dropped on a closing socket.
+    for (const [, resolve] of this.openUserInputs) resolve({ outcome: 'cancel' })
+    this.openUserInputs.clear()
     this.rpc.close('session closed')
     this.end()
     return Promise.resolve()

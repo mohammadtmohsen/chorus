@@ -457,3 +457,50 @@ describe('agent questions', () => {
     })
   })
 })
+
+describe('agent question deadlines', () => {
+  const ASK_TTL: UserInputRequest = {
+    id: 'q-ttl' as UserInputId,
+    agentId: 'claude',
+    expiresAt: 60_000,
+    questions: [
+      {
+        id: 'a',
+        header: 'H',
+        question: 'Q?',
+        options: [],
+        multiSelect: false,
+        allowOther: false,
+        isSecret: false,
+      },
+    ],
+  }
+
+  it('times out rather than holding the turn open forever', async () => {
+    // Neither provider imposes a deadline, so an unanswered question would
+    // block the agent indefinitely with nothing left to answer it.
+    session().emit({ type: 'userinput.requested', request: ASK_TTL })
+    await tick()
+    expect(service.pendingQuestions()).toHaveLength(1)
+
+    scheduler.fire()
+    await tick()
+
+    expect(service.pendingQuestions()).toHaveLength(0)
+    expect(session().userInputResponses[0]?.response).toMatchObject({ outcome: 'timeout' })
+    expect(store.read(CONV, { types: ['userinput.answered'] })[0]?.payload).toMatchObject({
+      outcome: 'timeout',
+      // A timeout never invents an answer.
+      answers: null,
+      answeredBy: 'system',
+    })
+  })
+
+  it('cancels an unanswered question when the session closes', async () => {
+    session().emit({ type: 'userinput.requested', request: ASK_TTL })
+    await tick()
+    await service.close()
+
+    expect(session().userInputResponses[0]?.response).toMatchObject({ outcome: 'cancel' })
+  })
+})

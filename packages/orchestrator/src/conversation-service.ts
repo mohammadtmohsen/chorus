@@ -12,7 +12,7 @@ import {
 } from '@chorus/agent-protocol'
 import type { ApprovalId } from '@chorus/shared'
 import type { AppendInput, ChorusEventPayload, EventStore } from '@chorus/event-store'
-import { DeltaBuffer, type Scheduler } from './delta-buffer.js'
+import { DeltaBuffer, realScheduler, type Scheduler } from './delta-buffer.js'
 import { describeRequest, evaluate, SessionGrants } from './policy/engine.js'
 import { ApprovalQueue } from './policy/queue.js'
 import { DEFAULT_PROFILE_ID, profileById, type PermissionProfile } from './policy/rules.js'
@@ -64,8 +64,17 @@ export class ConversationService {
    * Question sets waiting on the user, kept so an answer can be checked against
    * the questions that produced it — which is what redaction needs to know
    * which values are secret.
+   *
+   * Each carries its own deadline timer. Neither provider imposes one, so an
+   * unanswered question would otherwise hold the turn open forever — the same
+   * reasoning that gives approvals a TTL (plan §4.4), and the same failure:
+   * a closed laptop wedges the session.
    */
-  private readonly pendingUserInput = new Map<string, UserInputRequest>()
+  private readonly pendingUserInput = new Map<
+    string,
+    { request: UserInputRequest; timer: unknown }
+  >()
+  private readonly scheduler: Scheduler
   private session: AgentSession | null = null
   private pump: Promise<void> | null = null
   /** Set when *we* asked to stop, so an interrupt is not reported as a failure. */
@@ -78,6 +87,7 @@ export class ConversationService {
     this.profile = options.profile ?? profileById(DEFAULT_PROFILE_ID)
     this.grants = options.grants ?? new SessionGrants()
     this.onLimits = options.onLimits
+    this.scheduler = options.scheduler ?? realScheduler
     this.queue = new ApprovalQueue({
       ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
       onResolved: (entry, decision, decidedBy) =>
@@ -220,10 +230,12 @@ export class ConversationService {
     response: UserInputResponse,
     answeredBy: 'user' | 'system' = 'user'
   ): Promise<void> {
-    const request = this.pendingUserInput.get(userInputId)
+    const pending = this.pendingUserInput.get(userInputId)
     // Already answered, timed out, or never ours. Answering twice is harmless
     // by design — a double-submit from the UI must not throw at the user.
-    if (request === undefined) return
+    if (pending === undefined) return
+    const { request } = pending
+    this.scheduler.clearTimeout(pending.timer)
     this.pendingUserInput.delete(userInputId)
 
     this.lifecycle({
@@ -245,7 +257,7 @@ export class ConversationService {
 
   /** Question sets still waiting on the user, for the UI to draw after a replay. */
   pendingQuestions(): UserInputRequest[] {
-    return [...this.pendingUserInput.values()]
+    return [...this.pendingUserInput.values()].map((p) => p.request)
   }
 
   /** Everything a person or a rule may grant this session, for the audit view. */
@@ -294,6 +306,11 @@ export class ConversationService {
     // Anything still waiting is denied, or the agent blocks on a prompt nobody
     // will ever see.
     await this.queue.drain('Session closed')
+    // Questions the same way: the card is going away, so anything still open
+    // has to be settled rather than left holding the turn.
+    for (const id of [...this.pendingUserInput.keys()]) {
+      await this.answerUserInput(id, { outcome: 'cancel' }, 'system')
+    }
     this.buffer.flushAll()
     const ref = this.session?.sessionRef
     await this.session?.close()
@@ -456,7 +473,15 @@ export class ConversationService {
           request: event.request,
           expiresAt: event.request.expiresAt,
         })
-        this.pendingUserInput.set(event.request.id, event.request)
+        const timer = this.scheduler.setTimeout(
+          () => {
+            // Never fabricates an answer: `timeout` tells the provider nothing
+            // was chosen, which is recoverable. A guessed answer is not.
+            void this.answerUserInput(event.request.id, { outcome: 'timeout' }, 'system')
+          },
+          Math.max(0, event.request.expiresAt - this.scheduler.now())
+        )
+        this.pendingUserInput.set(event.request.id, { request: event.request, timer })
         return
       }
 
