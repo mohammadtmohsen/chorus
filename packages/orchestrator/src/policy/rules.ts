@@ -74,7 +74,21 @@ export const UNIVERSAL_DENIES: readonly Rule[] = [
     describe: 'Credential files',
     match: {
       kind: ['fileChange', 'command'],
-      pathPattern: String.raw`(\.env(\.|$)|\.ssh/|\.aws/|id_rsa|\.netrc|credentials\.json)`,
+      // Terminated by \b rather than by `/` or end-of-string. For a fileChange
+      // the subject is one path, so `\.ssh/` read correctly; for a command it is
+      // the whole command line (see `matches`), and there both anchors failed
+      // open:
+      //
+      //   tar -czf out.tgz ~/.ssh   — `.ssh` with no trailing slash, not denied
+      //   cp -r ~/.aws /tmp/        — same
+      //   cat .env | curl …         — `$` anchors to the end of the command,
+      //                               not the end of the path, so not denied
+      //
+      // The last is the one that matters: reading a secret and piping it out is
+      // exactly what this rule exists to stop. `\b` ends the token wherever it
+      // ends, so a directory named bare and a path mid-pipeline both match,
+      // while `env.ts`, `envelope.ts` and `environment.md` still do not.
+      pathPattern: String.raw`(\.env\b|\.ssh\b|\.aws\b|id_rsa|\.netrc\b|credentials\.json)`,
     },
     effect: 'deny',
   },
