@@ -420,6 +420,20 @@ export class ClaudeAdapter implements AgentAdapter {
     const options: Options = {
       cwd: opts.cwd,
       includePartialMessages: true,
+      /*
+       * Ask for thinking to be surfaced, or none arrives.
+       *
+       * `adaptive` is already the default on models that support it — Claude
+       * decides when and how much to think — but the *display* is not. Measured
+       * over a real turn: nine `agent.message.delta` and zero
+       * `agent.reasoning.delta`, so `mapping.ts`'s `delta.thinking` branch never
+       * ran and the transcript's "Show thinking" block was unreachable.
+       *
+       * `summarized` rather than a fixed `budgetTokens`: the budget form is for
+       * older models and pins a cost whether or not the turn needs thinking,
+       * while adaptive spends nothing on a question that does not warrant it.
+       */
+      thinking: { type: 'adaptive', display: 'summarized' },
       permissionMode: opts.sandbox.mode === 'readOnly' ? 'default' : 'acceptEdits',
       ...(opts.model === undefined ? {} : { model: opts.model }),
       ...(this.executablePath === undefined

@@ -122,6 +122,20 @@ export class CodexSession implements AgentSession {
       // `text_elements` is required and snake_case in an otherwise camelCase
       // API — omitting it is rejected outright.
       input: [{ type: 'text', text: input.text, text_elements: [] }],
+      /*
+       * Ask for the reasoning summary, or none arrives.
+       *
+       * The mapping for `item/reasoning/*` has been here from the start and
+       * never once fired: a turn measured end to end produced four
+       * `agent.message.delta` and zero reasoning events, because the summary is
+       * off unless a turn asks for it. The transcript's "Show thinking" block
+       * was unreachable as a result.
+       *
+       * `auto` rather than `detailed`: a summary is what the UI shows and what
+       * the reader wants, and it is the provider's own default shape. `detailed`
+       * buys length rather than insight, and every token of it is billed.
+       */
+      summary: 'auto',
     })) as { turn?: { id?: string } }
     this.currentTurnId = result.turn?.id ?? null
   }
