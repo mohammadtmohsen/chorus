@@ -1832,3 +1832,35 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
   Not signed and not notarized (M9): Gatekeeper will refuse it on another Mac
   until the user right-clicks → Open. Apple Silicon only, and each user needs
   their own logged-in `codex` and `claude`.
+
+- **2026-08-05 — v0.1.1: "Chorus.app is damaged and can't be opened."** What a
+  downloaded v0.1.0 did, on the first machine that tried it.
+
+  Not quarantine alone — that produces a refusal you can right-click past. The
+  bundle was **not signed at all**. `identity: null` does not mean "sign
+  ad-hoc", it means "skip signing", and electron-builder duly logged `skipped
+  macOS code signing` while what shipped kept the Electron binary's own linker
+  signature:
+
+  ```
+  Identifier=Electron            CodeDirectory flags=0x20002(adhoc,linker-signed)
+  Info.plist=not bound           Sealed Resources=none
+  $ codesign --verify --deep --strict Chorus.app
+  code has no resources but signature indicates they must be present
+  ```
+
+  An invalid seal plus a browser's quarantine flag is what macOS calls
+  *damaged*, and the dialog offers only "Move to Trash" — there is no
+  right-click → Open to reach for. It looks identical to a corrupt download,
+  which is how it reads to whoever you sent it to.
+
+  `build/sign-adhoc.cjs` runs `codesign --force --deep --sign -` from
+  `afterPack`, then verifies and throws if that fails — the check matters more
+  than the signing, because an unsigned build is indistinguishable from a good
+  one until it is on someone else's Mac. Now: `Identifier=dev.chorus.desktop`,
+  `Sealed Resources version=2 rules=13 files=76`, verify clean.
+
+  `spctl` still rejects it, which is correct and unchanged: ad-hoc is not a
+  Developer ID and this is not notarized (M9). The difference is that the
+  rejection is now overridable — `xattr -dr com.apple.quarantine`, which the
+  release notes lead with because it is the one instruction that always works.

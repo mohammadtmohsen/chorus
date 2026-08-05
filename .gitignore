@@ -2,6 +2,8 @@ node_modules/
 dist/
 out/
 build/
+# …except electron-builder's buildResources, which is source, not output.
+!apps/desktop/build/
 .turbo/
 coverage/
 *.tsbuildinfo

@@ -1,10 +1,11 @@
 # Packaging Chorus into something you can double-click.
 #
-# Unsigned on purpose for now: signing needs a Developer ID, and notarization
-# needs an Apple account — the M9 gate, which only opens if this is ever handed
-# to someone who is not us. Until then macOS will call it damaged on first
-# launch, and the release notes say how to get past that rather than pretending
-# it will not happen.
+# No Developer ID and no notarization yet: that is the M9 gate. So Gatekeeper
+# will object on a machine that downloaded this, and the release notes say how
+# to get past it rather than pretending it will not happen.
+#
+# It is still ad-hoc signed, which is a different thing and not optional. See
+# `afterPack` below.
 appId: dev.chorus.desktop
 productName: Chorus
 copyright: Chorus
@@ -33,10 +34,23 @@ mac:
   target:
     - target: dmg
       arch: [arm64]
-  # Ad-hoc signing: enough for the app to run locally, not enough for Gatekeeper
-  # on someone else's machine. Deliberate, and stated in the release.
+  # No identity to sign with. This makes electron-builder skip signing
+  # altogether, which `afterPack` then puts right.
   identity: null
   hardenedRuntime: false
+
+# Ad-hoc sign the finished bundle.
+#
+# `identity: null` does not mean "sign ad-hoc", it means "do not sign", and what
+# survives is the Electron binary's own linker signature: `Identifier=Electron`,
+# `Sealed Resources=none`, and `codesign --verify` failing with "code has no
+# resources but signature indicates they must be present".
+#
+# An app in that state, once a browser has quarantined it, is not merely
+# untrusted — macOS calls it **damaged** and offers only "Move to Trash". No
+# right-click → Open, no way through. Ad-hoc signing does not make Gatekeeper
+# happy, but it does make the refusal an honest one the user can override.
+afterPack: build/sign-adhoc.cjs
 
 dmg:
   title: Chorus ${version}
