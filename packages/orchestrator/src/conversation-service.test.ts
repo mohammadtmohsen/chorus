@@ -1,4 +1,6 @@
+import type { UserInputRequest } from '@chorus/agent-protocol'
 import { EventStore, openSqlite, type SqliteHandle } from '@chorus/event-store'
+import type { UserInputId } from '@chorus/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ConversationService } from './conversation-service.js'
 import type { Scheduler } from './delta-buffer.js'
@@ -346,6 +348,112 @@ describe('close', () => {
     expect(ended?.payload).toMatchObject({ reason: 'crashed' })
     expect(db.prepare('SELECT status FROM agent_sessions').get()).toMatchObject({
       status: 'crashed',
+    })
+  })
+})
+
+describe('agent questions', () => {
+  const ASK: UserInputRequest = {
+    id: 'q1' as UserInputId,
+    agentId: 'claude' as const,
+    expiresAt: 60_000,
+    questions: [
+      {
+        id: 'db',
+        header: 'Database',
+        question: 'Which database?',
+        options: [{ label: 'Postgres', description: 'Relational' }],
+        multiSelect: false,
+        allowOther: false,
+        isSecret: false,
+      },
+      {
+        id: 'token',
+        header: 'Token',
+        question: 'API token?',
+        options: [],
+        multiSelect: false,
+        allowOther: false,
+        isSecret: true,
+      },
+    ],
+  }
+
+  const ask = async (): Promise<void> => {
+    session().emit({ type: 'userinput.requested', request: ASK })
+    await tick()
+  }
+
+  it('logs the question and waits, rather than letting policy answer it', async () => {
+    await ask()
+    // A profile decides whether an *action* is allowed. What the user wants is
+    // not something a rule may decide on their behalf.
+    expect(types()).toContain('userinput.requested')
+    expect(types()).not.toContain('userinput.answered')
+    expect(service.pendingQuestions()).toHaveLength(1)
+  })
+
+  it('forwards the answers to the agent so the turn continues', async () => {
+    await ask()
+    await service.answerUserInput('q1', {
+      outcome: 'answered',
+      answers: [
+        { questionId: 'db', values: ['Postgres'] },
+        { questionId: 'token', values: ['sk-secret-value'] },
+      ],
+    })
+
+    expect(session().userInputResponses).toHaveLength(1)
+    expect(session().userInputResponses[0]?.response).toMatchObject({
+      outcome: 'answered',
+      answers: [
+        { questionId: 'db', values: ['Postgres'] },
+        // The agent still receives the real value; only the log is redacted.
+        { questionId: 'token', values: ['sk-secret-value'] },
+      ],
+    })
+  })
+
+  it('never writes a secret answer to the event log', async () => {
+    await ask()
+    await service.answerUserInput('q1', {
+      outcome: 'answered',
+      answers: [
+        { questionId: 'db', values: ['Postgres'] },
+        { questionId: 'token', values: ['sk-secret-value'] },
+      ],
+    })
+
+    const logged = store.read(CONV, { types: ['userinput.answered'] })[0]?.payload
+    expect(logged).toMatchObject({
+      outcome: 'answered',
+      answers: [
+        { questionId: 'db', values: ['Postgres'] },
+        // Null, not missing: "answered but not recorded" differs from "unanswered".
+        { questionId: 'token', values: null },
+      ],
+    })
+    // The strongest form of the assertion: the secret appears nowhere at all.
+    expect(JSON.stringify(store.read(CONV))).not.toContain('sk-secret-value')
+  })
+
+  it('clears the question once answered, and a double submit is harmless', async () => {
+    await ask()
+    await service.answerUserInput('q1', { outcome: 'answered', answers: [] })
+    expect(service.pendingQuestions()).toHaveLength(0)
+
+    // A UI that fires twice must not throw at the user or tell the agent twice.
+    await service.answerUserInput('q1', { outcome: 'answered', answers: [] })
+    expect(session().userInputResponses).toHaveLength(1)
+    expect(store.read(CONV, { types: ['userinput.answered'] })).toHaveLength(1)
+  })
+
+  it('records a cancel without inventing answers', async () => {
+    await ask()
+    await service.answerUserInput('q1', { outcome: 'cancel' })
+    expect(store.read(CONV, { types: ['userinput.answered'] })[0]?.payload).toMatchObject({
+      outcome: 'cancel',
+      answers: null,
     })
   })
 })

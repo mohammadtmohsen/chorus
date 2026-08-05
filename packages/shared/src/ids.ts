@@ -8,6 +8,11 @@ export type ConversationId = Brand<string, 'ConversationId'>
 export type ProjectId = Brand<string, 'ProjectId'>
 export type MessageId = Brand<string, 'MessageId'>
 export type ApprovalId = Brand<string, 'ApprovalId'>
+/**
+ * A question set, not a question. Both providers answer every question in one
+ * response, so the whole set is what has an identity and what gets answered.
+ */
+export type UserInputId = Brand<string, 'UserInputId'>
 export type HandoffId = Brand<string, 'HandoffId'>
 export type AgentSessionId = Brand<string, 'AgentSessionId'>
 
@@ -47,5 +52,6 @@ export const newConversationId = (): ConversationId => uuidv7() as ConversationI
 export const newProjectId = (): ProjectId => uuidv7() as ProjectId
 export const newMessageId = (): MessageId => uuidv7() as MessageId
 export const newApprovalId = (): ApprovalId => uuidv7() as ApprovalId
+export const newUserInputId = (): UserInputId => uuidv7() as UserInputId
 export const newHandoffId = (): HandoffId => uuidv7() as HandoffId
 export const newAgentSessionId = (): AgentSessionId => uuidv7() as AgentSessionId

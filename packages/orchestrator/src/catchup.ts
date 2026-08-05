@@ -228,8 +228,17 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
       case 'diff.updated':
       case 'approval.requested':
       case 'approval.decided':
+      case 'userinput.requested':
+      case 'userinput.answered':
       case 'handoff.created':
       case 'usage.updated':
+        /*
+         * Questions are left out of a handoff summary for the same reason
+         * approvals are: this is what the *user* was asked and answered, not
+         * what the conversation said. Carrying them would also mean deciding
+         * what to do with a secret answer, and the safest thing to do with one
+         * is not move it across an agent boundary at all.
+         */
         break
     }
   }

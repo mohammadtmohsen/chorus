@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { toSandboxMode } from './codex-adapter.js'
-import { mapApprovalRequest, mapNotification, toCodexDecision } from './mapping.js'
+import {
+  mapApprovalRequest,
+  mapNotification,
+  mapUserInputRequest,
+  toCodexDecision,
+  toCodexUserInputResponse,
+  USER_INPUT_METHOD,
+} from './mapping.js'
 
 const CTX = { seq: 1, now: 1_000, approvalTtlMs: 60_000 }
 const map = (method: string, params: unknown) => mapNotification({ method, params }, CTX)
@@ -277,5 +284,139 @@ describe('account rate limits', () => {
     expect(
       mapNotification({ method: 'account/rateLimits/updated', params: { rateLimits: {} } }, CTX)
     ).toBeNull()
+  })
+})
+
+describe('user input requests', () => {
+  const ask = (params: unknown) => mapUserInputRequest(USER_INPUT_METHOD, params, CTX)
+
+  it('maps a choice question', () => {
+    const r = ask({
+      itemId: 'q-set-1',
+      questions: [
+        {
+          id: 'db',
+          header: 'Database',
+          question: 'Which database?',
+          isOther: false,
+          isSecret: false,
+          options: [
+            { label: 'Postgres', description: 'Relational' },
+            { label: 'SQLite', description: 'Embedded' },
+          ],
+        },
+      ],
+      autoResolutionMs: null,
+    })
+
+    expect(r).toMatchObject({
+      id: 'q-set-1',
+      agentId: 'codex',
+      expiresAt: CTX.now + CTX.approvalTtlMs,
+      questions: [
+        {
+          id: 'db',
+          header: 'Database',
+          question: 'Which database?',
+          multiSelect: false,
+          allowOther: false,
+          isSecret: false,
+          options: [
+            { label: 'Postgres', description: 'Relational' },
+            { label: 'SQLite', description: 'Embedded' },
+          ],
+        },
+      ],
+    })
+    // No auto-resolution was offered, so none is claimed.
+    expect(r?.autoResolvesAt).toBeUndefined()
+  })
+
+  it('treats null options as free text rather than as no options yet', () => {
+    const r = ask({
+      itemId: 's',
+      questions: [{ id: 'name', header: 'Name', question: 'Project name?', options: null }],
+    })
+    expect(r?.questions[0]?.options).toEqual([])
+  })
+
+  it('carries isOther and isSecret through', () => {
+    const r = ask({
+      itemId: 's',
+      questions: [
+        {
+          id: 'token',
+          header: 'Token',
+          question: 'API token?',
+          isOther: true,
+          isSecret: true,
+          options: null,
+        },
+      ],
+    })
+    expect(r?.questions[0]).toMatchObject({ allowOther: true, isSecret: true })
+  })
+
+  it('turns autoResolutionMs into an absolute deadline', () => {
+    const r = ask({
+      itemId: 's',
+      questions: [{ id: 'a', header: 'H', question: 'Q?', options: null }],
+      autoResolutionMs: 5_000,
+    })
+    expect(r?.autoResolvesAt).toBe(CTX.now + 5_000)
+  })
+
+  it('drops questions with no id, which could never be answered', () => {
+    // The response is keyed by question id, so an id-less question would be
+    // silently lost on the way back with nothing to tell the user why.
+    const r = ask({
+      itemId: 's',
+      questions: [
+        { id: '', header: 'H', question: 'Ghost?', options: null },
+        { id: 'real', header: 'H', question: 'Real?', options: null },
+      ],
+    })
+    expect(r?.questions).toHaveLength(1)
+    expect(r?.questions[0]?.id).toBe('real')
+  })
+
+  it('returns null when nothing answerable survives, so the caller can fall through', () => {
+    expect(ask({ itemId: 's', questions: [] })).toBeNull()
+    expect(ask({ itemId: 's', questions: [{ id: '', header: '', question: '' }] })).toBeNull()
+  })
+
+  it('ignores every other server request', () => {
+    expect(
+      mapUserInputRequest('item/commandExecution/requestApproval', { itemId: 'x' }, CTX)
+    ).toBeNull()
+  })
+
+  it('is not confused with an approval, and vice versa', () => {
+    // The two mappers must not both claim the same method, or one request would
+    // produce two cards.
+    const params = { itemId: 's', questions: [{ id: 'a', header: 'H', question: 'Q?' }] }
+    expect(mapApprovalRequest(USER_INPUT_METHOD, params, CTX)).toBeNull()
+    expect(mapUserInputRequest(USER_INPUT_METHOD, params, CTX)).not.toBeNull()
+  })
+})
+
+describe('user input responses', () => {
+  it('keys answers by question id', () => {
+    expect(
+      toCodexUserInputResponse({
+        outcome: 'answered',
+        answers: [
+          { questionId: 'db', values: ['Postgres'] },
+          { questionId: 'features', values: ['auth', 'billing'] },
+        ],
+      })
+    ).toEqual({
+      answers: { db: { answers: ['Postgres'] }, features: { answers: ['auth', 'billing'] } },
+    })
+  })
+
+  it('sends nothing rather than inventing answers on cancel or timeout', () => {
+    expect(toCodexUserInputResponse({ outcome: 'cancel' })).toEqual({ answers: {} })
+    expect(toCodexUserInputResponse({ outcome: 'timeout' })).toEqual({ answers: {} })
   })
 })

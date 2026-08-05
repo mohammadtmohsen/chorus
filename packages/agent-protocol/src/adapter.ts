@@ -1,5 +1,6 @@
-import type { AgentId, ApprovalId } from '@chorus/shared'
+import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 import type { ApprovalDecision } from './approval.js'
+import type { UserInputResponse } from './user-input.js'
 import type { AgentEvent } from './events.js'
 
 /**
@@ -49,6 +50,13 @@ export interface AgentSession {
   /** Normalized, ordered, at-least-once. */
   readonly events: AsyncIterable<AgentEvent>
   respondToApproval(id: ApprovalId, decision: ApprovalDecision): Promise<void>
+  /**
+   * Answers a question set. Separate from `respondToApproval` because the two
+   * are different acts: an approval is settled by a verdict, a question by
+   * content. Sharing one method would mean a decision type that is a verdict
+   * *or* a payload, and every caller branching on which.
+   */
+  respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void>
   setModel?(model: string): Promise<void>
   close(): Promise<void>
 }

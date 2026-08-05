@@ -1,11 +1,14 @@
-import type { ApprovalId } from '@chorus/shared'
+import type { ApprovalId, UserInputId } from '@chorus/shared'
 import { describe, expect, it } from 'vitest'
 import {
   mapPlanUsage,
   mapSdkMessage,
   mapToolPermission,
+  mapUserInputRequest,
+  toClaudeUserInputResult,
   trackBashTools,
   trackStreamMessage,
+  USER_INPUT_TOOL,
 } from './mapping.js'
 
 const CTX = {
@@ -435,5 +438,124 @@ describe('plan usage', () => {
     // API key, Bedrock, Vertex: `rate_limits_available` is false.
     expect(mapPlanUsage({ rate_limits_available: false, rate_limits: null }, BASE)).toEqual([])
     expect(mapPlanUsage(undefined, BASE)).toEqual([])
+  })
+})
+
+describe('user input requests', () => {
+  const id = 'u1' as UserInputId
+  const ask = (input: Record<string, unknown>) =>
+    mapUserInputRequest(USER_INPUT_TOOL, input, CTX, id)
+
+  it('maps a question set', () => {
+    const r = ask({
+      questions: [
+        {
+          question: 'Which auth method?',
+          header: 'Auth',
+          multiSelect: false,
+          options: [
+            { label: 'OAuth', description: 'Third party' },
+            { label: 'Password', description: 'Local' },
+          ],
+        },
+      ],
+    })
+
+    expect(r).toMatchObject({
+      id,
+      agentId: 'claude',
+      expiresAt: CTX.now + CTX.approvalTtlMs,
+      questions: [
+        {
+          id: '0',
+          header: 'Auth',
+          question: 'Which auth method?',
+          multiSelect: false,
+          // The harness always offers Other, and Claude has no secret concept.
+          allowOther: true,
+          isSecret: false,
+          options: [
+            { label: 'OAuth', description: 'Third party' },
+            { label: 'Password', description: 'Local' },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('carries multiSelect through, which Codex cannot express', () => {
+    const r = ask({
+      questions: [
+        { question: 'Which features?', header: 'Features', multiSelect: true, options: [] },
+      ],
+    })
+    expect(r?.questions[0]?.multiSelect).toBe(true)
+  })
+
+  it('identifies questions by position, since Claude sends no ids', () => {
+    const r = ask({
+      questions: [
+        { question: 'First?', header: 'A', options: [] },
+        { question: 'Second?', header: 'B', options: [] },
+      ],
+    })
+    expect(r?.questions.map((q) => q.id)).toEqual(['0', '1'])
+  })
+
+  it('leaves every other tool to the approval path', () => {
+    // The whole point of the split: Bash must never come back as a question.
+    expect(mapUserInputRequest('Bash', { command: 'ls' }, CTX, id)).toBeNull()
+    expect(mapUserInputRequest('Edit', { file_path: '/a.ts' }, CTX, id)).toBeNull()
+    expect(mapUserInputRequest('mcp__slack__post', {}, CTX, id)).toBeNull()
+  })
+
+  it('returns null when there are no questions, so the caller can fall through', () => {
+    expect(ask({ questions: [] })).toBeNull()
+    expect(ask({})).toBeNull()
+  })
+
+  it('still reaches the approval mapper for non-question tools', () => {
+    // Guards the regression this split exists to prevent: routing questions out
+    // of mapToolPermission must not stop ordinary tools producing approvals.
+    expect(mapToolPermission('Bash', { command: 'ls' }, CTX, 'a1' as ApprovalId)).toMatchObject({
+      kind: 'command',
+    })
+  })
+})
+
+describe('user input results', () => {
+  it('sends answers back through updatedInput, preserving the original input', () => {
+    const input = { questions: [{ question: 'Which?', header: 'H', options: [] }] }
+    expect(
+      toClaudeUserInputResult(input, {
+        outcome: 'answered',
+        answers: [{ questionId: '0', values: ['Postgres'] }],
+      })
+    ).toEqual({
+      behavior: 'allow',
+      updatedInput: { ...input, answers: [['Postgres']] },
+    })
+  })
+
+  it('keeps multi-select answers grouped per question', () => {
+    expect(
+      toClaudeUserInputResult(
+        {},
+        {
+          outcome: 'answered',
+          answers: [
+            { questionId: '0', values: ['a', 'b'] },
+            { questionId: '1', values: ['c'] },
+          ],
+        }
+      )
+    ).toMatchObject({ updatedInput: { answers: [['a', 'b'], ['c']] } })
+  })
+
+  it('denies rather than fabricating an answer on cancel or timeout', () => {
+    // A made-up choice is unrecoverable; being told nothing was chosen is not.
+    for (const outcome of ['cancel', 'timeout'] as const) {
+      expect(toClaudeUserInputResult({}, { outcome })).toMatchObject({ behavior: 'deny' })
+    }
   })
 })

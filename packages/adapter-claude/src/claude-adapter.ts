@@ -16,12 +16,22 @@ import type {
   ApprovalDecision,
   HealthStatus,
   SessionOpts,
+  UserInputResponse,
 } from '@chorus/agent-protocol'
-import { AsyncQueue, newApprovalId, type AgentId, type ApprovalId } from '@chorus/shared'
+import {
+  AsyncQueue,
+  newApprovalId,
+  newUserInputId,
+  type AgentId,
+  type ApprovalId,
+  type UserInputId,
+} from '@chorus/shared'
 import {
   mapPlanUsage,
   mapSdkMessage,
   mapToolPermission,
+  mapUserInputRequest,
+  toClaudeUserInputResult,
   trackBashTools,
   trackStreamMessage,
 } from './mapping.js'
@@ -80,6 +90,14 @@ interface PendingApproval {
 export class ClaudeSession implements AgentSession {
   private readonly queue = new AsyncQueue<AgentEvent>()
   private readonly pendingApprovals = new Map<string, PendingApproval>()
+  /**
+   * Open question sets. Holds the original input because the answer goes back
+   * as `updatedInput`, which the CLI matches against what it sent.
+   */
+  private readonly pendingUserInputs = new Map<
+    string,
+    { resolve: (result: PermissionResult) => void; input: Record<string, unknown> }
+  >()
   private seq = 0
   private resolvedSessionRef: string
   private closed = false
@@ -163,18 +181,59 @@ export class ClaudeSession implements AgentSession {
       pending.resolve({ behavior: 'deny', message: 'Session closed' })
     }
     this.pendingApprovals.clear()
+    // Same reasoning for questions: an unanswered one holds `canUseTool` open
+    // forever, and the SDK imposes no deadline of its own.
+    for (const [, pending] of this.pendingUserInputs) {
+      pending.resolve({ behavior: 'deny', message: 'Session closed' })
+    }
+    this.pendingUserInputs.clear()
     this.q.close()
     this.queue.close()
     return Promise.resolve()
   }
 
-  /** Bridges the SDK's `canUseTool` into the approval queue. */
+  respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void> {
+    const pending = this.pendingUserInputs.get(id)
+    if (pending === undefined) return Promise.resolve()
+    this.pendingUserInputs.delete(id)
+    pending.resolve(toClaudeUserInputResult(pending.input, response))
+    return Promise.resolve()
+  }
+
+  /**
+   * Bridges the SDK's `canUseTool` into the approval queue — or, for
+   * `AskUserQuestion`, into the question queue.
+   *
+   * Claude routes *every* tool through this one callback, so the split has to
+   * happen here. Before it existed a question was mapped as an ordinary
+   * permission and rendered as "claude needs approval" with Allow/Deny; allowing
+   * it returned no answer, so the agent learned nothing and the user had no way
+   * to reply. The question branch returns early and the approval path below is
+   * untouched, which is what keeps this from being a change to every tool.
+   */
   handlePermission(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
+    const ctx = { seq: this.seq + 1, now: this.now(), approvalTtlMs: this.approvalTtlMs }
+
+    const questionId = newUserInputId()
+    const question = mapUserInputRequest(toolName, input, ctx, questionId)
+    if (question !== null) {
+      return new Promise<PermissionResult>((resolve) => {
+        this.pendingUserInputs.set(questionId, { resolve, input })
+        this.emit({
+          agentId: 'claude',
+          seq: ++this.seq,
+          at: this.now(),
+          type: 'userinput.requested',
+          request: question,
+        })
+      })
+    }
+
     const id = newApprovalId()
     const request = mapToolPermission(
       toolName,
       input,
-      { seq: this.seq + 1, now: this.now(), approvalTtlMs: this.approvalTtlMs },
+      ctx,
       id
     )
 

@@ -162,6 +162,19 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
       })
       break
 
+    /*
+     * Deliberately not projected into a table of their own.
+     *
+     * Approvals get one because policy queries them — "what has this profile
+     * auto-allowed" is a question asked of the projection, not of the log.
+     * Nothing asks that of a question set: the only reader is the UI, which
+     * rebuilds what is still pending by replaying the log. A table here would be
+     * a schema migration maintaining state nobody reads.
+     */
+    case 'userinput.requested':
+    case 'userinput.answered':
+      break
+
     case 'handoff.created':
       db.prepare(
         `INSERT INTO handoffs

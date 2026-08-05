@@ -1,11 +1,14 @@
-import type {
-  AgentAdapter,
-  AgentEvent,
-  AgentSession,
-  ApprovalDecision,
-  HealthStatus,
-  SessionOpts,
-  UsageWindow,
+import {
+  redactAnswers,
+  type AgentAdapter,
+  type AgentEvent,
+  type AgentSession,
+  type ApprovalDecision,
+  type HealthStatus,
+  type SessionOpts,
+  type UsageWindow,
+  type UserInputRequest,
+  type UserInputResponse,
 } from '@chorus/agent-protocol'
 import type { ApprovalId } from '@chorus/shared'
 import type { AppendInput, ChorusEventPayload, EventStore } from '@chorus/event-store'
@@ -57,6 +60,12 @@ export class ConversationService {
   private readonly grants: SessionGrants
   private readonly queue: ApprovalQueue
   private readonly onLimits: ((windows: readonly UsageWindow[]) => void) | undefined
+  /**
+   * Question sets waiting on the user, kept so an answer can be checked against
+   * the questions that produced it — which is what redaction needs to know
+   * which values are secret.
+   */
+  private readonly pendingUserInput = new Map<string, UserInputRequest>()
   private session: AgentSession | null = null
   private pump: Promise<void> | null = null
   /** Set when *we* asked to stop, so an interrupt is not reported as a failure. */
@@ -197,6 +206,46 @@ export class ConversationService {
       // Not queued — an auto-decided or already-settled approval. Still log it.
       await this.recordAndAnswer(approvalId, decision, decidedBy, null)
     }
+  }
+
+  /**
+   * Answers a question set and lets the agent's turn continue.
+   *
+   * The log entry is written before the provider is told, and the answers are
+   * redacted on the way into it. Ordering matters: if the wire call throws, the
+   * record of what the user chose still exists.
+   */
+  async answerUserInput(
+    userInputId: string,
+    response: UserInputResponse,
+    answeredBy: 'user' | 'system' = 'user'
+  ): Promise<void> {
+    const request = this.pendingUserInput.get(userInputId)
+    // Already answered, timed out, or never ours. Answering twice is harmless
+    // by design — a double-submit from the UI must not throw at the user.
+    if (request === undefined) return
+    this.pendingUserInput.delete(userInputId)
+
+    this.lifecycle({
+      type: 'userinput.answered',
+      userInputId,
+      outcome: response.outcome,
+      answers:
+        response.outcome === 'answered'
+          ? redactAnswers(request, response.answers).map((a) => ({
+              questionId: a.questionId,
+              values: a.values === null ? null : [...a.values],
+            }))
+          : null,
+      answeredBy,
+    })
+
+    await this.session?.respondToUserInput(request.id, response)
+  }
+
+  /** Question sets still waiting on the user, for the UI to draw after a replay. */
+  pendingQuestions(): UserInputRequest[] {
+    return [...this.pendingUserInput.values()]
   }
 
   /** Everything a person or a rule may grant this session, for the audit view. */
@@ -389,6 +438,25 @@ export class ConversationService {
 
         // Nobody but a person can settle this one; the queue owns its deadline.
         this.queue.add(this.conversationId, event.request)
+        return
+      }
+
+      /*
+       * Logged and held, never auto-answered.
+       *
+       * Deliberately does not go past `evaluate()`. A permission profile decides
+       * whether an action is allowed, which is a question it can be given rules
+       * about; what the user *wants* is not. An auto-answered question would put
+       * words in their mouth and the agent would have no way to tell.
+       */
+      case 'userinput.requested': {
+        this.lifecycle({
+          type: 'userinput.requested',
+          userInputId: event.request.id,
+          request: event.request,
+          expiresAt: event.request.expiresAt,
+        })
+        this.pendingUserInput.set(event.request.id, event.request)
         return
       }
 

@@ -7,8 +7,9 @@ import type {
   ApprovalDecision,
   HealthStatus,
   SessionOpts,
+  UserInputResponse,
 } from '@chorus/agent-protocol'
-import type { AgentId, ApprovalId } from '@chorus/shared'
+import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 
 /**
  * An in-memory `AgentAdapter` that emits a scripted event sequence.
@@ -73,6 +74,14 @@ export class FakeAgentSession implements AgentSession {
 
   respondToApproval(id: ApprovalId, decision: ApprovalDecision): Promise<void> {
     this.decisions.push({ id, decision })
+    return Promise.resolve()
+  }
+
+  /** Recorded rather than acted on, so a test can assert what the agent was told. */
+  readonly userInputResponses: { id: UserInputId; response: UserInputResponse }[] = []
+
+  respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void> {
+    this.userInputResponses.push({ id, response })
     return Promise.resolve()
   }
 

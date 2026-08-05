@@ -3,8 +3,10 @@ import {
   type AgentEvent,
   type ApprovalRequest,
   type UsageWindow,
+  type UserInputRequest,
+  type UserInputResponse,
 } from '@chorus/agent-protocol'
-import type { AgentId, ApprovalId } from '@chorus/shared'
+import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 
 /**
  * Codex notifications → the normalized `AgentEvent` union.
@@ -295,6 +297,81 @@ export function mapApprovalRequest(
     default:
       return null
   }
+}
+
+/** The one server request that is a question rather than a permission. */
+export const USER_INPUT_METHOD = 'item/tool/requestUserInput'
+
+/**
+ * `item/tool/requestUserInput` → the normalized question set.
+ *
+ * Returns null for anything else, so the caller can keep treating an
+ * unrecognised method as "not ours". Two Codex-isms are worth naming:
+ *
+ *  - **No multi-select flag.** Codex expresses it by accepting an array of
+ *    answers. There is nothing on the question saying whether more than one is
+ *    allowed, so we report `multiSelect: false` and let the answer array carry
+ *    the truth. Claiming otherwise would put checkboxes on single-answer
+ *    questions.
+ *  - **`options: null` means free text**, not "no options yet". Normalising it
+ *    to an empty array keeps the renderer from having to know that.
+ */
+export function mapUserInputRequest(
+  method: string,
+  params: unknown,
+  ctx: MapContext
+): UserInputRequest | null {
+  if (method !== USER_INPUT_METHOD) return null
+
+  const p = (params ?? {}) as Record<string, unknown>
+  const raw = Array.isArray(p['questions']) ? p['questions'] : []
+
+  const questions = raw
+    .filter((q): q is Record<string, unknown> => typeof q === 'object' && q !== null)
+    .map((q) => {
+      const options = Array.isArray(q['options']) ? q['options'] : []
+      return {
+        id: str(q['id'], ''),
+        header: str(q['header'], ''),
+        question: str(q['question'], ''),
+        options: options
+          .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
+          .map((o) => ({ label: str(o['label'], ''), description: str(o['description'], '') })),
+        multiSelect: false,
+        allowOther: q['isOther'] === true,
+        isSecret: q['isSecret'] === true,
+      }
+    })
+    // A question with no id cannot be answered: the response is keyed by id, so
+    // it would be dropped on the way back with no way to tell the user why.
+    .filter((q) => q.id !== '')
+
+  if (questions.length === 0) return null
+
+  const autoMs = p['autoResolutionMs']
+  return {
+    id: str(p['itemId'], '') as UserInputId,
+    agentId: AGENT,
+    questions,
+    expiresAt: ctx.now + ctx.approvalTtlMs,
+    ...(typeof autoMs === 'number' && autoMs > 0 ? { autoResolvesAt: ctx.now + autoMs } : {}),
+  }
+}
+
+/**
+ * Our answers → Codex's response payload.
+ *
+ * Shaped as `{ answers: { [questionId]: { answers: string[] } } }`. A cancel or
+ * timeout sends an empty map rather than inventing answers — Codex treats an
+ * absent id as unanswered, which is exactly what happened.
+ */
+export function toCodexUserInputResponse(response: UserInputResponse): {
+  answers: Record<string, { answers: string[] }>
+} {
+  if (response.outcome !== 'answered') return { answers: {} }
+  const answers: Record<string, { answers: string[] }> = {}
+  for (const a of response.answers) answers[a.questionId] = { answers: [...a.values] }
+  return { answers }
 }
 
 /**

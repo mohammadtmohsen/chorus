@@ -117,6 +117,35 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
   }),
 
   z.object({
+    type: z.literal('userinput.requested'),
+    userInputId: z.string(),
+    /**
+     * The normalized `UserInputRequest`. Secret questions are recorded — the
+     * user must be able to see later that they were asked — but their *answers*
+     * never are (see `userinput.answered`).
+     */
+    request: z.unknown(),
+    expiresAt: z.number().int(),
+  }),
+  z.object({
+    type: z.literal('userinput.answered'),
+    userInputId: z.string(),
+    outcome: z.enum(['answered', 'cancel', 'timeout']),
+    /**
+     * Answers, with every secret question's values replaced by null before this
+     * ever reaches the store.
+     *
+     * Null rather than omitted: "you answered this, and it is not written down"
+     * is a different fact from "you never answered", and replay has to be able
+     * to tell them apart.
+     */
+    answers: z
+      .array(z.object({ questionId: z.string(), values: z.array(z.string()).nullable() }))
+      .nullable(),
+    answeredBy: z.enum(['user', 'system']),
+  }),
+
+  z.object({
     type: z.literal('handoff.created'),
     handoffId: z.string(),
     from: z.enum(['codex', 'claude']),

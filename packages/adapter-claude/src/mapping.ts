@@ -3,8 +3,10 @@ import {
   type AgentEvent,
   type ApprovalRequest,
   type UsageWindow,
+  type UserInputRequest,
+  type UserInputResponse,
 } from '@chorus/agent-protocol'
-import type { AgentId, ApprovalId } from '@chorus/shared'
+import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 
 /**
  * Claude `SDKMessage` → the normalized `AgentEvent` union.
@@ -441,6 +443,86 @@ function mapResult(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {
  * the tool name. MCP tools are namespaced `mcp__server__tool`, and those are the
  * outward-facing ones a permission profile may never auto-allow (plan §2.6).
  */
+/** The one tool that is a question rather than an action needing permission. */
+export const USER_INPUT_TOOL = 'AskUserQuestion'
+
+/**
+ * `AskUserQuestion` → the normalized question set.
+ *
+ * Kept out of `mapToolPermission` deliberately. That function is on the path
+ * every single tool takes, and a question is not a permission — routing it
+ * there is what makes Claude questions render today as an approval card saying
+ * "claude needs approval", with Allow/Deny and no way to answer. Returning null
+ * for every other tool lets the caller branch once, at the top, and leave the
+ * approval path untouched.
+ *
+ * Claude's schema is narrower than Codex's: it has `multiSelect`, and it has no
+ * notion of a secret answer or of free text. Those come back as `false` and as
+ * a non-empty option list respectively — the renderer reads the flags, so it
+ * degrades on its own without knowing which provider it is drawing.
+ */
+export function mapUserInputRequest(
+  toolName: string,
+  input: Record<string, unknown>,
+  ctx: MapContext,
+  id: UserInputId
+): UserInputRequest | null {
+  if (toolName !== USER_INPUT_TOOL) return null
+
+  const raw = Array.isArray(input['questions']) ? input['questions'] : []
+  const questions = raw
+    .filter((q): q is Record<string, unknown> => typeof q === 'object' && q !== null)
+    .map((q, index) => {
+      const options = Array.isArray(q['options']) ? q['options'] : []
+      return {
+        /*
+         * Claude's questions carry no id, so position is the identity. The
+         * answer goes back inside `updatedInput` as a positional array, so this
+         * only has to be stable within the one request — which it is.
+         */
+        id: String(index),
+        header: typeof q['header'] === 'string' ? q['header'] : '',
+        question: typeof q['question'] === 'string' ? q['question'] : '',
+        options: options
+          .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
+          .map((o) => ({
+            label: typeof o['label'] === 'string' ? o['label'] : '',
+            description: typeof o['description'] === 'string' ? o['description'] : '',
+          })),
+        multiSelect: q['multiSelect'] === true,
+        // The harness always offers "Other"; the schema has no flag for it.
+        allowOther: true,
+        isSecret: false,
+      }
+    })
+
+  if (questions.length === 0) return null
+
+  return { id, agentId: AGENT, questions, expiresAt: ctx.now + ctx.approvalTtlMs }
+}
+
+/**
+ * Our answers → the `updatedInput` Claude expects back.
+ *
+ * The original input is preserved and `answers` added alongside: the CLI
+ * matches the response against the questions it sent, so dropping them would
+ * leave it unable to line the two up.
+ */
+export function toClaudeUserInputResult(
+  input: Record<string, unknown>,
+  response: UserInputResponse
+): { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string } {
+  if (response.outcome !== 'answered') {
+    // Never fabricate an answer. Denying lets the agent carry on knowing it was
+    // not told, which is recoverable; a made-up choice is not.
+    return { behavior: 'deny', message: 'The user did not answer the question.' }
+  }
+  return {
+    behavior: 'allow',
+    updatedInput: { ...input, answers: response.answers.map((a) => [...a.values]) },
+  }
+}
+
 export function mapToolPermission(
   toolName: string,
   input: Record<string, unknown>,

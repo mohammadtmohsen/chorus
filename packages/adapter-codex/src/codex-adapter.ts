@@ -10,9 +10,17 @@ import type {
   HealthStatus,
   SandboxPolicy,
   SessionOpts,
+  UserInputResponse,
 } from '@chorus/agent-protocol'
-import type { AgentId, ApprovalId } from '@chorus/shared'
-import { mapApprovalRequest, mapNotification, toCodexDecision, type ThreadItem } from './mapping.js'
+import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
+import {
+  mapApprovalRequest,
+  mapNotification,
+  mapUserInputRequest,
+  toCodexDecision,
+  toCodexUserInputResponse,
+  type ThreadItem,
+} from './mapping.js'
 import { JsonRpcClient } from './rpc.js'
 import { createStdioTransport, type Transport } from './transport.js'
 
@@ -80,6 +88,11 @@ export class CodexSession implements AgentSession {
   /** Approval id → the resolver that answers the server's pending request. */
   private readonly openApprovals = new Map<string, (decision: string) => void>()
   /**
+   * Question sets whose server request is still open. Separate from
+   * `openApprovals` because what resolves them is a payload, not a verdict.
+   */
+  private readonly openUserInputs = new Map<string, (response: UserInputResponse) => void>()
+  /**
    * Recently streamed items, so a `fileChange` approval — which carries only an
    * itemId — can be shown with the paths it will touch. Bounded, because a long
    * session would otherwise accumulate every item it ever saw.
@@ -131,6 +144,16 @@ export class CodexSession implements AgentSession {
     return Promise.resolve()
   }
 
+  respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void> {
+    const resolve = this.openUserInputs.get(id)
+    // Gone means it already auto-resolved or the turn ended. Answering a
+    // question nobody is waiting for is a no-op, not an error.
+    if (resolve === undefined) return Promise.resolve()
+    this.openUserInputs.delete(id)
+    resolve(response)
+    return Promise.resolve()
+  }
+
   get events(): AsyncIterable<AgentEvent> {
     return { [Symbol.asyncIterator]: () => this.iterate() }
   }
@@ -159,6 +182,31 @@ export class CodexSession implements AgentSession {
    * thing standing between a closed laptop and a wedged session (plan §4.4).
    */
   private handleServerRequest(method: string, params: unknown): Promise<unknown> {
+    /*
+     * Questions first, because they used to land in the fall-through below and
+     * be answered with `{}` — Codex was handed an empty response and the
+     * question vanished without ever reaching the user.
+     */
+    const question = mapUserInputRequest(method, params, {
+      seq: this.seq + 1,
+      now: this.now(),
+      approvalTtlMs: this.approvalTtlMs,
+    })
+    if (question !== null) {
+      return new Promise<unknown>((resolve) => {
+        this.openUserInputs.set(question.id, (response) => {
+          resolve(toCodexUserInputResponse(response))
+        })
+        this.emit({
+          agentId: 'codex' satisfies AgentId,
+          seq: ++this.seq,
+          at: this.now(),
+          type: 'userinput.requested',
+          request: question,
+        })
+      })
+    }
+
     const request = mapApprovalRequest(
       method,
       params,

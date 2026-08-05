@@ -1,5 +1,6 @@
 import type { AgentId } from '@chorus/shared'
 import type { ApprovalRequest } from './approval.js'
+import type { UserInputRequest } from './user-input.js'
 
 /**
  * The normalized event union both providers project onto (plan §4.2).
@@ -88,6 +89,15 @@ export interface ApprovalRequested extends AgentEventBase {
   readonly request: ApprovalRequest
 }
 
+/**
+ * The agent is asking, not proposing. Blocks the turn exactly like an approval,
+ * which is why it shares the queue and the undroppable list.
+ */
+export interface UserInputRequested extends AgentEventBase {
+  readonly type: 'userinput.requested'
+  readonly request: UserInputRequest
+}
+
 export interface UsageUpdated extends AgentEventBase {
   readonly type: 'usage.updated'
   readonly inputTokens: number
@@ -165,6 +175,7 @@ export type AgentEvent =
   | FileChangeProposed
   | DiffUpdated
   | ApprovalRequested
+  | UserInputRequested
   | UsageUpdated
   | TurnCompleted
   | AgentError
@@ -179,6 +190,9 @@ const UNDROPPABLE = new Set<AgentEventType>([
   'turn.started',
   'turn.completed',
   'approval.requested',
+  // Dropping one wedges the turn: the agent waits for an answer to a question
+  // the user was never shown.
+  'userinput.requested',
   'command.started',
   'command.completed',
   'file.change.proposed',

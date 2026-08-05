@@ -5,8 +5,9 @@ import type {
   AgentSession,
   ApprovalDecision,
   SessionOpts,
+  UserInputResponse,
 } from '@chorus/agent-protocol'
-import { AsyncQueue, type ApprovalId } from '@chorus/shared'
+import { AsyncQueue, type ApprovalId, type UserInputId } from '@chorus/shared'
 import { realScheduler, type Scheduler } from './delta-buffer.js'
 
 /**
@@ -127,6 +128,10 @@ export class SupervisedSession implements AgentSession {
 
   respondToApproval(id: ApprovalId, decision: ApprovalDecision): Promise<void> {
     return this.current.respondToApproval(id, decision)
+  }
+
+  respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void> {
+    return this.current.respondToUserInput(id, response)
   }
 
   async close(): Promise<void> {
