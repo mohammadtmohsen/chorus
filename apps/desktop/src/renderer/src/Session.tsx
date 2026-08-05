@@ -308,6 +308,29 @@ export function Session(props: {
     [conversationId]
   )
 
+  /** The one being asked about. The rest of the queue waits behind it. */
+  const current = view.approvals[0]
+  const queued = view.approvals.length
+
+  /*
+   * When the last approval clears, the caret goes back to the composer.
+   *
+   * The card took focus to be answerable by Enter; handing it back means a
+   * burst of approvals ends where you were before it started, rather than on a
+   * button that has just been unmounted — which drops focus to `body` and
+   * leaves the next keystroke going nowhere.
+   */
+  const hadApprovals = useRef(false)
+  useEffect(() => {
+    if (queued > 0) {
+      hadApprovals.current = true
+      return
+    }
+    if (!hadApprovals.current) return
+    hadApprovals.current = false
+    input.current?.focus()
+  }, [queued])
+
   return (
     <section
       ref={pane}
@@ -668,18 +691,30 @@ export function Session(props: {
       )}
 
       <div className="dock">
-        {view.approvals.map((approval) => (
+        {/*
+         * One at a time, oldest first.
+         *
+         * Approvals arrive in a burst — an agent asks for four commands in a
+         * row — and stacking all four leaves you reading a wall of them,
+         * deciding the wrong one, with the buttons of the next three a Tab
+         * away. Showing only the head of the queue makes the decision singular
+         * and lets the Allow button take focus without ambiguity about which
+         * request Enter would answer. The rest are counted, not drawn; the next
+         * one takes its place the moment this one is decided.
+         */}
+        {current !== undefined && (
           <ApprovalCard
-            key={approval.approvalId}
-            approval={approval}
+            key={current.approvalId}
+            approval={current}
+            waiting={view.approvals.length - 1}
             onAllow={() => {
-              decide(approval, 'allow')
+              decide(current, 'allow')
             }}
             onDeny={() => {
-              decide(approval, 'deny')
+              decide(current, 'deny')
             }}
           />
-        ))}
+        )}
 
         <form
           className="composer"
@@ -1050,14 +1085,32 @@ export function Session(props: {
 
 function ApprovalCard({
   approval,
+  waiting,
   onAllow,
   onDeny,
 }: {
   approval: PendingApproval
+  /** How many more are queued behind this one. Counted so the card can say so. */
+  waiting: number
   onAllow: () => void
   onDeny: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const allow = useRef<HTMLButtonElement | null>(null)
+
+  /*
+   * The Allow button takes focus as the card appears, so Enter answers it.
+   *
+   * An approval stops the agent dead, so the fastest possible answer is the
+   * point: reaching for the mouse, or Tabbing in from the composer, is friction
+   * on the one interaction that is always blocking. Keyed on the approval id as
+   * well as mount, so the next request in a queue claims focus too even if
+   * React reuses this instance.
+   */
+  useEffect(() => {
+    allow.current?.focus()
+  }, [approval.approvalId])
+
   return (
     <section
       className="approval"
@@ -1071,16 +1124,49 @@ function ApprovalCard({
       <header className="approval-head">
         <span className={`voice-dot voice--${approval.agentId}`} aria-hidden="true" />
         <strong>{t('approval.wants', { agent: approval.agentId })}</strong>
+        {waiting > 0 && (
+          <span className="approval-queue">{t('approval.waiting', { count: waiting })}</span>
+        )}
       </header>
       <pre className="approval-summary">{approval.summary}</pre>
       {approval.detail !== null && <pre className="approval-detail">{approval.detail}</pre>}
       <div className="approval-actions">
-        <button type="button" className="btn btn--go" onClick={onAllow}>
+        <button
+          ref={allow}
+          type="button"
+          className="btn btn--go"
+          onClick={onAllow}
+          /*
+           * Enter approves. Space does not, and a held Enter approves once.
+           *
+           * Both guards exist because this button takes focus on its own, which
+           * makes the usual button keys dangerous here:
+           *
+           *  - **Space.** If a request lands while you are typing, focus moves
+           *    mid-sentence and the next space of ordinary prose would activate
+           *    the button — approving a command you had not read. Nothing else
+           *    the user can type reaches this button, so Space is dropped and
+           *    Enter is the only key that approves.
+           *  - **Repeat.** Auto-repeat fires ~30 times a second, and every
+           *    approval unmounts this card and focuses the next one's button —
+           *    so one leant-on key would walk the whole queue. Each approval
+           *    costs its own deliberate press.
+           *
+           * Deny keeps both keys: refusing is the safe direction.
+           */
+          onKeyDown={(e) => {
+            if (e.key === ' ' || (e.repeat && e.key === 'Enter')) e.preventDefault()
+          }}
+        >
           {t('approval.allowOnce')}
         </button>
         <button type="button" className="btn" onClick={onDeny}>
           {t('approval.deny')}
         </button>
+        {/* Focus alone is a quiet affordance; saying it makes it discoverable. */}
+        <span className="approval-hint" aria-hidden="true">
+          {t('approval.enterHint')}
+        </span>
       </div>
     </section>
   )

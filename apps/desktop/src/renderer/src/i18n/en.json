@@ -113,7 +113,10 @@
   "approval": {
     "heading": "Approval",
     "wants": "{{agent}} needs approval",
+    "waiting_one": "{{count}} more waiting",
+    "waiting_other": "{{count}} more waiting",
     "allowOnce": "Allow once",
-    "deny": "Deny"
+    "deny": "Deny",
+    "enterHint": "Enter to allow"
   }
 }

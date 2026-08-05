@@ -900,6 +900,19 @@ body {
   text-transform: uppercase;
 }
 
+/*
+ * The rest of the queue, as a count rather than a stack of cards.
+ *
+ * Pushed to the far end so it reads as status about the pile, not as part of
+ * the request you are being asked to decide.
+ */
+.approval-queue {
+  margin-left: auto;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .approval-summary,
 .approval-detail {
   margin: 0;
@@ -911,6 +924,29 @@ body {
   max-height: 180px;
   overflow-y: auto;
   color: var(--muted);
+}
+
+/*
+ * `:focus`, not `:focus-visible`, and only here.
+ *
+ * The card focuses this button itself as it appears. Chromium only matches
+ * `:focus-visible` on a programmatic focus when the last input was the
+ * keyboard — so a mouse user would get an armed button with no ring, press
+ * Enter expecting nothing, and approve a command. If it can be fired by Enter
+ * it has to look like it can.
+ */
+.approval .btn--go:focus {
+  outline: 2px solid var(--codex);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--codex) 12%, transparent);
+}
+
+/* Sits after the buttons: it describes them, and is read after them. */
+.approval-hint {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
 }
 
 .approval-actions,
