@@ -1016,6 +1016,40 @@ body {
   justify-content: flex-start;
 }
 
+/*
+ * The summary mark, first in the row.
+ *
+ * Quieter than Send at the other end: Send is the one thing you press to make
+ * something happen, and two circles of equal weight at either end of the same
+ * row would read as a pair of equals. This one borrows the shape and drops the
+ * colour, so it reads as chrome you can reach for rather than an action waiting
+ * on you.
+ */
+.summary-open {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.summary-open:hover {
+  color: var(--bone);
+  border-color: color-mix(in srgb, var(--bone) 30%, var(--line));
+}
+
 .hint {
   margin-right: auto;
   font-family: var(--mono);
@@ -1557,6 +1591,118 @@ input::placeholder {
 .review-diff {
   overflow: auto;
   min-width: 0;
+}
+
+/* ---------------------------------------------------------------- summary */
+
+.summary-spend {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.summary-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 5);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 2);
+}
+
+/* Structure, so it takes the chrome's voice like every other heading. */
+.summary-title {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.summary-agents,
+.summary-problems,
+.summary-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--step);
+}
+
+.summary-agent {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--step) * 3);
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
+  border-left: 2px solid var(--voice, var(--line));
+  background: var(--sunken);
+  border-radius: 0 4px 4px 0;
+}
+
+.summary-agent--codex {
+  --voice: var(--codex);
+}
+
+.summary-agent--claude {
+  --voice: var(--claude);
+}
+
+.summary-agent-name {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--voice, var(--muted));
+  flex: none;
+}
+
+.summary-agent-facts {
+  font-size: 12px;
+  color: var(--muted);
+  /* Counts are the one thing here that must not be clipped as the sheet narrows. */
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.summary-problem {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--step) * 3);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary-problem-who {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* An error is the one kind that is not merely a fact about the run. */
+.summary-problem[data-kind='error'] .summary-problem-detail {
+  color: var(--alert);
+}
+
+.summary-problem-detail {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.summary-files {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary-files li {
+  overflow-wrap: anywhere;
 }
 
 .hunk {

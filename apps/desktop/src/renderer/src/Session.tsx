@@ -12,6 +12,7 @@ import {
   type MentionQuery,
 } from './mention-menu.js'
 import { ReviewPanel } from './ReviewPanel.js'
+import { SummaryPanel } from './SummaryPanel.js'
 import {
   EMPTY_VIEW,
   reduceEvents,
@@ -77,6 +78,7 @@ export function Session(props: {
   const [error, setError] = useState<string | null>(null)
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
+  const [summarising, setSummarising] = useState(false)
   const [confirmingClose, setConfirmingClose] = useState(false)
   const [pickingProfile, setPickingProfile] = useState(false)
   /** Set once Restart has been asked for and is being answered. */
@@ -676,6 +678,24 @@ export function Session(props: {
         />
       )}
 
+      {summarising && (
+        <SummaryPanel
+          conversationId={conversationId}
+          onClose={() => {
+            setSummarising(false)
+          }}
+          onAsk={(prompt) => {
+            // An ordinary message, deliberately. Chorus has no side-channel to
+            // an agent, so a summary asked for privately would be a reply
+            // arriving from nowhere — and the answer is worth keeping in the
+            // room anyway.
+            following.current = true
+            window.chorus.sendMessage({ conversationId, text: prompt }).catch(fail(setError))
+          }}
+          onError={setError}
+        />
+      )}
+
       {handoff !== null && (
         <HandoffComposer
           conversationId={conversationId}
@@ -837,6 +857,25 @@ export function Session(props: {
             saying so forever is a label for the first minute.
           */}
           <div className="composer-actions">
+            {/*
+              A glyph, not a word, and first in the row.
+
+              The row already sheds labels as the pane narrows, so a fourth named
+              control would be the thing that broke it. This one is the same
+              shape as Send at the other end: a mark you learn once, with the
+              name on `aria-label` and `title` so it is never only a shape.
+            */}
+            <button
+              type="button"
+              className="summary-open"
+              aria-label={t('summary.open')}
+              title={t('summary.open')}
+              onClick={() => {
+                setSummarising(true)
+              }}
+            >
+              <span aria-hidden="true">≡</span>
+            </button>
             {/*
               The cast is a set of switches, not a label.
               
