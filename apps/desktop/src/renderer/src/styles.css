@@ -128,9 +128,26 @@ body {
 
 /* --------------------------------------------------------------- wordmark */
 
+/*
+ * The mark sits on the row's centre line, like everything beside it.
+ *
+ * It is an `h1`, so it inherits the UA's `2em` — 26px — and with the body's 1.6
+ * that is a 41.6px line box. The mark itself is a 13px inline-block, and an
+ * inline-block sits on its parent's *baseline*, which in a line box that tall is
+ * 4.6px below where the limits and the buttons are centred. The row was aligned;
+ * only the glyphs inside it were not, which is why `align-items: center` on the
+ * masthead never fixed it.
+ *
+ * Sizing the line box to the mark it holds, rather than to the heading level it
+ * happens to be, puts the baseline back where the rest of the row is. No
+ * `display` change, so nothing moves horizontally and the large mark on the
+ * start screen is untouched.
+ */
 .wordmark {
   margin: 0;
   flex: none;
+  font-size: inherit;
+  line-height: 1;
 }
 
 .wordmark-logo {
@@ -460,6 +477,16 @@ body {
   padding: 0;
   list-style: none;
   -webkit-app-region: no-drag;
+  /*
+   * The windows wrap among themselves before the masthead wraps around them.
+   *
+   * Three windows measure 579px and this row was rigid, so it stayed 579px at
+   * every size: it pushed the masthead to two lines from 960px down, to three by
+   * 700px, and below 560px it simply ran off the right edge — 311px of it at
+   * phone width. Wrapping costs a line only when there is no other way to fit.
+   */
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .limit {
@@ -498,6 +525,33 @@ body {
 
 .limit-percent {
   color: var(--muted);
+}
+
+/*
+ * What a limit sheds as the window narrows, in the order it can afford to lose
+ * it — the same bargain the composer row makes.
+ *
+ * Nothing dropped here is lost. Every figure, including the exact reset time and
+ * the window's length in minutes, is already on the item's `title`, which is
+ * where the provider's own numbers live so the header can be checked rather than
+ * believed.
+ */
+@media (max-width: 1000px) {
+  /*
+   * The countdown first. It is the longest run of text in the row and the least
+   * urgent reading of it: the percentage beside it already says how close the
+   * window is to full, and "resets in 2d 22h" is a detail you go looking for.
+   */
+  .limit-reset {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  /* Then the bar, which is a second telling of the number right next to it. */
+  .limit-bar {
+    display: none;
+  }
 }
 
 /* The session's own usage, beside its name. */
