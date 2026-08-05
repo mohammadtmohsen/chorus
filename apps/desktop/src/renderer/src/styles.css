@@ -882,6 +882,20 @@ body {
   padding-block: var(--step);
 }
 
+/*
+ * The reply, marked as the thing the thinking was for.
+ *
+ * Only ever set when reasoning sits directly above it, so this marks the answer
+ * rather than marking every message and therefore nothing. A rule in the
+ * speaker's own colour, because the question it answers is "which of these is
+ * the reply" — the same question the rail already answers with its dots, said
+ * once more where the eye lands.
+ */
+.entry[data-answer='true'] .said {
+  padding-left: calc(var(--step) * 3);
+  border-left: 2px solid color-mix(in srgb, var(--voice) 55%, transparent);
+}
+
 .entry--reasoning .tick {
   top: calc(var(--step) * 2.5);
   background: transparent;

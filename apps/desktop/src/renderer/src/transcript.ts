@@ -118,7 +118,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       return
 
     case 'agent.reasoning.delta':
-      appendStreamed(view, event, 'reasoning', `reasoning:${str('itemRef')}`, str('text'))
+      appendReasoning(view, event, str('text'))
       return
 
     case 'agent.message.completed': {
@@ -339,6 +339,55 @@ function apply(view: Mutable, event: TranscriptEvent): void {
     default:
       return
   }
+}
+
+/**
+ * One block of thinking, however many items the provider split it into.
+ *
+ * Reasoning used to be keyed by `itemRef`, so a model that emitted its thinking
+ * as several items produced several entries — several dots on the rail, several
+ * "Show thinking" toggles, and the reply pushed further down each time. The
+ * provider's item boundaries are an implementation detail of how it streams;
+ * they are not something the reader asked to see.
+ *
+ * A run ends when anything else is said. Thinking, then a reply, then more
+ * thinking is genuinely two blocks, and joining those would misrepresent the
+ * order the agent worked in.
+ */
+function appendReasoning(view: Mutable, event: TranscriptEvent, text: string): void {
+  const last = view.messages.at(-1)
+  if (last?.kind === 'reasoning' && last.actor === event.actor) {
+    view.messages[view.messages.length - 1] = { ...last, text: last.text + text }
+    return
+  }
+  view.messages.push({
+    // Keyed by the event that opened the run, so the block keeps its identity as
+    // more of it arrives.
+    key: `reasoning:${event.id}`,
+    eventId: event.id,
+    actor: event.actor,
+    kind: 'reasoning',
+    text,
+    status: 'streaming',
+  })
+}
+
+/**
+ * True when this message is the reply a block of thinking led to.
+ *
+ * Derived from where a message sits rather than stored on it: the answer is only
+ * distinguishable *because* thinking precedes it, so it is a fact about the pair
+ * and not about either one. When no reasoning arrives — which is every turn both
+ * CLIs currently produce — nothing is marked, which is the right answer rather
+ * than a degraded one.
+ */
+export function answersThinking(
+  previous: TranscriptMessage | undefined,
+  current: TranscriptMessage
+): boolean {
+  if (current.kind !== 'message') return false
+  if (current.actor === 'user' || current.actor === 'system') return false
+  return previous?.kind === 'reasoning' && previous.actor === current.actor
 }
 
 function appendStreamed(

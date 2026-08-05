@@ -15,6 +15,7 @@ import { anchorFor, withQuote } from './quote.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
+  answersThinking,
   EMPTY_VIEW,
   reduceEvents,
   type PendingApproval,
@@ -688,10 +689,11 @@ export function Session(props: {
             the conversation.
           */}
           <div className="rail" aria-hidden="true" />
-          {view.messages.map((message) => (
+          {view.messages.map((message, i) => (
             <Entry
               key={message.key}
               message={message}
+              answersThinking={answersThinking(view.messages[i - 1], message)}
               onHandOff={
                 // Only offered when there is somebody to hand to, and only for an
                 // agent's own words — handing the user's message back is noise.

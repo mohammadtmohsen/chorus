@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TranscriptEvent } from '../../shared/ipc.js'
-import { EMPTY_VIEW, reduceEvents } from './transcript.js'
+import { answersThinking, EMPTY_VIEW, reduceEvents, type TranscriptMessage } from './transcript.js'
 
 let seq = 0
 function event(
@@ -198,5 +198,95 @@ describe('spend', () => {
     ])
     expect(view.spend.costUsd).toBeNull()
     expect(view.spend.inputTokens).toBe(9)
+  })
+})
+
+describe('thinking, combined', () => {
+  it('joins a run of reasoning items into one block', () => {
+    // The provider's item boundaries are how it streams, not something the
+    // reader asked to see: three items used to mean three dots and three
+    // toggles.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.reasoning.delta', { itemRef: 'r1', text: 'first ' }),
+      event('agent.reasoning.delta', { itemRef: 'r2', text: 'second ' }),
+      event('agent.reasoning.delta', { itemRef: 'r3', text: 'third' }),
+    ])
+    expect(view.messages).toHaveLength(1)
+    expect(view.messages[0]).toMatchObject({
+      kind: 'reasoning',
+      text: 'first second third',
+    })
+  })
+
+  it('keeps thinking either side of a reply as two blocks', () => {
+    // Joining these would misrepresent the order the agent worked in.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.reasoning.delta', { itemRef: 'r1', text: 'before' }),
+      event('agent.message.delta', { itemRef: 'm1', text: 'partial answer' }),
+      event('agent.reasoning.delta', { itemRef: 'r2', text: 'after' }),
+    ])
+    expect(view.messages.map((m) => m.kind)).toEqual(['reasoning', 'message', 'reasoning'])
+    expect(view.messages[0]?.text).toBe('before')
+    expect(view.messages[2]?.text).toBe('after')
+  })
+
+  it('does not join two agents thinking in the same room', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.reasoning.delta', { itemRef: 'r1', text: 'codex thinks' }, 'codex'),
+      event('agent.reasoning.delta', { itemRef: 'r2', text: 'claude thinks' }, 'claude'),
+    ])
+    expect(view.messages).toHaveLength(2)
+    expect(view.messages.map((m) => m.actor)).toEqual(['codex', 'claude'])
+  })
+
+  it('survives a replay without doubling the block', () => {
+    const events = [
+      event('agent.reasoning.delta', { itemRef: 'r1', text: 'a' }),
+      event('agent.reasoning.delta', { itemRef: 'r2', text: 'b' }),
+    ]
+    const once = reduceEvents(EMPTY_VIEW, events)
+    const twice = reduceEvents(once, events)
+    expect(twice.messages).toHaveLength(1)
+    expect(twice.messages[0]?.text).toBe('ab')
+  })
+})
+
+describe('answersThinking', () => {
+  const reasoning = { kind: 'reasoning', actor: 'codex' } as const
+  const reply = { kind: 'message', actor: 'codex' } as const
+
+  const message = (m: { kind: string; actor: string }): TranscriptMessage =>
+    ({ key: 'k', eventId: 'e', text: 't', status: 'complete', ...m }) as TranscriptMessage
+
+  it('marks a reply that follows the same agent thinking', () => {
+    expect(answersThinking(message(reasoning), message(reply))).toBe(true)
+  })
+
+  it('marks nothing when no thinking arrived', () => {
+    // Every turn both CLIs currently produce. Marking every message would mark
+    // nothing, so this is the right answer rather than a degraded one.
+    expect(answersThinking(undefined, message(reply))).toBe(false)
+    expect(answersThinking(message({ kind: 'message', actor: 'user' }), message(reply))).toBe(false)
+  })
+
+  it('does not credit one agent with another agent thinking', () => {
+    expect(answersThinking(message({ kind: 'reasoning', actor: 'claude' }), message(reply))).toBe(
+      false
+    )
+  })
+
+  it('never marks the user or the system', () => {
+    expect(answersThinking(message(reasoning), message({ kind: 'message', actor: 'user' }))).toBe(
+      false
+    )
+    expect(answersThinking(message(reasoning), message({ kind: 'message', actor: 'system' }))).toBe(
+      false
+    )
+  })
+
+  it('only marks a message, not a command or a notice', () => {
+    for (const kind of ['command', 'notice', 'handoff', 'reasoning']) {
+      expect(answersThinking(message(reasoning), message({ kind, actor: 'codex' }))).toBe(false)
+    }
   })
 })

@@ -32,10 +32,13 @@ function displayName(actor: TranscriptMessage['actor'] | undefined): string {
 export const Entry = memo(function Entry({
   message,
   onHandOff,
+  answersThinking = false,
 }: {
   message: TranscriptMessage
   /** Absent when there is nobody to hand to — a one-agent conversation. */
   onHandOff?: ((message: TranscriptMessage) => void) | undefined
+  /** This reply follows the agent's own thinking, so it is worth marking as the answer. */
+  answersThinking?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -86,7 +89,12 @@ export const Entry = memo(function Entry({
   }
 
   return (
-    <article className={`entry entry--${message.actor} entry--${message.kind}`}>
+    <article
+      className={`entry entry--${message.actor} entry--${message.kind}`}
+      // Only ever set when thinking precedes it, so it marks the answer rather
+      // than marking every message and therefore nothing.
+      data-answer={answersThinking ? 'true' : undefined}
+    >
       <span className="tick" aria-hidden="true" />
       <span className="speaker">{message.actor}</span>
       {onHandOff !== undefined && message.status === 'complete' && (
