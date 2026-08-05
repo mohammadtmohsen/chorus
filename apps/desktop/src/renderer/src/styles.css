@@ -641,16 +641,21 @@ body {
   row-gap: var(--step);
   padding: calc(var(--step) * 3) calc(var(--step) * 5);
   /*
-   * No vertical padding: the bar is as tall as the tallest thing in it and no
-   * taller, which is 21px of button.
+   * Barely any vertical padding: the bar is the height of the tallest thing in
+   * it — 21px of button — plus a couple of pixels so the buttons are not flush
+   * against the border.
    *
    * This only became a real choice once the mark stopped setting the height. The
    * `h1` line box was 41.6px, so the header was 42.6px whatever the padding said
-   * — removing it looked like it did nothing. With the line box sized to the mark
-   * the padding is the only thing left, and dropping it gives the transcript back
-   * 18px on every session.
+   * — changing it looked like it did nothing. With the line box sized to the mark
+   * the padding is the only thing left, and keeping it to 2px gives the
+   * transcript back most of the 18px.
+   *
+   * `2px`, with the unit. A bare `2` is not a length: CSS drops the declaration,
+   * the `padding` shorthand above wins, and the header quietly returns to 9px
+   * padding and 40px tall — the opposite of what the line appears to say.
    */
-  padding-block: 0;
+  padding-block: 2px;
   /* Room for the traffic lights under `titleBarStyle: hiddenInset`. */
   padding-left: 92px;
   border-bottom: 1px solid var(--line);

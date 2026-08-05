@@ -34,8 +34,11 @@ describe('block parsing', () => {
   it('groups consecutive bullets into one list', () => {
     const blocks = parseMarkdown('- a\n- b\n- c')
     expect(blocks).toHaveLength(1)
-    expect(blocks[0]).toMatchObject({ kind: 'list', ordered: false })
-    expect((blocks[0] as { items: unknown[] }).items).toHaveLength(3)
+    const list = blocks[0]
+    expect(list).toMatchObject({ kind: 'list', ordered: false })
+    // Narrowed rather than cast: `items` lives on one member of the union, and
+    // asserting across the union is an error the editor sees and CI did not.
+    expect(list?.kind === 'list' ? list.items : null).toHaveLength(3)
   })
 
   it('distinguishes ordered lists', () => {
@@ -108,8 +111,9 @@ describe('injection safety', () => {
   })
 
   it('treats an img onerror payload as text', () => {
-    const blocks = parseMarkdown('<img src=x onerror="alert(1)">')
-    const content = (blocks[0] as { content: { kind: string }[] }).content
+    const block = parseMarkdown('<img src=x onerror="alert(1)">')[0]
+    expect(block?.kind).toBe('paragraph')
+    const content = block?.kind === 'paragraph' ? block.content : []
     expect(content.every((i) => i.kind === 'text')).toBe(true)
   })
 })
