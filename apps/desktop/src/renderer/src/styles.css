@@ -831,6 +831,13 @@ body {
   background: var(--sunken);
   font-family: var(--mono);
   font-size: 0.88em;
+  /*
+   * `anywhere`, not the `break-word` its surrounding prose gets: a chip carries
+   * a border and a background, so only `anywhere` lowers its min-content width
+   * and lets the box itself narrow with the pane rather than just the glyphs
+   * inside it.
+   */
+  overflow-wrap: anywhere;
 }
 
 .md-h {
@@ -857,6 +864,31 @@ body {
   padding-left: calc(var(--step) * 3);
   border-left: 2px solid var(--line);
   color: var(--muted);
+}
+
+/*
+ * Prose wraps at spaces, and an absolute path has none.
+ *
+ * `.said` already carries `min-width: 0`, so the entry's `1fr` track collapses
+ * as it should — but a token with no break opportunity still paints past the
+ * pane it was given, and `.grid` is `overflow-x: hidden`, so the tail is clipped
+ * rather than scrollable. Agents talk in paths, so this is the common case, not
+ * the pathological one:
+ *
+ *   /Users/…/apps/desktop/src/renderer/src/Session.tsx:312
+ *
+ * `break-word` rather than `anywhere`: it only breaks a token that would
+ * overflow on its own line, so ordinary prose keeps its normal ragged edge and
+ * nothing else about the measure changes.
+ */
+.md-p,
+.md-h,
+.md-list,
+.md-quote,
+.reasoning-body,
+.notice-line,
+.said a {
+  overflow-wrap: break-word;
 }
 
 .said a {
