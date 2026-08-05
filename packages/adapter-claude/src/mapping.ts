@@ -511,7 +511,9 @@ export function mapUserInputRequest(
 export function toClaudeUserInputResult(
   input: Record<string, unknown>,
   response: UserInputResponse
-): { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string } {
+):
+  | { behavior: 'allow'; updatedInput: Record<string, unknown> }
+  | { behavior: 'deny'; message: string } {
   if (response.outcome !== 'answered') {
     // Never fabricate an answer. Denying lets the agent carry on knowing it was
     // not told, which is recoverable; a made-up choice is not.

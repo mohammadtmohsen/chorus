@@ -230,12 +230,7 @@ export class ClaudeSession implements AgentSession {
     }
 
     const id = newApprovalId()
-    const request = mapToolPermission(
-      toolName,
-      input,
-      ctx,
-      id
-    )
+    const request = mapToolPermission(toolName, input, ctx, id)
 
     return new Promise<PermissionResult>((resolve) => {
       this.pendingApprovals.set(id, { resolve, toolName, input })

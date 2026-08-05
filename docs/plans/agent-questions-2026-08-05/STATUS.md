@@ -28,7 +28,7 @@ Claude disagree about what a question is (see plan §1).
 ## Phase 2 done: adapter mappings, both providers
 
 - **Codex** — `mapUserInputRequest`, `toCodexUserInputResponse`, and
-  `USER_INPUT_METHOD`. Wired into `handleServerRequest` *before* the
+  `USER_INPUT_METHOD`. Wired into `handleServerRequest` _before_ the
   `mapApprovalRequest` null-fallback, which is where questions were previously
   answered with `{}` and silently dropped.
 - **Claude** — `mapUserInputRequest`, `toClaudeUserInputResult`, and

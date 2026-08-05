@@ -1816,7 +1816,7 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
 
   4. **The wrong PATH, then the wrong binary.** With a PATH, this machine chose
      Homebrew's `codex` 0.42.0 over npm's 0.146.0 and got `app-server exited
-     (code=1)`. Two causes stacked: `zsh -lc` does not read `.zshrc`, where nvm
+(code=1)`. Two causes stacked: `zsh -lc` does not read `.zshrc`, where nvm
      is set up; and the npm one is a `#!/usr/bin/env node` script, so it failed
      its own `--version` with no `node` on PATH and dropped out of the running.
      `which.ts` now adopts the shell's PATH at startup, asks both `-lic` and
@@ -1826,7 +1826,7 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
   Verified by driving the real `.app` through `open --env` (a launchd launch,
   as a double-click is) rather than a spawned process: both agents answer, the
   `@` route reaches the one addressed, and limits arrive from both providers.
-  An `env -i` harness is *harsher* than Finder — it cost an hour chasing a
+  An `env -i` harness is _harsher_ than Finder — it cost an hour chasing a
   "Not logged in" that was only the Keychain being absent.
 
   Not signed and not notarized (M9): Gatekeeper will refuse it on another Mac
@@ -1839,7 +1839,7 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
   Not quarantine alone — that produces a refusal you can right-click past. The
   bundle was **not signed at all**. `identity: null` does not mean "sign
   ad-hoc", it means "skip signing", and electron-builder duly logged `skipped
-  macOS code signing` while what shipped kept the Electron binary's own linker
+macOS code signing` while what shipped kept the Electron binary's own linker
   signature:
 
   ```
@@ -1850,7 +1850,7 @@ resets in 1d 22h`. Pinned by a test using the captured `/usage` payload.
   ```
 
   An invalid seal plus a browser's quarantine flag is what macOS calls
-  *damaged*, and the dialog offers only "Move to Trash" — there is no
+  _damaged_, and the dialog offers only "Move to Trash" — there is no
   right-click → Open to reach for. It looks identical to a corrupt download,
   which is how it reads to whoever you sent it to.
 

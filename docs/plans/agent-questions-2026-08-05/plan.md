@@ -23,7 +23,7 @@ this section is the load-bearing part of the plan.
 - `PermissionResult`'s allow branch carries `updatedInput?: Record<string, unknown>`
   (`sdk.d.ts:2114`), which is the channel an answer travels back on.
 
-**The bug this exposes.** `claude-adapter.ts:375` routes *every* tool through
+**The bug this exposes.** `claude-adapter.ts:375` routes _every_ tool through
 `handlePermission`, which emits `approval.requested` unconditionally. So today a
 Claude question does not fall through — it renders as an ordinary approval card
 reading "claude needs approval", with Allow/Deny buttons and no way to answer it.
@@ -43,13 +43,13 @@ line 168. The doubt was wrong and is retracted here.)
 
 The generated wire types are already in the repo and are exact:
 
-| Type | Shape |
-|---|---|
-| `ToolRequestUserInputParams` | `{ threadId, turnId, itemId, questions[], autoResolutionMs: number \| null }` |
-| `ToolRequestUserInputQuestion` | `{ id, header, question, isOther, isSecret, options: Option[] \| null }` |
-| `ToolRequestUserInputOption` | `{ label, description }` |
-| `ToolRequestUserInputAnswer` | `{ answers: string[] }` |
-| `ToolRequestUserInputResponse` | `{ answers: { [questionId]: { answers: string[] } } }` |
+| Type                           | Shape                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| `ToolRequestUserInputParams`   | `{ threadId, turnId, itemId, questions[], autoResolutionMs: number \| null }` |
+| `ToolRequestUserInputQuestion` | `{ id, header, question, isOther, isSecret, options: Option[] \| null }`      |
+| `ToolRequestUserInputOption`   | `{ label, description }`                                                      |
+| `ToolRequestUserInputAnswer`   | `{ answers: string[] }`                                                       |
+| `ToolRequestUserInputResponse` | `{ answers: { [questionId]: { answers: string[] } } }`                        |
 
 `UserInput.ts` is unrelated — it is the input-message type, not an answer type.
 
@@ -57,14 +57,14 @@ The generated wire types are already in the repo and are exact:
 
 The two providers do not model a question the same way:
 
-| Concern | Codex | Claude |
-|---|---|---|
-| Multi-select | implicit — `answers` is an array | explicit `multiSelect` boolean |
-| Free text | `options: null` | not expressible; options are required |
-| "Other" | explicit `isOther` per question | harness-provided, always available |
-| Secret | explicit `isSecret` per question | no concept |
-| Answer unit | whole set at once, keyed by question id | whole set at once via `updatedInput` |
-| Timeout | `autoResolutionMs` | `AskUserQuestionTimeout` policy |
+| Concern      | Codex                                   | Claude                                |
+| ------------ | --------------------------------------- | ------------------------------------- |
+| Multi-select | implicit — `answers` is an array        | explicit `multiSelect` boolean        |
+| Free text    | `options: null`                         | not expressible; options are required |
+| "Other"      | explicit `isOther` per question         | harness-provided, always available    |
+| Secret       | explicit `isSecret` per question        | no concept                            |
+| Answer unit  | whole set at once, keyed by question id | whole set at once via `updatedInput`  |
+| Timeout      | `autoResolutionMs`                      | `AskUserQuestionTimeout` policy       |
 
 Both answer the **entire set in one response**, which is the single most
 important fact for the UI: the wizard collects all answers locally and sends
@@ -78,7 +78,7 @@ express (`isSecret`, free text) must be representable-but-absent, not invented.
 
 ## 2. Phases
 
-### Phase 0 — Restore verification tooling *(blocked on user approval)*
+### Phase 0 — Restore verification tooling _(blocked on user approval)_
 
 Commit `c134cc4` overwrote the root `package.json` with the desktop one. The
 root lost 15 scripts and 9 devDeps, so `pnpm lint`, `pnpm test` and
@@ -98,14 +98,14 @@ writing them with no runner is how this ships broken.
 (`events.ts:181`). Superset shape per the divergence table; every field a given
 provider cannot express is optional.
 
-### Phase 2 — Adapter mappings *(pure functions, unit-tested)*
+### Phase 2 — Adapter mappings _(pure functions, unit-tested)_
 
 - **Codex:** recognise `item/tool/requestUserInput` in `handleServerRequest`
   before the `mapApprovalRequest` null-fallback. Hold the promise open in an
   `openUserInputs` map, mirroring `openApprovals`. Resolve with
   `{ answers: { [id]: { answers: string[] } } }`. Honour `autoResolutionMs`.
 - **Claude:** branch on `toolName === 'AskUserQuestion'` in `handlePermission`
-  *before* the approval path. Resolve with
+  _before_ the approval path. Resolve with
   `{ behavior: 'allow', updatedInput: { ...input, answers } }`.
 
 Tests: both mappings round-trip, multi-select, free text, Other, secret,
@@ -118,7 +118,7 @@ event store so replay reconstructs pending questions. Clear on turn interrupt
 and session close. **Redact secret answers** before any event is persisted or
 logged — the answer text must never reach disk.
 
-Keep approval *policy* and question handling separate in the backend; they share
+Keep approval _policy_ and question handling separate in the backend; they share
 only presentation order.
 
 ### Phase 4 — IPC
@@ -167,7 +167,7 @@ is not done on mocked IPC alone.
 - **Experimental Codex API.** Every generated type is marked `EXPERIMENTAL`. The
   wire shape can change; keep the mapping in one place so a break is one edit.
 - **Claude regression risk.** Branching inside `handlePermission` sits on the
-  path every tool takes. A mistake there breaks *all* approvals, not just
+  path every tool takes. A mistake there breaks _all_ approvals, not just
   questions. This is the highest-risk edit in the plan.
 - **Secret answers.** Redaction has to be right the first time; a leaked secret
   in the event store is not recoverable by fixing the code later.
