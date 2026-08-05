@@ -12,6 +12,8 @@
  * degrades to plain text, which is the safe direction to fail.
  */
 
+import { linkifyIssues } from './issue-links.js'
+
 export type Inline =
   | { readonly kind: 'text'; readonly text: string }
   | { readonly kind: 'code'; readonly text: string }
@@ -149,7 +151,14 @@ export function parseInline(source: string): Inline[] {
   }
 
   if (rest.length > 0) out.push({ kind: 'text', text: rest })
-  return coalesceText(out)
+  /*
+   * Issue keys become links last, on text nodes only.
+   *
+   * After coalescing, so a key split across two text nodes by a rejected link
+   * still matches; and after inline parsing, so a key inside a code span or an
+   * explicit markdown link is already a `code` or `link` node and is left alone.
+   */
+  return linkifyIssues(coalesceText(out))
 }
 
 /**
