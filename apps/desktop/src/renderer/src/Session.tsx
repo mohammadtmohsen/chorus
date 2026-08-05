@@ -11,6 +11,7 @@ import {
   mentionOptions,
   type MentionQuery,
 } from './mention-menu.js'
+import { anchorFor, withQuote } from './quote.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
@@ -79,6 +80,13 @@ export function Session(props: {
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const [summarising, setSummarising] = useState(false)
+  /** A passage selected in this pane's transcript, and where to offer to quote it. */
+  const [selected, setSelected] = useState<{
+    text: string
+    left: number
+    top: number
+    placement: 'above' | 'below'
+  } | null>(null)
   const [confirmingClose, setConfirmingClose] = useState(false)
   const [pickingProfile, setPickingProfile] = useState(false)
   /** Set once Restart has been asked for and is being answered. */
@@ -275,6 +283,67 @@ export function Session(props: {
     ])
     input.current?.focus()
   }, [])
+
+  /**
+   * Offers to quote whatever was just selected in this pane's transcript.
+   *
+   * Read on mouse-up and key-up rather than from `selectionchange`, which fires
+   * on every pixel of a drag: the offer should appear when you finish choosing a
+   * passage, not follow the pointer while you are still choosing it.
+   *
+   * Scoped to this pane's scroller, so selecting in one conversation never
+   * offers to quote it into another's composer, and selecting the chrome — a
+   * title, a path, the composer's own text — offers nothing.
+   */
+  const readSelection = useCallback(() => {
+    const selection = window.getSelection()
+    const scoreEl = score.current
+    const paneEl = pane.current
+    if (selection === null || selection.isCollapsed || scoreEl === null || paneEl === null) {
+      setSelected(null)
+      return
+    }
+    const range = selection.getRangeAt(0)
+    if (!scoreEl.contains(range.commonAncestorContainer)) {
+      setSelected(null)
+      return
+    }
+    const text = selection.toString().trim()
+    if (text === '') {
+      setSelected(null)
+      return
+    }
+    const at = anchorFor(range.getBoundingClientRect(), paneEl.getBoundingClientRect())
+    setSelected(at === null ? null : { text, ...at })
+  }, [])
+
+  useEffect(() => {
+    /*
+     * A selection made anywhere else takes the offer away.
+     *
+     * `selectionchange` is the only event that fires when a click in another
+     * pane collapses this one's selection, so it is worth listening to for the
+     * clearing half even though the positioning half ignores it.
+     */
+    const onChange = (): void => {
+      const selection = window.getSelection()
+      if (selection === null || selection.isCollapsed) setSelected(null)
+    }
+    document.addEventListener('selectionchange', onChange)
+    return () => {
+      document.removeEventListener('selectionchange', onChange)
+    }
+  }, [])
+
+  /** Puts the passage in the draft and leaves the caret under it, ready for the question. */
+  const quoteSelection = useCallback(() => {
+    const passage = selected
+    if (passage === null) return
+    setDraft((current) => withQuote(current, passage.text))
+    setSelected(null)
+    window.getSelection()?.removeAllRanges()
+    input.current?.focus()
+  }, [selected])
 
   const send = useCallback(() => {
     /*
@@ -594,11 +663,17 @@ export function Session(props: {
         className="score"
         ref={score}
         aria-label={t('conversation.transcript')}
+        onMouseUp={readSelection}
+        onKeyUp={readSelection}
         onScroll={(e) => {
           // "At the bottom" with room to spare: a couple of pixels of rounding,
           // or a scroll that lands just short, should still count as following.
           const el = e.currentTarget
           following.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 32
+          // The offer is anchored to a rectangle that just moved. Re-reading it
+          // on every scroll frame would fight the scroll; dropping it is honest
+          // and the selection itself survives, so it can be re-made.
+          if (selected !== null) setSelected(null)
         }}
       >
         <div className="score-content" ref={transcript}>
@@ -667,6 +742,28 @@ export function Session(props: {
             ))}
         </div>
       </div>
+
+      {/*
+        Offered where the passage is, not in a toolbar.
+
+        `onMouseDown` with `preventDefault` rather than `onClick` alone: a
+        mousedown on a button clears the selection before the click lands, so by
+        the time the handler ran there would be nothing left to quote.
+      */}
+      {selected !== null && (
+        <button
+          type="button"
+          className="quote-offer"
+          data-placement={selected.placement}
+          style={{ left: `${String(selected.left)}px`, top: `${String(selected.top)}px` }}
+          onMouseDown={(e) => {
+            e.preventDefault()
+          }}
+          onClick={quoteSelection}
+        >
+          {t('conversation.askAboutThis')}
+        </button>
+      )}
 
       {reviewing && (
         <ReviewPanel

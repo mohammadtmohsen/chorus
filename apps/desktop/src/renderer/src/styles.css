@@ -425,6 +425,46 @@ body {
   }
 }
 
+/*
+ * The offer to quote what you just selected.
+ *
+ * Anchored to the passage rather than parked in a toolbar: the thing it acts on
+ * is the thing you are looking at, and a control that appears where your
+ * attention already is needs no explaining.
+ *
+ * The transform is here rather than in the arithmetic that positions it: the
+ * anchor is a point on the selection's edge, and how far the button hangs off
+ * that point depends on its own width and line height, which the positioning
+ * module cannot measure. `above` pulls it fully clear of the passage — without
+ * that it covers the words it is offering to quote.
+ */
+.quote-offer {
+  position: absolute;
+  z-index: 4;
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  border: 1px solid color-mix(in srgb, var(--bone) 22%, var(--line));
+  border-radius: 999px;
+  background: var(--raised);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 45%);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--bone);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.quote-offer[data-placement='above'] {
+  transform: translate(-50%, -100%);
+}
+
+.quote-offer[data-placement='below'] {
+  transform: translateX(-50%);
+}
+
+.quote-offer:hover {
+  border-color: color-mix(in srgb, var(--bone) 40%, var(--line));
+}
+
 /* A file is over this pane and will land in its composer. */
 .pane[data-file-over='true'] {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--codex) 60%, transparent);
