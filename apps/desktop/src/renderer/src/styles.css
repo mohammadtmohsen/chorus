@@ -600,6 +600,17 @@ body {
   flex-wrap: wrap;
   row-gap: var(--step);
   padding: calc(var(--step) * 3) calc(var(--step) * 5);
+  /*
+   * No vertical padding: the bar is as tall as the tallest thing in it and no
+   * taller, which is 21px of button.
+   *
+   * This only became a real choice once the mark stopped setting the height. The
+   * `h1` line box was 41.6px, so the header was 42.6px whatever the padding said
+   * — removing it looked like it did nothing. With the line box sized to the mark
+   * the padding is the only thing left, and dropping it gives the transcript back
+   * 18px on every session.
+   */
+  padding-block: 0;
   /* Room for the traffic lights under `titleBarStyle: hiddenInset`. */
   padding-left: 92px;
   border-bottom: 1px solid var(--line);
