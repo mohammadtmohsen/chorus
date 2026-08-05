@@ -273,6 +273,23 @@ body {
 }
 
 /*
+ * Both rows have to be allowed to shrink.
+ *
+ * A grid item's automatic minimum is its min-content, so the masthead and the
+ * pane grid each refused to go narrower than theirs — 530px — and the window
+ * scrolled sideways instead, even though the BrowserWindow allows 360px and the
+ * layout is meant to reflow to phone width.
+ *
+ * It also made the narrow steps unreachable rather than merely unused: the pane
+ * is the query container, and it could never get below 530px, so its own
+ * `@container (max-width: 430px)` rule and the 560px media block below were dead
+ * code. Letting the rows shrink is what puts them back in play.
+ */
+.stage > * {
+  min-width: 0;
+}
+
+/*
  * Several conversations at once.
  *
  * Panes are equal, never a main one and some others: each has its own agents,
@@ -519,6 +536,15 @@ body {
   display: flex;
   align-items: center;
   gap: calc(var(--step) * 4);
+  /*
+   * Wraps rather than clips. Now that the row can shrink, its contents have to
+   * go somewhere: 92px of traffic-light inset plus the mark, the limits and two
+   * buttons do not fit a phone-width window on one line, and a second line costs
+   * height the transcript can spare where a clipped Settings button cannot be
+   * reached at all.
+   */
+  flex-wrap: wrap;
+  row-gap: var(--step);
   padding: calc(var(--step) * 3) calc(var(--step) * 5);
   /* Room for the traffic lights under `titleBarStyle: hiddenInset`. */
   padding-left: 92px;
