@@ -91,34 +91,71 @@ async function connect(port) {
 
 function makeSession(socket) {
   let id = 0
-  const evaluate = (expression) =>
+
+  /**
+   * One command down the debugger protocol, whatever it is.
+   *
+   * Running code in the page is only the commonest thing to ask for, not the
+   * only one — anything the app cannot do to itself has to come through here.
+   * The label is carried separately so a timeout still names the expression
+   * that hung rather than the channel it hung on.
+   */
+  const send = (method, params = {}, label = method) =>
     new Promise((resolve, reject) => {
       const mine = ++id
       const onMessage = (message) => {
         const reply = JSON.parse(message.data)
         if (reply.id !== mine) return
         socket.removeEventListener('message', onMessage)
-        if (reply.result?.exceptionDetails !== undefined) {
-          reject(new Error(JSON.stringify(reply.result.exceptionDetails).slice(0, 300)))
+        if (reply.error !== undefined) {
+          reject(new Error(`${method}: ${JSON.stringify(reply.error).slice(0, 300)}`))
           return
         }
-        resolve(reply.result?.result?.value)
+        resolve(reply.result)
       }
       socket.addEventListener('message', onMessage)
-      socket.send(
-        JSON.stringify({
-          id: mine,
-          method: 'Runtime.evaluate',
-          params: { expression, awaitPromise: true, returnByValue: true },
-        })
-      )
+      socket.send(JSON.stringify({ id: mine, method, params }))
       setTimeout(() => {
-        reject(new Error(`timed out: ${expression.slice(0, 60)}`))
+        reject(new Error(`timed out: ${label}`))
       }, 120_000)
     })
 
+  const evaluate = async (expression) => {
+    const result = await send(
+      'Runtime.evaluate',
+      { expression, awaitPromise: true, returnByValue: true },
+      expression.slice(0, 60)
+    )
+    if (result.exceptionDetails !== undefined) {
+      throw new Error(JSON.stringify(result.exceptionDetails).slice(0, 300))
+    }
+    return result.result?.value
+  }
+
   return {
     evaluate,
+    send,
+    /**
+     * Pretends the window is another size, and puts it back with no arguments.
+     *
+     * The layout sheds a column and moves its rail below certain widths, and
+     * those rules answer to the viewport rather than to anything the app can be
+     * told. Chromium's own emulation changes the CSS viewport for real, so the
+     * media queries fire exactly as they would on a smaller screen — which is
+     * the difference between asserting the narrow layout and eyeballing it.
+     */
+    async viewport(width, height) {
+      if (width === undefined) {
+        await send('Emulation.clearDeviceMetricsOverride')
+        return
+      }
+      await send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      })
+    },
     /**
      * Waits for something to become true in the page.
      *

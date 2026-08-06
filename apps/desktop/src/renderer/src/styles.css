@@ -760,7 +760,9 @@ body {
 .score {
   position: relative;
   overflow-y: auto;
-  padding: calc(var(--step) * 5) calc(var(--step) * 5) calc(var(--step) * 7);
+  /* Named because the pinned turn has to cancel it exactly; see `.turn-head`. */
+  --score-top: calc(var(--step) * 5);
+  padding: var(--score-top) calc(var(--step) * 5) calc(var(--step) * 7);
 }
 
 /* The origin the rail and every dot now share. */
@@ -773,7 +775,14 @@ body {
   position: absolute;
   left: calc(var(--gutter) - 1px);
   top: 0;
-  bottom: 0;
+  /*
+   * Stopping short of the room held open under the current turn.
+   *
+   * The line is exactly as long as the conversation, and the empty view the
+   * current turn keeps beneath itself is not conversation — running the rail
+   * down through it would draw a timeline of nothing.
+   */
+  bottom: var(--spare, 0px);
   width: 1px;
   /*
    * Fades at both ends, but never more than a fifth of the line.
@@ -789,6 +798,84 @@ body {
     var(--line) calc(100% - min(40px, 20%)),
     transparent
   );
+}
+
+/*
+ * The current turn: what you last asked, and what is being made of it.
+ *
+ * A block of its own so the question can be pinned within it and only within it
+ * — scroll back into history and the pin lets go, because up there the heading
+ * would be a claim about the wrong part of the conversation.
+ */
+.turn {
+  position: relative;
+}
+
+/*
+ * The question, held at the top of the view for as long as it is the question.
+ *
+ * A long reply used to push it out of the window inside a paragraph, leaving a
+ * screen of prose with nothing on it to say what it answered. Whoever is still
+ * thinking sits inside this same box, so the two never part company and a
+ * wrapped question pushes the waiting agents down with it rather than under it.
+ */
+.turn-head {
+  position: sticky;
+  /*
+   * Negative by exactly the scroller's top padding.
+   *
+   * A sticky offset is measured from the scroller's content box rather than its
+   * edge, so `0` pins the header a padding's width down — and that strip is
+   * still inside the scrollport, so the history slides visibly through it above
+   * a header whose whole job is to be the top.
+   */
+  top: calc(var(--score-top) * -1);
+  /* Over the rail and the reply sliding beneath it; under the quote offer. */
+  z-index: 2;
+  /* The pane's own ground: without it, older text reads through the pin. */
+  background: var(--sunken);
+}
+
+/*
+ * Where the pin cuts the answer, drawn.
+ *
+ * Held at the top, the header slices whatever line of the reply happens to be
+ * passing under it. That is honest — the text is mid-scroll — but an unmarked
+ * cut reads as damage rather than as an edge. A rule says the header ends here
+ * and the answer carries on beneath it.
+ *
+ * Only once a reply exists: before it, the only thing under the header is the
+ * room held open for it, and a line across that would divide the question from
+ * nothing.
+ */
+.turn-head:has(+ .entry) {
+  border-bottom: 1px solid var(--line);
+}
+
+/*
+ * The rail, carried through the pinned header.
+ *
+ * The line behind the header is covered by it, so the header draws its own
+ * length of it at the same origin — the dots inside it are positioned from
+ * their entries exactly as everywhere else, so the two still meet.
+ *
+ * Solid rather than faded: the gradient exists so a two-message conversation
+ * does not disappear into its own ends, and over a header's height the fades
+ * would meet in the middle and erase the line right where the dots are.
+ */
+.rail--turn {
+  background: var(--line);
+}
+
+/*
+ * Room for the current turn to rise into, and for its pin to hold within.
+ *
+ * Sized in `makeRoom` to exactly what the turn is short of a full view, so it
+ * vanishes the moment a reply fills one. The rail is inset by the same amount
+ * rather than following it down.
+ */
+.turn-tail {
+  height: 0;
 }
 
 .entry {
@@ -1447,9 +1534,20 @@ input::placeholder {
     padding: 0 0 var(--step);
   }
 
-  .rail,
   .tick {
     left: 4px;
+  }
+
+  /*
+   * Centred on the dots, not flush with them.
+   *
+   * Both used to be given the same `left`, which lines up their left edges — and
+   * a 1px line beside a 7px dot is then 3px off the thing it is supposed to run
+   * through. The wide layout has always offset the two for exactly this reason;
+   * the compact gutter had the same sum to do and did not do it.
+   */
+  .rail {
+    left: 7px;
   }
 }
 

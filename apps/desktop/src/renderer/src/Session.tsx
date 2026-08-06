@@ -19,6 +19,7 @@ import {
   EMPTY_VIEW,
   reduceEvents,
   type PendingApproval,
+  type TranscriptMessage,
   type TranscriptView,
 } from './transcript.js'
 
@@ -109,6 +110,10 @@ export function Session(props: {
   const score = useRef<HTMLDivElement | null>(null)
   /** The growing part, which is what a resize observer has to watch. */
   const transcript = useRef<HTMLDivElement | null>(null)
+  /** The current turn — what you last said and whatever is answering it. */
+  const turn = useRef<HTMLDivElement | null>(null)
+  /** Empty space at the foot of the current turn, so its question can reach the top. */
+  const tail = useRef<HTMLDivElement | null>(null)
   const input = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(
@@ -151,6 +156,41 @@ export function Session(props: {
    * either.
    */
   const following = useRef(true)
+  /** Where the last scroll left us, so the next one can be told which way it went. */
+  const wasAt = useRef(0)
+
+  /**
+   * Makes the current turn a view tall, however little has been said in it.
+   *
+   * Two things need the height, and both need it *inside* the turn. A pinned
+   * header can only travel as far as the block it belongs to, so a turn no
+   * taller than its own question gives the pin nowhere to go. And there has to
+   * be something below to scroll, or a question asked at the foot of a long
+   * history stays where it landed until the answer happens to be tall enough to
+   * lift it — which reads as the layout waiting for the agent's permission.
+   *
+   * Spare rather than fixed: exactly what the turn is short of, so it is gone
+   * the moment a reply fills the view. The rail is pulled up by the same amount,
+   * because a line drawn down through deliberate emptiness is a line drawn
+   * through nothing.
+   */
+  const makeRoom = useCallback(() => {
+    const el = score.current
+    const content = transcript.current
+    const spacer = tail.current
+    if (el === null || content === null) return
+    if (spacer === null) {
+      content.style.removeProperty('--spare')
+      return
+    }
+    const block = turn.current
+    // The turn's own height, less whatever room was added last time — measuring
+    // the block whole would feed the spacer its own size.
+    const said = block === null ? 0 : block.offsetHeight - spacer.offsetHeight
+    const spare = Math.max(0, el.clientHeight - said)
+    spacer.style.height = `${String(spare)}px`
+    content.style.setProperty('--spare', `${String(spare)}px`)
+  }, [])
 
   useEffect(() => {
     const el = score.current
@@ -169,13 +209,18 @@ export function Session(props: {
      * ancestor and would drag the whole grid around when panes sit side by side.
      */
     const follow = new ResizeObserver(() => {
+      // Before following, not after: the spare room decides where the bottom is.
+      makeRoom()
       if (following.current) el.scrollTop = el.scrollHeight
     })
     follow.observe(content)
+    // The pane itself, because how much room the turn is short of is measured
+    // against the view — and a window resize changes that without changing a word.
+    follow.observe(el)
     return () => {
       follow.disconnect()
     }
-  }, [])
+  }, [makeRoom])
 
   useEffect(() => {
     /*
@@ -226,6 +271,34 @@ export function Session(props: {
   const streaming = new Set(
     view.messages.filter((m) => m.status === 'streaming').map((m) => m.actor)
   )
+
+  /*
+   * The transcript is split at the last thing you said.
+   *
+   * Everything before it is history; from it down is the current turn — the
+   * question and whatever is being made of it. The division is derived from the
+   * messages rather than stored, so a conversation restored from the log finds
+   * its current turn the same way a live one does, with nothing extra persisted.
+   */
+  const turnAt = view.messages.findLastIndex((m) => m.actor === 'user' && m.kind === 'message')
+  const currentTurn = turnAt === -1 ? undefined : view.messages[turnAt]
+  const turnKey = currentTurn?.key ?? null
+
+  useEffect(() => {
+    /*
+     * A new turn takes the top, whether or not the page grew.
+     *
+     * Following is driven by the transcript getting taller, and a short question
+     * asked below a long answer can add less height than the spare room it takes
+     * away — the observer sees nothing, and the message you just sent stays
+     * halfway up. Keyed on which message the turn is, so this fires once per
+     * question rather than on every token of the reply.
+     */
+    const el = score.current
+    if (el === null || turnKey === null) return
+    makeRoom()
+    if (following.current) el.scrollTop = el.scrollHeight
+  }, [turnKey, makeRoom])
 
   const options = mention === null ? [] : mentionOptions(participants, mention.query)
   const menuOpen = options.length > 0
@@ -402,6 +475,65 @@ export function Session(props: {
     hadApprovals.current = false
     input.current?.focus()
   }, [queued])
+
+  /**
+   * One entry, drawn the same wherever it falls.
+   *
+   * Takes its index in the whole transcript rather than in the slice it is being
+   * drawn from: whether a message answers a block of thinking is a fact about
+   * the pair, and splitting the list at the current turn must not make the first
+   * message after the split forget what came before it.
+   */
+  const entry = (message: TranscriptMessage, index: number): React.JSX.Element => (
+    <Entry
+      key={message.key}
+      message={message}
+      answersThinking={answersThinking(view.messages[index - 1], message)}
+      onHandOff={
+        // Only offered when there is somebody to hand to, and only for an
+        // agent's own words — handing the user's message back is noise.
+        participants.length > 1 && (message.actor === 'codex' || message.actor === 'claude')
+          ? (m) => {
+              const from = m.actor === 'claude' ? 'claude' : 'codex'
+              const to = participants.find((p) => p !== from)
+              if (to !== undefined) {
+                setHandoff({ from, to, sourceEventIds: [m.eventId] })
+              }
+            }
+          : undefined
+      }
+    />
+  )
+
+  /*
+   * Who is thinking, directly under the question they were asked.
+   *
+   * The dots in the bar have always breathed for whoever is mid-turn, but they
+   * are chrome — small, at the edge, and easy to miss while reading. This sits
+   * where the answer will appear, in the voice's own colour, so "is anything
+   * happening, and from whom" is answered where you are already looking. Two
+   * agents waiting stack, in the order the conversation put them in.
+   *
+   * Only until the first words arrive: once an agent is writing, its text is a
+   * better indicator than any label, and leaving both would say the same thing
+   * twice.
+   */
+  const thinking = view.working
+    .filter((agent) => !streaming.has(agent))
+    .map((agent) => (
+      <article key={`thinking:${agent}`} className={`entry entry--${agent} entry--thinking`}>
+        <span className="tick" aria-hidden="true" />
+        <span className="speaker">{agent}</span>
+        <p className="said thinking" role="status">
+          <span className="thinking-word">{t('conversation.thinking')}</span>
+          <span className="thinking-dots" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+        </p>
+      </article>
+    ))
 
   return (
     <section
@@ -667,10 +799,33 @@ export function Session(props: {
         onMouseUp={readSelection}
         onKeyUp={readSelection}
         onScroll={(e) => {
+          const el = e.currentTarget
           // "At the bottom" with room to spare: a couple of pixels of rounding,
           // or a scroll that lands just short, should still count as following.
-          const el = e.currentTarget
-          following.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 32
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 32
+          // A pixel of slack, because a scroll that lands a hair short of where
+          // it started is rounding, not a decision.
+          const wentUp = el.scrollTop < wasAt.current - 1
+          wasAt.current = el.scrollTop
+
+          /*
+           * Following stops when *you* scroll up, not merely when the bottom
+           * gets further away.
+           *
+           * Measuring the distance alone read a growing transcript as a reader
+           * who had wandered off: the page gains an entry between a scroll being
+           * written and its event being delivered, so the handler saw a
+           * three-line gap that nobody had opened, gave up following, and left
+           * the view one entry short of the bottom for the rest of the
+           * conversation. Since the current turn is pinned by being scrolled to,
+           * that also stranded the question halfway up the pane.
+           *
+           * Coming back to the bottom always resumes, which is what makes this
+           * safe: a shrinking transcript clamps the scroll down by itself, and
+           * that lands at the bottom rather than counting as a scroll upward.
+           */
+          if (atBottom) following.current = true
+          else if (wentUp) following.current = false
           // The offer is anchored to a rectangle that just moved. Re-reading it
           // on every scroll frame would fight the scroll; dropping it is honest
           // and the selection itself survives, so it can be re-made.
@@ -689,59 +844,42 @@ export function Session(props: {
             the conversation.
           */}
           <div className="rail" aria-hidden="true" />
-          {view.messages.map((message, i) => (
-            <Entry
-              key={message.key}
-              message={message}
-              answersThinking={answersThinking(view.messages[i - 1], message)}
-              onHandOff={
-                // Only offered when there is somebody to hand to, and only for an
-                // agent's own words — handing the user's message back is noise.
-                participants.length > 1 && (message.actor === 'codex' || message.actor === 'claude')
-                  ? (m) => {
-                      const from = m.actor === 'claude' ? 'claude' : 'codex'
-                      const to = participants.find((p) => p !== from)
-                      if (to !== undefined) {
-                        setHandoff({ from, to, sourceEventIds: [m.eventId] })
-                      }
-                    }
-                  : undefined
-              }
-            />
-          ))}
 
-          {/*
-          Who is thinking, at the foot of the transcript.
-          
-          The dots in the bar have always breathed for whoever is mid-turn, but
-          they are chrome — small, at the edge, and easy to miss while reading.
-          This sits where the answer will appear, in the voice's own colour, so
-          the question "is anything happening, and from whom" is answered where
-          you are already looking. It follows the scroll for the same reason.
-          
-          Only until the first words arrive: once an agent is writing, its text
-          is a better indicator than any label, and leaving both would say the
-          same thing twice.
-        */}
-          {view.working
-            .filter((agent) => !streaming.has(agent))
-            .map((agent) => (
-              <article
-                key={`thinking:${agent}`}
-                className={`entry entry--${agent} entry--thinking`}
-              >
-                <span className="tick" aria-hidden="true" />
-                <span className="speaker">{agent}</span>
-                <p className="said thinking" role="status">
-                  <span className="thinking-word">{t('conversation.thinking')}</span>
-                  <span className="thinking-dots" aria-hidden="true">
-                    <i />
-                    <i />
-                    <i />
-                  </span>
-                </p>
-              </article>
-            ))}
+          {/* History: everything said before the question now being answered. */}
+          {(currentTurn === undefined ? view.messages : view.messages.slice(0, turnAt)).map(entry)}
+
+          {currentTurn === undefined ? (
+            // Nothing has been asked yet, so there is no turn to pin — an agent
+            // can still be working, and says so at the foot as it always did.
+            thinking
+          ) : (
+            /*
+              The current turn, with its question held at the top.
+
+              What you asked is the thing the whole reply is measured against, and
+              a long answer used to push it out of the window within a paragraph —
+              leaving a screen of prose with no visible sign of what it was for.
+              Pinned, it stays the heading of its own answer until you ask the next
+              thing, which is when the heading should change.
+            */
+            <div className="turn" ref={turn}>
+              <div className="turn-head" data-turn={currentTurn.key}>
+                {/* The rail passes behind an opaque header, so the header carries
+                    its own length of it — otherwise the line breaks at the pin. */}
+                <div className="rail rail--turn" aria-hidden="true" />
+                {entry(currentTurn, turnAt)}
+                {thinking}
+              </div>
+              {view.messages.slice(turnAt + 1).map((m, i) => entry(m, turnAt + 1 + i))}
+              {/*
+                Room for the question to rise into, and for the pin to hold it
+                there. Inside the turn because a pinned header travels only
+                within its own block; sized in `makeRoom`, which is the only
+                thing that knows how much of the view is still empty.
+              */}
+              <div className="turn-tail" ref={tail} aria-hidden="true" />
+            </div>
+          )}
         </div>
       </div>
 
