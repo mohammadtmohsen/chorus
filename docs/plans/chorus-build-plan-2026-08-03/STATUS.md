@@ -1864,3 +1864,29 @@ macOS code signing` while what shipped kept the Electron binary's own linker
   Developer ID and this is not notarized (M9). The difference is that the
   rejection is now overridable — `xattr -dr com.apple.quarantine`, which the
   release notes lead with because it is the one instruction that always works.
+
+- **2026-08-06 — `pnpm app:install`, because the dev loop is daily.** The v0.1.1
+  fix made the refusal overridable, not absent: every downloaded build still
+  produces "Apple could not verify Chorus.app", and until M9 it always will.
+  Overriding it by hand on every build is the wrong thing to do daily — it
+  trains the reflex of dismissing exactly the dialog that is worth reading.
+
+  `com.apple.quarantine` is set by the downloader, not by macOS at large, so an
+  app that goes disk → disk never carries it, and Gatekeeper never runs the
+  notarization check that produces the dialog. `build/install-local.mjs`
+  `ditto`s `release/mac-arm64/Chorus.app` into `/Applications` directly;
+  `package:dir` packs with `--dir`, skipping dmg assembly the local loop never
+  reads. Verified: `xattr` shows only `com.apple.provenance`, seal verifies
+  clean, and the binary launches.
+
+  This changes nothing about distribution — it removes the one input that makes
+  the gate fire, on this machine. Anything handed to someone else still needs a
+  Developer ID and notarization, and the release notes still lead with `xattr`.
+
+  Three guards, because the script deletes a path under `/Applications`: it
+  refuses a source that is already quarantined (that would mean a downloaded
+  build, installed silently broken), it refuses a destination whose
+  `CFBundleIdentifier` is not `dev.chorus.desktop` (a `productName` typo would
+  otherwise delete another vendor's app), and it asks a running instance to
+  quit via AppleScript rather than killing it — there is a SQLite event store
+  and live agent subprocesses on the other side of that.

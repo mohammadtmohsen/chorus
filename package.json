@@ -23,7 +23,8 @@
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test",
     "clean": "turbo run clean && rm -rf node_modules",
     "e2e": "pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e",
-    "package": "pnpm --filter @chorus/desktop run package"
+    "package": "pnpm --filter @chorus/desktop run package",
+    "app:install": "pnpm --filter @chorus/desktop run app:install"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
