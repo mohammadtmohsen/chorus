@@ -33,6 +33,17 @@ export function App(): React.JSX.Element {
     profileId: 'read-only',
   })
   const [sessions, setSessions] = useState<SessionInfo[]>([])
+  /*
+   * Which pane your keystrokes belong to.
+   *
+   * Held here rather than read from `:focus-within`, because the question it
+   * answers is "who may take the caret", and that has to be answerable while
+   * nothing is focused at all — between a card unmounting and the composer
+   * getting the caret back, focus is on `body` and every pane would look
+   * equally entitled to it. Null until you touch one; the first pane to mount
+   * claims it, which is the one a new launch drops you into.
+   */
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
@@ -169,6 +180,9 @@ export function App(): React.JSX.Element {
           ...current,
           { conversationId, participants, cwd: startedIn, profileId: profile, title },
         ])
+        // You opened it to type in it, so it becomes the active pane — which is
+        // also what lets it take the caret without that counting as theft.
+        setActiveId(conversationId)
         // Kept, not cleared: the next session is usually in the same place, and
         // retyping the path is the kind of thing that stops you opening a second.
         setDefaults((current) => ({ ...current, cwd: startedIn }))
@@ -422,10 +436,28 @@ export function App(): React.JSX.Element {
 
       {/* Capped at four; the stylesheet steps it down as the window narrows. */}
       <main className="grid" data-count={Math.min(sessions.length, 4)}>
-        {sessions.map((session) => (
+        {sessions.map((session, index) => (
           <Session
             key={session.conversationId}
             session={session}
+            /*
+             * Exactly one pane is active, and a fallback keeps it that way.
+             *
+             * When the active pane is closed its id lingers until something
+             * claims it, so the first pane stands in — otherwise a burst of
+             * agent activity would arrive with no pane entitled to focus and
+             * every card would decline to take it.
+             */
+            active={
+              activeId === null || !sessions.some((s) => s.conversationId === activeId)
+                ? index === 0
+                : activeId === session.conversationId
+            }
+            onActivate={() => {
+              setActiveId((current) =>
+                current === session.conversationId ? current : session.conversationId
+              )
+            }}
             dragging={dragging}
             onDragStart={(id) => {
               dragging.current = id

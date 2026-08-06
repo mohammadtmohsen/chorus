@@ -507,19 +507,34 @@ export const specs = [
       try {
         await started(app)
 
-        // Claude is the agent whose AskUserQuestion tool this path serves.
-        const added = await app.evaluate(`(() => {
-          const btn = Array.from(document.querySelectorAll('.voices--pane .voice'))
-            .find(b => b.textContent.trim() === 'claude')
-          if (!btn || btn.disabled) return 'unavailable'
-          if (btn.dataset.on === 'true') return 'already here'
-          btn.click()
-          return 'clicked'
-        })()`)
-        if (added === 'unavailable') {
+        /*
+         * Claude is the agent whose AskUserQuestion tool this path serves.
+         *
+         * Waited for rather than sampled. The chip is disabled until the probe
+         * that finds the CLIs comes back, so reading `disabled` on the first
+         * frame calls an installed agent missing — and the spec then skips
+         * itself and reports green, which is the one outcome worse than failing.
+         */
+        const chip = `Array.from(document.querySelectorAll('.voices--pane .voice'))
+          .find(b => b.textContent.trim() === 'claude')`
+        let usable = true
+        try {
+          await app.until(`(() => { const b = ${chip}; return !!b && !b.disabled })()`, {
+            timeout: 60_000,
+            label: 'the claude chip settled',
+          })
+        } catch {
+          usable = false
+        }
+        if (!usable) {
           assert(true, 'claude is not installed on this machine, and nothing is claimed')
           return
         }
+        await app.evaluate(`(() => {
+          const btn = ${chip}
+          if (btn.dataset.on !== 'true') btn.click()
+          return true
+        })()`)
         await app.until(
           `Array.from(document.querySelectorAll('.voices--pane .voice'))
              .some(b => b.textContent.trim() === 'claude' && b.dataset.on === 'true')`,
@@ -576,12 +591,25 @@ export const specs = [
         })
         assert(true, 'answering clears the card')
 
-        // The point of the whole path: the agent is unblocked and has the answer.
-        await app.until(
-          `Array.from(document.querySelectorAll('.entry--claude')).some(e => /red/i.test(e.innerText))`,
-          { timeout: 180_000, label: 'the agent received the answer' }
+        /*
+         * The point of the whole path: the agent is unblocked, and it was the
+         * answer that unblocked it.
+         *
+         * Asserted as "the turn finished and nothing expired" rather than by
+         * looking for the chosen word in the reply. An agent is free to
+         * acknowledge a choice without repeating it, and a spec that requires it
+         * to fails on a turn of phrase — which says nothing about whether the
+         * answer arrived. The deadline is the thing being ruled out, and it
+         * writes itself into the transcript when it fires.
+         */
+        await app.until(`!document.querySelector('.send--stop')`, {
+          timeout: 180_000,
+          label: 'the agent finished its turn',
+        })
+        const expired = await app.evaluate(
+          `Array.from(document.querySelectorAll('.entry--system')).some(e => /unanswered in time/.test(e.innerText))`
         )
-        assert(true, 'and the answer reached the agent, which is what was broken')
+        assert(expired === false, 'the answer reached the agent rather than the deadline')
       } finally {
         await app.quit()
       }

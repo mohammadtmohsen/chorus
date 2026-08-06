@@ -25,6 +25,17 @@ import {
   type TranscriptView,
 } from './transcript.js'
 
+/**
+ * Things a click must not be taken away from.
+ *
+ * Anything focusable does its own job with the caret, and the two blocking
+ * cards are the sharp case: they focus a control so Enter can answer them, and
+ * a click landing anywhere inside one would hand the caret straight back to the
+ * composer and undo that.
+ */
+const FOCUS_KEEPS_ITS_OWN =
+  'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question'
+
 type AgentId = 'codex' | 'claude'
 const ALL_AGENTS: AgentId[] = ['codex', 'claude']
 
@@ -74,6 +85,15 @@ export function Session(props: {
   installed: readonly AgentId[]
   onParticipants: (participants: AgentId[]) => void
   onClose: (conversationId: string) => void
+  /**
+   * Whether this pane owns the caret.
+   *
+   * Only the active pane may take focus on its own. Everything that grabs it —
+   * an approval, a question, the composer after a queue clears — is worth doing
+   * in the pane you are working in and is theft anywhere else.
+   */
+  active: boolean
+  onActivate: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const { conversationId, participants, cwd, profileId, title } = props.session
@@ -117,6 +137,8 @@ export function Session(props: {
   /** Empty space at the foot of the current turn, so its question can reach the top. */
   const tail = useRef<HTMLDivElement | null>(null)
   const input = useRef<HTMLTextAreaElement | null>(null)
+  /** Read once: whether this pane was the active one at the moment it mounted. */
+  const activeOnMount = useRef(props.active)
 
   useEffect(
     () =>
@@ -135,7 +157,12 @@ export function Session(props: {
      * Mount is the right moment rather than every render: this component is
      * keyed by conversation, so it runs exactly once per session — a pane that
      * already exists never steals the caret back from one you are using.
+     *
+     * Still only if it is the active one. Restoring four panes at launch mounts
+     * four of these at once, and without the guard the caret landed in whichever
+     * happened to finish last rather than in the pane you are looking at.
      */
+    if (!activeOnMount.current) return
     input.current?.focus()
   }, [])
 
@@ -421,6 +448,28 @@ export function Session(props: {
     input.current?.focus()
   }, [selected])
 
+  /*
+   * Sent, and nothing has come back yet.
+   *
+   * `working` is driven by `turn.started`, which the agent emits once it has
+   * actually begun — and starting a session, spinning up a CLI and accepting the
+   * message all happen first. For as long as that took, the transcript showed
+   * your message and then nothing, which is indistinguishable from a message
+   * that went nowhere. This fills exactly that gap and gets out of the way the
+   * moment the agent speaks for itself.
+   */
+  const [awaiting, setAwaiting] = useState(false)
+
+  useEffect(() => {
+    /*
+     * Cleared by the agent starting, or by anything the system had to say —
+     * an error or a refusal arrives as a notice, and the row must not outlive
+     * the turn it was waiting for.
+     */
+    if (view.working.length === 0 && view.messages.at(-1)?.actor !== 'system') return
+    setAwaiting(false)
+  }, [view.working.length, view.messages])
+
   const send = useCallback(() => {
     /*
      * The paths join the message on the way out, not while you are writing it.
@@ -437,18 +486,24 @@ export function Session(props: {
     following.current = true
     setDraft('')
     setAttached([])
-    window.chorus.sendMessage({ conversationId, text }).catch(fail(setError))
+    setAwaiting(true)
+    window.chorus.sendMessage({ conversationId, text }).catch((error: unknown) => {
+      // Nothing is coming: the message never left, so the row would be waiting
+      // for a turn that will not start.
+      setAwaiting(false)
+      fail(setError)(error)
+    })
   }, [conversationId, draft, attached])
 
   const decide = useCallback(
-    (approval: PendingApproval, outcome: 'allow' | 'deny') => {
+    (approval: PendingApproval, outcome: 'allow' | 'deny', scope: 'once' | 'session' = 'once') => {
       window.chorus
         .decideApproval({
           conversationId,
           agentId: approval.agentId === 'claude' ? 'claude' : 'codex',
           approvalId: approval.approvalId,
           outcome,
-          scope: 'once',
+          scope,
         })
         .catch(fail(setError))
     },
@@ -502,8 +557,10 @@ export function Session(props: {
     }
     if (!hadApprovals.current) return
     hadApprovals.current = false
-    input.current?.focus()
-  }, [queued])
+    // Only where you are working. In a background pane this used to reach across
+    // and pull the caret out of the sentence you were typing.
+    if (props.active) input.current?.focus()
+  }, [queued, props.active])
 
   /**
    * One entry, drawn the same wherever it falls.
@@ -547,6 +604,31 @@ export function Session(props: {
    * better indicator than any label, and leaving both would say the same thing
    * twice.
    */
+  /*
+   * Who will answer is not ours to say.
+   *
+   * Mentions are routed by the orchestrator, so at this moment the pane knows a
+   * message went out and nothing more. With one agent in the room there is no
+   * ambiguity and it is named; with two, naming either would be a guess, and a
+   * guess about who is working is worse than an honest unattributed wait.
+   */
+  const soleAgent = participants.length === 1 ? participants[0] : undefined
+  const waitingRow =
+    awaiting && view.working.length === 0 ? (
+      <article key="awaiting" className={`entry entry--${soleAgent ?? 'system'} entry--thinking`}>
+        <span className="tick" aria-hidden="true" />
+        <span className="speaker">{soleAgent ?? ''}</span>
+        <p className="said thinking" role="status">
+          <span className="thinking-word">{t('conversation.waiting')}</span>
+          <span className="thinking-dots" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+        </p>
+      </article>
+    ) : null
+
   const thinking = view.working
     .filter((agent) => !streaming.has(agent))
     .map((agent) => (
@@ -572,7 +654,35 @@ export function Session(props: {
       // to address it — a driver, a bug report, the element inspector.
       data-conversation={conversationId}
       data-lifted={props.lifted}
+      data-active={props.active}
       aria-label={t('conversation.sessionLabel', { path: cwd })}
+      /*
+       * Touching a pane makes it yours, before anything else happens.
+       *
+       * `pointerdown` rather than `click`: it lands before focus moves, so a
+       * card that focuses itself on the way in is already doing so in a pane
+       * that counts as active. Capture, so it still fires when the press was on
+       * a control that stops propagation.
+       */
+      onPointerDownCapture={props.onActivate}
+      // Tab, or a click the pointer handler did not see, is also a claim.
+      onFocusCapture={props.onActivate}
+      onClick={(e) => {
+        /*
+         * Clicking the body puts the caret in the composer — but not at the
+         * cost of what the click was actually for.
+         *
+         * Two things are left alone. A control does its own job, and yanking
+         * focus off an approval's Allow button or a question's options would
+         * make the card unanswerable by keyboard the moment you clicked it. And
+         * a selection is the beginning of quoting a passage; stealing the caret
+         * mid-drag would empty it before the offer could be taken.
+         */
+        if (e.target instanceof Element && e.target.closest(FOCUS_KEEPS_ITS_OWN) !== null) return
+        const selection = window.getSelection()
+        if (selection !== null && !selection.isCollapsed) return
+        input.current?.focus()
+      }}
       onDragOver={(e) => {
         // Only a pane being dragged counts; a file dropped from Finder is not a
         // reorder, and preventing default on it would swallow it silently.
@@ -880,7 +990,10 @@ export function Session(props: {
           {currentTurn === undefined ? (
             // Nothing has been asked yet, so there is no turn to pin — an agent
             // can still be working, and says so at the foot as it always did.
-            thinking
+            <>
+              {thinking}
+              {waitingRow}
+            </>
           ) : (
             /*
               The current turn, with its question held at the top.
@@ -898,6 +1011,7 @@ export function Session(props: {
                 <div className="rail rail--turn" aria-hidden="true" />
                 {entry(currentTurn, turnAt)}
                 {thinking}
+                {waitingRow}
               </div>
               {view.messages.slice(turnAt + 1).map((m, i) => entry(m, turnAt + 1 + i))}
               {/*
@@ -993,8 +1107,12 @@ export function Session(props: {
             key={current.approvalId}
             approval={current}
             waiting={view.approvals.length - 1}
+            active={props.active}
             onAllow={() => {
               decide(current, 'allow')
+            }}
+            onAllowAlways={() => {
+              decide(current, 'allow', 'session')
             }}
             onDeny={() => {
               decide(current, 'deny')
@@ -1012,6 +1130,7 @@ export function Session(props: {
             key={asking.userInputId}
             request={asking}
             waiting={view.questions.length - 1}
+            active={props.active}
             onAnswer={(answers) => {
               answerQuestion(asking, 'answered', answers)
             }}
@@ -1432,12 +1551,15 @@ const OTHER = '\u0000other'
 function QuestionCard({
   request,
   waiting,
+  active,
   onAnswer,
   onDismiss,
 }: {
   request: PendingQuestion
   /** How many more sets are queued behind this one. */
   waiting: number
+  /** Whether this pane owns the caret; a background card must not take it. */
+  active: boolean
   onAnswer: (answers: { questionId: string; values: string[] }[]) => void
   onDismiss: () => void
 }): React.JSX.Element {
@@ -1455,6 +1577,8 @@ function QuestionCard({
   }
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [typed, setTyped] = useState<Record<string, string>>({})
+  /** Which question of the set is on screen; a set of one never shows it. */
+  const [step, setStep] = useState(0)
 
   /*
    * The first control takes focus as the card appears, so the keyboard can
@@ -1462,8 +1586,9 @@ function QuestionCard({
    * makes, for the same reason: the agent is stopped until this is answered.
    */
   useEffect(() => {
+    if (!active) return
     first.current?.focus()
-  }, [request.userInputId])
+  }, [request.userInputId, active])
 
   /** What this question currently answers, in the array shape the wire expects. */
   const valuesFor = (q: QuestionField): string[] => {
@@ -1474,11 +1599,23 @@ function QuestionCard({
     )
   }
 
-  const answered = request.questions.every((q) => valuesFor(q).length > 0)
+  /** Complete enough to move on from: this question has something to send. */
+  const done = (q: QuestionField): boolean => valuesFor(q).length > 0
+  const answered = request.questions.every(done)
+  const last = step >= request.questions.length - 1
+  const asked = request.questions[step]
 
   const toggle = (q: QuestionField, value: string): void => {
     setPicked((current) => {
       const chosen = current[q.id] ?? []
+      /*
+       * One choice replaces, several accumulate.
+       *
+       * Straight from the provider's own flag rather than from how many options
+       * arrived: a single-select question with four options and a multi-select
+       * with four look identical from here, and guessing would silently send
+       * one answer where the agent expected a list.
+       */
       if (!q.multiSelect) return { ...current, [q.id]: chosen.includes(value) ? [] : [value] }
       return {
         ...current,
@@ -1486,6 +1623,12 @@ function QuestionCard({
       }
     })
   }
+
+  if (asked === undefined) return <></>
+
+  const chosen = picked[asked.id] ?? []
+  const free = asked.options.length === 0
+  const otherOpen = chosen.includes(OTHER)
 
   return (
     <section
@@ -1499,87 +1642,146 @@ function QuestionCard({
       <header className="question-head">
         <span className={`voice-dot voice--${request.agentId}`} aria-hidden="true" />
         <strong>{t('question.asking', { agent: request.agentId })}</strong>
+        {/*
+          One question at a time, counted.
+
+          A set can hold four, and stacking them makes a wall you answer by
+          scrolling — the last one reached with the first already forgotten.
+          Stepping keeps the decision singular, which is the same reason the
+          approval queue draws only its head.
+        */}
+        {request.questions.length > 1 && (
+          <span className="question-step">
+            {t('question.step', { step: step + 1, total: request.questions.length })}
+          </span>
+        )}
         {waiting > 0 && (
           <span className="question-queue">{t('question.waiting', { count: waiting })}</span>
         )}
       </header>
 
-      {request.questions.map((q, index) => {
-        const chosen = picked[q.id] ?? []
-        const free = q.options.length === 0
-        const otherOpen = chosen.includes(OTHER)
-        return (
-          <div className="question-item" key={q.id}>
-            {q.header !== '' && <span className="question-label">{q.header}</span>}
-            <p className="question-ask">{q.question}</p>
-            {q.multiSelect && <span className="question-hint">{t('question.multiHint')}</span>}
+      <div className="question-item">
+        {asked.header !== '' && <span className="question-label">{asked.header}</span>}
+        <p className="question-ask">{asked.question}</p>
+        {asked.multiSelect && <span className="question-hint">{t('question.multiHint')}</span>}
 
-            {!free && (
-              <div className="question-options">
-                {q.options.map((option, optionIndex) => (
-                  <button
-                    key={option.label}
-                    ref={index === 0 && optionIndex === 0 ? takeFocus : undefined}
-                    type="button"
-                    className="question-option"
-                    aria-pressed={chosen.includes(option.label)}
-                    onClick={() => {
-                      toggle(q, option.label)
-                    }}
-                  >
-                    <span className="question-option-label">{option.label}</span>
-                    {option.description !== '' && (
-                      <span className="question-option-why">{option.description}</span>
-                    )}
-                  </button>
-                ))}
-                {q.allowOther && (
-                  <button
-                    type="button"
-                    className="question-option"
-                    aria-pressed={otherOpen}
-                    onClick={() => {
-                      toggle(q, OTHER)
-                    }}
-                  >
-                    <span className="question-option-label">{t('question.other')}</span>
-                  </button>
-                )}
-              </div>
-            )}
-
-            {(free || otherOpen) && (
-              <input
-                ref={index === 0 && free ? takeFocus : undefined}
-                className="question-text"
-                // A secret is never echoed, and the orchestrator strips it from
-                // the log before it is written rather than after.
-                type={q.isSecret ? 'password' : 'text'}
-                value={typed[q.id] ?? ''}
-                placeholder={free ? t('question.freePlaceholder') : t('question.otherPlaceholder')}
-                onChange={(e) => {
-                  const { value } = e.target
-                  setTyped((current) => ({ ...current, [q.id]: value }))
+        {!free && (
+          /*
+           * Checkboxes or radios, said in the markup rather than only in a hint.
+           *
+           * The two behave differently under the pointer and must therefore look
+           * different before it is used: a reader who cannot tell a "pick one"
+           * from a "pick several" learns the difference by losing a selection
+           * they had already made. The roles carry the same distinction to a
+           * screen reader, which the shape alone would not.
+           */
+          <div
+            className="question-options"
+            role={asked.multiSelect ? 'group' : 'radiogroup'}
+            aria-label={asked.question}
+          >
+            {asked.options.map((option, optionIndex) => (
+              <button
+                key={option.label}
+                ref={optionIndex === 0 ? takeFocus : undefined}
+                type="button"
+                className="question-option"
+                role={asked.multiSelect ? 'checkbox' : 'radio'}
+                aria-checked={chosen.includes(option.label)}
+                onClick={() => {
+                  toggle(asked, option.label)
                 }}
-              />
+              >
+                <span
+                  className={`question-mark question-mark--${asked.multiSelect ? 'many' : 'one'}`}
+                  aria-hidden="true"
+                />
+                <span className="question-option-body">
+                  <span className="question-option-label">{option.label}</span>
+                  {option.description !== '' && (
+                    <span className="question-option-why">{option.description}</span>
+                  )}
+                </span>
+              </button>
+            ))}
+            {asked.allowOther && (
+              <button
+                type="button"
+                className="question-option"
+                role={asked.multiSelect ? 'checkbox' : 'radio'}
+                aria-checked={otherOpen}
+                onClick={() => {
+                  toggle(asked, OTHER)
+                }}
+              >
+                <span
+                  className={`question-mark question-mark--${asked.multiSelect ? 'many' : 'one'}`}
+                  aria-hidden="true"
+                />
+                <span className="question-option-body">
+                  <span className="question-option-label">{t('question.other')}</span>
+                </span>
+              </button>
             )}
-
-            {q.isSecret && <span className="question-hint">{t('question.secretNote')}</span>}
           </div>
-        )
-      })}
+        )}
+
+        {(free || otherOpen) && (
+          <input
+            ref={free ? takeFocus : undefined}
+            className="question-text"
+            // A secret is never echoed, and the orchestrator strips it from the
+            // log before it is written rather than after.
+            type={asked.isSecret ? 'password' : 'text'}
+            value={typed[asked.id] ?? ''}
+            placeholder={free ? t('question.freePlaceholder') : t('question.otherPlaceholder')}
+            onChange={(e) => {
+              const { value } = e.target
+              setTyped((current) => ({ ...current, [asked.id]: value }))
+            }}
+          />
+        )}
+
+        {asked.isSecret && <span className="question-hint">{t('question.secretNote')}</span>}
+      </div>
 
       <div className="question-actions">
-        <button
-          type="button"
-          className="btn btn--go"
-          disabled={!answered}
-          onClick={() => {
-            onAnswer(request.questions.map((q) => ({ questionId: q.id, values: valuesFor(q) })))
-          }}
-        >
-          {t('question.send')}
-        </button>
+        {step > 0 && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setStep((current) => current - 1)
+            }}
+          >
+            {t('question.back')}
+          </button>
+        )}
+        {last ? (
+          <button
+            type="button"
+            className="btn btn--go"
+            disabled={!answered}
+            onClick={() => {
+              onAnswer(request.questions.map((q) => ({ questionId: q.id, values: valuesFor(q) })))
+            }}
+          >
+            {t('question.send')}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--go"
+            // Answer before moving on: a skipped question would arrive at the
+            // agent as an empty list, which reads as a choice rather than a gap.
+            disabled={!done(asked)}
+            onClick={() => {
+              setStep((current) => current + 1)
+            }}
+          >
+            {t('question.next')}
+          </button>
+        )}
         <button type="button" className="btn" onClick={onDismiss}>
           {t('question.dismiss')}
         </button>
@@ -1591,13 +1793,19 @@ function QuestionCard({
 function ApprovalCard({
   approval,
   waiting,
+  active,
   onAllow,
+  onAllowAlways,
   onDeny,
 }: {
   approval: PendingApproval
   /** How many more are queued behind this one. Counted so the card can say so. */
   waiting: number
+  /** Whether this pane owns the caret; a background card must not take it. */
+  active: boolean
   onAllow: () => void
+  /** Grants it for the rest of the session, so the same ask stops coming back. */
+  onAllowAlways: () => void
   onDeny: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -1613,8 +1821,9 @@ function ApprovalCard({
    * React reuses this instance.
    */
   useEffect(() => {
+    if (!active) return
     allow.current?.focus()
-  }, [approval.approvalId])
+  }, [approval.approvalId, active])
 
   return (
     <section
@@ -1664,6 +1873,21 @@ function ApprovalCard({
           }}
         >
           {t('approval.allowOnce')}
+        </button>
+        {/*
+          Granted for the session, not remembered past it.
+          
+          The same ask arriving four times in a row is the commonest way an
+          approval queue becomes something you stop reading, which is the
+          failure mode the whole card exists to avoid. Scoped to the session
+          because a permission that outlived the window would be a policy
+          change, and those are made in Settings where they can be seen.
+          
+          Deliberately not the focused button: it is the wider grant, so it
+          costs a deliberate press rather than the Enter that is already armed.
+        */}
+        <button type="button" className="btn" onClick={onAllowAlways}>
+          {t('approval.allowAlways')}
         </button>
         <button type="button" className="btn" onClick={onDeny}>
           {t('approval.deny')}

@@ -38,7 +38,8 @@
     "endLabel": "End this session",
     "askAboutThis": "Ask about this",
     "endConfirm": "An agent is working — press again to end this session",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "waiting": "waiting"
   },
   "settings": {
     "open": "Settings",
@@ -145,10 +146,12 @@
     "waiting_other": "{{count}} more waiting",
     "allowOnce": "Allow once",
     "deny": "Deny",
-    "enterHint": "Enter to allow"
+    "enterHint": "Enter to allow",
+    "allowAlways": "Allow for this session"
   },
   "question": {
     "asking": "{{agent}} is asking",
+    "step": "{{step}} of {{total}}",
     "waiting_one": "{{count}} more waiting",
     "waiting_other": "{{count}} more waiting",
     "multiHint": "Choose as many as apply",
@@ -156,6 +159,8 @@
     "otherPlaceholder": "Type your own answer",
     "freePlaceholder": "Type your answer",
     "secretNote": "Kept out of the log",
+    "back": "Back",
+    "next": "Next",
     "send": "Send answer",
     "dismiss": "Dismiss"
   }

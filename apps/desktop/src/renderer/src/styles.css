@@ -482,6 +482,41 @@ body {
   border-bottom-color: color-mix(in srgb, var(--bone) 30%, var(--line));
 }
 
+/*
+ * The pane your keystrokes belong to.
+ *
+ * `:focus-within` alone could not say this. Focus is on `body` for the moment
+ * between a card unmounting and the composer taking the caret back, and during
+ * it every pane looked equally unclaimed — so the one mark that has to stay put
+ * is the one that flickered. This follows the app's own idea of which pane is
+ * active, which survives having nothing focused at all.
+ *
+ * Read at the edge rather than across the whole pane: three of these sit side by
+ * side, and a tint over an entire transcript would fight the text it is behind.
+ */
+.pane[data-active='true'] {
+  background: color-mix(in srgb, var(--bone) 2%, var(--sunken));
+}
+
+.pane[data-active='true'] .pane-head {
+  border-bottom-color: color-mix(in srgb, var(--bone) 34%, var(--line));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--bone) 45%, transparent);
+}
+
+/*
+ * Only worth marking when there is something to tell apart.
+ *
+ * With one pane open the highlight would be permanent chrome saying nothing —
+ * there is nowhere else the caret could be.
+ */
+.grid[data-count='1'] .pane[data-active='true'] {
+  background: var(--sunken);
+}
+
+.grid[data-count='1'] .pane[data-active='true'] .pane-head {
+  box-shadow: none;
+}
+
 .pane-head {
   display: flex;
   align-items: center;
@@ -1294,17 +1329,26 @@ body {
   letter-spacing: 0;
 }
 
-/* A set can hold several questions; each is its own block so a long one cannot
-   be mistaken for the answer options of the one above it. */
+/* One question of the set, whichever step you are on. */
 .question-item {
   display: flex;
   flex-direction: column;
   gap: var(--step);
 }
 
-.question-item + .question-item {
-  padding-top: calc(var(--step) * 2);
-  border-top: 1px solid var(--line);
+/* How far through a set you are. Beside the queue count, which answers the
+   different question of how many sets are behind this one. */
+.question-step {
+  margin-left: auto;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Both are pushed right, so the pair reads as one status group rather than
+   fighting for the same edge. */
+.question-step + .question-queue {
+  margin-left: calc(var(--step) * 2);
 }
 
 .question-label {
@@ -1343,8 +1387,8 @@ body {
  */
 .question-option {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: flex-start;
+  gap: calc(var(--step) * 2);
   padding: calc(var(--step) * 2) calc(var(--step) * 3);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1361,9 +1405,49 @@ body {
 
 /* Chosen, said twice: the border carries it at a glance and the tint holds up
    where a hairline does not — on a wide pane, or for a tired reader. */
-.question-option[aria-pressed='true'] {
+.question-option[aria-checked='true'] {
   border-color: var(--voice);
   background: color-mix(in srgb, var(--voice) 14%, var(--sunken));
+}
+
+.question-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/*
+ * Square for several, round for one.
+ *
+ * The shape is the whole point: "pick one" and "pick as many as apply" behave
+ * differently the moment you click a second option, and a reader who cannot see
+ * which they are in learns it by losing a choice they had already made. The
+ * hint above says it in words; this says it where the hand is.
+ */
+.question-mark {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  border: 1px solid color-mix(in srgb, var(--bone) 35%, var(--line));
+  background: transparent;
+}
+
+.question-mark--one {
+  border-radius: 50%;
+}
+
+.question-mark--many {
+  border-radius: 3px;
+}
+
+/* Filled from the middle, so the mark reads at a glance rather than needing a
+   glyph that would not fit at this size. */
+.question-option[aria-checked='true'] .question-mark {
+  border-color: var(--voice);
+  box-shadow: inset 0 0 0 3px var(--sunken);
+  background: var(--voice);
 }
 
 .question-option-label {
