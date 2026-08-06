@@ -1148,6 +1148,94 @@ export const specs = [
   },
 
   {
+    name: 'steps fold to a line, and the answer reads as the answer',
+    /*
+     * A turn is mostly work. Every command used to render as its own
+     * syntax-highlighted block, so a turn that ran four of them buried the
+     * reply under four blocks — and the reply was set in the same type at the
+     * same indent as everything above it.
+     *
+     * Folded rather than folding-on-completion: a transcript that reflowed the
+     * moment an agent stopped would move the pinned question, resize the rail,
+     * and change the measurement `makeRoom` uses to find the bottom.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        const conversationId = await app.evaluate(
+          `document.querySelector('${PANE}').dataset.conversation`
+        )
+        // Read-only is the default and refuses to run anything.
+        await app.evaluate(
+          `window.chorus.setProfile({ conversationId: ${JSON.stringify(conversationId)}, profileId: 'trusted' }).then(() => true)`
+        )
+        await say(app, 'Run these three bash commands one at a time: pwd ; date ; echo hello. Then reply with a one sentence summary.')
+        await app.until(`document.querySelectorAll('.command-fold').length >= 2`, {
+          timeout: 240_000,
+          label: 'the commands ran',
+        })
+        await app.until(`!document.querySelector('.send--stop')`, {
+          timeout: 240_000,
+          label: 'the turn finished',
+        })
+        await app.settle()
+
+        const folds = await app.evaluate(`(() => {
+          const all = [...document.querySelectorAll('.command-fold')]
+          return {
+            count: all.length,
+            heights: all.map(f => Math.round(f.getBoundingClientRect().height)),
+            expanded: document.querySelectorAll('.command-fold pre.command').length,
+          }
+        })()`)
+        assert(folds.count >= 2, `several commands ran, got ${folds.count}`)
+        assert(
+          folds.expanded === 0,
+          `every one of them is folded, ${folds.expanded} were not`
+        )
+        assert(
+          folds.heights.every((h) => h < 40),
+          `and each is a line rather than a block, got ${folds.heights.join(',')}`
+        )
+
+        // The fold is a fold, not a truncation.
+        await app.evaluate(`(() => { document.querySelector('.command-summary').click(); return true })()`)
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelectorAll('.command-fold pre.command').length`)) === 1,
+          'and opens on click'
+        )
+
+        const answer = await app.evaluate(`(() => {
+          const final = document.querySelector('.entry[data-final="true"]')
+          if (!final) return null
+          const agentMessages = [...document.querySelectorAll('.entry--message')]
+            .filter(e => e.classList.contains('entry--codex') || e.classList.contains('entry--claude'))
+          const said = getComputedStyle(final.querySelector('.said'))
+          return {
+            isLast: final === agentMessages.at(-1),
+            count: document.querySelectorAll('.entry[data-final="true"]').length,
+            /* Must out-rank \`data-answer\`, which every reply after a block of
+               thinking already carries — a filled panel, not a hairline. */
+            border: said.borderLeftWidth,
+            filled: said.backgroundColor !== 'rgba(0, 0, 0, 0)',
+          }
+        })()`)
+        assert(answer !== null, 'the finished turn marks a final answer')
+        assert(answer.count === 1, `exactly one, got ${String(answer?.count)}`)
+        assert(answer.isLast, 'and it is the last thing the agent said')
+        assert(
+          answer.filled && answer.border === '3px',
+          `drawn as a panel rather than another bordered line (${String(answer?.border)}, filled ${String(answer?.filled)})`
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
     name: 'quits cleanly with an agent mid-turn',
     // Shutdown closed the database while event pumps were still writing, which
     // surfaced as an unhandled rejection.

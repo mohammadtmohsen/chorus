@@ -1135,6 +1135,29 @@ body {
   border-left: 2px solid color-mix(in srgb, var(--voice) 55%, transparent);
 }
 
+/*
+ * The answer, and unmistakably the answer.
+ *
+ * It has to out-shout `data-answer` directly above, which every reply
+ * following a block of thinking already wears — and it sits after it for
+ * exactly that reason, since the two match on specificity. A hairline in a
+ * slightly stronger colour is not a difference anyone would notice at the foot
+ * of a turn full of steps, so this changes register instead: a filled panel
+ * with the voice down its edge. The conclusion is a thing on the page rather
+ * than one more line in the column.
+ */
+.entry[data-final='true'] .said {
+  padding: calc(var(--step) * 3) calc(var(--step) * 4);
+  border-left: 3px solid var(--voice);
+  border-radius: 0 calc(var(--step) * 2) calc(var(--step) * 2) 0;
+  background: color-mix(in srgb, var(--voice) 8%, var(--raised));
+}
+
+.entry[data-final='true'] .said .md-p,
+.entry[data-final='true'] .said .md-list {
+  color: var(--bone);
+}
+
 .entry--reasoning .tick {
   top: calc(var(--step) * 2.5);
   background: transparent;
@@ -1201,6 +1224,61 @@ body {
 .command {
   border-left: 2px solid var(--voice);
 }
+
+.command-fold {
+  display: grid;
+  gap: var(--step);
+  min-width: 0;
+}
+
+/*
+ * A step reads as one line of a list.
+ *
+ * Quieter than a message on purpose: this is the work, not the answer, and a
+ * turn is mostly work. The caret is the only affordance — the whole line is the
+ * hit target, because at this size a separate control would be most of it.
+ */
+.command-summary {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--step) * 2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-left: 2px solid var(--voice);
+  padding-left: calc(var(--step) * 3);
+  background: transparent;
+  color: var(--muted);
+  font: 12px var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-summary:hover,
+.command-summary:focus-visible {
+  color: var(--bone);
+  outline: none;
+}
+
+.command-caret {
+  flex: none;
+  color: var(--faint);
+}
+
+/* One line, however long the command is; the fold holds the rest. */
+.command-first {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-more {
+  flex: none;
+  color: var(--faint);
+  font-size: 10px;
+}
+
 
 .md-code {
   position: relative;

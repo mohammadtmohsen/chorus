@@ -671,10 +671,26 @@ export function Session(props: {
    * the pair, and splitting the list at the current turn must not make the first
    * message after the split forget what came before it.
    */
+  /*
+   * The answer the latest finished turn arrived at.
+   *
+   * Only while nothing is working: mid-turn there is no final message, and
+   * marking the newest one as final would move the mark down the transcript
+   * every time the agent spoke again. Only the newest, too — every agent
+   * message is some turn's conclusion, so marking them all marks nothing.
+   */
+  const finalKey =
+    view.busy || view.messages.length === 0
+      ? null
+      : (view.messages.findLast(
+          (m) => (m.actor === 'codex' || m.actor === 'claude') && m.kind === 'message'
+        )?.key ?? null)
+
   const entry = (message: TranscriptMessage, index: number): React.JSX.Element => (
     <Entry
       key={message.key}
       message={message}
+      final={message.key === finalKey}
       answersThinking={answersThinking(view.messages[index - 1], message)}
       onHandOff={
         // Only offered when there is somebody to hand to, and only for an

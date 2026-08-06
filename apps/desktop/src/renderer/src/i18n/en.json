@@ -21,6 +21,7 @@
     "placeholder": "Say something. Type @ to choose who answers.",
     "send": "Send",
     "steer": "Send — the agent keeps working and takes this in",
+    "moreLines": "+{{count}} more",
     "stop": "Stop",
     "stopAll": "Stop {{agents}}",
     "showThinking": "Show thinking",
