@@ -1,10 +1,12 @@
 # Status
 
 Phases 1–8 are in. The gates are green: `pnpm run typecheck`, `pnpm run lint`,
-`pnpm run test` (734 unit, 3 skipped), and `node e2e/run.mjs` — **all 14 specs
-passing**, including the two the rewrite caught real bugs with.
+`pnpm run test` (736 unit, 3 skipped), and `node e2e/run.mjs` — **all 18 specs
+passing**.
 
-Nothing is committed yet — all of this is working-tree change on `main`.
+On `feat/workspace-shell`, not pushed. The suite grew from 14 to 18 as the work
+went on: the sidenav's rename and reorder, its resize, mid-turn steering, and
+the folding of steps each arrived with the spec that pins them.
 
 ## Phase 1 done: headless layout core
 
@@ -176,7 +178,7 @@ harmless one (`null` → force-open) rather than the destructive one, and
 `open-sessions.ts` already calls this file a note to ourselves that costs
 nothing but a click.
 
-## Sidenav redesign — supersedes parts of Phase 4 and decision 3
+## Sidenav redesign — supersedes parts of Phase 4
 
 Asked for after the shell landed. What changed:
 
@@ -185,12 +187,25 @@ Asked for after the shell landed. What changed:
   usually repeated the only row beneath it — and grouping left nowhere for a
   dragged row to go. The `cwd` survives as the row's `title` tooltip and is
   still matched by search.
-- **A card.** Rounded 9px, inset 6px from the window, `--raised` on a full 1px
-  border. **This supersedes decision 3** for this one surface: the sidenav is
-  the only thing that is *beside* the work rather than part of it, so a radius
-  and a gap separate it from the editor without a heavier border. Panes, tabs
-  and sashes stay square, so the radius reads as "a different kind of thing"
-  rather than a style applied unevenly.
+- **A card.** Inset 6px from the window, `--raised` on a full 1px border, and
+  rounded on the token the rest of the app already uses.
+
+  This was recorded here for a while as "an exception to decision 3", which was
+  wrong twice over. The plan's line about Chorus being "a room drawn in 1px
+  lines" reads as a ban on curvature, but `main` already carried 53
+  `border-radius` rules — the composer, the user's own message, approval and
+  question cards, the mention menu, every chip. What is square is the
+  *structure*: panes, tabs, sashes, the grid. Content surfaces have always been
+  rounded. A sidenav card is content, so it needed no exception at all.
+
+  The real fault was the one not flagged: it shipped on 9px and 6px, beside an
+  existing `--radius: 7px` and its derived `calc(--radius * 2)` and
+  `calc(--radius - 2px)`. Two scales a pixel apart, indistinguishable on screen
+  and therefore never noticed, with a later change to the token silently
+  updating half of them. It now maps onto the scale — 14px for the card, the
+  same as the composer, 7px for the search field and icon buttons, 5px for a
+  session row — and the plan's wording says structure-versus-content rather than
+  claiming nothing is round.
 - **Full height.** `position: fixed`, 6px to 854px in an 860px window — 848px
   against the old 808px. It runs up behind the traffic lights, which is the
   usual macOS arrangement; `.workspace-sidebar-head` pads 26px down to clear

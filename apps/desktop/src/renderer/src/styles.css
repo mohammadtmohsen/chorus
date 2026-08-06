@@ -1149,7 +1149,7 @@ body {
 .entry[data-final='true'] .said {
   padding: calc(var(--step) * 3) calc(var(--step) * 4);
   border-left: 3px solid var(--voice);
-  border-radius: 0 calc(var(--step) * 2) calc(var(--step) * 2) 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: color-mix(in srgb, var(--voice) 8%, var(--raised));
 }
 
@@ -3078,7 +3078,7 @@ input::placeholder {
   /* Clips the head's bottom rule and the tree's scroll to the radius. */
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: calc(var(--step) * 3);
+  border-radius: calc(var(--radius) * 2);
   background: var(--raised);
   transform: translateX(0);
   transition: transform 300ms ease;
@@ -3164,7 +3164,7 @@ input::placeholder {
 .workspace-icon-button {
   width: 30px;
   height: 30px;
-  border-radius: calc(var(--step) * 2);
+  border-radius: var(--radius);
   font-size: 15px;
   line-height: 1;
 }
@@ -3180,7 +3180,7 @@ input::placeholder {
   height: 32px;
   padding: 0 calc(var(--step) * 3);
   border: 1px solid var(--line);
-  border-radius: calc(var(--step) * 2);
+  border-radius: var(--radius);
   background: var(--sunken);
   color: var(--bone);
   font: 13px var(--mono);
@@ -3219,7 +3219,7 @@ input::placeholder {
   margin-inline: calc(var(--step) * 2);
   padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
   border: 0;
-  border-radius: calc(var(--step) * 2);
+  border-radius: calc(var(--radius) - 2px);
   background: transparent;
   color: var(--faint);
   font-family: var(--mono);
@@ -3312,7 +3312,7 @@ input::placeholder {
   margin-inline: calc(var(--step) * 2);
   padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
   border: 1px solid var(--muted);
-  border-radius: calc(var(--step) * 2);
+  border-radius: calc(var(--radius) - 2px);
   background: var(--sunken);
   color: var(--bone);
   font: 14px var(--mono);
