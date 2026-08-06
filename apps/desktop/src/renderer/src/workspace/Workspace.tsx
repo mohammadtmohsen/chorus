@@ -922,19 +922,26 @@ function SidebarSession(props: {
               {pulse?.unread}
             </span>
           ) : null}
-          {/* Last, so the dots read as a status column rather than a bullet. */}
-          <span className="workspace-session-voices" aria-hidden="true">
-            {props.session.participants.map((agent) => (
-              <span className={`voice-dot voice--${agent}`} key={agent} />
-            ))}
-          </span>
         </span>
         {/*
           What the composer's own footer says about a session, for the sessions
-          you are not looking at: where it is pointed, and what it may do there.
-          The agents are the dots above rather than their names — at this width
-          the names cost a line and say what the colours already do.
+          you are not looking at: who is in it, where it is pointed, and what it
+          may do there.
+
+          Named rather than the bare dots this line replaced. A colour answers
+          "how many and which" only once you already know the mapping, and the
+          sidenav is where you look at sessions you have not opened — the one
+          place that knowledge cannot be assumed. The composer keeps the cast as
+          switches; these say who is here, they do not change it.
         */}
+        <span className="workspace-session-agents">
+          {props.session.participants.map((agent) => (
+            <span className={`workspace-session-voice voice--${agent}`} key={agent}>
+              <span className="voice-dot" aria-hidden="true" />
+              {agent}
+            </span>
+          ))}
+        </span>
         <span className="workspace-session-meta">
           <span className="workspace-session-path">{shortenPath(props.session.cwd)}</span>
           <span className="workspace-session-profile">{props.profileName}</span>

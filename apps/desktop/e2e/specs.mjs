@@ -619,12 +619,51 @@ export const specs = [
             path: row.querySelector('.workspace-session-path')?.textContent ?? null,
             profile: row.querySelector('.workspace-session-profile')?.textContent ?? null,
             actions: [...row.querySelectorAll('.workspace-session-action')].length,
+            agents: row.querySelectorAll('.workspace-session-voice').length,
             nestedButtons: main.querySelectorAll('button').length,
             actionsIdle: getComputedStyle(row.querySelector('.workspace-session-actions')).opacity,
             menus: document.querySelectorAll('.workspace-context-menu').length,
           }
         })()`)
         assert(card.path !== null && card.profile !== null, 'the row shows its path and profile')
+        assert(card.agents >= 1, `and who is in it, by name (${String(card.agents)})`)
+
+        /*
+         * Three lines, and every one of them fits at the narrowest the sidebar
+         * can be dragged to.
+         *
+         * On two lines the agents shared a row with the path and the profile,
+         * which overflowed a 240px card by 31px — the action buttons hold their
+         * width at rest, so the row does not jump when a pointer crosses it, and
+         * that is what squeezed it. A line each removed the need for the
+         * container query that had been shedding the agents' names to fit.
+         * Setting the variable stands in for the drag the resize spec covers.
+         */
+        const narrow = await app.evaluate(`(() => {
+          document.documentElement.style.setProperty('--sidebar', '240px')
+          const row = document.querySelector('.workspace-session-row')
+          const over = (s) => {
+            const e = row.querySelector(s)
+            return e.scrollWidth - e.clientWidth
+          }
+          return {
+            lines: [
+              over('.workspace-session-line'),
+              over('.workspace-session-agents'),
+              over('.workspace-session-meta'),
+            ],
+            namesStillShown:
+              getComputedStyle(row.querySelector('.workspace-session-voice')).fontSize !== '0px',
+          }
+        })()`)
+        assert(
+          narrow.lines.every((n) => n === 0),
+          `at 240px no line overflows (${narrow.lines.join(',')})`
+        )
+        assert(narrow.namesStillShown, 'and the agents keep their names')
+        await app.evaluate(
+          `(document.documentElement.style.removeProperty('--sidebar'), true)`
+        )
         assert(card.actions === 2, `Restart and End sit on it, got ${String(card.actions)}`)
         assert(card.nestedButtons === 0, 'and no button is nested inside another')
         assert(card.actionsIdle === '0', 'held back until the row is hovered or focused')
