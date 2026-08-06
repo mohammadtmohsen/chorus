@@ -162,7 +162,12 @@ export default tseslint.config(
   },
 
   {
-    files: ['**/*.config.{js,mjs,ts,mts}', '**/*.setup.ts'],
+    /*
+     * Build scripts and config files are not part of any tsconfig — they are
+     * run by node or by a bundler, never compiled — so the type-aware rules
+     * have no project to resolve them against.
+     */
+    files: ['**/*.config.{js,mjs,ts,mts}', '**/*.setup.ts', 'apps/vscode-extension/esbuild.mjs'],
     languageOptions: { parserOptions: { projectService: false, project: null } },
     rules: {
       ...tseslint.configs.disableTypeChecked.rules,

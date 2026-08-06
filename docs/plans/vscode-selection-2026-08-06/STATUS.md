@@ -1,6 +1,6 @@
 # Status — VS Code editor context
 
-Status: **Phase 2 done.** Plan approved; implementation in progress.
+Status: **Phase 3 done.** Plan approved; implementation in progress.
 
 ## Done
 
@@ -82,9 +82,48 @@ Lint also caught a real type-design flaw rather than a style nit: `#handleLine` 
 `string | null | 'closed'`, and since a window id is a string the sentinel was
 indistinguishable from a real id. It now returns a discriminated outcome.
 
+**Phase 3 done: the first-party VS Code extension.**
+
+`apps/vscode-extension` is a UI extension (`extensionKind: ["ui"]`, so Remote-SSH and
+containers keep it on the Mac) activated `onStartupFinished`. It scans
+`<tmp>/chorus-ide` for descriptors, PID-checks them, dials every live Chorus with capped
+exponential backoff, and rescans every 5s so a Chorus started after VS Code is still
+found. Workspace Trust is declared `limited`.
+
+The disclosure policy lives in `editor-context.ts`, which imports nothing from VS Code —
+that is what makes it testable directly rather than through a mock of the editor.
+`extension.ts` is the only file that knows what a `TextEditor` is, and its whole job is
+filling in structural shapes. Every ineligible branch returns `editor: null`, so a
+document from another project never reaches Chorus even as a name; `tooLarge` is the one
+refusal that still names the file, because the pill has to say which selection is the
+problem.
+
+`SelectionCache` implements the plan's narrow rule: absence of an editor is remembered,
+the wrong editor is not. Focus sitting in the terminal, the sidebar, or Chorus itself
+yields the last eligible in-project selection marked `cached`; a current editor that is
+outside the project or unsupported clears it, so an unrelated file can never fall back to
+an older in-project selection.
+
+Gate: `pnpm check` and `pnpm build` green — 673 tests (up from 623), 3 skipped. The
+bundle was smoke-loaded under a stubbed `vscode`: 552 KB CJS, `vscode` correctly external,
+`activate`/`deactivate` both exported.
+
+Two notes against the plan's own predictions:
+
+- `turbo.json` needed **no** change. Its `build`/`typecheck`/`test` tasks are defined
+  once for every workspace member, so the extension was covered the moment it had those
+  scripts. The plan overstated this.
+- `eslint.config.mjs` did need a change, but not for the predicted reason. Node globals
+  and the ambient `vscode` module were already fine. What broke was `esbuild.mjs`: it
+  belongs to no tsconfig, so the type-aware rules had no project to resolve it against.
+  It joins the existing config-file exemption.
+
+Lint also caught an `any` leak that would have violated the global rule: VS Code types
+`Extension.packageJSON` as `any`, so reading `.version` off it was unchecked. Narrowed
+rather than cast, and it degrades to `0.0.0` instead of putting `undefined` on the wire.
+
 ## Not started
 
-- Phase 3 — first-party VS Code extension
 - Phase 4 — scoped IPC, live context pill, and send-time composition
 - Phase 5 — VSIX distribution and project opening
 - Phase 6 — end-to-end, live, packaged-app, and visual verification

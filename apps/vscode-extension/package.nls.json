@@ -1,0 +1,4 @@
+{
+  "chorus.command.reconnect": "Reconnect to Chorus",
+  "chorus.trust.description": "In a restricted workspace Chorus reports that the window exists, but sends no file path, range, or text."
+}

@@ -1,0 +1,51 @@
+{
+  "name": "chorus-vscode",
+  "displayName": "Chorus",
+  "description": "Lets Chorus see the file and lines you have selected, for the project it already has open.",
+  "version": "0.4.0",
+  "private": true,
+  "publisher": "chorus",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "%chorus.trust.description%"
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "chorus.reconnect",
+        "title": "%chorus.command.reconnect%",
+        "category": "Chorus"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.mts",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@chorus/ide-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/vscode": "^1.94.0",
+    "esbuild": "^0.25.0"
+  }
+}
