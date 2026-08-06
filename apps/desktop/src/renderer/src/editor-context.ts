@@ -75,19 +75,27 @@ export function safeLanguageId(languageId: string): string {
 /**
  * The block that goes into the message.
  *
- * An empty selection contributes no code at all — the agent is told where the
- * cursor is and reads the file itself, which is both cheaper and more accurate
- * than pasting a line it can fetch.
+ * Normally this is the reference and nothing else. `attach.ts` sets the rule:
+ * Chorus hands agents **paths**, not attachments — the agent opens
+ * `src/a.ts:85` and reads it, with the surrounding context that no quotation
+ * could have carried anyway. Pasting the lines as well is decoration, and for a
+ * short selection it is a fenced block wrapped around a single bracket.
  *
- * A dirty buffer says so. The agent reads from disk, and for an unsaved file
- * that is not what the user is looking at; letting it assume otherwise is how
- * it confidently answers about the wrong version.
+ * The exception is an unsaved buffer, and it is not a preference. The agent
+ * reads from disk; for a dirty file that is not what the user is looking at, so
+ * the text is the only way it can see the version being asked about. Without it
+ * the agent answers confidently about the wrong content, with nothing to
+ * indicate it happened.
+ *
+ * An empty selection never contributes code either way: there is nothing
+ * selected to be unsaved, and the cursor line is enough to point at.
  */
 export function formatContextBlock(block: EditorBlock, labels: ContextLabels): string {
   const reference = formatReference(block)
   const suffix = block.isDirty ? ` (${labels.unsaved})` : ''
   const head = `${labels.heading}: \`${reference}\`${suffix}`
   if (block.isEmpty || block.text === '') return head
+  if (!block.isDirty) return head
 
   const fence = fenceFor(block.text)
   // No trimming anywhere: leading indentation is syntax, and a trailing newline

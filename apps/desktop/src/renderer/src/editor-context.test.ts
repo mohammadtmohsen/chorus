@@ -81,44 +81,58 @@ describe('safeLanguageId', () => {
 })
 
 describe('formatContextBlock', () => {
-  it('leads with the reference and fences the code', () => {
-    expect(formatContextBlock(block(), labels)).toBe(
-      'VS Code context: `src/a.ts:12-18`\n\n```typescript\nconst a = 1\n```'
+  /* The reference does the work: the agent opens the file and reads around the
+     lines, which no quotation could have carried. Pasting them as well is
+     decoration — and for a short selection, a fenced block around one bracket. */
+  it('sends the reference alone for a saved file', () => {
+    expect(formatContextBlock(block(), labels)).toBe('VS Code context: `src/a.ts:12-18`')
+  })
+
+  it('sends no code for a bare cursor', () => {
+    const cursor = block({ isEmpty: true, startLine: 5, endLine: 5, text: '' })
+    expect(formatContextBlock(cursor, labels)).toBe('VS Code context: `src/a.ts:5`')
+  })
+
+  /* The one exception, and not a preference: the agent reads from disk, so for
+     an unsaved buffer the text is the only way it can see the version being
+     asked about. */
+  it('carries the code when the buffer is unsaved', () => {
+    const dirty = block({ isDirty: true })
+    expect(formatContextBlock(dirty, labels)).toBe(
+      'VS Code context: `src/a.ts:12-18` (unsaved buffer)\n\n```typescript\nconst a = 1\n```'
     )
   })
 
   /* Indentation is syntax. `asQuote` would have trimmed this. */
   it('preserves leading indentation exactly', () => {
-    const indented = block({ text: '    if (x) {\n      return 1\n    }' })
+    const indented = block({ isDirty: true, text: '    if (x) {\n      return 1\n    }' })
     expect(formatContextBlock(indented, labels)).toContain(
       '\n    if (x) {\n      return 1\n    }\n'
     )
   })
 
   it('preserves trailing whitespace inside the selection', () => {
-    expect(formatContextBlock(block({ text: 'x  ' }), labels)).toContain('\nx  \n')
-  })
-
-  /* The agent reads from disk, and for an unsaved file that is not what the
-     user is looking at. */
-  it('says when the buffer is unsaved', () => {
-    expect(formatContextBlock(block({ isDirty: true }), labels)).toContain(
-      '`src/a.ts:12-18` (unsaved buffer)'
-    )
-  })
-
-  /* Pasting a line the agent can fetch itself is both costlier and less
-     accurate than telling it where to look. */
-  it('sends no code for a bare cursor', () => {
-    const cursor = block({ isEmpty: true, startLine: 5, endLine: 5, text: '' })
-    expect(formatContextBlock(cursor, labels)).toBe('VS Code context: `src/a.ts:5`')
+    expect(formatContextBlock(block({ isDirty: true, text: 'x  ' }), labels)).toContain('\nx  \n')
   })
 
   it('survives a selection that is itself a fenced block', () => {
-    const nested = block({ text: '```js\nconst a = 1\n```', languageId: 'markdown' })
+    const nested = block({
+      isDirty: true,
+      text: '```js\nconst a = 1\n```',
+      languageId: 'markdown',
+    })
     const out = formatContextBlock(nested, labels)
     expect(out).toContain('````markdown\n```js')
     expect(out.endsWith('```\n````')).toBe(true)
+  })
+
+  /* An unsaved file with nothing selected has no text to carry, and the cursor
+     line is enough to point at. */
+  it('sends no code for a bare cursor even when unsaved', () => {
+    const cursor = block({ isEmpty: true, isDirty: true, startLine: 5, endLine: 5, text: '' })
+    expect(formatContextBlock(cursor, labels)).toBe(
+      'VS Code context: `src/a.ts:5` (unsaved buffer)'
+    )
   })
 })
 
