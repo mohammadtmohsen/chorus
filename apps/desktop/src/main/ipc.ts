@@ -24,6 +24,7 @@ import {
 } from './ide-extension.js'
 import { probeAgents } from './agent-probe.js'
 import type { ChorusRuntime } from './runtime.js'
+import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
 import { previewFile, stashFile } from './stash.js'
 
@@ -149,8 +150,8 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'files:preview': (request: { path: string }) => Promise.resolve(previewFile(request.path)),
 
-    'conversation:reorder': (request: { order: string[] }) => {
-      runtime.reorderConversations(request.order)
+    'conversation:layout': (request: { order: string[]; workspace: WorkspaceSnapshot }) => {
+      runtime.setConversationLayout(request.order, request.workspace)
       return Promise.resolve(OK)
     },
 

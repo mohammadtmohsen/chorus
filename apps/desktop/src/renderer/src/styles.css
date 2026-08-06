@@ -79,6 +79,18 @@
    */
   --gutter: 60px;
   --radius: 7px;
+  /*
+   * The sidenav's footprint, including the gap it floats in.
+   *
+   * One value because three rules have to agree on it — the spacer that holds
+   * the editor clear, the card's own width, and the masthead's left padding.
+   * They were three copies of 288px, which is exactly the kind of number that
+   * gets changed in two places out of three.
+   *
+   * 336 rather than 288 because the rows are set at the transcript's size now,
+   * and a session's title is usually a project path's last segment.
+   */
+  --sidebar: 336px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -382,9 +394,22 @@ body {
   }
 }
 
+/*
+ * Column, not a three-row grid.
+ *
+ * The grid template was positional — `auto 1fr auto` meant title, transcript,
+ * dock — so it depended on exactly three children being present in that order.
+ * Two things break that: the title bar is gone, and the error notice is a
+ * conditional *first* child, so any pane showing an error was already handing
+ * `1fr` to the wrong row and pinning the composer somewhere up the middle.
+ *
+ * A flex column says which child stretches rather than which position does, so
+ * neither the notice appearing nor a row being removed can move the composer
+ * off the bottom again.
+ */
 .pane {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--sunken);
@@ -418,6 +443,19 @@ body {
   .composer-actions .path {
     display: none;
   }
+
+  /*
+   * The money goes before the count.
+   *
+   * "8.6M · $17.64" is the longest thing in this row and it arrived here when
+   * the spend chip moved out of the pane's tools bar — without a rung on this
+   * ladder it simply pushed the row wider than the pane. Dropping the cost
+   * keeps the part that answers "is this conversation getting expensive"
+   * roughly, and the full breakdown is still on the chip's `title`.
+   */
+  .composer-actions .spend-cost {
+    display: none;
+  }
 }
 
 @container (max-width: 430px) {
@@ -425,6 +463,20 @@ body {
   .composer-actions .voice {
     font-size: 0;
     gap: 0;
+  }
+
+  .composer-actions .spend {
+    display: none;
+  }
+
+  /*
+   * The spend carried the `margin-left: auto` that splits this row into facts
+   * on the left and controls on the right. With it gone the split has to be
+   * handed to the next thing along, or Review and Send collapse leftward into
+   * the dots.
+   */
+  .composer-actions .pane-actions {
+    margin-left: auto;
   }
 
   .composer-actions {
@@ -645,11 +697,6 @@ body {
   white-space: nowrap;
 }
 
-/* The name should still take the space it needs when both are present. */
-.spend + .pane-title-actions {
-  margin-left: calc(var(--step) * 2);
-}
-
 .masthead-actions {
   display: flex;
   align-items: center;
@@ -702,10 +749,23 @@ body {
    * desktop.
    */
   padding: calc(var(--step) * 3) calc(var(--step) * 5);
-  /* Room for the traffic lights under `titleBarStyle: hiddenInset`. */
-  padding-left: 92px;
+  /*
+   * Clear of the sidebar card, which is now full height and owns the top-left
+   * corner — including the traffic lights it used to make room for here.
+   *
+   * `:has()` rather than a prop threaded down from the store: the offset is a
+   * consequence of what the sidebar is doing, and routing it through React
+   * would re-render every mounted transcript on a sidebar toggle.
+   */
+  padding-left: var(--sidebar);
+  transition: padding-left 300ms ease;
   border-bottom: 1px solid var(--line);
   -webkit-app-region: drag;
+}
+
+/* Sidebar away: the masthead takes the traffic lights back. */
+.stage:has(.workspace-sidebar[data-hidden='true']) .masthead {
+  padding-left: 92px;
 }
 
 .path {
@@ -798,6 +858,10 @@ body {
 
 .score {
   position: relative;
+  /* The one child that takes the slack; `min-height: 0` so it scrolls rather
+     than pushing the composer off the bottom of the pane. */
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   /* Named because the pinned turn has to cancel it exactly; see `.turn-head`. */
   --score-top: calc(var(--step) * 5);
@@ -1232,6 +1296,8 @@ body {
   border-top: 1px solid var(--line);
   background: var(--raised);
   display: flex;
+  /* Never stretches and never shrinks: it is the floor of the pane. */
+  flex: none;
   flex-direction: column;
   gap: calc(var(--step) * 2);
 }
@@ -1537,6 +1603,14 @@ body {
   gap: calc(var(--step) * 2);
   /* The session's own details read from the left; the controls sit right. */
   justify-content: flex-start;
+}
+
+/* Stop and Send sit together while a turn is running. */
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  flex: none;
 }
 
 /*
@@ -1974,7 +2048,9 @@ input::placeholder {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  /* Above the sidebar card, which is fixed at 60 and would otherwise float
+     over a sheet that is meant to cover everything. */
+  z-index: 80;
   display: grid;
   place-items: center;
   padding: calc(var(--step) * 6);
@@ -2446,149 +2522,8 @@ input::placeholder {
   color: var(--bone);
 }
 
-/*
- * The session's name, above what it names.
- *
- * Quiet by default — it is identity, not a control, and it is read far more
- * often than it is changed. It borrows the transcript's own left gutter so the
- * name lines up with the speakers below it rather than floating over them.
- */
-.pane-title {
-  cursor: grab;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  padding: calc(var(--step) * 2) calc(var(--step) * 5);
-  padding-left: calc(var(--gutter) + var(--step) * 5);
-  border-bottom: 1px solid var(--line);
-}
-
-.pane-title:active {
-  cursor: grabbing;
-}
-
-/*
- * The pane being carried.
- *
- * Dimmed rather than outlined: the grid rearranges under the cursor, so the
- * question is no longer "where will it land" — you can see that — but "which one
- * am I holding".
- */
-.pane[data-lifted='true'] {
-  opacity: 0.45;
-}
-
-.pane-title-name,
-.pane-title-input {
-  max-width: 100%;
-  padding: 1px 5px;
-  border: 1px solid transparent;
-  border-radius: calc(var(--radius) - 3px);
-  background: transparent;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  color: var(--muted);
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pane-title-name {
-  cursor: text;
-}
-
-/*
- * Restart and End, beside the name they act on.
- *
- * Quiet until the bar is under the cursor: rare things to press and bad things
- * to press by accident, but they belong next to what they act on rather than
- * among the session's other controls at the far end of the pane.
- */
-.pane-title-actions {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 1.5);
-  /* Pushed to the end of the bar: the name reads from the left, the things you
-     do to it collect at the right, where every other control in a pane sits. */
-  margin-left: auto;
-  flex: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.pane-title:hover .pane-title-actions,
-.pane-title-actions:focus-within {
-  opacity: 1;
-}
-
-/* Round, like the send button: the same shape for the same kind of thing. */
-.pane-title-action {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--faint);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
-}
-
-.pane-title-action:hover:not(:disabled) {
-  border-color: var(--muted);
-  background: color-mix(in srgb, var(--bone) 8%, transparent);
-  color: var(--bone);
-}
-
-.pane-title-action:disabled {
-  cursor: default;
-}
-
-.pane-title-action--end:hover {
-  border-color: var(--alert);
-  background: color-mix(in srgb, var(--alert) 14%, transparent);
-  color: var(--alert);
-}
-
-/* Armed: it has been pressed once while an agent is working. */
-.pane-title-action--end[data-armed='true'] {
-  opacity: 1;
-  border-color: var(--alert);
-  background: color-mix(in srgb, var(--alert) 16%, transparent);
-  color: var(--alert);
-}
-
-/* Kept visible while armed, or the warning would vanish with the cursor. */
-.pane-title-actions:has([data-armed='true']) {
-  opacity: 1;
-}
-
-.pane-title-name:hover {
-  border-color: var(--line);
-  color: var(--bone);
-}
-
-.pane-title-input {
-  width: 32ch;
-  border-color: var(--line);
-  background: var(--sunken);
-  color: var(--bone);
-}
-
 @container (max-width: 430px) {
-  .pane-title {
-    padding-left: calc(var(--step) * 4);
-  }
+
 }
 
 /* The path reads as text until you edit it, then it is a field in the same place. */
@@ -2988,6 +2923,829 @@ input::placeholder {
 
   .sheet-backdrop .setup {
     padding: calc(var(--step) * 4);
+  }
+}
+
+/* ----------------------------------------------------------- workspace shell */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.notice--workspace {
+  flex: none;
+  margin: 0;
+  border-radius: 0;
+}
+
+.workspace-shell {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--ground);
+}
+
+.workspace-sidebar-spacer {
+  width: var(--sidebar);
+  flex: 0 0 auto;
+  transition: width 300ms ease;
+}
+
+.workspace-sidebar-spacer[data-hidden='true'] {
+  width: 0;
+}
+
+/*
+ * A card, floated off the window edge rather than welded to it.
+ *
+ * This is a deliberate exception to the plan's decision 3 ("a room drawn in 1px
+ * lines"): the sidenav is the one surface that is *beside* the work rather than
+ * part of it, and giving it a radius and a gap is what separates it from the
+ * editor without needing a heavier border. The panes and tabs stay square, so
+ * the radius reads as "this is a different kind of thing" rather than as a
+ * style applied unevenly.
+ */
+.workspace-sidebar {
+  /*
+   * Fixed, so the card is as tall as the window rather than as tall as the
+   * space under the masthead.
+   *
+   * That means it runs up behind the traffic lights, which is the usual macOS
+   * arrangement for a full-height sidebar — the head below pads itself down to
+   * clear them, and takes over as the drag region for that corner.
+   */
+  position: fixed;
+  z-index: 60;
+  inset: calc(var(--step) * 2) auto calc(var(--step) * 2) calc(var(--step) * 2);
+  display: grid;
+  grid-template-rows: 59px auto minmax(0, 1fr);
+  width: calc(var(--sidebar) - var(--step) * 4);
+  /* Clips the head's bottom rule and the tree's scroll to the radius. */
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--step) * 3);
+  background: var(--raised);
+  transform: translateX(0);
+  transition: transform 300ms ease;
+}
+
+/* Its own width *and* the gap, or the card leaves a sliver against the edge. */
+.workspace-sidebar[data-hidden='true'] {
+  transform: translateX(calc(-100% - var(--step) * 2));
+}
+
+/* Only slides back into view — the card already sits above the shell at 60. */
+.workspace-sidebar[data-previewing='true'] {
+  transform: translateX(0);
+}
+
+.workspace-sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  min-width: 0;
+  /*
+   * 26px of headroom for the traffic lights, which macOS draws over this corner
+   * now that the card reaches the top of the window. The card is inset 6px, so
+   * this clears the 28pt the OS reserves with a little to spare.
+   */
+  padding: 26px calc(var(--step) * 3) 0;
+  border-bottom: 1px solid var(--line);
+  /* The strip the lights sit in has to stay draggable, or that corner is dead. */
+  -webkit-app-region: drag;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.workspace-sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--step);
+  margin-left: auto;
+  /*
+   * The head is a drag region now that the card owns the traffic-light corner,
+   * and a drag region swallows the clicks of everything inside it. Same guard
+   * the masthead has carried since it became one.
+   */
+  -webkit-app-region: no-drag;
+}
+
+.workspace-icon-button,
+.workspace-pane-close,
+.workspace-tab-close {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-icon-button:hover,
+.workspace-icon-button:focus-visible,
+.workspace-pane-close:hover,
+.workspace-pane-close:focus-visible,
+.workspace-tab-close:hover,
+.workspace-tab-close:focus-visible {
+  background: color-mix(in srgb, var(--bone) 7%, transparent);
+  color: var(--bone);
+  outline: none;
+}
+
+/*
+ * Bigger than the two × buttons it used to share a rule with.
+ *
+ * Those live inside a 160px tab and a pane's top edge, where small is the
+ * point. These are the sidenav's only two controls, and they were inheriting
+ * the head's 10px uppercase type — so the glyphs were drawn at label size
+ * rather than button size.
+ */
+.workspace-icon-button {
+  width: 30px;
+  height: 30px;
+  border-radius: calc(var(--step) * 2);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.workspace-search {
+  display: block;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-bottom: 1px solid var(--line);
+}
+
+.workspace-search input {
+  width: 100%;
+  height: 32px;
+  padding: 0 calc(var(--step) * 3);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--step) * 2);
+  background: var(--sunken);
+  color: var(--bone);
+  font: 13px var(--mono);
+  outline: none;
+}
+
+.workspace-search input:focus {
+  border-color: var(--muted);
+}
+
+.workspace-tree {
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  min-height: 0;
+  overflow: auto;
+  padding-block: calc(var(--step) * 2);
+}
+
+/*
+ * The title takes the room, then status, then the voices.
+ *
+ * Dots last rather than first: leading them made every row start with the same
+ * two marks, so the eye had to step over identical punctuation to reach the one
+ * thing that differs. On the right they line up into a column you can read down
+ * for who is in each session.
+ */
+.workspace-session-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  min-height: 36px;
+  min-width: 0;
+  margin-inline: calc(var(--step) * 2);
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  border: 0;
+  border-radius: calc(var(--step) * 2);
+  background: transparent;
+  color: var(--faint);
+  font-family: var(--mono);
+  /* The transcript's size. A session's name is content, not chrome, and it was
+     being set two steps below the text it names. */
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-session-row:hover,
+.workspace-session-row:focus-visible {
+  background: color-mix(in srgb, var(--bone) 6%, transparent);
+  color: var(--bone);
+  outline: none;
+}
+
+.workspace-session-row[data-state='active'] {
+  background: var(--ground);
+  color: var(--bone);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 70%, var(--bone));
+}
+
+.workspace-session-row[data-state='open'] {
+  color: var(--muted);
+}
+
+/*
+ * The three states, as a stub of colour rather than a full-height border.
+ *
+ * A rounded row cannot carry a square left border without the two fighting at
+ * the corners, and the stub says the same thing in less ink: nothing when the
+ * session is off screen, the voice's colour when it is open elsewhere, bone
+ * when it is the one you are looking at.
+ */
+.workspace-session-row::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--step) * -1);
+  top: 50%;
+  width: 2px;
+  height: 0;
+  border-radius: 1px;
+  background: var(--codex);
+  transform: translateY(-50%);
+  transition: height 140ms ease;
+}
+
+.workspace-session-row[data-state='open']::before {
+  height: 16px;
+}
+
+.workspace-session-row[data-state='active']::before {
+  height: 20px;
+  background: var(--bone);
+}
+
+/* Lifted, so the row you are carrying reads as detached from the list. */
+.workspace-session-row[data-dragging='true'] {
+  opacity: 0.4;
+}
+
+/*
+ * Drawn on the neighbouring row rather than inserted into the list: a real
+ * element between rows would change their heights mid-drag, and the geometry
+ * was snapshotted before that.
+ */
+.workspace-session-row[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--bone);
+}
+
+.workspace-session-row[data-drop='before']::after {
+  top: calc(var(--step) * -1);
+}
+
+.workspace-session-row[data-drop='after']::after {
+  bottom: calc(var(--step) * -1);
+}
+
+/* Sits exactly where the row's title does, so renaming does not shift the list. */
+.workspace-session-rename {
+  min-height: 36px;
+  margin-inline: calc(var(--step) * 2);
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  border: 1px solid var(--muted);
+  border-radius: calc(var(--step) * 2);
+  background: var(--sunken);
+  color: var(--bone);
+  font: 14px var(--mono);
+  outline: none;
+}
+
+.workspace-session-voices,
+.workspace-tab-voices {
+  display: flex;
+  gap: 3px;
+  flex: none;
+}
+
+.workspace-session-voices .voice-dot,
+.workspace-tab-voices .voice-dot {
+  width: 5px;
+  height: 5px;
+}
+
+/* Sized against the row's 14px, not the tab's 11px. */
+.workspace-session-voices .voice-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.workspace-session-title,
+.workspace-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-session-status,
+.workspace-session-badge {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workspace-session-status[data-waiting='true'] {
+  color: var(--claude);
+}
+
+.workspace-session-badge {
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding-inline: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+/*
+ * The card's right edge, grabbable.
+ *
+ * Centred on the boundary rather than tucked inside it — half the handle sits
+ * in the gap, which is dead space otherwise, so the card keeps its full width
+ * for content and the target is still 7px wide. Same hit area as a pane sash.
+ */
+.workspace-sidebar-resize {
+  position: fixed;
+  z-index: 61;
+  top: calc(var(--step) * 2);
+  bottom: calc(var(--step) * 2);
+  left: calc(var(--sidebar) - var(--step) * 2 - 3px);
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* The line is thinner than the target, the way a sash is. */
+.workspace-sidebar-resize::after {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.workspace-sidebar-resize:hover::after,
+.workspace-sidebar-resize:focus-visible::after {
+  background: var(--bone);
+}
+
+.workspace-sidebar-resize:focus-visible {
+  outline: none;
+}
+
+/*
+ * Nothing eases while the pointer is down.
+ *
+ * The spacer and the masthead both animate their width over 300ms so the
+ * collapse glides; during a drag that same easing makes the edge trail the
+ * cursor by a third of a second and feel broken.
+ */
+[data-sidebar-resizing='true'] .workspace-sidebar-spacer,
+[data-sidebar-resizing='true'] .masthead {
+  transition: none;
+}
+
+[data-sidebar-resizing='true'] {
+  cursor: col-resize;
+}
+
+.workspace-sidebar-edge {
+  position: absolute;
+  z-index: 35;
+  inset: 0 auto 0 0;
+  width: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.workspace-sidebar-edge:hover,
+.workspace-sidebar-edge:focus-visible {
+  background: var(--bone);
+  outline: none;
+}
+
+.workspace-sidebar-scrim {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  background: color-mix(in srgb, var(--sunken) 42%, transparent);
+  pointer-events: none;
+}
+
+.workspace-editor {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.workspace-empty {
+  display: grid;
+  place-content: center;
+  gap: calc(var(--step) * 2);
+  width: 100%;
+  height: 100%;
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.workspace-empty small {
+  color: var(--faint);
+}
+
+.split-branch {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-branch[data-orientation='row'] {
+  flex-direction: row;
+}
+
+.split-branch[data-orientation='column'] {
+  flex-direction: column;
+}
+
+.split-child {
+  position: relative;
+  display: flex;
+  flex-basis: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-sash {
+  position: absolute;
+  z-index: 10;
+  padding: 0;
+  background: var(--line);
+  outline: none;
+  touch-action: none;
+}
+
+.workspace-sash::after {
+  content: '';
+  position: absolute;
+}
+
+.workspace-sash[data-orientation='row'] {
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 1px;
+  cursor: col-resize;
+}
+
+.workspace-sash[data-orientation='row']::after {
+  inset: 0 -3px;
+}
+
+.workspace-sash[data-orientation='column'] {
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  cursor: row-resize;
+}
+
+.workspace-sash[data-orientation='column']::after {
+  inset: -3px 0;
+}
+
+.workspace-sash:hover,
+.workspace-sash:focus-visible {
+  background: var(--bone);
+}
+
+.workspace-pane {
+  display: grid;
+  grid-template-rows: 33px minmax(0, 1fr);
+  width: 100%;
+  /*
+   * Both dimensions, and the height is the one that matters.
+   *
+   * A split pane is a flex item and gets stretched to its `.split-child`, so it
+   * looks correct there whether or not this is set. An *unsplit* pane is a
+   * direct child of `.workspace-editor`, which lays out as a block — so with an
+   * auto height the `minmax(0, 1fr)` row resolves against the content instead
+   * of the view, and the pane grows as tall as the transcript. The scroller
+   * then never scrolls, `makeRoom` measures a `clientHeight` of six figures and
+   * holds open a spacer to match, and the question never reaches the top to
+   * pin. One pane is the state the app launches in, so this was the common case
+   * rather than the edge one.
+   */
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px transparent;
+}
+
+.workspace-pane[data-focused='true'] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 55%, var(--bone));
+}
+
+.workspace-tab-strip {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  min-width: 0;
+  height: 33px;
+  border-bottom: 1px solid var(--line);
+  background: var(--ground);
+}
+
+/*
+ * Scrolls rather than squashes.
+ *
+ * The strip has always had `overflow-x: auto`, but the tabs shrank to 84px
+ * before it could ever engage — at which point every tab reads as a truncated
+ * word and a dot, and the scroll never happens because nothing overflows. The
+ * minimum below is what makes this rule do anything.
+ */
+.workspace-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* The tabs are the chrome; a scrollbar under them would be chrome on chrome. */
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-tab {
+  position: relative;
+  display: flex;
+  flex: 0 1 220px;
+  /*
+   * Wide enough to still be a name.
+   *
+   * 84px held a truncated word and the voice dots and nothing else, so a pane
+   * with five sessions gave you five identical stubs — the tab strip stopped
+   * answering the only question it exists for. Past this width the strip
+   * scrolls instead, which costs a gesture rather than the information.
+   */
+  min-width: 160px;
+  max-width: 220px;
+  height: 32px;
+  border-right: 1px solid var(--line);
+  background: transparent;
+}
+
+.workspace-tab[data-active='true'] {
+  background: var(--sunken);
+}
+
+.workspace-tab[data-dragging='true'] {
+  opacity: 0.4;
+}
+
+.workspace-tab-main {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 27px 0 calc(var(--step) * 3);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 11px var(--mono);
+  text-align: left;
+  cursor: default;
+  outline: none;
+  touch-action: none;
+}
+
+.workspace-tab-main:hover,
+.workspace-tab-main:focus-visible,
+.workspace-tab[data-active='true'] .workspace-tab-main {
+  color: var(--bone);
+}
+
+.workspace-tab-main:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+
+.workspace-tab-close {
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  width: 23px;
+  height: 23px;
+  opacity: 0;
+}
+
+.workspace-tab:hover .workspace-tab-close,
+.workspace-tab[data-active='true'] .workspace-tab-close,
+.workspace-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.workspace-tab-rename {
+  width: 100%;
+  min-width: 0;
+  margin: 4px;
+  padding: 0 5px;
+  border: 1px solid var(--muted);
+  border-radius: 0;
+  background: var(--sunken);
+  color: var(--bone);
+  font: 11px var(--mono);
+  outline: none;
+}
+
+.workspace-pane-close {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-left: 1px solid var(--line);
+}
+
+.workspace-pane-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-pane-content > .pane {
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-context-menu {
+  position: fixed;
+  z-index: 100;
+  display: grid;
+  min-width: 180px;
+  padding: var(--step);
+  border: 1px solid var(--line);
+  background: var(--raised);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--sunken) 70%, transparent);
+}
+
+.workspace-context-menu button {
+  min-height: 27px;
+  padding: 0 calc(var(--step) * 3);
+  border: 0;
+  background: transparent;
+  color: var(--bone);
+  font: 11px var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-context-menu button:hover:not(:disabled),
+.workspace-context-menu button:focus-visible {
+  background: color-mix(in srgb, var(--bone) 8%, transparent);
+  outline: none;
+}
+
+.workspace-context-menu button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.workspace-context-menu .workspace-context-danger {
+  color: var(--alert);
+}
+
+.workspace-context-separator {
+  height: 1px;
+  margin: var(--step) 0;
+  background: var(--line);
+}
+
+.workspace-drop-overlay,
+.workspace-drop-line,
+.workspace-drag-ghost {
+  position: fixed;
+  z-index: 120;
+  pointer-events: none;
+}
+
+.workspace-drop-overlay {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--bone);
+  background: color-mix(in srgb, var(--bone) 9%, transparent);
+  color: var(--bone);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.workspace-drop-overlay[data-disabled='true'] {
+  border-color: var(--faint);
+  background: color-mix(in srgb, var(--faint) 7%, transparent);
+  color: var(--faint);
+}
+
+.workspace-drop-line {
+  width: 3px;
+  background: var(--bone);
+}
+
+.workspace-drag-ghost {
+  max-width: 220px;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--bone);
+  font: 11px var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Below this the sidebar stops pushing and starts covering.
+ *
+ * There is not enough width for a card and a readable transcript side by side,
+ * so it floats over the editor instead of reserving space beside it: the spacer
+ * collapses, and the masthead takes its traffic-light inset back because
+ * nothing is being pushed aside any more.
+ *
+ * Resizing is withdrawn on the same logic. The width that matters here is "as
+ * much as fits", not one the user picks, and the handle is positioned from
+ * `--sidebar` — which is no longer where the card's edge is once `100% - 36px`
+ * wins the `min()`.
+ */
+@media (max-width: 760px) {
+  .workspace-sidebar-spacer {
+    width: 0;
+  }
+
+  .workspace-sidebar {
+    width: min(var(--sidebar), calc(100% - 36px));
+  }
+
+  .masthead {
+    padding-left: 92px;
+  }
+
+  .workspace-sidebar-resize {
+    display: none;
+  }
+
+  .workspace-sidebar:not([data-hidden='true']) + .workspace-sidebar-edge {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-sidebar,
+  .workspace-sidebar-spacer {
+    transition: none;
   }
 }
 

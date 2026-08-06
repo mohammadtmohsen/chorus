@@ -1,26 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
 import { Limits } from './Limits.js'
 import { LogViewer } from './LogViewer.js'
-import { fail, Session, type SessionInfo } from './Session.js'
+import { fail, Session, type SessionCarry, type SessionInfo } from './Session.js'
 import { Settings, type Defaults } from './Settings.js'
-
-/**
- * The stage: several conversations at once, side by side.
- *
- * The organising idea inside each pane is the voice rail down the left — one
- * continuous line for the shared timeline, a dot per message coloured by who
- * spoke. Reading the dots tells you the shape of an exchange before you read a
- * word, which is the first question a multi-agent transcript has to answer.
- *
- * Across panes the organising idea is that they are genuinely independent:
- * separate agents, separate approvals, separate drafts. `App` holds only the
- * list; everything a conversation knows lives in `Session`.
- */
-/** A little longer than the slide, so boxes are measured where they came to rest. */
-const MOVE_COOLDOWN_MS = 200
+import { Workspace } from './workspace/Workspace.js'
+import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
 
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
@@ -33,91 +20,130 @@ export function App(): React.JSX.Element {
     profileId: 'read-only',
   })
   const [sessions, setSessions] = useState<SessionInfo[]>([])
-  /*
-   * Which pane your keystrokes belong to.
-   *
-   * Held here rather than read from `:focus-within`, because the question it
-   * answers is "who may take the caret", and that has to be answerable while
-   * nothing is focused at all — between a card unmounting and the composer
-   * getting the caret back, focus is on `body` and every pane would look
-   * equally entitled to it. Null until you touch one; the first pane to mount
-   * claims it, which is the one a new launch drops you into.
-   */
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const sessionsRef = useRef<SessionInfo[]>([])
+  const carries = useRef(new Map<string, SessionCarry>())
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
   const [showingSettings, setShowingSettings] = useState(false)
-  /** Holds the placeholder up briefly, so a restored grid does not flash past. */
   const [restoring, setRestoring] = useState(true)
-  /**
-   * Whether restore has actually *finished*, which is a different question.
-   *
-   * The placeholder gives up after a moment so a stuck provider cannot leave a
-   * blank window — but opening a session must wait for the real answer. Deciding
-   * "nothing was open" from the placeholder's deadline opened a second session
-   * on top of the one still being restored, and the pair were then saved, so
-   * every launch added another.
-   */
   const [restored, setRestored] = useState(false)
-  /*
-   * The pane being dragged, in a ref rather than state.
-   *
-   * `dragover` can fire in the same tick as `dragstart`, before React has
-   * re-rendered — so a pane asked "is something being dragged?" would answer no
-   * and refuse the drop. A ref is readable the instant it is set.
-   */
-  const dragging = useRef<string | null>(null)
-  /** The same id as `dragging`, in state, purely so the pane can look lifted. */
-  const [lifted, setLifted] = useState<string | null>(null)
-  /** The size, shown briefly after it changes. Null when nothing to say. */
   const [zoom, setZoom] = useState<number | null>(null)
+
+  const updateSessions = useCallback((change: (current: SessionInfo[]) => SessionInfo[]) => {
+    setSessions((current) => {
+      const next = change(current)
+      sessionsRef.current = next
+      return next
+    })
+  }, [])
+
+  /*
+   * Status is global and deliberately tiny. Active Session components still
+   * reduce full transcripts; this listener lets closed/background tabs say an
+   * agent is working or waiting without keeping markdown trees mounted.
+   */
+  useEffect(
+    () => window.chorus.onEvents((events) => { useWorkspaceStore.getState().ingestEvents(events); }),
+    []
+  )
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    /*
+     * The hydration itself is not a rearrangement, and echoing it back to disk
+     * is actively destructive.
+     *
+     * `hydrate` flips `hydrated` false→true, which the selector below counts as
+     * a change, so the very first emission is the store repeating what was just
+     * read. On a *first* run that is worse than redundant: the file's `null`
+     * workspace is what tells `reconcileWorkspace` "this predates the shell,
+     * open everything", and overwriting it with the seeded empty snapshot
+     * relabels it "the user closed every tab". That write also lands before the
+     * auto-started session has opened its pane, so the next launch restores a
+     * running session into an empty editor and the force-open path can never
+     * fire again.
+     *
+     * Only what happens after the seed is the user's doing.
+     */
+    let seeded = false
+    const stop = useWorkspaceStore.subscribe(
+      (state) => ({ ...workspaceSnapshot(state), hydrated: state.hydrated }),
+      (next) => {
+        if (!next.hydrated) return
+        if (!seeded) {
+          seeded = true
+          return
+        }
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          window.chorus
+            .writeConversationLayout({
+              order: sessionsRef.current.map((session) => session.conversationId),
+              workspace: {
+                layout: next.layout,
+                panes: next.panes,
+                focusedPaneId: next.focusedPaneId,
+                sidebarHidden: next.sidebarHidden,
+                sidebarWidth: next.sidebarWidth,
+              },
+            })
+            .catch(fail(setError))
+        }, 180)
+      },
+      {
+        equalityFn: (left, right) =>
+          left.hydrated === right.hydrated &&
+          left.layout === right.layout &&
+          left.panes === right.panes &&
+          left.focusedPaneId === right.focusedPaneId &&
+          left.sidebarHidden === right.sidebarHidden &&
+          left.sidebarWidth === right.sidebarWidth,
+      }
+    )
+    return () => {
+      clearTimeout(timer)
+      stop()
+    }
+  }, [])
 
   useEffect(() => {
     window.chorus
       .getAppInfo()
-      .then(({ appVersion: version }) => {
-        setAppVersion(version)
-      })
-      // The header can still do its job if this optional detail is unavailable.
-      .catch(() => {
-        setAppVersion(null)
-      })
+      .then(({ appVersion: version }) => { setAppVersion(version); })
+      .catch(() => { setAppVersion(null); })
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
-    // Only the fields this sheet owns: `scale` belongs to the menu, and holding
-    // a copy of it here is how a stale value gets written back.
     window.chorus
       .readSettings()
-      .then(({ agents, cwd, profileId }) => {
-        setDefaults({ agents, cwd, profileId })
-      })
+      .then(({ agents, cwd, profileId }) => { setDefaults({ agents, cwd, profileId }); })
       .catch(fail(setError))
 
     /*
-     * Whatever was open last time comes back — but the window does not wait on
-     * it indefinitely.
-     *
-     * Reopening starts agents, and an agent that never answers used to leave a
-     * blank window with nothing on it and no way forward. A moment of nothing is
-     * worth it to avoid the start screen flashing past; a minute of nothing is
-     * an app that looks broken. So the placeholder gets a deadline, and restored
-     * sessions appear whenever they are ready.
+     * The visual grace may expire, but a new session still waits for the real
+     * restore result. That distinction prevents one slow provider from creating
+     * another duplicate session on every launch.
      */
-    const grace = setTimeout(() => {
-      setRestoring(false)
-    }, 1_500)
-
+    const grace = setTimeout(() => { setRestoring(false); }, 1_500)
     window.chorus
       .restoreConversations()
-      .then((reopened) => {
-        // Merged, not assigned: a session started while this was in flight is a
-        // real session, and replacing the list would drop it from the grid while
-        // leaving it running.
-        setSessions((current) => [
-          ...reopened.filter((r) => !current.some((s) => s.conversationId === r.conversationId)),
-          ...current,
-        ])
+      .then(({ sessions: reopened, workspace }) => {
+        updateSessions((current) => {
+          const merged = [
+            ...reopened.filter(
+              (candidate) =>
+                !current.some((session) => session.conversationId === candidate.conversationId)
+            ),
+            ...current,
+          ]
+          useWorkspaceStore
+            .getState()
+            .hydrate(
+              workspace,
+              merged.map((session) => session.conversationId)
+            )
+          return merged
+        })
       })
       .catch(fail(setError))
       .finally(() => {
@@ -125,40 +151,20 @@ export function App(): React.JSX.Element {
         setRestoring(false)
         setRestored(true)
       })
+    return () => { clearTimeout(grace); }
+  }, [updateSessions])
 
-    return () => {
-      clearTimeout(grace)
-    }
-  }, [])
-
-  /**
-   * Remembers a change made inside a session as the next one's starting point.
-   *
-   * With the duplicate controls gone from Settings, this is the only thing that
-   * still writes defaults — and it is the honest rule: a new session starts
-   * where the last one was, rather than snapping back to something you set once
-   * and forgot. A patch, so one field cannot overwrite another.
-   */
   const remember = useCallback((patch: Partial<Defaults>) => {
     setDefaults((current) => ({ ...current, ...patch }))
     window.chorus.writeSettings(patch).catch(fail(setError))
   }, [])
 
   useEffect(() => {
-    /*
-     * ⌘− has no visible control behind it, so the only feedback is the whole
-     * window moving — which says something happened, not what. The badge says
-     * what, then leaves.
-     */
     let timer: ReturnType<typeof setTimeout> | undefined
     const stop = window.chorus.onScale((next) => {
       setZoom(next)
-      // Restarted on every change, or holding ⌘− would hide the badge partway
-      // through the run of presses that needed it most.
       clearTimeout(timer)
-      timer = setTimeout(() => {
-        setZoom(null)
-      }, 1_400)
+      timer = setTimeout(() => { setZoom(null); }, 1_400)
     })
     return () => {
       clearTimeout(timer)
@@ -175,179 +181,127 @@ export function App(): React.JSX.Element {
         cwd: defaults.cwd,
         profileId: defaults.profileId,
       })
-      .then(({ conversationId, participants, cwd: startedIn, profileId: profile, title }) => {
-        setSessions((current) => [
-          ...current,
-          { conversationId, participants, cwd: startedIn, profileId: profile, title },
-        ])
-        // You opened it to type in it, so it becomes the active pane — which is
-        // also what lets it take the caret without that counting as theft.
-        setActiveId(conversationId)
-        // Kept, not cleared: the next session is usually in the same place, and
-        // retyping the path is the kind of thing that stops you opening a second.
-        setDefaults((current) => ({ ...current, cwd: startedIn }))
+      .then((session) => {
+        updateSessions((current) => [...current, session])
+        useWorkspaceStore.getState().openSession(session.conversationId)
+        setDefaults((current) => ({ ...current, cwd: session.cwd }))
       })
       .catch(fail(setError))
-      .finally(() => {
-        setStarting(false)
-      })
-  }, [defaults])
+      .finally(() => { setStarting(false); })
+  }, [defaults, updateSessions])
 
-  /**
-   * Moves the dragged pane as it passes over another, not on drop.
-   *
-   * The grid rearranges under the cursor, so what you see while dragging is
-   * what you get — a drop that only reveals the result at the end asks you to
-   * predict it.
-   *
-   * The caller says which side of the target to land on; this works out the
-   * index that means, accounting for the pane being lifted out of the list
-   * first. Returning the list unchanged when it is already there is what stops
-   * a stream of `dragover` events from churning React.
-   *
-   * Nothing is written to disk here — a drag across three panes would be three
-   * writes for one decision. `commitOrder` does it once the drag ends.
-   */
-  const reorder = useCallback((movedId: string, ontoId: string, after: boolean) => {
-    /*
-     * Nothing moves again until the last move has landed.
-     *
-     * The panes slide to their new places, and while they slide their measured
-     * boxes are the *animated* ones — so a `dragover` arriving mid-flight is
-     * judged against a pane that is not where it will be. Diagonal moves travel
-     * furthest and were the worst for it: the grid kept re-deciding against
-     * positions in transit and swapped in circles.
-     *
-     * A spatial margin cannot fix that, because the geometry itself is lying.
-     * This is the matching margin in time, held slightly longer than the slide.
-     */
-    const now = performance.now()
-    if (now - settledAt.current < MOVE_COOLDOWN_MS) return
-    settledAt.current = now
-
-    setSessions((current) => {
-      const from = current.findIndex((s) => s.conversationId === movedId)
-      const onto = current.findIndex((s) => s.conversationId === ontoId)
-      if (from === -1 || onto === -1 || from === onto) return current
-
-      // Where it should end up, once itself is out of the way.
-      let to = after ? onto + 1 : onto
-      if (from < to) to -= 1
-      if (to === from) {
-        // Nothing moved, so nothing has to settle; let the next event decide.
-        settledAt.current = 0
-        return current
-      }
-
-      const next = [...current]
-      const [moved] = next.splice(from, 1)
-      if (moved === undefined) return current
-      next.splice(to, 0, moved)
-      return next
-    })
-  }, [])
-
-  /**
-   * Reordering without a mouse.
-   *
-   * A drag is the only way to move a pane otherwise, which leaves the grid
-   * unreachable from the keyboard entirely. Committed immediately: a keypress
-   * has no release to wait for.
-   */
-  const movePane = useCallback((conversationId: string, delta: -1 | 1) => {
-    setSessions((current) => {
-      const from = current.findIndex((s) => s.conversationId === conversationId)
-      const to = from + delta
-      if (from === -1 || to < 0 || to >= current.length) return current
-
-      const next = [...current]
-      const [moved] = next.splice(from, 1)
-      if (moved === undefined) return current
-      next.splice(to, 0, moved)
-
-      window.chorus
-        .reorderConversations({ order: next.map((s) => s.conversationId) })
-        .catch(fail(setError))
-      return next
-    })
-  }, [])
-
-  /**
-   * Slides panes from where they were to where they now are.
-   *
-   * Reordering is a layout change, so nothing about it can be transitioned in
-   * CSS — panes simply appear somewhere else. Measuring before and after and
-   * animating the difference is what turns "two panes swapped" from a fact you
-   * have to re-read into a movement you watched.
-   *
-   * The carried pane is skipped: it is already under the cursor, and sliding it
-   * as well would fight the drag. Motion is skipped entirely when the system
-   * asks for less of it.
-   */
-  /** When the last reorder happened, so the next waits for it to land. */
-  const settledAt = useRef(0)
-  const positions = useRef(new Map<string, DOMRect>())
-  const order = sessions.map((session) => session.conversationId).join(',')
-
-  useLayoutEffect(() => {
-    const previous = positions.current
-    const next = new Map<string, DOMRect>()
-    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
-    for (const el of document.querySelectorAll<HTMLElement>('.pane[data-conversation]')) {
-      const id = el.dataset['conversation']
-      if (id === undefined) continue
-      const rect = el.getBoundingClientRect()
-      next.set(id, rect)
-
-      const was = previous.get(id)
-      if (was === undefined || still || el.dataset['lifted'] === 'true') continue
-      const dx = was.left - rect.left
-      const dy = was.top - rect.top
-      if (dx === 0 && dy === 0) continue
-
-      el.animate(
-        [{ transform: `translate(${String(dx)}px, ${String(dy)}px)` }, { transform: 'none' }],
-        {
-          duration: 160,
-          easing: 'ease-out',
-        }
-      )
-    }
-    positions.current = next
-  }, [order])
-
-  const commitOrder = useCallback(() => {
-    setSessions((current) => {
-      window.chorus
-        .reorderConversations({ order: current.map((s) => s.conversationId) })
-        .catch(fail(setError))
-      return current
-    })
-  }, [])
-
-  /*
-   * Nothing restored and nothing broken: open a room.
-   *
-   * The start screen asked you to press a button whose only answer was "yes" —
-   * every choice behind it was remembered, and the app has nothing to show
-   * without a session anyway. It survives only as the place you land when
-   * starting fails, which is the one time there is something to say.
-   *
-   * `error` in the guard is what stops this retrying forever: a failure leaves
-   * the panel up until you ask again.
-   */
   useEffect(() => {
     if (!restored || starting || sessions.length > 0 || error !== null) return
     start()
   }, [restored, starting, sessions.length, error, start])
 
-  const close = useCallback((conversationId: string) => {
-    // Removed from the grid first: the agents take a moment to shut down, and
-    // leaving a dead pane on screen while that happens reads as a hang.
-    setSessions((current) => current.filter((s) => s.conversationId !== conversationId))
-    window.chorus.closeConversation({ conversationId }).catch(fail(setError))
+  const applyRestart = useCallback(
+    (previousId: string, restarted: SessionInfo) => {
+      carries.current.delete(previousId)
+      updateSessions((current) =>
+        current.map((session) => (session.conversationId === previousId ? restarted : session))
+      )
+      useWorkspaceStore.getState().replaceSession(previousId, restarted.conversationId)
+    },
+    [updateSessions]
+  )
+
+  const restart = useCallback(
+    (conversationId: string) => {
+      window.chorus
+        .restartConversation({ conversationId })
+        .then((restarted) => { applyRestart(conversationId, restarted); })
+        .catch(fail(setError))
+    },
+    [applyRestart]
+  )
+
+  const endNow = useCallback(
+    (conversationId: string) => {
+      carries.current.delete(conversationId)
+      updateSessions((current) =>
+        current.filter((session) => session.conversationId !== conversationId)
+      )
+      useWorkspaceStore.getState().removeSession(conversationId)
+      window.chorus.closeConversation({ conversationId }).catch(fail(setError))
+    },
+    [updateSessions]
+  )
+
+/*
+   * Ending asks twice while an agent is working, and the asking is done by the
+   * control you pressed — the menu item arms itself, exactly as the pane's ✕
+   * does. A `window.confirm` was doing this job and had to go: it is an OS
+   * dialog in an app drawn entirely in one typeface, and it blocks the renderer
+   * while three other sessions are still streaming into it.
+   */
+  const rename = useCallback(
+    (conversationId: string, title: string) => {
+      window.chorus
+        .renameConversation({ conversationId, title })
+        .then(({ title: applied }) => {
+          updateSessions((current) =>
+            current.map((session) =>
+              session.conversationId === conversationId ? { ...session, title: applied } : session
+            )
+          )
+        })
+        .catch(fail(setError))
+    },
+    [updateSessions]
+  )
+
+  const keepCarry = useCallback((conversationId: string, carry: SessionCarry) => {
+    carries.current.set(conversationId, carry)
   }, [])
+
+  /*
+   * Writes the arrangement now, without waiting on the 180ms debounce.
+   *
+   * For a change that ends the moment the pointer comes up — a finished resize,
+   * a dropped row — the debounce is all risk and no benefit: it exists to
+   * coalesce a stream of updates, and there is no stream. Quitting inside that
+   * window would silently discard the change and reopen at the old value.
+   */
+  const commitLayout = useCallback(() => {
+    window.chorus
+      .writeConversationLayout({
+        order: sessionsRef.current.map((session) => session.conversationId),
+        workspace: workspaceSnapshot(useWorkspaceStore.getState()),
+      })
+      .catch(fail(setError))
+  }, [])
+
+  /*
+   * Reorder writes through the same way, but builds its own order: the
+   * debounced subscription only fires on *workspace store* changes, and the
+   * sidebar's order lives in React state beside it, so a dragged row would
+   * otherwise sit in the right place until the next relaunch and then jump
+   * back. Anything the caller forgot keeps its place at the end, so a stale
+   * list cannot drop a live session.
+   */
+  const reorderSessions = useCallback(
+    (order: readonly string[]) => {
+      const current = sessionsRef.current
+      const named = new Set(order)
+      const byId = new Map(current.map((session) => [session.conversationId, session]))
+      const next = [
+        ...order.flatMap((id) => {
+          const session = byId.get(id)
+          return session === undefined ? [] : [session]
+        }),
+        ...current.filter((session) => !named.has(session.conversationId)),
+      ]
+      updateSessions(() => next)
+      window.chorus
+        .writeConversationLayout({
+          order: next.map((session) => session.conversationId),
+          workspace: workspaceSnapshot(useWorkspaceStore.getState()),
+        })
+        .catch(fail(setError))
+    },
+    [updateSessions]
+  )
 
   const badge =
     zoom === null ? null : (
@@ -361,43 +315,28 @@ export function App(): React.JSX.Element {
       {showingSettings && (
         <Settings
           probes={probes}
-          onClose={() => {
-            setShowingSettings(false)
-          }}
+          onClose={() => { setShowingSettings(false); }}
           onOpenLogs={() => {
             setShowingSettings(false)
             setShowingLogs(true)
           }}
         />
       )}
-
-      {showingLogs && (
-        <LogViewer
-          onClose={() => {
-            setShowingLogs(false)
-          }}
-          onError={setError}
-        />
-      )}
+      {showingLogs && <LogViewer onClose={() => { setShowingLogs(false); }} onError={setError} />}
     </>
   )
 
   if (restoring || (sessions.length === 0 && error === null)) {
     return <div className="empty" aria-busy="true" />
   }
-
   if (sessions.length === 0) {
     return (
       <>
         <Stuck
           error={error}
           starting={starting}
-          onRetry={() => {
-            setError(null)
-          }}
-          onSettings={() => {
-            setShowingSettings(true)
-          }}
+          onRetry={() => { setError(null); }}
+          onSettings={() => { setShowingSettings(true); }}
         />
         {sheets}
       </>
@@ -413,15 +352,10 @@ export function App(): React.JSX.Element {
         </h1>
         <Limits />
         <div className="masthead-actions">
-          <button type="button" className="btn btn--chip" disabled={starting} onClick={start}>
-            {starting ? t('conversation.starting') : t('conversation.newSession')}
-          </button>
           <button
             type="button"
             className="btn btn--chip"
-            onClick={() => {
-              setShowingSettings(true)
-            }}
+            onClick={() => { setShowingSettings(true); }}
           >
             {t('settings.open')}
           </button>
@@ -429,104 +363,63 @@ export function App(): React.JSX.Element {
       </header>
 
       {error !== null && (
-        <p className="notice notice--bad" role="alert">
+        <p className="notice notice--bad notice--workspace" role="alert">
           {error}
         </p>
       )}
 
-      {/* Capped at four; the stylesheet steps it down as the window narrows. */}
-      <main className="grid" data-count={Math.min(sessions.length, 4)}>
-        {sessions.map((session, index) => (
+      <Workspace
+        sessions={sessions}
+        starting={starting}
+        onNewSession={start}
+        onRename={rename}
+        onRestart={restart}
+        onEnd={endNow}
+        onReorderSessions={reorderSessions}
+        onCommitLayout={commitLayout}
+        renderSession={(session, focused, paneId) => (
           <Session
             key={session.conversationId}
             session={session}
-            /*
-             * Exactly one pane is active, and a fallback keeps it that way.
-             *
-             * When the active pane is closed its id lingers until something
-             * claims it, so the first pane stands in — otherwise a burst of
-             * agent activity would arrive with no pane entitled to focus and
-             * every card would decline to take it.
-             */
-            active={
-              activeId === null || !sessions.some((s) => s.conversationId === activeId)
-                ? index === 0
-                : activeId === session.conversationId
-            }
-            onActivate={() => {
-              setActiveId((current) =>
-                current === session.conversationId ? current : session.conversationId
-              )
-            }}
-            dragging={dragging}
-            onDragStart={(id) => {
-              dragging.current = id
-              setLifted(id)
-              // A fresh drag should not have to wait out the previous one.
-              settledAt.current = 0
-            }}
-            onDragEnd={() => {
-              dragging.current = null
-              setLifted(null)
-              // The grid already looks right; this is the one write that makes
-              // it survive a relaunch.
-              commitOrder()
-            }}
-            onDragOverPane={(ontoId, after) => {
-              const moved = dragging.current
-              if (moved !== null) reorder(moved, ontoId, after)
-            }}
-            lifted={lifted === session.conversationId}
-            canClose={sessions.length > 1}
-            onMove={movePane}
-            onRestart={(was, restarted) => {
-              // Replaced in place: the pane keeps its position, and its key
-              // changes with the conversation id, so it remounts empty.
-              setSessions((current) =>
-                current.map((s) => (s.conversationId === was ? restarted : s))
-              )
-            }}
-            onTitle={(title) => {
-              // Names belong to one conversation; they are not a starting point.
-              setSessions((current) =>
-                current.map((s) =>
-                  s.conversationId === session.conversationId ? { ...s, title } : s
-                )
-              )
-            }}
+            active={focused}
+            onActivate={() => { useWorkspaceStore.getState().focusPane(paneId); }}
+            carry={carries.current.get(session.conversationId)}
+            onCarry={keepCarry}
             profiles={profiles}
             onProfile={(profileId) => {
-              setSessions((current) =>
-                current.map((s) =>
-                  s.conversationId === session.conversationId ? { ...s, profileId } : s
+              updateSessions((current) =>
+                current.map((candidate) =>
+                  candidate.conversationId === session.conversationId
+                    ? { ...candidate, profileId }
+                    : candidate
                 )
               )
               remember({ profileId })
             }}
             installed={(probes ?? []).filter((probe) => probe.installed).map((probe) => probe.id)}
             onParticipants={(participants) => {
-              setSessions((current) =>
-                current.map((s) =>
-                  s.conversationId === session.conversationId ? { ...s, participants } : s
+              updateSessions((current) =>
+                current.map((candidate) =>
+                  candidate.conversationId === session.conversationId
+                    ? { ...candidate, participants }
+                    : candidate
                 )
               )
-              // Only when somebody is left: an empty room is a step on the way to
-              // swapping agents, not a choice about how the next one should open.
               if (participants.length > 0) remember({ agents: participants })
             }}
             onCwd={(cwd, title) => {
-              // The title comes with it: a name nobody chose follows the folder.
-              setSessions((current) =>
-                current.map((s) =>
-                  s.conversationId === session.conversationId ? { ...s, cwd, title } : s
+              updateSessions((current) =>
+                current.map((candidate) =>
+                  candidate.conversationId === session.conversationId
+                    ? { ...candidate, cwd, title }
+                    : candidate
                 )
               )
               remember({ cwd })
             }}
-            onClose={close}
           />
-        ))}
-      </main>
+        )}
+      />
 
       {sheets}
       {badge}
@@ -534,13 +427,6 @@ export function App(): React.JSX.Element {
   )
 }
 
-/**
- * Where you land when a session will not open.
- *
- * This is what is left of the start screen. It stopped being a door — the app
- * opens one for you — and became the place that says why it could not, which is
- * the only moment the screen had anything to add.
- */
 function Stuck(props: {
   error: string | null
   starting: boolean
@@ -554,11 +440,9 @@ function Stuck(props: {
         <h1 className="wordmark wordmark--large">
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
         </h1>
-
         <p className="notice notice--bad" role="alert">
           {props.error}
         </p>
-
         <button
           type="button"
           className="btn btn--go btn--wide"
@@ -574,3 +458,4 @@ function Stuck(props: {
     </div>
   )
 }
+

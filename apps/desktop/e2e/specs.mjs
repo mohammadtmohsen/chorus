@@ -11,8 +11,73 @@ import { existingDescriptors, FakeIde, waitForDescriptor } from './fake-ide.mjs'
  * hand. They are written as the smallest question that would have caught it.
  */
 
+/*
+ * `.pane` is a *mounted* session, and since the workspace shell arrived that is
+ * no longer the same thing as an editor group: only a group's active tab is
+ * mounted, so two sessions sharing one group means two tabs and one `.pane`.
+ * That distinction is the mount policy, so the selectors keep them apart.
+ */
 const PANE = '.pane'
+const GROUP = '[data-workspace-pane]'
+const TAB = '[data-workspace-tab]'
 const started = (page) => page.until(`document.querySelectorAll('${PANE}').length > 0`)
+
+/** The ＋ in the sidenav header. It left the masthead when the shell arrived. */
+const newSession = (page) =>
+  page.evaluate(`(() => {
+    document.querySelector('.workspace-sidebar-head [aria-label="New session"]').click()
+    return true
+  })()`)
+
+/**
+ * A shortcut, as the app's own listener sees it.
+ *
+ * Dispatched on `document` because that is where the capture-phase handler
+ * lives; sending it to the focused element would test bubbling instead.
+ */
+const press = (page, key, { meta = false, shift = false, alt = false } = {}) =>
+  page.evaluate(`(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ${JSON.stringify(key)}, bubbles: true, cancelable: true,
+      metaKey: ${String(meta)}, shiftKey: ${String(shift)}, altKey: ${String(alt)},
+    }))
+    return true
+  })()`)
+
+/** Types without sending, so the draft is still unsent when the pane unmounts. */
+const draft = (page, text) =>
+  page.evaluate(`(() => {
+    const ta = document.querySelector('.composer textarea')
+    Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
+      .set.call(ta, ${JSON.stringify(text)})
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+
+const tabIds = (page) =>
+  page.evaluate(
+    `Array.from(document.querySelectorAll('${TAB}')).map(t => t.dataset.workspaceTab)`
+  )
+
+const clickTab = (page, conversationId) =>
+  page.evaluate(`(() => {
+    document.querySelector('${TAB}[data-workspace-tab="${conversationId}"]').click()
+    return true
+  })()`)
+
+const clickSidebarRow = (page, conversationId) =>
+  page.evaluate(`(() => {
+    document.querySelector('[data-sidebar-conversation="${conversationId}"]').click()
+    return true
+  })()`)
+
+/** Two sessions, which is the smallest workspace where tabs and splits mean anything. */
+async function twoSessions(app) {
+  await started(app)
+  await newSession(app)
+  await app.until(`document.querySelectorAll('${TAB}').length === 2`, { timeout: 120_000 })
+  return tabIds(app)
+}
 
 /**
  * Types into the composer and sends, the way the app's own handlers see it.
@@ -52,6 +117,22 @@ export const specs = [
           (await app.evaluate(`document.activeElement.tagName`)) === 'TEXTAREA',
           'the composer has the caret'
         )
+        /*
+         * The composer is the floor of the pane.
+         *
+         * `.pane` used to lay its children out on a three-row grid, which meant
+         * the row that stretched was chosen by position rather than by name —
+         * so removing the title bar handed the slack to the composer instead of
+         * the transcript, and it floated up under the last message with the
+         * rest of the pane empty beneath it. The same template did it whenever
+         * an error notice appeared, since that is a conditional first child.
+         */
+        const floor = await app.evaluate(`(() => {
+          const pane = document.querySelector('${PANE}').getBoundingClientRect()
+          const dock = document.querySelector('.dock').getBoundingClientRect()
+          return Math.round(pane.bottom - dock.bottom)
+        })()`)
+        assert(floor === 0, `the composer sits on the floor of the pane (${floor}px above it)`)
       } finally {
         await app.quit()
       }
@@ -216,51 +297,409 @@ export const specs = [
   },
 
   {
-    name: 'panes reorder by drag, and settle',
-    // Live sorting thrashed: the axis came from the pane's shape rather than the
-    // grid's columns, and decisions were made against panes still animating.
+    name: 'a second session is a tab, and only its own tab',
+    /*
+     * The invariant the whole shell rests on: one session, at most one tab
+     * anywhere. The old grid gave every session a column, so "open it again"
+     * and "show it" were the same gesture and nothing could tell them apart.
+     * Here the sidenav must focus what is already open rather than making a
+     * second view of a session that can only have one composer.
+     */
     async run(assert) {
       const app = await launch()
       try {
-        await started(app)
-        await app.evaluate(
-          `Array.from(document.querySelectorAll('.masthead-actions button'))
-             .find(b => b.textContent.includes('New session')).click(), true`
-        )
-        await app.until(`document.querySelectorAll('${PANE}').length === 2`, { timeout: 120_000 })
-
-        const before = await app.evaluate(
-          `Array.from(document.querySelectorAll('${PANE}')).map(p => p.dataset.conversation).join(',')`
-        )
-        const orders = await app.evaluate(`(async () => {
-          const panes = document.querySelectorAll('${PANE}')
-          const dt = new DataTransfer()
-          Object.defineProperty(dt, 'setDragImage', { value: () => {} })
-          panes[0].querySelector('.pane-title')
-            .dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }))
-          const seen = []
-          for (let i = 0; i < 25; i++) {
-            const box = document.querySelectorAll('${PANE}')[1].getBoundingClientRect()
-            document.querySelectorAll('${PANE}')[1].dispatchEvent(new DragEvent('dragover', {
-              bubbles: true, cancelable: true, dataTransfer: dt,
-              clientX: box.left + box.width * 0.9, clientY: box.top + box.height / 2,
-            }))
-            await new Promise((r) => setTimeout(r, 40))
-            const now = Array.from(document.querySelectorAll('${PANE}')).map(p => p.dataset.conversation).join(',')
-            if (seen[seen.length - 1] !== now) seen.push(now)
-          }
-          panes[0].querySelector('.pane-title')
-            .dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }))
-          return seen
-        })()`)
+        const [first, second] = await twoSessions(app)
 
         assert(
-          orders.length === 1,
-          `one rearrangement across 25 events, not ${String(orders.length)}`
+          (await app.evaluate(`document.querySelectorAll('${GROUP}').length`)) === 1,
+          'two sessions share one editor group'
         )
-        assert(orders[0] !== before, 'and the order actually changed')
+        assert(
+          (await app.evaluate(`document.querySelectorAll('${PANE}').length`)) === 1,
+          'and only the active tab is mounted — the background one costs nothing'
+        )
+        assert(
+          (await app.evaluate(`document.querySelector('${PANE}').dataset.conversation`)) === second,
+          'the session just started is the one on screen'
+        )
+
+        // Asking for a session that is already open focuses it in place.
+        await clickSidebarRow(app, first)
+        await app.settle()
+        assert((await tabIds(app)).length === 2, 'still two tabs, not three')
+        assert(
+          (await app.evaluate(`document.querySelector('${PANE}').dataset.conversation`)) === first,
+          'the sidenav moved the caret rather than opening a duplicate'
+        )
+
+        /*
+         * A tab stops shrinking before it stops being a name.
+         *
+         * The strip has always had `overflow-x: auto`, but tabs shrank to 84px
+         * first — so a crowded pane showed a column of identical truncated
+         * stubs and the scroll never engaged, because nothing ever overflowed.
+         * Squeezed below what two tabs need, they hold 160px and the strip
+         * scrolls instead.
+         */
+        await app.viewport(340, 700)
+        await wait(400)
+        const strip = await app.evaluate(`(() => {
+          const tabs = document.querySelector('.workspace-tabs')
+          return {
+            widths: [...document.querySelectorAll('.workspace-tab')]
+              .map(t => Math.round(t.getBoundingClientRect().width)),
+            overflows: tabs.scrollWidth > tabs.clientWidth,
+          }
+        })()`)
+        assert(
+          strip.widths.every((w) => w === 160),
+          `tabs hold their minimum rather than squashing, got ${strip.widths.join(',')}`
+        )
+        assert(strip.overflows, 'and the strip scrolls instead')
+        await app.viewport()
+        await wait(300)
+
+        // Closing a view leaves the agent running and the session in the tree.
+        await press(app, 'w', { meta: true })
+        await app.until(`document.querySelectorAll('${TAB}').length === 1`, {
+          label: '⌘W closed the tab',
+        })
+        const state = await app.evaluate(
+          `document.querySelector('[data-sidebar-conversation="${first}"]').dataset.state`
+        )
+        assert(state === 'offscreen', `the closed session is still listed, got ${state}`)
+
+        await clickSidebarRow(app, first)
+        await app.until(`document.querySelectorAll('${TAB}').length === 2`, {
+          label: 'the closed session comes back',
+        })
       } finally {
         await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'splitting moves the tab into its own group, and refuses to empty one',
+    /*
+     * Chorus splits by moving, not by duplicating as VS Code does, so a pane
+     * whose active tab is its only tab cannot split itself — the gesture would
+     * create a group and empty the old one, which normalisation then removes.
+     * That has to be refused outright rather than collapsing into a no-op the
+     * user has to interpret.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await twoSessions(app)
+
+        await press(app, '\\', { meta: true })
+        await app.until(`document.querySelectorAll('${GROUP}').length === 2`, {
+          label: 'the split made a second group',
+        })
+        assert(
+          (await app.evaluate(`document.querySelectorAll('${PANE}').length`)) === 2,
+          'both sessions are now mounted, one per group'
+        )
+        assert(
+          (await app.evaluate(
+            `Array.from(document.querySelectorAll('${GROUP}'))
+               .every(g => g.querySelectorAll('${TAB}').length === 1)`
+          )) === true,
+          'the tab moved rather than being copied — one each, not two and one'
+        )
+        assert(
+          (await app.evaluate(
+            `document.querySelector('.split-branch').dataset.orientation`
+          )) === 'row',
+          '⌘\\ split sideways'
+        )
+
+        // Each group now holds a single tab, so neither may split again.
+        await press(app, '\\', { meta: true })
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelectorAll('${GROUP}').length`)) === 2,
+          'splitting a one-tab group is refused, not silently collapsed'
+        )
+
+        // The sash drags, and the sizes it writes are the ones that render.
+        const before = await app.evaluate(
+          `getComputedStyle(document.querySelector('.split-child')).flexGrow`
+        )
+        await app.evaluate(`(() => {
+          const sash = document.querySelector('.workspace-sash')
+          const box = sash.getBoundingClientRect()
+          const x = box.left + box.width / 2
+          const y = box.top + box.height / 2
+          sash.dispatchEvent(new PointerEvent('pointerdown', {
+            pointerId: 1, button: 0, bubbles: true, cancelable: true, clientX: x, clientY: y,
+          }))
+          document.dispatchEvent(new PointerEvent('pointermove', {
+            pointerId: 1, bubbles: true, clientX: x - 120, clientY: y,
+          }))
+          document.dispatchEvent(new PointerEvent('pointerup', {
+            pointerId: 1, bubbles: true, clientX: x - 120, clientY: y,
+          }))
+          return true
+        })()`)
+        await app.settle()
+        const after = await app.evaluate(
+          `getComputedStyle(document.querySelector('.split-child')).flexGrow`
+        )
+        assert(
+          Number(after) < Number(before) - 0.01,
+          `the sash narrowed the first group (${before} → ${after})`
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'a backgrounded session keeps its transcript and its unsent draft',
+    /*
+     * Unmounting a background tab is what makes the shell affordable, and it is
+     * the one change that can lose work: the transcript comes back from the
+     * event store, but a half-typed message exists nowhere but the component
+     * being torn down. If the carry map is wrong this is data loss rather than
+     * a glitch, which is why it is asserted end to end rather than in a unit.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        const [first, second] = await twoSessions(app)
+
+        await clickTab(app, first)
+        await app.until(
+          `document.querySelector('${PANE}')?.dataset.conversation === '${first}'`
+        )
+        await say(app, 'Reply with exactly: KEPT')
+        /*
+         * An *agent* entry, not any entry: the prompt says "KEPT" too, so
+         * matching `.entry` alone resolves the moment the user's own message
+         * renders. The count taken then is of a turn still in flight, and the
+         * reply lands while the tabs are being switched — which reads at the
+         * end as a transcript that came back the wrong size.
+         */
+        await app.until(
+          `Array.from(document.querySelectorAll('.entry--codex, .entry--claude'))
+             .some(e => e.innerText.includes('KEPT'))`,
+          { timeout: 180_000, label: 'an agent answered' }
+        )
+        // And idle, so no thinking row is still to resolve underneath it.
+        await app.until(`!document.querySelector('.send--stop')`, {
+          timeout: 180_000,
+          label: 'the turn finished',
+        })
+        await app.settle()
+        const entries = await app.evaluate(`document.querySelectorAll('.entry').length`)
+        await draft(app, 'half a thought')
+
+        // Away, which unmounts it outright rather than hiding it.
+        await clickTab(app, second)
+        await app.until(
+          `document.querySelector('${PANE}')?.dataset.conversation === '${second}'`
+        )
+        assert(
+          (await app.evaluate(
+            `!document.querySelector('${PANE}[data-conversation="${first}"]')`
+          )) === true,
+          'the background session left the DOM entirely'
+        )
+
+        await clickTab(app, first)
+        await app.until(
+          `document.querySelector('${PANE}')?.dataset.conversation === '${first}'`
+        )
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelector('.composer textarea').value`)) ===
+            'half a thought',
+          'the unsent draft survived the unmount'
+        )
+        const back = await app.evaluate(`document.querySelectorAll('.entry').length`)
+        assert(
+          back === entries,
+          `and the transcript came back whole, not truncated (${entries} → ${back})`
+        )
+        // The `afterSeq` restore asks only for what it missed, so a replay that
+        // started from zero would show the answer twice rather than not at all.
+        const kept = await app.evaluate(
+          `Array.from(document.querySelectorAll('.entry--codex, .entry--claude'))
+             .filter(e => e.innerText.includes('KEPT')).length`
+        )
+        assert(kept === 1, `and not doubled by the incremental restore (${kept} copies)`)
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'a sidenav row renames inline and drags into a new order',
+    /*
+     * Both gestures live on the same element and can smother each other: the
+     * row is a button that opens a session on click, so a rename that did not
+     * replace it would have the button eating the caret, and a drag that did
+     * not suppress its click would open the session it was only being moved
+     * past. Asserted together for that reason.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        const [first] = await twoSessions(app)
+        const order = () =>
+          app.evaluate(
+            `Array.from(document.querySelectorAll('[data-sidebar-conversation]'))
+               .map(r => r.dataset.sidebarConversation)`
+          )
+        const before = await order()
+        assert(before.length === 2, `both sessions are listed flat, got ${before.length}`)
+        assert(
+          (await app.evaluate(`document.querySelectorAll('.workspace-group-label').length`)) === 0,
+          'and not under a folder heading'
+        )
+
+        // Double-click swaps the row for a field, which is the only way a
+        // caret can land inside what is otherwise a button.
+        await app.evaluate(`(() => {
+          document.querySelector('[data-sidebar-conversation="${first}"]')
+            .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.workspace-session-rename')`, {
+          label: 'the rename field opened',
+        })
+        await app.evaluate(`(() => {
+          const field = document.querySelector('.workspace-session-rename')
+          field.value = 'renamed-inline'
+          field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+          return true
+        })()`)
+        await app.until(
+          `document.querySelector('[data-sidebar-conversation="${first}"]')
+             ?.innerText.includes('renamed-inline')`,
+          { label: 'the new name reached the row' }
+        )
+
+        // Drag the first row past the second. The row midpoints are snapshotted
+        // at drag start, so the pointer only has to clear the lower one.
+        await app.evaluate(`(() => {
+          const rows = document.querySelectorAll('[data-sidebar-conversation]')
+          const from = rows[0].getBoundingClientRect()
+          const to = rows[1].getBoundingClientRect()
+          const x = from.left + from.width / 2
+          rows[0].dispatchEvent(new PointerEvent('pointerdown', {
+            pointerId: 1, button: 0, bubbles: true, cancelable: true,
+            clientX: x, clientY: from.top + from.height / 2,
+          }))
+          document.dispatchEvent(new PointerEvent('pointermove', {
+            pointerId: 1, bubbles: true, clientX: x, clientY: to.bottom + 4,
+          }))
+          document.dispatchEvent(new PointerEvent('pointerup', {
+            pointerId: 1, bubbles: true, clientX: x, clientY: to.bottom + 4,
+          }))
+          return true
+        })()`)
+        await app.settle()
+        const after = await order()
+        assert(
+          after[0] === before[1] && after[1] === before[0],
+          `the dragged row took the other's place, got ${after.join(',')}`
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'the sidenav resizes, clamps, and comes back that width',
+    /*
+     * The width is the one piece of sidebar state that does not go through
+     * React while it is changing — the drag writes `--sidebar` straight onto
+     * the document element so a live transcript is not re-rendered sixty times
+     * a second, and only commits to the store on release. That split is easy to
+     * get half right: an edge that moves and never persists, or one that
+     * persists and does not move.
+     */
+    async run(assert) {
+      const first = await launch({ keepData: true })
+      const dataPath = first.dataPath
+      try {
+        await started(first)
+        const drag = (toX) =>
+          first.evaluate(`(() => {
+            const h = document.querySelector('.workspace-sidebar-resize')
+            const b = h.getBoundingClientRect()
+            const y = b.top + 120
+            h.dispatchEvent(new PointerEvent('pointerdown', {
+              pointerId: 1, button: 0, bubbles: true, cancelable: true,
+              clientX: b.left + b.width / 2, clientY: y,
+            }))
+            document.dispatchEvent(new PointerEvent('pointermove', {
+              pointerId: 1, bubbles: true, clientX: ${String(toX)}, clientY: y,
+            }))
+            const during = getComputedStyle(document.documentElement)
+              .getPropertyValue('--sidebar').trim()
+            document.dispatchEvent(new PointerEvent('pointerup', {
+              pointerId: 1, bubbles: true, clientX: ${String(toX)}, clientY: y,
+            }))
+            return during
+          })()`)
+        const editorLeft = () =>
+          first.evaluate(
+            `Math.round(document.querySelector('.workspace-editor').getBoundingClientRect().left)`
+          )
+
+        const before = await editorLeft()
+        const during = await drag(500)
+        assert(during === '506px', `the edge tracks the pointer mid-drag, got ${during}`)
+        await first.settle()
+        const after = await editorLeft()
+        assert(after === 506, `the editor moved with it (${before} → ${after})`)
+
+        // Well past the maximum: a width nobody can read past is refused.
+        await drag(2000)
+        await first.settle()
+        assert(
+          (await editorLeft()) === 640,
+          `dragged past the limit, clamped to 640, got ${await editorLeft()}`
+        )
+
+        /*
+         * A width remembered from a wide window must not swallow a narrow one.
+         * The card is fixed, so an unfitted 640 in a 900px window leaves a
+         * 260px editor, and at 640 it covers the workspace outright — the
+         * stored value is kept, but what is shown is fitted to the room.
+         */
+        await first.viewport(900, 800)
+        await wait(400)
+        const fitted = await first.evaluate(
+          `getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim()`
+        )
+        assert(fitted === '450px', `fitted to half a narrower window, got ${fitted}`)
+        assert((await editorLeft()) === 450, 'and the editor keeps the other half')
+        await first.viewport()
+        await wait(300)
+      } finally {
+        await first.stop()
+      }
+
+      const again = await launch({ userData: dataPath })
+      try {
+        await started(again)
+        await again.settle()
+        const restored = await again.evaluate(
+          `getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim()`
+        )
+        // 640 rather than the 450 it was fitted to: what gets remembered is
+        // the width chosen, not the compromise a smaller window imposed.
+        assert(restored === '640px', `the width survived the relaunch, got ${restored}`)
+      } finally {
+        await again.quit()
       }
     },
   },
@@ -649,6 +1088,59 @@ export const specs = [
           `Array.from(document.querySelectorAll('.entry--system')).some(e => /unanswered in time/.test(e.innerText))`
         )
         assert(expired === false, 'the answer reached the agent rather than the deadline')
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'a message sent mid-turn steers the agent rather than stopping it',
+    /*
+     * This always worked and was impossible to discover. `onSubmit` has never
+     * had a busy guard, both adapters declare `steer`, and `runtime.send`
+     * pushes into the running turn — but the only visible control turned into
+     * Stop the moment an agent started, so the way to say "actually, do it
+     * this way" looked exactly like the way to abandon the turn, and clicking
+     * it did abandon the turn. Both buttons now show at once, and this pins the
+     * behaviour they promise.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        await say(app, 'Count slowly from 1 to 30, one number per line, nothing else.')
+        await app.until(`!!document.querySelector('.send--stop')`, {
+          timeout: 120_000,
+          label: 'the turn started',
+        })
+
+        const controls = await app.evaluate(`(() => ({
+          stop: !!document.querySelector('.send--stop'),
+          send: !!document.querySelector('.composer-tools button[type="submit"]'),
+        }))()`)
+        assert(controls.stop && controls.send, 'Stop and Send are both offered while working')
+
+        await wait(1500)
+        await say(app, 'Change of plan: stop counting and reply with exactly STEERED')
+        await app.until(
+          `Array.from(document.querySelectorAll('.entry--codex, .entry--claude'))
+             .some(e => e.innerText.includes('STEERED'))`,
+          { timeout: 180_000, label: 'the agent took the new direction' }
+        )
+
+        const notices = await app.evaluate(
+          `Array.from(document.querySelectorAll('.notice-line'))
+             .map(n => n.textContent).filter(t => /Stopped|Interrupted/.test(t))`
+        )
+        assert(
+          notices.length === 0,
+          `and the turn was never interrupted to do it, got ${JSON.stringify(notices)}`
+        )
+        assert(
+          (await app.evaluate(`document.querySelectorAll('.entry--user').length`)) === 2,
+          'both instructions are in the transcript'
+        )
       } finally {
         await app.quit()
       }

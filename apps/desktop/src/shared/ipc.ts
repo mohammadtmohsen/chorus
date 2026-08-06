@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WorkspaceSnapshot } from './workspace-layout.js'
 
 /**
  * The single source of truth for the IPC surface.
@@ -211,15 +212,18 @@ export const IPC_CONTRACT = {
    */
   'conversation:restore': {
     request: z.object({}),
-    response: z.array(
-      z.object({
-        conversationId: z.string(),
-        participants: z.array(z.enum(['codex', 'claude'])),
-        profileId: z.string(),
-        cwd: z.string(),
-        title: z.string(),
-      })
-    ),
+    response: z.object({
+      sessions: z.array(
+        z.object({
+          conversationId: z.string(),
+          participants: z.array(z.enum(['codex', 'claude'])),
+          profileId: z.string(),
+          cwd: z.string(),
+          title: z.string(),
+        })
+      ),
+      workspace: WorkspaceSnapshot.nullable(),
+    }),
   },
 
   /**
@@ -261,9 +265,16 @@ export const IPC_CONTRACT = {
     }),
   },
 
-  /** Records the order the panes were arranged into, so a restore keeps it. */
-  'conversation:reorder': {
-    request: z.object({ order: z.array(z.string()) }),
+  /**
+   * Persists the whole arrangement in one write.
+   *
+   * `order` is the **sidebar's** order of running conversations, and only that.
+   * Each pane's tab order lives inside `workspace`, where it belongs — the two
+   * were briefly both called "order", which is exactly how they would have
+   * drifted apart.
+   */
+  'conversation:layout': {
+    request: z.object({ order: z.array(z.string()), workspace: WorkspaceSnapshot }),
     response: z.object({ ok: z.literal(true) }),
   },
 
@@ -552,8 +563,8 @@ export interface ChorusApi {
   readonly stashFile: (request: IpcRequest<'files:stash'>) => Promise<IpcResponse<'files:stash'>>
   /** The real path of a dropped file; `File.path` was removed in Electron 32. */
   readonly pathForFile: (file: File) => string
-  readonly reorderConversations: (
-    request: IpcRequest<'conversation:reorder'>
+  readonly writeConversationLayout: (
+    request: IpcRequest<'conversation:layout'>
   ) => Promise<{ ok: true }>
   readonly renameConversation: (
     request: IpcRequest<'conversation:rename'>

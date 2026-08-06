@@ -171,9 +171,31 @@ function makeSession(socket) {
       }
       throw new Error(`never became true: ${label}`)
     },
-    /** A frame plus a moment, so React has rendered before anything is measured. */
+    /**
+     * A frame plus a moment, so React has rendered before anything is measured.
+     *
+     * With a deadline, because `requestAnimationFrame` does not fire in a window
+     * the compositor considers occluded — and a suite that launches this many
+     * Electron windows cannot promise any of them is frontmost. Waiting on a
+     * frame that will never come turned into a two-minute timeout and a failure
+     * in whichever spec happened to be running behind another window.
+     */
     settle: () =>
-      evaluate('new Promise((r) => requestAnimationFrame(() => setTimeout(r, 40, true))))'),
+      evaluate(`new Promise((resolve) => {
+        const done = () => { resolve(true) }
+        /*
+         * Generous, because this path only runs when no frame is coming: the
+         * window is occluded and nothing is painting, so there is no cheap
+         * signal that layout has caught up. Resolving too early measures a
+         * scroll that has not finished — which showed up as a pinned header
+         * reported 9px from where it settles.
+         */
+        const deadline = setTimeout(done, 700)
+        requestAnimationFrame(() => {
+          clearTimeout(deadline)
+          setTimeout(done, 40)
+        })
+      })`),
   }
 }
 

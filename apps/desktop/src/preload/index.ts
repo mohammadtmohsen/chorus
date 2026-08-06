@@ -46,7 +46,7 @@ const api: ChorusApi = {
   stashFile: invoke('files:stash'),
   // Renderers cannot read a File's path any more; only the bridge can.
   pathForFile: (file: File) => webUtils.getPathForFile(file),
-  reorderConversations: invoke('conversation:reorder'),
+  writeConversationLayout: invoke('conversation:layout'),
   renameConversation: invoke('conversation:rename'),
   chooseProjectDirectory: invoke('conversation:chooseCwd'),
   setProjectDirectory: invoke('conversation:setCwd'),

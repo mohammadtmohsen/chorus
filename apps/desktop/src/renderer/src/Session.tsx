@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { quotePath } from './attach.js'
 import { Attachments, type Attachment } from './Attachments.js'
@@ -49,6 +49,16 @@ export interface SessionInfo {
   readonly title: string
 }
 
+/** Renderer state that survives closing or backgrounding a tab. */
+export interface SessionCarry {
+  readonly view: TranscriptView
+  readonly draft: string
+  readonly attached: readonly Attachment[]
+  readonly following: boolean
+  readonly scrollTop: number
+  readonly ideIncluded: boolean
+}
+
 /**
  * One conversation, whole: its transcript, its approvals, its composer.
  *
@@ -63,21 +73,6 @@ export interface SessionInfo {
  */
 export function Session(props: {
   session: SessionInfo
-  onTitle: (title: string) => void
-  /** Which pane is being dragged. A ref, so a drop decided in the same tick sees it. */
-  dragging: { current: string | null }
-  onDragStart: (conversationId: string) => void
-  onDragEnd: () => void
-  /**
-   * Called as a dragged pane passes over this one; the grid sorts live.
-   * `after` says which side of this pane it should land on.
-   */
-  onDragOverPane: (conversationId: string, after: boolean) => void
-  lifted: boolean
-  onMove: (conversationId: string, delta: -1 | 1) => void
-  onRestart: (was: string, session: SessionInfo) => void
-  /** False for the only session: there is nowhere to be with none open. */
-  canClose: boolean
   profiles: { id: string; name: string; summary: string }[]
   /** Reported upward so the pane's chip and the log agree on what is in force. */
   onProfile: (profileId: string) => void
@@ -86,7 +81,13 @@ export function Session(props: {
   /** Which agents exist on this machine at all; an absent one cannot be added. */
   installed: readonly AgentId[]
   onParticipants: (participants: AgentId[]) => void
-  onClose: (conversationId: string) => void
+  /*
+   * Undefined is spelled out because `exactOptionalPropertyTypes` is on: the
+   * caller reads this out of a Map, and a miss is a real value it has to be
+   * allowed to pass rather than an argument it must remember to omit.
+   */
+  carry?: SessionCarry | undefined
+  onCarry: (conversationId: string, carry: SessionCarry) => void
   /**
    * Whether this pane owns the caret.
    *
@@ -98,10 +99,10 @@ export function Session(props: {
   onActivate: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { conversationId, participants, cwd, profileId, title } = props.session
+  const { conversationId, participants, cwd, profileId } = props.session
   const profile = props.profiles.find((p) => p.id === profileId)
-  const [view, setView] = useState<TranscriptView>(EMPTY_VIEW)
-  const [draft, setDraft] = useState('')
+  const [view, setView] = useState<TranscriptView>(props.carry?.view ?? EMPTY_VIEW)
+  const [draft, setDraft] = useState(props.carry?.draft ?? '')
   const [error, setError] = useState<string | null>(null)
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
@@ -113,20 +114,17 @@ export function Session(props: {
     top: number
     placement: 'above' | 'below'
   } | null>(null)
-  const [confirmingClose, setConfirmingClose] = useState(false)
   const [pickingProfile, setPickingProfile] = useState(false)
-  /** Set once Restart has been asked for and is being answered. */
-  const [restarting, setRestarting] = useState(false)
+  /* Restart and End, with their arming and their in-flight state, live on the
+     tab's context menu now — the only place either is offered. */
   /** True while a file from outside is over this pane. */
   const [fileOver, setFileOver] = useState(false)
   /** Files waiting to be sent, shown above the box rather than typed into it. */
-  const [attached, setAttached] = useState<Attachment[]>([])
+  const [attached, setAttached] = useState<Attachment[]>([...(props.carry?.attached ?? [])])
   /** Non-null while the path is being edited; holds the draft, not the truth. */
   const [pathDraft, setPathDraft] = useState<string | null>(null)
   /** The agent currently joining or leaving, so its chip can say so. */
   const [moving, setMoving] = useState<AgentId | null>(null)
-  /** Non-null while the title is being edited; holds the draft, not the truth. */
-  const [titleDraft, setTitleDraft] = useState<string | null>(null)
   /** The pane itself, so dragging its bar carries the whole thing. */
   const pane = useRef<HTMLElement | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
@@ -170,7 +168,10 @@ export function Session(props: {
 
   useEffect(() => {
     window.chorus
-      .history({ conversationId })
+      .history({
+        conversationId,
+        ...(view.lastSeq > 0 ? { afterSeq: view.lastSeq } : {}),
+      })
       .then((history) => {
         setView((current) => reduceEvents(current, history))
       })
@@ -186,7 +187,7 @@ export function Session(props: {
    * never follows at all, and one that stops following for good is worse than
    * either.
    */
-  const following = useRef(true)
+  const following = useRef(props.carry?.following ?? true)
   /** Where the last scroll left us, so the next one can be told which way it went. */
   const wasAt = useRef(0)
 
@@ -493,7 +494,38 @@ export function Session(props: {
    * once, when Send is pressed.
    */
   const [ide, setIde] = useState<IdeContextPush | null>(null)
-  const [ideIncluded, setIncluded] = useState(true)
+  const [ideIncluded, setIncluded] = useState(props.carry?.ideIncluded ?? true)
+
+  const latest = useRef<SessionCarry>({
+    view,
+    draft,
+    attached,
+    following: following.current,
+    scrollTop: props.carry?.scrollTop ?? 0,
+    ideIncluded,
+  })
+  latest.current = {
+    view,
+    draft,
+    attached,
+    following: following.current,
+    scrollTop: score.current?.scrollTop ?? latest.current.scrollTop,
+    ideIncluded,
+  }
+
+  useEffect(
+    () => () => {
+      props.onCarry(conversationId, latest.current)
+    },
+    [conversationId, props.onCarry]
+  )
+
+  useLayoutEffect(() => {
+    const scrollTop = props.carry?.scrollTop
+    if (scrollTop === undefined || score.current === null) return
+    score.current.scrollTop = scrollTop
+    wasAt.current = scrollTop
+  }, [])
 
   useEffect(() => {
     return window.chorus.onIdeContext((payload) => {
@@ -722,7 +754,6 @@ export function Session(props: {
       // Which conversation this pane is, for anything outside React that needs
       // to address it — a driver, a bug report, the element inspector.
       data-conversation={conversationId}
-      data-lifted={props.lifted}
       data-active={props.active}
       aria-label={t('conversation.sessionLabel', { path: cwd })}
       /*
@@ -753,54 +784,13 @@ export function Session(props: {
         input.current?.focus()
       }}
       onDragOver={(e) => {
-        // Only a pane being dragged counts; a file dropped from Finder is not a
-        // reorder, and preventing default on it would swallow it silently.
-        const moved = props.dragging.current
-        if (moved === null) {
-          // A file from outside: accepted, but it is not a reorder.
-          if (e.dataTransfer.types.includes('Files')) {
-            e.preventDefault()
-            e.dataTransfer.dropEffect = 'copy'
-            setFileOver(true)
-          }
-          return
+        // Workspace tabs use pointer events. HTML drag here now means a file
+        // from outside the app, and remains scoped to the composer.
+        if (e.dataTransfer.types.includes('Files')) {
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          setFileOver(true)
         }
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'move'
-        if (moved === conversationId) return
-
-        /*
-         * Which side, decided by the midpoint — with a dead band around it.
-         *
-         * Reordering the instant the cursor touched a pane meant the pane that
-         * shifted under the cursor immediately triggered the next swap, and the
-         * grid thrashed between two arrangements while the mouse sat still. A
-         * pane now has to be crossed past its middle by a real margin before it
-         * gives way, and the margin is what the return trip has to re-cross —
-         * so a cursor hovering near a seam changes nothing.
-         *
-         * The axis comes from the grid's column count, not the pane's shape.
-         * Two panes side by side in a tall window are each *taller than wide*,
-         * so judging by aspect ratio decided them vertically — and left-to-right
-         * drags did nothing at all while diagonal ones flipped about.
-         */
-        const box = e.currentTarget.getBoundingClientRect()
-        const grid = e.currentTarget.parentElement
-        const columns =
-          grid === null
-            ? 1
-            : window.getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length
-
-        // One column means the panes are stacked, so the question is up or down.
-        const horizontal = columns > 1
-        const at = horizontal ? e.clientX : e.clientY
-        const start = horizontal ? box.left : box.top
-        const extent = horizontal ? box.width : box.height
-        const middle = start + extent / 2
-        const deadBand = Math.max(16, extent * 0.12)
-
-        if (at > middle + deadBand) props.onDragOverPane(conversationId, true)
-        else if (at < middle - deadBand) props.onDragOverPane(conversationId, false)
       }}
       onDragLeave={(e) => {
         // Only when the pointer actually left the pane, not on every child.
@@ -813,9 +803,6 @@ export function Session(props: {
           void attach(e.dataTransfer)
           return
         }
-        // The grid sorted itself on the way here; this only stops the browser
-        // treating the drop as navigation.
-        if (props.dragging.current !== null) e.preventDefault()
       }}
       data-file-over={fileOver}
     >
@@ -825,180 +812,6 @@ export function Session(props: {
         </p>
       )}
 
-      {/*
-        The session's name, where a name belongs — above what it names.
-        
-        It replaced the grid position, which was only ever a way to tell two
-        identical panes apart. A name does that better and says something as
-        well, and the folder is the name until you choose another.
-      */}
-      {/*
-        The title bar is the handle, the way a window's is.
-        
-        Not the whole pane: it holds a transcript you select text in and a field
-        you type into, and either would fight a drag. Dragging is off while the
-        name is being edited, or a caret drag inside the field would pick the
-        pane up instead.
-      */}
-      <header
-        className="pane-title"
-        draggable={titleDraft === null}
-        onDragStart={(e) => {
-          // Some engines refuse to start a drag with nothing on the transfer.
-          e.dataTransfer.setData('text/plain', conversationId)
-          e.dataTransfer.effectAllowed = 'move'
-
-          /*
-           * The whole pane follows the cursor, not the strip you grabbed.
-           *
-           * Dragging a title bar that leaves its conversation behind reads as
-           * moving the label rather than the session. Offset by where in the
-           * pane you actually took hold of it, so it does not jump under the
-           * cursor as it lifts.
-           */
-          const el = pane.current
-          if (el !== null) {
-            const box = el.getBoundingClientRect()
-            e.dataTransfer.setDragImage(el, e.clientX - box.left, e.clientY - box.top)
-          }
-          props.onDragStart(conversationId)
-        }}
-        onDragEnd={props.onDragEnd}
-      >
-        {titleDraft === null ? (
-          <button
-            type="button"
-            className="pane-title-name"
-            title={t('conversation.renameTitle')}
-            onClick={() => {
-              setTitleDraft(title)
-            }}
-            /*
-             * ⌥← and ⌥→ move the pane, so the grid can be rearranged without a
-             * mouse. On the name because it is already the focusable thing in
-             * the bar you grab — the same handle, reached the other way.
-             */
-            onKeyDown={(e) => {
-              if (!e.altKey) return
-              const delta = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : null
-              if (delta === null) return
-              e.preventDefault()
-              props.onMove(conversationId, delta)
-            }}
-          >
-            {title}
-          </button>
-        ) : (
-          <input
-            className="pane-title-input"
-            value={titleDraft}
-            autoFocus
-            spellCheck={false}
-            aria-label={t('conversation.renameTitle')}
-            placeholder={t('conversation.titlePlaceholder')}
-            onChange={(e) => {
-              setTitleDraft(e.target.value)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                setTitleDraft(null)
-                return
-              }
-              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-              e.preventDefault()
-              const next = titleDraft
-              setTitleDraft(null)
-              window.chorus
-                .renameConversation({ conversationId, title: next })
-                .then(({ title: applied }) => {
-                  props.onTitle(applied)
-                })
-                .catch(fail(setError))
-            }}
-            onBlur={() => {
-              setTitleDraft(null)
-            }}
-          />
-        )}
-        {view.spend.inputTokens + view.spend.outputTokens > 0 && (
-          <span
-            className="spend"
-            title={t('spend.tokens', {
-              input: view.spend.inputTokens.toLocaleString(),
-              output: view.spend.outputTokens.toLocaleString(),
-            })}
-            aria-label={t('spend.label')}
-          >
-            {compactTokens(view.spend.inputTokens + view.spend.outputTokens)}
-            {view.spend.costUsd !== null && ` · ${money(view.spend.costUsd)}`}
-          </span>
-        )}
-        {titleDraft === null && (
-          <span className="pane-title-actions">
-            {/*
-              Glyphs, not words.
-              
-              These sit beside a name that can be long, in a bar that has to
-              survive a pane a third of the window wide — and both are shapes
-              everything else uses for the same two ideas. The words live on
-              `aria-label` and `title`, so a screen reader and a hover both still
-              get "Restart" and "End".
-            */}
-            <button
-              type="button"
-              className="pane-title-action"
-              disabled={restarting}
-              aria-label={t('conversation.restartLabel')}
-              title={t('conversation.restartLabel')}
-              onClick={() => {
-                setRestarting(true)
-                window.chorus
-                  .restartConversation({ conversationId })
-                  .then((session) => {
-                    props.onRestart(conversationId, session)
-                  })
-                  .catch(fail(setError))
-                  .finally(() => {
-                    setRestarting(false)
-                  })
-              }}
-            >
-              <span aria-hidden="true">{restarting ? '…' : '↻'}</span>
-            </button>
-            {/*
-              Ending asks twice only while an agent is working — the one moment
-              there is anything to lose. Rather than a second button, the first
-              press arms this one: it turns the colour of a warning and says so,
-              and disarms itself after a few seconds so a stray click cannot lie
-              in wait.
-            */}
-            {props.canClose && (
-              <button
-                type="button"
-                className="pane-title-action pane-title-action--end"
-                data-armed={confirmingClose}
-                aria-label={
-                  confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')
-                }
-                title={confirmingClose ? t('conversation.endConfirm') : t('conversation.endLabel')}
-                onClick={() => {
-                  if (view.busy && !confirmingClose) {
-                    setConfirmingClose(true)
-                    window.setTimeout(() => {
-                      setConfirmingClose(false)
-                    }, 3_000)
-                    return
-                  }
-                  props.onClose(conversationId)
-                }}
-              >
-                <span aria-hidden="true">✕</span>
-              </button>
-            )}
-          </span>
-        )}
-      </header>
 
       <div
         className="score"
@@ -1581,6 +1394,33 @@ export function Session(props: {
                 </ul>
               )}
             </div>
+            {/*
+              What the conversation has cost, beside what it is pointed at and
+              what it is allowed to do.
+
+              It used to have a bar of its own above the transcript. That bar
+              held nothing else once the name moved to the tab and Restart and
+              End moved to the tab's context menu, so a full-width rule and 27px
+              of height were being spent on one chip. Down here it sits with the
+              other session-level facts and costs no height at all.
+            */}
+            {view.spend.inputTokens + view.spend.outputTokens > 0 && (
+              <span
+                className="spend"
+                title={t('spend.tokens', {
+                  input: view.spend.inputTokens.toLocaleString(),
+                  output: view.spend.outputTokens.toLocaleString(),
+                })}
+                aria-label={t('spend.label')}
+              >
+                {compactTokens(view.spend.inputTokens + view.spend.outputTokens)}
+                {/* Its own element so a narrow pane can drop the money and keep
+                    the count, rather than losing both at once. */}
+                {view.spend.costUsd !== null && (
+                  <span className="spend-cost">{` · ${money(view.spend.costUsd)}`}</span>
+                )}
+              </span>
+            )}
             <div className="pane-actions">
               {/*
                 Two labels, one button. The row has to survive a pane a third of
@@ -1603,18 +1443,20 @@ export function Session(props: {
             </div>
             <div className="composer-tools">
               {/*
-              One button, both jobs: Stop while an agent is working, Send
-              otherwise.
+              Two buttons while an agent is working, not one that changes job.
 
-              The worry with this shape is real — one agent mid-turn must not
-              stop you addressing another, which is the whole point of a shared
-              room. What saves it is the keyboard: ↵ sends whether or not anyone
-              is working, so the button showing Stop closes nothing off. A glyph,
-              not a word, because a label would crowd the text being written; the
-              name lives on `aria-label`, so a screen reader hears "Send" or
-              "Stop" rather than a shape.
+              Sending mid-turn has always worked — `onSubmit` has no busy guard,
+              both adapters declare `steer`, and `runtime.send` pushes straight
+              into the running turn — and ↵ has always done it. But the only
+              *visible* control turned into Stop, which says the opposite: the
+              way to add "actually, do it this way instead" looked like the way
+              to abandon the turn, and clicking it did abandon the turn.
+
+              So Stop appears beside Send rather than in place of it. Glyphs
+              rather than words, because a label would crowd the text being
+              written; the names live on `aria-label`.
             */}
-              {view.busy ? (
+              {view.busy && (
                 <button
                   type="button"
                   className="send send--stop"
@@ -1625,18 +1467,18 @@ export function Session(props: {
                 >
                   <span className="send-square" aria-hidden="true" />
                 </button>
-              ) : (
-                <button
-                  type="submit"
-                  className="send"
-                  aria-label={t('conversation.send')}
-                  disabled={
-                    (draft.trim() === '' && attached.length === 0) || participants.length === 0
-                  }
-                >
-                  <span aria-hidden="true">↑</span>
-                </button>
               )}
+              <button
+                type="submit"
+                className="send"
+                aria-label={view.busy ? t('conversation.steer') : t('conversation.send')}
+                title={view.busy ? t('conversation.steer') : undefined}
+                disabled={
+                  (draft.trim() === '' && attached.length === 0) || participants.length === 0
+                }
+              >
+                <span aria-hidden="true">↑</span>
+              </button>
             </div>
           </div>
         </form>

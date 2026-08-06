@@ -20,6 +20,7 @@
     "messageLabel": "Message",
     "placeholder": "Say something. Type @ to choose who answers.",
     "send": "Send",
+    "steer": "Send — the agent keeps working and takes this in",
     "stop": "Stop",
     "stopAll": "Stop {{agents}}",
     "showThinking": "Show thinking",
@@ -40,6 +41,42 @@
     "endConfirm": "An agent is working — press again to end this session",
     "cancel": "Cancel",
     "waiting": "waiting"
+  },
+  "workspace": {
+    "sessions": "Sessions",
+    "search": "Search sessions",
+    "hideSidebar": "Hide session sidebar",
+    "showSidebar": "Show session sidebar",
+    "resizeSidebar": "Resize sidebar — double-click to reset",
+    "empty": "No session is open in the editor",
+    "emptyHint": "Choose a running session from the sidebar.",
+    "working": "working",
+    "waiting_one": "{{count}} waiting",
+    "waiting_other": "{{count}} waiting",
+    "unread_one": "{{count}} unread update",
+    "unread_other": "{{count}} unread updates",
+    "closeTab": "Close {{title}} — the session keeps running",
+    "closePane": "Close editor group — sessions keep running",
+    "close": "Close",
+    "closeOthers": "Close Others",
+    "closeAll": "Close All",
+    "rename": "Rename",
+    "restart": "Restart Session",
+    "end": "End Session",
+    "endConfirm": "An agent is still working. End this session?",
+    "moveHere": "MOVE HERE",
+    "split": {
+      "up": "Split Up",
+      "down": "Split Down",
+      "left": "Split Left",
+      "right": "Split Right"
+    },
+    "dropSplit": {
+      "up": "SPLIT UP",
+      "down": "SPLIT DOWN",
+      "left": "SPLIT LEFT",
+      "right": "SPLIT RIGHT"
+    }
   },
   "settings": {
     "open": "Settings",
