@@ -146,5 +146,17 @@
     "allowOnce": "Allow once",
     "deny": "Deny",
     "enterHint": "Enter to allow"
+  },
+  "question": {
+    "asking": "{{agent}} is asking",
+    "waiting_one": "{{count}} more waiting",
+    "waiting_other": "{{count}} more waiting",
+    "multiHint": "Choose as many as apply",
+    "other": "Other",
+    "otherPlaceholder": "Type your own answer",
+    "freePlaceholder": "Type your answer",
+    "secretNote": "Kept out of the log",
+    "send": "Send answer",
+    "dismiss": "Dismiss"
   }
 }

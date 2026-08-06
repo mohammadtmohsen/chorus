@@ -492,6 +492,103 @@ export const specs = [
   },
 
   {
+    name: 'an agent can ask a question and get an answer back',
+    /*
+     * The whole path existed except its last step. The adapter mapped
+     * `AskUserQuestion`, the orchestrator logged the request and held it open —
+     * and nothing in the renderer read the event, so every question an agent
+     * asked was invisible until its deadline passed and the agent was told
+     * nobody had answered. Two unit tests cover the reducer; this is the only
+     * check that would have noticed the missing half, because every piece it
+     * spans was individually correct.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+
+        // Claude is the agent whose AskUserQuestion tool this path serves.
+        const added = await app.evaluate(`(() => {
+          const btn = Array.from(document.querySelectorAll('.voices--pane .voice'))
+            .find(b => b.textContent.trim() === 'claude')
+          if (!btn || btn.disabled) return 'unavailable'
+          if (btn.dataset.on === 'true') return 'already here'
+          btn.click()
+          return 'clicked'
+        })()`)
+        if (added === 'unavailable') {
+          assert(true, 'claude is not installed on this machine, and nothing is claimed')
+          return
+        }
+        await app.until(
+          `Array.from(document.querySelectorAll('.voices--pane .voice'))
+             .some(b => b.textContent.trim() === 'claude' && b.dataset.on === 'true')`,
+          { timeout: 120_000, label: 'claude joined the conversation' }
+        )
+
+        await say(
+          app,
+          '@claude Use your AskUserQuestion tool right now to ask me one question: "Which colour?" with options Red and Blue. Do not answer it yourself, just ask.'
+        )
+
+        await app.until(`!!document.querySelector('.question')`, {
+          timeout: 240_000,
+          label: 'the question reached the window',
+        })
+        await wait(500)
+
+        const card = await app.evaluate(`(() => {
+          const q = document.querySelector('.question')
+          return {
+            head: q.querySelector('.question-head strong')?.textContent ?? '',
+            ask: q.querySelector('.question-ask')?.textContent ?? '',
+            options: Array.from(q.querySelectorAll('.question-option-label')).map(o => o.textContent),
+            sendDisabled: q.querySelector('.btn--go').disabled,
+            focused: document.activeElement?.className ?? '',
+          }
+        })()`)
+
+        assert(/claude/i.test(card.head), `the card says who is asking: ${card.head}`)
+        assert(card.ask.length > 0, `and what was asked: ${card.ask}`)
+        assert(
+          card.options.length >= 2,
+          `the agent's own options are offered, not invented ones: ${JSON.stringify(card.options)}`
+        )
+        // Nothing is a truer answer than a wrong one: an empty send would tell
+        // the agent something the user never chose.
+        assert(card.sendDisabled === true, 'and it cannot be sent until it is answered')
+        assert(
+          card.focused.includes('question-option'),
+          `the keyboard can answer it without reaching for the mouse (focus: ${card.focused})`
+        )
+
+        await app.evaluate(`(document.querySelectorAll('.question-option')[0].click(), true)`)
+        await wait(400)
+        assert(
+          (await app.evaluate(`document.querySelector('.question .btn--go').disabled`)) === false,
+          'picking an option arms the send'
+        )
+
+        await app.evaluate(`(document.querySelector('.question .btn--go').click(), true)`)
+        await app.until(`!document.querySelector('.question')`, {
+          timeout: 60_000,
+          label: 'the card cleared once answered',
+        })
+        assert(true, 'answering clears the card')
+
+        // The point of the whole path: the agent is unblocked and has the answer.
+        await app.until(
+          `Array.from(document.querySelectorAll('.entry--claude')).some(e => /red/i.test(e.innerText))`,
+          { timeout: 180_000, label: 'the agent received the answer' }
+        )
+        assert(true, 'and the answer reached the agent, which is what was broken')
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
     name: 'quits cleanly with an agent mid-turn',
     // Shutdown closed the database while event pumps were still writing, which
     // surfaced as an unhandled rejection.

@@ -8,6 +8,7 @@ import type {
   ApprovalDecision,
   SessionOpts,
   UsageWindow,
+  UserInputResponse,
 } from '@chorus/agent-protocol'
 import { EventStore, openSqlite, type SqliteHandle, type StoredEvent } from '@chorus/event-store'
 import {
@@ -899,6 +900,29 @@ export class ChorusRuntime {
     const participant = this.require(conversationId).participants.get(agentId)
     if (participant === undefined) throw new Error(`"${agentId}" is not in this conversation`)
     await participant.service.decideApproval(approvalId, decision)
+  }
+
+  /**
+   * Carries an answer back to the agent that asked for it.
+   *
+   * A sibling of `decideApproval` rather than part of it: a permission is a
+   * question a rule can be given an opinion about, and what the user *wants* is
+   * not — which is why the service refuses to auto-answer these and why they
+   * come back through their own path.
+   *
+   * `timeout` is deliberately not reachable from here. The deadline belongs to
+   * the orchestrator, which owns the timer; a UI that could claim a question had
+   * expired would be able to say so before it had.
+   */
+  async answerUserInput(
+    conversationId: string,
+    agentId: AgentId,
+    userInputId: string,
+    response: UserInputResponse
+  ): Promise<void> {
+    const participant = this.require(conversationId).participants.get(agentId)
+    if (participant === undefined) throw new Error(`"${agentId}" is not in this conversation`)
+    await participant.service.answerUserInput(userInputId, response)
   }
 
   /**

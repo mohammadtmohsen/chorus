@@ -19,6 +19,8 @@ import {
   EMPTY_VIEW,
   reduceEvents,
   type PendingApproval,
+  type PendingQuestion,
+  type QuestionField,
   type TranscriptMessage,
   type TranscriptView,
 } from './transcript.js'
@@ -456,6 +458,33 @@ export function Session(props: {
   /** The one being asked about. The rest of the queue waits behind it. */
   const current = view.approvals[0]
   const queued = view.approvals.length
+
+  /*
+   * The head of the question queue, if the agent that asked is still one we can
+   * answer. `actor` spans the whole cast including `system`, and only a real
+   * agent has a session to send an answer back to.
+   */
+  const asking = view.questions.find((q) => q.agentId === 'codex' || q.agentId === 'claude')
+
+  const answerQuestion = useCallback(
+    (
+      request: PendingQuestion,
+      outcome: 'answered' | 'cancel',
+      answers: { questionId: string; values: string[] }[]
+    ) => {
+      if (request.agentId !== 'codex' && request.agentId !== 'claude') return
+      window.chorus
+        .answerQuestion({
+          conversationId,
+          agentId: request.agentId,
+          userInputId: request.userInputId,
+          outcome,
+          answers,
+        })
+        .catch(fail(setError))
+    },
+    [conversationId]
+  )
 
   /*
    * When the last approval clears, the caret goes back to the composer.
@@ -973,6 +1002,25 @@ export function Session(props: {
           />
         )}
 
+        {/*
+          Below the approval, and for the same reason it is drawn one at a time:
+          two blocking cards at once make you answer whichever your eye lands on
+          rather than whichever came first.
+        */}
+        {asking !== undefined && (
+          <QuestionCard
+            key={asking.userInputId}
+            request={asking}
+            waiting={view.questions.length - 1}
+            onAnswer={(answers) => {
+              answerQuestion(asking, 'answered', answers)
+            }}
+            onDismiss={() => {
+              answerQuestion(asking, 'cancel', [])
+            }}
+          />
+        )}
+
         <form
           className="composer"
           onSubmit={(e) => {
@@ -1354,6 +1402,187 @@ export function Session(props: {
             </div>
           </div>
         </form>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Marks "Other" apart from a real option label.
+ *
+ * A sentinel rather than a boolean beside the selection, because Other is one
+ * more thing you can pick and behaves like the rest until the answer is
+ * assembled — at which point it is replaced by what was typed. A NUL cannot
+ * collide with a provider's label; a string like "Other" could.
+ */
+const OTHER = '\u0000other'
+
+/**
+ * A question set, answered inline.
+ *
+ * The other half of the blocking pair. An approval asks whether an action may
+ * happen and a rule can answer it; this asks what you want, which nothing but a
+ * person can. That is why it has no Allow — only your answer, or a dismissal
+ * that tells the agent nothing was chosen.
+ *
+ * Every control is drawn from the request's own capability flags and never from
+ * a guess: an agent that sent no options is asking for typed text, and offering
+ * it a multiple choice would produce an answer it cannot take back.
+ */
+function QuestionCard({
+  request,
+  waiting,
+  onAnswer,
+  onDismiss,
+}: {
+  request: PendingQuestion
+  /** How many more sets are queued behind this one. */
+  waiting: number
+  onAnswer: (answers: { questionId: string; values: string[] }[]) => void
+  onDismiss: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  /*
+   * Whichever control comes first, whatever kind it is.
+   *
+   * A callback ref rather than a typed one: the first thing to focus is a button
+   * on a multiple choice and an input on a free-text question, and the card does
+   * not know which until it reads the request.
+   */
+  const first = useRef<HTMLElement | null>(null)
+  const takeFocus = (el: HTMLElement | null): void => {
+    first.current = el
+  }
+  const [picked, setPicked] = useState<Record<string, string[]>>({})
+  const [typed, setTyped] = useState<Record<string, string>>({})
+
+  /*
+   * The first control takes focus as the card appears, so the keyboard can
+   * answer without reaching for the mouse — the same bargain the approval card
+   * makes, for the same reason: the agent is stopped until this is answered.
+   */
+  useEffect(() => {
+    first.current?.focus()
+  }, [request.userInputId])
+
+  /** What this question currently answers, in the array shape the wire expects. */
+  const valuesFor = (q: QuestionField): string[] => {
+    const text = (typed[q.id] ?? '').trim()
+    if (q.options.length === 0) return text === '' ? [] : [text]
+    return (picked[q.id] ?? []).flatMap((value) =>
+      value === OTHER ? (text === '' ? [] : [text]) : [value]
+    )
+  }
+
+  const answered = request.questions.every((q) => valuesFor(q).length > 0)
+
+  const toggle = (q: QuestionField, value: string): void => {
+    setPicked((current) => {
+      const chosen = current[q.id] ?? []
+      if (!q.multiSelect) return { ...current, [q.id]: chosen.includes(value) ? [] : [value] }
+      return {
+        ...current,
+        [q.id]: chosen.includes(value) ? chosen.filter((v) => v !== value) : [...chosen, value],
+      }
+    })
+  }
+
+  return (
+    <section
+      className={`question question--${request.agentId}`}
+      // Assertive for the same reason an approval is: the agent is blocked and
+      // the request expires. Hearing about it afterwards is hearing nothing.
+      role="alertdialog"
+      aria-live="assertive"
+      aria-label={t('question.asking', { agent: request.agentId })}
+    >
+      <header className="question-head">
+        <span className={`voice-dot voice--${request.agentId}`} aria-hidden="true" />
+        <strong>{t('question.asking', { agent: request.agentId })}</strong>
+        {waiting > 0 && (
+          <span className="question-queue">{t('question.waiting', { count: waiting })}</span>
+        )}
+      </header>
+
+      {request.questions.map((q, index) => {
+        const chosen = picked[q.id] ?? []
+        const free = q.options.length === 0
+        const otherOpen = chosen.includes(OTHER)
+        return (
+          <div className="question-item" key={q.id}>
+            {q.header !== '' && <span className="question-label">{q.header}</span>}
+            <p className="question-ask">{q.question}</p>
+            {q.multiSelect && <span className="question-hint">{t('question.multiHint')}</span>}
+
+            {!free && (
+              <div className="question-options">
+                {q.options.map((option, optionIndex) => (
+                  <button
+                    key={option.label}
+                    ref={index === 0 && optionIndex === 0 ? takeFocus : undefined}
+                    type="button"
+                    className="question-option"
+                    aria-pressed={chosen.includes(option.label)}
+                    onClick={() => {
+                      toggle(q, option.label)
+                    }}
+                  >
+                    <span className="question-option-label">{option.label}</span>
+                    {option.description !== '' && (
+                      <span className="question-option-why">{option.description}</span>
+                    )}
+                  </button>
+                ))}
+                {q.allowOther && (
+                  <button
+                    type="button"
+                    className="question-option"
+                    aria-pressed={otherOpen}
+                    onClick={() => {
+                      toggle(q, OTHER)
+                    }}
+                  >
+                    <span className="question-option-label">{t('question.other')}</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {(free || otherOpen) && (
+              <input
+                ref={index === 0 && free ? takeFocus : undefined}
+                className="question-text"
+                // A secret is never echoed, and the orchestrator strips it from
+                // the log before it is written rather than after.
+                type={q.isSecret ? 'password' : 'text'}
+                value={typed[q.id] ?? ''}
+                placeholder={free ? t('question.freePlaceholder') : t('question.otherPlaceholder')}
+                onChange={(e) => {
+                  const { value } = e.target
+                  setTyped((current) => ({ ...current, [q.id]: value }))
+                }}
+              />
+            )}
+
+            {q.isSecret && <span className="question-hint">{t('question.secretNote')}</span>}
+          </div>
+        )
+      })}
+
+      <div className="question-actions">
+        <button
+          type="button"
+          className="btn btn--go"
+          disabled={!answered}
+          onClick={() => {
+            onAnswer(request.questions.map((q) => ({ questionId: q.id, values: valuesFor(q) })))
+          }}
+        >
+          {t('question.send')}
+        </button>
+        <button type="button" className="btn" onClick={onDismiss}>
+          {t('question.dismiss')}
+        </button>
       </div>
     </section>
   )

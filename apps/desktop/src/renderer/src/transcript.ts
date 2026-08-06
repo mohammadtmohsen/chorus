@@ -30,6 +30,33 @@ export interface PendingApproval {
   readonly expiresAt: number
 }
 
+/**
+ * A question set an agent is blocked on.
+ *
+ * Shaped from the event's payload rather than imported from the protocol: the
+ * renderer only ever sees a logged event, and reading it defensively is what
+ * keeps a replayed log from an older version out of the UI's assumptions.
+ */
+export interface PendingQuestion {
+  readonly userInputId: string
+  /** Which agent asked — several can be waiting at once in a shared conversation. */
+  readonly agentId: TranscriptEvent['actor']
+  readonly questions: readonly QuestionField[]
+  readonly expiresAt: number
+}
+
+export interface QuestionField {
+  readonly id: string
+  readonly header: string
+  readonly question: string
+  /** Empty means free text: the provider is asking you to type, not to choose. */
+  readonly options: readonly { readonly label: string; readonly description: string }[]
+  readonly multiSelect: boolean
+  readonly allowOther: boolean
+  /** The answer is a credential: never echoed on screen, never written down. */
+  readonly isSecret: boolean
+}
+
 /** What this conversation has cost so far, as the agents reported it. */
 export interface Spend {
   readonly inputTokens: number
@@ -41,6 +68,8 @@ export interface Spend {
 export interface TranscriptView {
   readonly messages: readonly TranscriptMessage[]
   readonly approvals: readonly PendingApproval[]
+  /** Question sets waiting on an answer. Blocking, like approvals, but unruleable. */
+  readonly questions: readonly PendingQuestion[]
   /** Agents currently mid-turn. Drives the live indicator on each voice. */
   readonly working: readonly TranscriptEvent['actor'][]
   readonly busy: boolean
@@ -53,6 +82,7 @@ export interface TranscriptView {
 export const EMPTY_VIEW: TranscriptView = {
   messages: [],
   approvals: [],
+  questions: [],
   working: [],
   busy: false,
   lastSeq: 0,
@@ -65,6 +95,7 @@ interface Mutable {
   usageByActor: Record<string, Spend>
   messages: TranscriptMessage[]
   approvals: PendingApproval[]
+  questions: PendingQuestion[]
   working: TranscriptEvent['actor'][]
   busy: boolean
   lastSeq: number
@@ -77,6 +108,7 @@ export function reduceEvents(
   const next: Mutable = {
     messages: [...view.messages],
     approvals: [...view.approvals],
+    questions: [...view.questions],
     working: [...view.working],
     busy: view.busy,
     lastSeq: view.lastSeq,
@@ -167,6 +199,55 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         })
       }
       return
+
+    /*
+     * A question an agent is blocked on, held until somebody answers it.
+     *
+     * Never auto-answered anywhere in the stack: a permission profile can hold
+     * an opinion about whether an action is allowed, but not about what you
+     * want. So unlike an approval there is no rule that can clear this — only a
+     * person, or the deadline.
+     */
+    case 'userinput.requested': {
+      const asked = questionSet(p['request'])
+      if (asked.length === 0) return
+      view.questions.push({
+        userInputId: str('userInputId'),
+        agentId: event.actor,
+        questions: asked,
+        expiresAt: num('expiresAt'),
+      })
+      return
+    }
+
+    case 'userinput.answered': {
+      const id = str('userInputId')
+      view.questions = view.questions.filter((q) => q.userInputId !== id)
+
+      /*
+       * An unanswered question leaves a line, an answered one does not.
+       *
+       * Answering is visible already — you did it, and the agent's next words
+       * are the result. A question that ran out its deadline is the opposite:
+       * the agent was told nothing was chosen and carried on, and without this
+       * the only trace is a reply that quietly assumed something. That silence
+       * is precisely how a whole missing question UI went unnoticed.
+       */
+      const outcome = str('outcome')
+      if (outcome === 'answered') return
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: 'system',
+        kind: 'notice',
+        text:
+          outcome === 'timeout'
+            ? 'A question went unanswered in time.'
+            : 'A question was dismissed.',
+        status: 'complete',
+      })
+      return
+    }
 
     case 'approval.requested':
       view.approvals.push({
@@ -414,6 +495,51 @@ function appendStreamed(
   // A completed message is authoritative; a late delta must not append to it.
   if (previous.status === 'complete') return
   view.messages[index] = { ...previous, text: previous.text + text }
+}
+
+/**
+ * The questions inside a logged request, read rather than trusted.
+ *
+ * Every field is checked because this comes off disk: a log written by an older
+ * build, or by a provider that has since changed its mind about what it sends,
+ * must produce a card that is missing a label rather than a renderer that
+ * throws. A set with no readable questions is dropped — there would be nothing
+ * to answer.
+ *
+ * The capability flags are copied exactly and never inferred. `options: []`
+ * means the provider asked for typed text; adding a synthetic option would put
+ * an answer in front of the user that their agent cannot accept back.
+ */
+function questionSet(request: unknown): QuestionField[] {
+  if (typeof request !== 'object' || request === null) return []
+  const asked = (request as { questions?: unknown }).questions
+  if (!Array.isArray(asked)) return []
+
+  return asked
+    .filter((q): q is Record<string, unknown> => typeof q === 'object' && q !== null)
+    .map((q, index) => {
+      const options = Array.isArray(q['options']) ? q['options'] : []
+      return {
+        // Position is a usable fallback: Claude's questions carry no id of their
+        // own, and the adapter already keys them this way on the wire.
+        id: typeof q['id'] === 'string' ? q['id'] : String(index),
+        header: typeof q['header'] === 'string' ? q['header'] : '',
+        question: typeof q['question'] === 'string' ? q['question'] : '',
+        options: options
+          .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
+          .map((o) => ({
+            label: typeof o['label'] === 'string' ? o['label'] : '',
+            description: typeof o['description'] === 'string' ? o['description'] : '',
+          }))
+          .filter((o) => o.label !== ''),
+        multiSelect: q['multiSelect'] === true,
+        allowOther: q['allowOther'] === true,
+        // Fails closed: an unreadable flag is treated as a secret, because
+        // showing a credential once cannot be undone by fixing this later.
+        isSecret: q['isSecret'] !== false,
+      }
+    })
+    .filter((q) => q.question !== '' || q.header !== '')
 }
 
 /** The diff or arguments behind an approval, shown under the summary line. */

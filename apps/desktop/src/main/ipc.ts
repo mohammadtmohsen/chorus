@@ -152,6 +152,24 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       return OK
     },
 
+    'userinput:answer': async (request: {
+      conversationId: string
+      agentId: 'codex' | 'claude'
+      userInputId: string
+      outcome: 'answered' | 'cancel'
+      answers: { questionId: string; values: string[] }[]
+    }) => {
+      await runtime.answerUserInput(
+        request.conversationId,
+        request.agentId,
+        request.userInputId,
+        request.outcome === 'answered'
+          ? { outcome: 'answered', answers: request.answers }
+          : { outcome: 'cancel' }
+      )
+      return OK
+    },
+
     'policy:set': (request: { conversationId: string; profileId: string }) =>
       Promise.resolve(runtime.setProfile(request.conversationId, request.profileId)),
 

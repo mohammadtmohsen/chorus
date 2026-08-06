@@ -1245,6 +1245,177 @@ body {
 }
 
 /*
+ * A question, which is not an alarm.
+ *
+ * Built as a sibling of the approval card and deliberately not in its colour.
+ * Red says "something is about to happen that you may not want"; a question is
+ * the agent deferring to you, which is the opposite kind of interruption. It
+ * borrows the asking agent's own hue instead, so in a shared room the card says
+ * who is waiting before you read a word of it.
+ */
+.question {
+  /* Falls back to the bone tone when an agent has no hue of its own, so the
+     card is never left asking with an unset colour. */
+  --voice: var(--bone);
+  padding: calc(var(--step) * 3);
+  border: 1px solid color-mix(in srgb, var(--bone) 22%, var(--line));
+  border-radius: var(--radius);
+  background: var(--raised);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 2);
+}
+
+/* Whose question it is, carried into every mark the card makes. */
+.question--codex {
+  --voice: var(--codex);
+}
+
+.question--claude {
+  --voice: var(--claude);
+}
+
+.question-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The rest of the queue as a count, as on an approval: status about the pile,
+   not part of what you are being asked. */
+.question-queue {
+  margin-left: auto;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* A set can hold several questions; each is its own block so a long one cannot
+   be mistaken for the answer options of the one above it. */
+.question-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--step);
+}
+
+.question-item + .question-item {
+  padding-top: calc(var(--step) * 2);
+  border-top: 1px solid var(--line);
+}
+
+.question-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.question-ask {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--bone);
+}
+
+.question-hint {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--step);
+  margin-top: var(--step);
+}
+
+/*
+ * An option, with the reason to pick it underneath.
+ *
+ * Stacked rather than in a row: the descriptions are what make a choice
+ * answerable without asking a follow-up, and side by side they would be the
+ * first thing dropped to fit.
+ */
+.question-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+  font-family: var(--mono);
+  text-align: left;
+  color: var(--bone);
+  cursor: pointer;
+}
+
+.question-option:hover {
+  border-color: color-mix(in srgb, var(--bone) 35%, var(--line));
+}
+
+/* Chosen, said twice: the border carries it at a glance and the tint holds up
+   where a hairline does not — on a wide pane, or for a tired reader. */
+.question-option[aria-pressed='true'] {
+  border-color: var(--voice);
+  background: color-mix(in srgb, var(--voice) 14%, var(--sunken));
+}
+
+.question-option-label {
+  font-size: 12.5px;
+}
+
+.question-option-why {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.question-text {
+  margin-top: var(--step);
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--bone);
+}
+
+.question-text:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--bone) 40%, var(--line));
+}
+
+.question-actions {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  margin-top: var(--step);
+}
+
+/* Unanswerable until it is answered: the agent is waiting on a value, and an
+   empty send would tell it something untrue rather than nothing. */
+.question .btn--go:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Same reasoning as the approval's Allow: this card focuses a control itself,
+   and `:focus-visible` would leave a mouse user with an armed control and no
+   ring. */
+.question-option:focus,
+.question .btn--go:focus {
+  outline: 2px solid var(--voice);
+  outline-offset: 2px;
+}
+
+/*
  * `:focus`, not `:focus-visible`, and only here.
  *
  * The card focuses this button itself as it appears. Chromium only matches

@@ -56,6 +56,26 @@ export const ApprovalChoice = z.object({
 export type ApprovalChoice = z.infer<typeof ApprovalChoice>
 
 /**
+ * An answer to a question set, on its way back to the agent that asked.
+ *
+ * `timeout` is not in the outcome list on purpose. The deadline belongs to the
+ * orchestrator, which holds the timer; letting the window send one would let the
+ * UI declare a question expired before it was.
+ *
+ * `values` is an array even for a single choice, because that is Codex's wire
+ * format and flattening it here would lose multi-select on the way back.
+ */
+export const QuestionAnswer = z.object({
+  conversationId: z.string(),
+  /** Which agent asked — several can be waiting at once in a shared room. */
+  agentId: z.enum(['codex', 'claude']),
+  userInputId: z.string(),
+  outcome: z.enum(['answered', 'cancel']),
+  answers: z.array(z.object({ questionId: z.string(), values: z.array(z.string()) })),
+})
+export type QuestionAnswer = z.infer<typeof QuestionAnswer>
+
+/**
  * One entry per operation, each with its own request/response schema. Adding a
  * channel means adding it here first — `contextBridge` is generated from this.
  */
@@ -214,6 +234,10 @@ export const IPC_CONTRACT = {
   },
   'approval:decide': {
     request: ApprovalChoice,
+    response: z.object({ ok: z.literal(true) }),
+  },
+  'userinput:answer': {
+    request: QuestionAnswer,
     response: z.object({ ok: z.literal(true) }),
   },
   /**
@@ -442,6 +466,7 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:history'>
   ) => Promise<IpcResponse<'conversation:history'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
+  readonly answerQuestion: (request: QuestionAnswer) => Promise<{ ok: true }>
   readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
   readonly setProfile: (request: IpcRequest<'policy:set'>) => Promise<IpcResponse<'policy:set'>>
   readonly readDiagnostics: () => Promise<IpcResponse<'diagnostics:read'>>

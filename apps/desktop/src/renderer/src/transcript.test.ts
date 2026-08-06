@@ -290,3 +290,114 @@ describe('answersThinking', () => {
     }
   })
 })
+
+/**
+ * Questions were logged, held, and never drawn.
+ *
+ * The adapter mapped `AskUserQuestion` correctly and the orchestrator held the
+ * request open — but nothing in the renderer read the event, so every question
+ * an agent asked sat invisible until its deadline passed and the agent was told
+ * nobody had answered. These are the smallest checks that would have caught it.
+ */
+describe('questions', () => {
+  const ask = (overrides: Record<string, unknown> = {}): TranscriptEvent =>
+    event('userinput.requested', {
+      userInputId: 'q1',
+      expiresAt: 999,
+      request: {
+        id: 'q1',
+        questions: [
+          {
+            id: '0',
+            header: 'Auth method',
+            question: 'Which auth method?',
+            options: [
+              { label: 'OAuth', description: 'Redirect flow' },
+              { label: 'API key', description: 'A header' },
+            ],
+            multiSelect: false,
+            allowOther: true,
+            isSecret: false,
+          },
+        ],
+        ...overrides,
+      },
+    })
+
+  it('surfaces a question set and then clears it', () => {
+    let view = reduceEvents(EMPTY_VIEW, [ask()])
+    expect(view.questions).toHaveLength(1)
+    expect(view.questions[0]).toMatchObject({ userInputId: 'q1', agentId: 'codex' })
+    expect(view.questions[0]?.questions[0]).toMatchObject({
+      header: 'Auth method',
+      question: 'Which auth method?',
+      multiSelect: false,
+      allowOther: true,
+      isSecret: false,
+    })
+    expect(view.questions[0]?.questions[0]?.options).toHaveLength(2)
+
+    view = reduceEvents(view, [
+      event('userinput.answered', {
+        userInputId: 'q1',
+        outcome: 'answered',
+        answeredBy: 'user',
+      }),
+    ])
+    expect(view.questions).toHaveLength(0)
+    // Answering is its own evidence; the agent's next words are the result.
+    expect(view.messages).toHaveLength(0)
+  })
+
+  it('leaves a line when a question runs out of time', () => {
+    // The silence this fixes: an unanswered question used to leave no trace at
+    // all, so a reply that had quietly assumed something looked like a reply.
+    let view = reduceEvents(EMPTY_VIEW, [ask()])
+    view = reduceEvents(view, [
+      event('userinput.answered', {
+        userInputId: 'q1',
+        outcome: 'timeout',
+        answeredBy: 'system',
+      }),
+    ])
+    expect(view.questions).toHaveLength(0)
+    expect(view.messages.at(-1)?.text).toBe('A question went unanswered in time.')
+  })
+
+  it('reads no options as free text rather than inventing a choice', () => {
+    // Codex says "type something" by sending no options. Offering a synthetic
+    // option would produce an answer the provider cannot take back.
+    const view = reduceEvents(EMPTY_VIEW, [
+      ask({
+        questions: [
+          {
+            id: '0',
+            header: 'Token',
+            question: 'Paste the token',
+            options: null,
+            multiSelect: false,
+            allowOther: false,
+            isSecret: true,
+          },
+        ],
+      }),
+    ])
+    expect(view.questions[0]?.questions[0]?.options).toEqual([])
+    expect(view.questions[0]?.questions[0]?.isSecret).toBe(true)
+  })
+
+  it('treats an unreadable secret flag as secret', () => {
+    // Fails closed: a credential shown once cannot be unshown by fixing this.
+    const view = reduceEvents(EMPTY_VIEW, [
+      ask({
+        questions: [{ id: '0', header: 'K', question: 'Key?', options: [] }],
+      }),
+    ])
+    expect(view.questions[0]?.questions[0]?.isSecret).toBe(true)
+  })
+
+  it('drops a set with nothing answerable in it', () => {
+    const view = reduceEvents(EMPTY_VIEW, [ask({ questions: [] })])
+    expect(view.questions).toHaveLength(0)
+  })
+})
