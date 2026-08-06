@@ -161,6 +161,13 @@ body {
   color: var(--bone);
 }
 
+.app-version {
+  margin-left: calc(var(--step) * 2);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
 .wordmark--large .wordmark-logo {
   font-size: 22px;
 }

@@ -24,6 +24,7 @@ const MOVE_COOLDOWN_MS = 200
 
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
+  const [appVersion, setAppVersion] = useState<string | null>(null)
   const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
   const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
   const [defaults, setDefaults] = useState<Defaults>({
@@ -62,6 +63,15 @@ export function App(): React.JSX.Element {
   const [zoom, setZoom] = useState<number | null>(null)
 
   useEffect(() => {
+    window.chorus
+      .getAppInfo()
+      .then(({ appVersion: version }) => {
+        setAppVersion(version)
+      })
+      // The header can still do its job if this optional detail is unavailable.
+      .catch(() => {
+        setAppVersion(null)
+      })
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
     // Only the fields this sheet owns: `scale` belongs to the menu, and holding
@@ -385,6 +395,7 @@ export function App(): React.JSX.Element {
       <header className="masthead">
         <h1 className="wordmark">
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
+          {appVersion !== null && <span className="app-version">{appVersion}</span>}
         </h1>
         <Limits />
         <div className="masthead-actions">
