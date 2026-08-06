@@ -377,6 +377,53 @@ timeout. It has a deadline now. The first deadline was 250ms, which was worse in
 a quieter way: it resolved before a scroll finished and reported a pinned header
 9px from where it settles. 700ms.
 
+## The renderer CPU measurement — Phase 8's last line
+
+Asked for as "six sessions streaming and two on screen, before and after". The
+*before* cannot be run: the old grid capped at four columns, so six sessions
+never fit in it — which was the reason for the shell in the first place. What
+can be measured is the claim the mount policy rests on, which is the useful
+half: **an unmounted session costs the renderer nothing while its agent
+streams.** So hold the mounted count still and vary how many stream, then vary
+the mounted count and watch the cost arrive.
+
+Six sessions, all sent the same 4000-line count so every window lands
+mid-stream. Renderer task time from `Performance.getMetrics`, sampled over 10
+seconds, as a fraction of wall clock. Two runs:
+
+| mounted | streaming | CPU | layout |
+|---|---|---|---|
+| 1 | 0 | 0.3% / 0.3% | 0% |
+| 1 | 1 | 13.7% / 12.3% | 1.2% / 0.9% |
+| 1 | **6** | **14.7% / 13.9%** | 1.6% / 1.7% |
+| **4** | 6 | **35.6% / 36.7%** | 10.8% / 12% |
+
+- **Five extra streams, none of them mounted: +0.9% and +1.5%.** An agent
+  streaming into a session nobody is looking at is very close to free, which is
+  exactly what unmount-on-background was for.
+- **Three extra mounted, the same six streams: +21% and +22.8%** — about
+  **7–7.6% per mounted streaming session**, and layout time is where it goes,
+  1.6% → 12%.
+
+Cost scales with what is *mounted*, not with what is *running*. That is the
+whole of the divergence from the app this was modelled on, measured: their
+policy keeps hidden tabs mounted because their storm is on reload, and ours is
+continuous.
+
+Extrapolating the *before* rather than pretending to have run it: the old grid
+mounted every session it showed, so six of them would have been roughly six
+times the per-session cost — order of 45%, against 14% now, and it could only
+ever have shown four.
+
+Two measurement mistakes, both mine, both worth the note. The first pass used a
+300-line count that finished before the sampling window, so "6 streaming"
+measured a renderer with nothing left to do and read *lower* than one stream.
+The second used `⌘\` three times from a fresh split each time and got two
+groups, not four — a split *moves* the tab, so the new group holds exactly one
+and correctly refuses to split again. Focusing the crowded group with `⌘1`
+before each split fixes it. Neither would have been visible in the numbers
+alone; both were caught by asserting the state the sample was taken in.
+
 ## Known deviations from the plan
 
 - The sidebar edge hot-zone is **3px, not 2px**. Kept: at 2px it competes with
@@ -386,6 +433,17 @@ a quieter way: it resolved before a scroll finished and reported a pinned header
 
 ## Next
 
-Nothing outstanding in this plan. Before commit: the renderer CPU measurement
-the plan asks for — six sessions streaming with two on screen, before and after
-— has **not** been taken. It is the one Phase 8 line item not done.
+Nothing outstanding in this plan. The renderer CPU measurement was the last
+open line and is recorded above.
+
+Carried forward, none of it blocking:
+
+- **The 180ms debounce still coalesces continuous changes** — sash drags and tab
+  moves — so an abrupt quit inside that window can lose one. Discrete changes
+  that end on pointer-up write straight through.
+- **`@media (max-width: 760px)` overlays the sidebar rather than reserving space
+  for it.** That predates the shell and now reads from `--sidebar`, but it is a
+  second layout mode with no spec of its own; the suite only ever drives the
+  docked one.
+- **The `--radius` scale is documented in the plan and nowhere the CSS can
+  enforce it.** The next surface that wants a corner is on its honour.
