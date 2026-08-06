@@ -210,6 +210,34 @@ export const specs = [
       const app = await launch()
       try {
         await started(app)
+        /*
+         * The footer splits once, whether or not there is a spend chip in it.
+         *
+         * The chip arrives partway through a session — it renders only once an
+         * agent reports usage — so it is the one element in this row that can
+         * appear under a reader mid-conversation. It used to carry a
+         * `margin-left: auto` from the pane-title bar it was moved out of,
+         * which is a second auto margin beside `.pane-actions`; flex splits the
+         * free space between them, so an 894px row went from one gap of 287px
+         * to two of 135 and 134 the first time a token was spent, with the chip
+         * stranded between the details and the controls.
+         */
+        const controlsAtRight = () =>
+          app.evaluate(`(() => {
+            const row = document.querySelector('.composer-actions')
+            const tools = row.querySelector('.composer-tools')
+            return Math.round(row.getBoundingClientRect().right - tools.getBoundingClientRect().right)
+          })()`)
+        const bigGaps = () =>
+          app.evaluate(`(() => {
+            const kids = [...document.querySelector('.composer-actions').children]
+            return kids.slice(1).filter((c, i) =>
+              c.getBoundingClientRect().left - kids[i].getBoundingClientRect().right > 12).length
+          })()`)
+
+        assert((await controlsAtRight()) === 0, 'before any spend, the controls sit hard right')
+        const gapsBefore = await bigGaps()
+
         await app.evaluate(`(() => {
           const ta = document.querySelector('.composer textarea')
           Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
@@ -224,6 +252,14 @@ export const specs = [
         })
         const shown = await app.evaluate(`document.querySelector('.spend').textContent`)
         assert(/\d/.test(shown), `spend reads as a number: ${shown}`)
+
+        await app.settle()
+        assert((await controlsAtRight()) === 0, 'and still hard right once it appears')
+        const gapsAfter = await bigGaps()
+        assert(
+          gapsAfter === gapsBefore,
+          `the row keeps its shape rather than growing a second gap (${gapsBefore} → ${gapsAfter})`
+        )
       } finally {
         await app.quit()
       }
@@ -342,7 +378,14 @@ export const specs = [
          * scrolls instead.
          */
         await app.viewport(340, 700)
-        await wait(400)
+        // Waited for rather than slept through: emulation, the resize event and
+        // the reflow do not land on any fixed schedule, and under a loaded
+        // machine a sleep that is usually long enough silently is not.
+        await app.until(
+          `[...document.querySelectorAll('.workspace-tab')]
+             .every(t => Math.round(t.getBoundingClientRect().width) === 160)`,
+          { timeout: 15_000, label: 'the strip reflowed to the narrow window' }
+        )
         const strip = await app.evaluate(`(() => {
           const tabs = document.querySelector('.workspace-tabs')
           return {
@@ -676,7 +719,19 @@ export const specs = [
          * stored value is kept, but what is shown is fitted to the room.
          */
         await first.viewport(900, 800)
-        await wait(400)
+        /*
+         * Wait on the editor, which is the last link in the chain.
+         *
+         * The refit runs off a `resize` listener and writes `--sidebar`; the
+         * spacer that holds the editor clear reads it through a 300ms width
+         * transition. Waiting for the variable and then measuring the editor
+         * catches it mid-animation — which is a slower, quieter version of the
+         * fixed sleep this replaced.
+         */
+        await first.until(
+          `Math.round(document.querySelector('.workspace-editor').getBoundingClientRect().left) === 450`,
+          { timeout: 15_000, label: 'the sidebar refitted and the editor followed it' }
+        )
         const fitted = await first.evaluate(
           `getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim()`
         )

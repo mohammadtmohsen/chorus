@@ -469,16 +469,6 @@ body {
     display: none;
   }
 
-  /*
-   * The spend carried the `margin-left: auto` that splits this row into facts
-   * on the left and controls on the right. With it gone the split has to be
-   * handed to the next thing along, or Review and Send collapse leftward into
-   * the dots.
-   */
-  .composer-actions .pane-actions {
-    margin-left: auto;
-  }
-
   .composer-actions {
     gap: calc(var(--step) * 1.5);
   }
@@ -689,8 +679,18 @@ body {
 }
 
 /* The session's own usage, beside its name. */
+/*
+ * A fact about the session, so it sits with the others.
+ *
+ * It carried `margin-left: auto` from the pane-title bar it used to live in,
+ * where it pushed itself clear of the session name. In the composer row that
+ * is a second auto margin beside `.pane-actions`, and flex splits the free
+ * space between them: measured on an 894px row, one gap of 287px became two of
+ * 135 and 134 with the chip stranded in the middle, belonging to neither the
+ * details on the left nor the controls on the right. It also meant the row
+ * changed shape the first time a session spent a token.
+ */
 .spend {
-  margin-left: auto;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--faint);
