@@ -242,24 +242,8 @@ export function closeTab(
   })
 }
 
-export function closeOtherTabs(
-  workspace: WorkspaceSnapshot,
-  paneId: string,
-  keepConversationId: string
-): WorkspaceSnapshot {
-  const pane = workspace.panes[paneId]
-  if (!pane?.tabs.includes(keepConversationId)) return workspace
-  return normalizeWorkspace({
-    ...workspace,
-    panes: {
-      ...workspace.panes,
-      [paneId]: { ...pane, tabs: [keepConversationId], activeTabId: keepConversationId },
-    },
-    focusedPaneId: paneId,
-  })
-}
 
-export function closeAllTabs(workspace: WorkspaceSnapshot, paneId: string): WorkspaceSnapshot {
+function closeAllTabs(workspace: WorkspaceSnapshot, paneId: string): WorkspaceSnapshot {
   const pane = workspace.panes[paneId]
   if (pane === undefined) return workspace
   return normalizeWorkspace({
@@ -268,6 +252,7 @@ export function closeAllTabs(workspace: WorkspaceSnapshot, paneId: string): Work
   })
 }
 
+/** Emptying a pane is what removes it: normalisation drops a leaf with no tabs. */
 export function closePane(workspace: WorkspaceSnapshot, paneId: string): WorkspaceSnapshot {
   return closeAllTabs(workspace, paneId)
 }

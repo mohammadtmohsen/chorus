@@ -1,6 +1,6 @@
 import { useShallow } from 'zustand/react/shallow'
 import type { WorkspaceLayoutNode, WorkspacePane } from '../../../shared/workspace-layout.js'
-import { leafPaneIds, tabLocation } from './layout.js'
+import { tabLocation } from './layout.js'
 import { useWorkspaceStore, type SessionPulse, type WorkspaceActions, type WorkspaceStore } from './store.js'
 
 /**
@@ -35,8 +35,6 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     activateTab,
     focusPane,
     closeTab,
-    closeOtherTabs,
-    closeAllTabs,
     closePane,
     reorderTab,
     moveTab,
@@ -55,8 +53,6 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     activateTab,
     focusPane,
     closeTab,
-    closeOtherTabs,
-    closeAllTabs,
     closePane,
     reorderTab,
     moveTab,
@@ -101,10 +97,6 @@ export function usePane(paneId: string): WorkspacePane | undefined {
   return useWorkspaceStore((state) => state.panes[paneId])
 }
 
-/** How many panes are on screen, for the `MAX_PANES` guards on split. */
-export function usePaneCount(): number {
-  return useWorkspaceStore((state) => leafPaneIds(state.layout).length)
-}
 
 export function useSidebarHidden(): boolean {
   return useWorkspaceStore((state) => state.sidebarHidden)

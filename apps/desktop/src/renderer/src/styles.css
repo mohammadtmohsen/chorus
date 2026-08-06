@@ -3208,31 +3208,136 @@ input::placeholder {
  * thing that differs. On the right they line up into a column you can read down
  * for who is in each session.
  */
+/*
+ * A card now, not a line: the row carries what the composer's own footer says
+ * about a session, for the sessions you are not looking at.
+ *
+ * A wrapper rather than one button, because Restart and End sit inside it and
+ * a button cannot contain buttons — the same shape a tab already has.
+ */
 .workspace-session-row {
   position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-inline: calc(var(--step) * 2);
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--faint);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-session-main {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--mono);
+  /* The transcript's size. A session's name is content, not chrome, and it was
+     being set three steps below the text it names. */
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+
+.workspace-session-line {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: calc(var(--step) * 2);
-  min-height: 36px;
   min-width: 0;
-  margin-inline: calc(var(--step) * 2);
-  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+}
+
+/* Where it is pointed and what it may do there, quieter than the name. */
+.workspace-session-meta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  min-width: 0;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.workspace-session-path {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-session-profile {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/*
+ * Held back until the row is under the pointer or holding focus.
+ *
+ * Opacity rather than `display`, so both stay in the tab order — a control you
+ * can only reach by hovering is one a keyboard cannot reach at all. End is the
+ * only irreversible thing in the sidenav, and it arms itself while an agent is
+ * working exactly as the tab's did.
+ */
+.workspace-session-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 1px;
+  padding-right: var(--step);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.workspace-session-row:hover .workspace-session-actions,
+.workspace-session-actions:focus-within {
+  opacity: 1;
+}
+
+.workspace-session-action {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 0;
   border-radius: calc(var(--radius) - 2px);
   background: transparent;
   color: var(--faint);
-  font-family: var(--mono);
-  /* The transcript's size. A session's name is content, not chrome, and it was
-     being set two steps below the text it names. */
-  font-size: 14px;
-  text-align: left;
+  font-size: 12px;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-session-action:hover,
+.workspace-session-action:focus-visible {
+  background: color-mix(in srgb, var(--bone) 8%, transparent);
+  color: var(--bone);
+  outline: none;
+}
+
+.workspace-session-action--end:hover,
+.workspace-session-action--end:focus-visible {
+  background: color-mix(in srgb, var(--alert) 18%, transparent);
+  color: var(--alert);
+}
+
+.workspace-session-action--end[data-armed='true'] {
+  background: color-mix(in srgb, var(--alert) 22%, transparent);
+  color: var(--alert);
 }
 
 .workspace-session-row:hover,
-.workspace-session-row:focus-visible {
+.workspace-session-row:focus-within {
   background: color-mix(in srgb, var(--bone) 6%, transparent);
   color: var(--bone);
   outline: none;

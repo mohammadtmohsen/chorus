@@ -5,8 +5,6 @@ import type { WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
 import {
   activateTab,
   clampSidebarWidth,
-  closeAllTabs,
-  closeOtherTabs,
   closePane,
   closeTab,
   EMPTY_WORKSPACE,
@@ -64,8 +62,6 @@ export interface WorkspaceActions {
   activateTab: (paneId: string, conversationId: string) => void
   focusPane: (paneId: string) => void
   closeTab: (paneId: string, conversationId: string) => void
-  closeOtherTabs: (paneId: string, conversationId: string) => void
-  closeAllTabs: (paneId: string) => void
   closePane: (paneId: string) => void
   reorderTab: (paneId: string, fromIndex: number, slotBefore: number) => void
   moveTab: (conversationId: string, targetPaneId: string, slotBefore: number) => void
@@ -179,9 +175,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       focusPane: (paneId) => { update((current) => focusPane(current, paneId)); },
       closeTab: (paneId, conversationId) =>
         { update((current) => closeTab(current, paneId, conversationId)); },
-      closeOtherTabs: (paneId, conversationId) =>
-        { update((current) => closeOtherTabs(current, paneId, conversationId)); },
-      closeAllTabs: (paneId) => { update((current) => closeAllTabs(current, paneId)); },
       closePane: (paneId) => { update((current) => closePane(current, paneId)); },
       reorderTab: (paneId, fromIndex, slotBefore) =>
         { update((current) => reorderTab(current, paneId, fromIndex, slotBefore)); },

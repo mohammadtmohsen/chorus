@@ -67,7 +67,7 @@ const clickTab = (page, conversationId) =>
 
 const clickSidebarRow = (page, conversationId) =>
   page.evaluate(`(() => {
-    document.querySelector('[data-sidebar-conversation="${conversationId}"]').click()
+    document.querySelector('[data-sidebar-conversation="${conversationId}"] .workspace-session-main').click()
     return true
   })()`)
 
@@ -605,10 +605,46 @@ export const specs = [
           'and not under a folder heading'
         )
 
+        /*
+         * The card carries what the composer's footer says about a session, and
+         * its own Restart and End — the tab's context menu is gone, so this is
+         * where those live. A wrapper with a button inside it, because a button
+         * cannot contain buttons; the nesting check is the part that would fail
+         * silently in the DOM rather than loudly in a test.
+         */
+        const card = await app.evaluate(`(() => {
+          const row = document.querySelector('[data-sidebar-conversation="${first}"]')
+          const main = row.querySelector('.workspace-session-main')
+          return {
+            path: row.querySelector('.workspace-session-path')?.textContent ?? null,
+            profile: row.querySelector('.workspace-session-profile')?.textContent ?? null,
+            actions: [...row.querySelectorAll('.workspace-session-action')].length,
+            nestedButtons: main.querySelectorAll('button').length,
+            actionsIdle: getComputedStyle(row.querySelector('.workspace-session-actions')).opacity,
+            menus: document.querySelectorAll('.workspace-context-menu').length,
+          }
+        })()`)
+        assert(card.path !== null && card.profile !== null, 'the row shows its path and profile')
+        assert(card.actions === 2, `Restart and End sit on it, got ${String(card.actions)}`)
+        assert(card.nestedButtons === 0, 'and no button is nested inside another')
+        assert(card.actionsIdle === '0', 'held back until the row is hovered or focused')
+
+        // Right-clicking a tab used to open a menu. It should do nothing now.
+        await app.evaluate(`(() => {
+          document.querySelector('${TAB}')
+            .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelectorAll('.workspace-context-menu').length`)) === 0,
+          'and the tab context menu is gone'
+        )
+
         // Double-click swaps the row for a field, which is the only way a
         // caret can land inside what is otherwise a button.
         await app.evaluate(`(() => {
-          document.querySelector('[data-sidebar-conversation="${first}"]')
+          document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-main')
             .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
           return true
         })()`)
@@ -634,7 +670,7 @@ export const specs = [
           const from = rows[0].getBoundingClientRect()
           const to = rows[1].getBoundingClientRect()
           const x = from.left + from.width / 2
-          rows[0].dispatchEvent(new PointerEvent('pointerdown', {
+          rows[0].querySelector('.workspace-session-main').dispatchEvent(new PointerEvent('pointerdown', {
             pointerId: 1, button: 0, bubbles: true, cancelable: true,
             clientX: x, clientY: from.top + from.height / 2,
           }))

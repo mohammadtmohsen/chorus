@@ -377,6 +377,7 @@ export function App(): React.JSX.Element {
         onEnd={endNow}
         onReorderSessions={reorderSessions}
         onCommitLayout={commitLayout}
+        profiles={profiles}
         renderSession={(session, focused, paneId) => (
           <Session
             key={session.conversationId}

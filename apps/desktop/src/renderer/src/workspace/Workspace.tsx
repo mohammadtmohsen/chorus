@@ -2,13 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
-import type { SessionInfo } from '../Session.js'
+import { shortenPath, type SessionInfo } from '../Session.js'
 import { SIDEBAR_WIDTH } from '../../../shared/workspace-layout.js'
-import { clampSidebarWidth, leafPaneIds, MAX_PANES, type SplitDirection } from './layout.js'
+import { clampSidebarWidth, leafPaneIds, type SplitDirection } from './layout.js'
 import {
   useActiveConversationId,
   usePane,
-  usePaneCount,
   useSessionPulse,
   useSidebarHidden,
   useSidebarWidth,
@@ -28,6 +27,8 @@ interface WorkspaceProps {
   readonly onEnd: (conversationId: string) => void
   /** The sidebar's own order, which is the `order` half of `conversation:layout`. */
   readonly onReorderSessions: (order: readonly string[]) => void
+  /** So a session's `profileId` can be shown as the name the chip uses. */
+  readonly profiles: readonly { readonly id: string; readonly name: string }[]
   /** Persists the arrangement immediately, for changes that end on pointer-up. */
   readonly onCommitLayout: () => void
   readonly renderSession: (
@@ -186,6 +187,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         onRename={props.onRename}
         onReorderSessions={props.onReorderSessions}
         onCommitLayout={props.onCommitLayout}
+        profiles={props.profiles}
+        onRestart={props.onRestart}
+        onEnd={props.onEnd}
       />
       <main className="workspace-editor" aria-label="Workspace">
         {layout === null ? (
@@ -407,30 +411,10 @@ function PaneTabStrip(
   }
 ): React.JSX.Element {
   const { t } = useTranslation()
-  const { closeOtherTabs, closeAllTabs, closePane, splitTab } = useWorkspaceActions()
-  const paneCount = usePaneCount()
+  const { closePane } = useWorkspaceActions()
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [context, setContext] = useState<{ conversationId: string; x: number; y: number } | null>(
-    null
-  )
-  /** Reset with the menu, so a warning never lies in wait for the next opening. */
-  const [armedEnd, setArmedEnd] = useState(false)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-  useEffect(() => {
-    setArmedEnd(false)
-    if (context === null) return
-    const close = (): void => { setContext(null); }
-    const key = (event: globalThis.KeyboardEvent): void => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', key)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', key)
-    }
-  }, [context])
 
   /*
    * A strip that scrolls can hold the active tab off screen.
@@ -458,17 +442,9 @@ function PaneTabStrip(
     } else if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault()
       focusAt(event.key === 'Home' ? 0 : props.pane.tabs.length - 1)
-    } else if (event.key === 'F10' && event.shiftKey) {
-      const rect = event.currentTarget.getBoundingClientRect()
-      event.preventDefault()
-      const conversationId = props.pane.tabs[index]
-      if (conversationId !== undefined) setContext({ conversationId, x: rect.left, y: rect.bottom })
     }
   }
 
-  const selected = context?.conversationId
-  const selectedSession = selected === undefined ? undefined : props.sessions.get(selected)
-  const canSplit = props.pane.tabs.length > 1 && paneCount < MAX_PANES
   return (
     <div className="workspace-tab-strip" data-tab-strip role="tablist">
       <div className="workspace-tabs">
@@ -532,10 +508,6 @@ function PaneTabStrip(
                   onDoubleClick={() => {
                     setRenaming(conversationId)
                   }}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    setContext({ conversationId, x: event.clientX, y: event.clientY })
-                  }}
                   onKeyDown={(event) => { onTabKeyDown(index, event); }}
                 >
                   <span className="workspace-tab-title">{session.title}</span>
@@ -573,109 +545,6 @@ function PaneTabStrip(
       >
         <span aria-hidden="true">×</span>
       </button>
-      {context !== null && selectedSession !== undefined && (
-        <div
-          className="workspace-context-menu"
-          role="menu"
-          style={{ left: context.x, top: context.y }}
-          onPointerDown={(event) => {
-            event.stopPropagation()
-          }}
-        >
-          {(['up', 'down', 'left', 'right'] as const).map((direction) => (
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!canSplit}
-              key={direction}
-              onClick={() => {
-                splitTab(context.conversationId, props.paneId, direction)
-                setContext(null)
-              }}
-            >
-              {t(`workspace.split.${direction}`)}
-            </button>
-          ))}
-          <span className="workspace-context-separator" role="separator" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              props.onClose(props.paneId, context.conversationId)
-              setContext(null)
-            }}
-          >
-            {t('workspace.close')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={props.pane.tabs.length <= 1}
-            onClick={() => {
-              closeOtherTabs(props.paneId, context.conversationId)
-              setContext(null)
-            }}
-          >
-            {t('workspace.closeOthers')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              closeAllTabs(props.paneId)
-              setContext(null)
-            }}
-          >
-            {t('workspace.closeAll')}
-          </button>
-          <span className="workspace-context-separator" role="separator" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setRenaming(context.conversationId)
-              setContext(null)
-            }}
-          >
-            {t('workspace.rename')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              props.onRestart(context.conversationId)
-              setContext(null)
-            }}
-          >
-            {t('workspace.restart')}
-          </button>
-          {/*
-            End is the only item here that cannot be undone — closing a tab
-            leaves the agent working, this stops it. So while it is working the
-            item arms rather than fires, turns the colour of a warning, and says
-            what a second press will do. The same rule as the pane's own ✕.
-          */}
-          <button
-            type="button"
-            role="menuitem"
-            className="workspace-context-danger"
-            data-armed={armedEnd}
-            onClick={() => {
-              const working =
-                (useWorkspaceStore.getState().pulses[context.conversationId]?.working.length ?? 0) >
-                0
-              if (working && !armedEnd) {
-                setArmedEnd(true)
-                return
-              }
-              props.onEnd(context.conversationId)
-              setContext(null)
-            }}
-          >
-            {armedEnd ? t('conversation.endConfirm') : t('workspace.end')}
-          </button>
-        </div>
-      )}
     </div>
   )
 }
@@ -786,6 +655,9 @@ function WorkspaceSidebar(props: {
   onRename: (conversationId: string, title: string) => void
   onReorderSessions: (order: readonly string[]) => void
   onCommitLayout: () => void
+  profiles: readonly { readonly id: string; readonly name: string }[]
+  onRestart: (conversationId: string) => void
+  onEnd: (conversationId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const hidden = useSidebarHidden()
@@ -902,6 +774,11 @@ function WorkspaceSidebar(props: {
               dragging={reorder.draggingId === session.conversationId}
               drop={reorder.dropEdge(index, visible.length)}
               key={session.conversationId}
+              profileName={
+                props.profiles.find((p) => p.id === session.profileId)?.name ?? session.profileId
+              }
+              onRestart={() => { props.onRestart(session.conversationId); }}
+              onEnd={() => { props.onEnd(session.conversationId); }}
               onPointerDown={(event) => { reorder.onPointerDown(session.conversationId, event); }}
               onOpen={() => {
                 if (reorder.consumeSuppressedClick()) return
@@ -964,10 +841,13 @@ function SidebarSession(props: {
   renaming: boolean
   dragging: boolean
   drop: 'before' | 'after' | undefined
+  profileName: string
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void
   onOpen: () => void
   onRenameStart: () => void
   onRenameEnd: (title: string | null) => void
+  onRestart: () => void
+  onEnd: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const paneId = useTabPaneId(props.session.conversationId)
@@ -975,6 +855,11 @@ function SidebarSession(props: {
   const waiting = (pulse?.approvalIds.length ?? 0) + (pulse?.questionIds.length ?? 0)
   const working = (pulse?.working.length ?? 0) > 0
   const state = props.active ? 'active' : paneId === null ? 'offscreen' : 'open'
+  /* Reset whenever the session stops working, so a warning cannot lie in wait. */
+  const [armedEnd, setArmedEnd] = useState(false)
+  useEffect(() => {
+    if (!working) setArmedEnd(false)
+  }, [working])
 
   /*
    * Renaming replaces the row rather than nesting a field inside it: the row is
@@ -1001,37 +886,95 @@ function SidebarSession(props: {
   }
 
   return (
-    <button
-      type="button"
+    <div
       className="workspace-session-row"
       data-state={state}
       data-dragging={props.dragging}
       data-drop={props.drop}
       data-sidebar-conversation={props.session.conversationId}
-      title={props.session.cwd}
-      onPointerDown={props.onPointerDown}
-      onClick={props.onOpen}
-      onDoubleClick={props.onRenameStart}
     >
-      <span className="workspace-session-title">{props.session.title}</span>
-      {waiting > 0 ? (
-        <span className="workspace-session-status" data-waiting="true">
-          {t('workspace.waiting', { count: waiting })}
+      {/*
+        A wrapper rather than one button, because Restart and End live here now
+        and a button cannot contain buttons. Same shape as a tab: one control
+        that opens the thing, and its own controls beside it.
+      */}
+      <button
+        type="button"
+        className="workspace-session-main"
+        title={props.session.cwd}
+        onPointerDown={props.onPointerDown}
+        onClick={props.onOpen}
+        onDoubleClick={props.onRenameStart}
+      >
+        <span className="workspace-session-line">
+          <span className="workspace-session-title">{props.session.title}</span>
+          {waiting > 0 ? (
+            <span className="workspace-session-status" data-waiting="true">
+              {t('workspace.waiting', { count: waiting })}
+            </span>
+          ) : working ? (
+            <span className="workspace-session-status">{t('workspace.working')}</span>
+          ) : (pulse?.unread ?? 0) > 0 ? (
+            <span
+              className="workspace-session-badge"
+              aria-label={t('workspace.unread', { count: pulse?.unread })}
+            >
+              {pulse?.unread}
+            </span>
+          ) : null}
+          {/* Last, so the dots read as a status column rather than a bullet. */}
+          <span className="workspace-session-voices" aria-hidden="true">
+            {props.session.participants.map((agent) => (
+              <span className={`voice-dot voice--${agent}`} key={agent} />
+            ))}
+          </span>
         </span>
-      ) : working ? (
-        <span className="workspace-session-status">{t('workspace.working')}</span>
-      ) : (pulse?.unread ?? 0) > 0 ? (
-        <span className="workspace-session-badge" aria-label={t('workspace.unread', { count: pulse?.unread })}>
-          {pulse?.unread}
+        {/*
+          What the composer's own footer says about a session, for the sessions
+          you are not looking at: where it is pointed, and what it may do there.
+          The agents are the dots above rather than their names — at this width
+          the names cost a line and say what the colours already do.
+        */}
+        <span className="workspace-session-meta">
+          <span className="workspace-session-path">{shortenPath(props.session.cwd)}</span>
+          <span className="workspace-session-profile">{props.profileName}</span>
         </span>
-      ) : null}
-      {/* Last in the row, so the dots read as a status column rather than a bullet. */}
-      <span className="workspace-session-voices" aria-hidden="true">
-        {props.session.participants.map((agent) => (
-          <span className={`voice-dot voice--${agent}`} key={agent} />
-        ))}
+      </button>
+      {/*
+        Held back until the row is under the pointer or holding focus. Both are
+        rare acts on a session you are only glancing at, and End is the one
+        thing here that cannot be undone.
+      */}
+      <span className="workspace-session-actions">
+        <button
+          type="button"
+          className="workspace-session-action"
+          aria-label={t('conversation.restartLabel')}
+          title={t('conversation.restartLabel')}
+          onClick={props.onRestart}
+        >
+          <span aria-hidden="true">↻</span>
+        </button>
+        <button
+          type="button"
+          className="workspace-session-action workspace-session-action--end"
+          data-armed={armedEnd}
+          aria-label={armedEnd ? t('conversation.endConfirm') : t('conversation.endLabel')}
+          title={armedEnd ? t('conversation.endConfirm') : t('conversation.endLabel')}
+          onClick={() => {
+            // Asks twice only while an agent is working — the one moment there
+            // is anything to lose.
+            if (working && !armedEnd) {
+              setArmedEnd(true)
+              return
+            }
+            props.onEnd()
+          }}
+        >
+          <span aria-hidden="true">✕</span>
+        </button>
       </span>
-    </button>
+    </div>
   )
 }
 
