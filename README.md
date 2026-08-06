@@ -2,6 +2,17 @@
 
 Chorus is a local-first workspace where a developer can collaborate with multiple coding agents in one shared conversation.
 
+## Install
+
+Apple Silicon Mac, macOS 12 or later, with the `claude` and `codex` CLIs installed and logged in. Chorus is not notarized yet, so macOS blocks the downloaded build on first launch — [Installing Chorus on macOS](docs/install-macos.md) covers first install, updates, and every dialog you might hit, including the one that means something is actually wrong.
+
+Building it yourself avoids the warnings entirely, since they apply to downloads:
+
+```bash
+pnpm install
+pnpm app:install
+```
+
 ## Vision
 
 Coding agents are most useful when they can specialize, exchange findings, and remain under clear human control. Chorus provides one place to ask an agent for analysis, hand the result to another agent for implementation, and send the finished work back for review.
