@@ -1,6 +1,6 @@
 # Status — VS Code editor context
 
-Status: **Phase 5 done.** Plan approved; implementation in progress.
+Status: **Phase 6 done — feature complete, pending your UI verification.** Plan approved; implementation in progress.
 
 ## Done
 
@@ -176,9 +176,35 @@ clean build carrying the VSIX at `Contents/Resources/chorus-vscode.vsix`, and th
 re-verified as the plan required: `codesign --verify --deep --strict` passes, and
 **`Sealed Resources rules=13 files=77`** — up from 76 by exactly the one added resource.
 
-## Not started
+**Phase 6 done: end-to-end against the running app.**
 
-- Phase 6 — end-to-end, live, packaged-app, and visual verification
+`e2e/fake-ide.mjs` is a VS Code window that is not VS Code. It speaks the real protocol
+over the real socket to the real app, so what runs is the whole path — descriptor
+discovery, the token handshake, root filtering, and the snapshot request Send makes. Only
+the editor is pretend, which is the one part that cannot be automated on a build machine.
+
+Two specs, both green:
+
+- **follows the editor for its own project, and only that one.** Proves the socket is
+  reachable from a real main process, that the published root arrives canonicalized
+  (macOS reaches the temp dir through `/var`, a symlink to `/private/var`), and that the
+  pill names `src/a.ts:12-14`. Reporting a file from an unrelated directory leaves the
+  pane reading "No file from this project is open" — the foreign path never appears.
+- **Send asks the editor again rather than trusting the pill.** The pill is shown lines
+  1-3, the selection then moves to 40-41 with an unsaved buffer, and the snapshot returns
+  the fresh range, a project-relative path, exact text with its indentation, and the dirty
+  flag. Diagnostics are asserted to contain neither the token nor the selected source.
+
+The full suite is 12 specs and all pass, so the ten that existed before are unregressed.
+
+Gate: `pnpm check` green — 716 tests, 3 skipped; `pnpm run e2e` 12/12.
+
+Scope note, so the coverage is not overstated: the e2e harness drives the **built** app via
+`npx electron .`, not the packaged `.app`. Packaged verification was done in Phase 5 —
+`codesign --verify --deep --strict` clean, `Sealed Resources files=77`, VSIX present at
+`Contents/Resources/`. What has **not** been done is a run against a real VS Code window
+with the real extension installed, and the visual pass at normal and narrow widths. Those
+are the UI-verification gate and are yours to walk.
 
 ## Approved decisions captured by the plan
 

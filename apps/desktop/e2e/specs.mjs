@@ -1,4 +1,8 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { launch, wait } from './harness.mjs'
+import { existingDescriptors, FakeIde, waitForDescriptor } from './fake-ide.mjs'
 
 /**
  * What each spec is here to catch.
@@ -678,6 +682,140 @@ export const specs = [
           'no database errors on the way out'
         )
       } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'follows the editor for its own project, and only that one',
+    /*
+     * The whole path, end to end: descriptor discovery, the token handshake,
+     * root filtering, and the pill. Everything until now was unit-level, and a
+     * unit test cannot tell you the socket is actually reachable from a
+     * packaged main process.
+     */
+    async run(assert) {
+      const before = existingDescriptors()
+      const app = await launch()
+      let ide = null
+      try {
+        await started(app)
+
+        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-proj-'))
+        mkdirSync(join(project, 'src'), { recursive: true })
+        writeFileSync(join(project, 'src/a.ts'), 'const a = 1\n')
+
+        const conversationId = await app.evaluate(
+          `document.querySelector('.pane').dataset.conversation`
+        )
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
+        )
+
+        const descriptor = await waitForDescriptor(before)
+        assert(typeof descriptor.token === 'string', 'the descriptor carries a token')
+        ide = await FakeIde.connect(descriptor)
+
+        const roots = await ide.awaitRoots()
+        // The root arrives canonicalized: on macOS the temp dir is reached
+        // through /var, which is a symlink to /private/var.
+        assert(roots.length === 1, 'Chorus published exactly one root')
+        const root = roots[0]
+
+        ide.report(root, { file: join(root, 'src/a.ts'), startLine: 11, endLine: 13 })
+        await app.until(`!!document.querySelector('.ide-pill')`, { label: 'the pill appears' })
+        const shown = await app.evaluate(`document.querySelector('.ide-pill-what').textContent`)
+        assert(shown === 'src/a.ts:12-14', `the pill names the file and lines, got ${shown}`)
+
+        // A file from somewhere else must not reach this pane, even as a name.
+        const other = mkdtempSync(join(tmpdir(), 'chorus-e2e-other-'))
+        writeFileSync(join(other, 'secret.ts'), 'const s = 1\n')
+        ide.report(root, { file: join(other, 'secret.ts') })
+        await wait(600)
+        const after = await app.evaluate(
+          `document.querySelector('.ide-pill-what')?.textContent ?? ''`
+        )
+        assert(!after.includes('secret'), `no foreign path reaches the pane, got ${after}`)
+      } finally {
+        ide?.close()
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'Send asks the editor again rather than trusting the pill',
+    /*
+     * The pill is debounced, so it can be a few hundred milliseconds behind.
+     * Attaching the lines the user *was* looking at is worse than attaching
+     * none, and only a live round trip can prove the fresh ones win.
+     */
+    async run(assert) {
+      const before = existingDescriptors()
+      const app = await launch()
+      let ide = null
+      try {
+        await started(app)
+        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-fresh-'))
+        mkdirSync(join(project, 'src'), { recursive: true })
+        writeFileSync(join(project, 'src/b.ts'), 'const b = 2\n')
+
+        const conversationId = await app.evaluate(
+          `document.querySelector('.pane').dataset.conversation`
+        )
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
+        )
+
+        const descriptor = await waitForDescriptor(before)
+        ide = await FakeIde.connect(descriptor)
+        const [root] = await ide.awaitRoots()
+
+        // The pill says lines 1-3 ...
+        ide.report(root, { file: join(root, 'src/b.ts'), startLine: 0, endLine: 2 })
+        await app.until(`!!document.querySelector('.ide-pill')`, { label: 'the pill appears' })
+
+        // ... and by the time Send runs, the selection has moved to 40-41 and
+        // the buffer is unsaved.
+        ide.onSnapshot(() => ({
+          outcome: 'ok',
+          snapshot: {
+            source: 'current',
+            filePath: join(root, 'src/b.ts'),
+            fileUrl: `file://${join(root, 'src/b.ts')}`,
+            languageId: 'typescript',
+            documentVersion: 2,
+            isDirty: true,
+            selection: {
+              start: { line: 39, character: 0 },
+              end: { line: 40, character: 3 },
+              isEmpty: false,
+              selectedBytes: 7,
+              text: '  x = 1',
+            },
+          },
+        }))
+
+        const result = await app.evaluate(
+          `window.chorus.ideSnapshot({ conversationId: ${JSON.stringify(conversationId)} })`
+        )
+        assert(result.outcome === 'ok', `the snapshot came back, got ${result.outcome}`)
+        assert(
+          result.startLine === 40 && result.endLine === 41,
+          'the fresh range wins over the pill'
+        )
+        assert(result.relativePath === 'src/b.ts', 'the path is relative to the project')
+        assert(result.text === '  x = 1', 'the text is exact, indentation included')
+        assert(result.isDirty === true, 'an unsaved buffer is reported as one')
+
+        // The one place a token or a path may never end up.
+        const diagnostics = await app.evaluate(`window.chorus.readDiagnostics()`)
+        const dumped = JSON.stringify(diagnostics)
+        assert(!dumped.includes(descriptor.token), 'the token is absent from diagnostics')
+        assert(!dumped.includes('x = 1'), 'no selected source text is in diagnostics')
+      } finally {
+        ide?.close()
         await app.quit()
       }
     },
