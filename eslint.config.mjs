@@ -167,8 +167,18 @@ export default tseslint.config(
      * run by node or by a bundler, never compiled — so the type-aware rules
      * have no project to resolve them against.
      */
-    files: ['**/*.config.{js,mjs,ts,mts}', '**/*.setup.ts', 'apps/vscode-extension/esbuild.mjs'],
-    languageOptions: { parserOptions: { projectService: false, project: null } },
+    files: [
+      '**/*.config.{js,mjs,ts,mts}',
+      '**/*.setup.ts',
+      'apps/vscode-extension/esbuild.mjs',
+      'apps/vscode-extension/package.mjs',
+    ],
+    languageOptions: {
+      parserOptions: { projectService: false, project: null },
+      /* Node build scripts. Listed rather than pulled from a globals package,
+         for the same reason the e2e block lists its own. */
+      globals: { console: 'readonly', process: 'readonly', URL: 'readonly' },
+    },
     rules: {
       ...tseslint.configs.disableTypeChecked.rules,
       'no-console': 'off',

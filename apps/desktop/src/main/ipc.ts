@@ -15,6 +15,13 @@ import {
 import { toDisplayRange, type EditorMetadata } from '@chorus/ide-protocol'
 import { projectRelativePath, type CanonicalRoot } from '@chorus/workspace'
 import type { IdeBridge } from './ide-bridge.js'
+import {
+  defaultDeps,
+  extensionStatus,
+  installBundledExtension,
+  openProjectInEditor,
+  resolveVsix,
+} from './ide-extension.js'
 import { probeAgents } from './agent-probe.js'
 import type { ChorusRuntime } from './runtime.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
@@ -33,6 +40,28 @@ let ideBridge: IdeBridge | null = null
 
 export function attachIdeBridge(bridge: IdeBridge | null): void {
   ideBridge = bridge
+}
+
+/**
+ * The VSIX shipped with this build, and the `code` CLI to install it with.
+ *
+ * Resolved per call rather than cached: `code` can be installed while Chorus is
+ * running, and a user who follows the "Shell Command: Install 'code'" hint
+ * should not have to restart the app for the button to appear.
+ */
+function extensionDeps(): ReturnType<typeof defaultDeps> {
+  const vsix = (): string | null =>
+    resolveVsix({
+      packaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+    })
+  return defaultDeps({
+    vsixPath: vsix,
+    // The extension is versioned with the app it ships inside, so the app's own
+    // version is what the bundled VSIX carries.
+    bundledVersion: () => (vsix() === null ? null : app.getVersion()),
+  })
 }
 
 /**
@@ -266,6 +295,13 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
      * the composer can explain instead of throwing, because the caller's job is
      * to keep the draft, not to handle an exception on a path taken constantly.
      */
+    'ide:extensionStatus': () => extensionStatus(extensionDeps()),
+
+    'ide:installExtension': () => installBundledExtension(extensionDeps()),
+
+    'ide:openProject': (request: { conversationId: string }) =>
+      openProjectInEditor(runtime.projectDirectory(request.conversationId), extensionDeps()),
+
     'ide:snapshot': async (request: { conversationId: string }) => {
       const bridge = ideBridge
       if (bridge === null) return { outcome: 'unavailable', reason: 'unavailable' } as const

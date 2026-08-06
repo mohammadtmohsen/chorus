@@ -39,3 +39,6 @@ apps/desktop/release/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Built by apps/vscode-extension/package.mjs and bundled as an app resource.
+*.vsix

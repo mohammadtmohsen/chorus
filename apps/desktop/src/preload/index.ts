@@ -61,6 +61,9 @@ const api: ChorusApi = {
   exportDiagnostics: invoke('diagnostics:export'),
   readWorkspace: invoke('workspace:read'),
   ideSnapshot: invoke('ide:snapshot'),
+  ideExtensionStatus: () => invoke('ide:extensionStatus')({}),
+  ideInstallExtension: () => invoke('ide:installExtension')({}),
+  ideOpenProject: invoke('ide:openProject'),
   prepareHandoff: invoke('handoff:prepare'),
   sendHandoff: invoke('handoff:send'),
 

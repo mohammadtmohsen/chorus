@@ -13,6 +13,18 @@ pnpm install
 pnpm app:install
 ```
 
+## VS Code
+
+Chorus can follow the file and lines you have selected in VS Code, so a question can carry
+an exact reference instead of a description. Open **Settings → Install VS Code Extension**
+once, then open the same project folder in VS Code — the ⧉ button beside a conversation's
+path does that for you.
+
+While you work the extension sends metadata only: the file, the line range, and whether
+the buffer is unsaved. Source code crosses once, when you press Send, and only for the
+selection named in the composer. Nothing is reported for a folder Chorus does not have
+open, so a file from another project never leaves the editor — not even as a path.
+
 ## Vision
 
 Coding agents are most useful when they can specialize, exchange findings, and remain under clear human control. Chorus provides one place to ask an agent for analysis, hand the result to another agent for implementation, and send the finished work back for review.

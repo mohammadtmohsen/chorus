@@ -24,6 +24,13 @@ files:
   - node_modules/better-sqlite3/**
   - node_modules/@anthropic-ai/claude-agent-sdk/**
 
+# The companion VS Code extension, shipped with the app so the two always speak
+# the same protocol version. Outside the asar because `code --install-extension`
+# needs a real path it can open, and an asar is not a directory.
+extraResources:
+  - from: ../vscode-extension/chorus-vscode.vsix
+    to: chorus-vscode.vsix
+
 # better-sqlite3 ships N-API prebuilds, so nothing is compiled at pack time —
 # but it must stay outside the asar to be loadable.
 asarUnpack:

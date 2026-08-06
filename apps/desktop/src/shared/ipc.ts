@@ -426,6 +426,34 @@ export const IPC_CONTRACT = {
    * Separate from the live push because it is the only moment source code
    * crosses into Chorus, and it happens because the user pressed a button.
    */
+  /**
+   * Whether the companion extension is installed and current.
+   *
+   * Answered even when VS Code is absent: the renderer needs to know the
+   * difference between "no `code` command" and "not installed yet" in order to
+   * offer the right thing, or nothing at all.
+   */
+  'ide:extensionStatus': {
+    request: z.object({}),
+    response: z.object({
+      cliAvailable: z.boolean(),
+      installedVersion: z.string().nullable(),
+      bundledVersion: z.string().nullable(),
+      need: z.enum(['none', 'install', 'update']),
+    }),
+  },
+
+  'ide:installExtension': {
+    request: z.object({}),
+    response: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
+  },
+
+  /** Open this conversation's folder in VS Code. */
+  'ide:openProject': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
+  },
+
   'ide:snapshot': {
     request: z.object({ conversationId: z.string() }),
     response: IdeSnapshotResult,
@@ -554,6 +582,11 @@ export interface ChorusApi {
   readonly readWorkspace: (
     request: IpcRequest<'workspace:read'>
   ) => Promise<IpcResponse<'workspace:read'>>
+  readonly ideExtensionStatus: () => Promise<IpcResponse<'ide:extensionStatus'>>
+  readonly ideInstallExtension: () => Promise<IpcResponse<'ide:installExtension'>>
+  readonly ideOpenProject: (
+    request: IpcRequest<'ide:openProject'>
+  ) => Promise<IpcResponse<'ide:openProject'>>
   readonly ideSnapshot: (
     request: IpcRequest<'ide:snapshot'>
   ) => Promise<IpcResponse<'ide:snapshot'>>

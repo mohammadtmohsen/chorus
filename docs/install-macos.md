@@ -125,6 +125,28 @@ Chorus is ad-hoc signed: enough that macOS can confirm the app has not been
 tampered with since it was built, not enough for Apple to vouch for who built
 it. The warning you see is the honest description of that gap.
 
+## The VS Code extension
+
+Chorus ships a small companion extension that tells it which file and lines you have
+selected. It is installed on request, never automatically.
+
+1. In Chorus, open **Settings**.
+2. Under **VS Code extension**, press **Install VS Code Extension**.
+3. Reload the VS Code window (`Cmd+Shift+P` → "Developer: Reload Window").
+
+The status bar in VS Code then reads `Chorus: linked` while Chorus is running, and
+`Chorus: not running` otherwise.
+
+**If the button is missing**, the `code` command is not on your `PATH`. In VS Code, run
+`Cmd+Shift+P` → **Shell Command: Install 'code' command in PATH**, then reopen Chorus
+Settings.
+
+Each Chorus release ships the matching extension, so **update it when you update Chorus** —
+the button says _Update VS Code Extension_ when the two have drifted apart. They speak a
+versioned protocol and refuse to talk across a mismatch rather than misbehave.
+
+To remove it: `code --uninstall-extension chorus.chorus-vscode`.
+
 ## Uninstalling
 
 ```bash

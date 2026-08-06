@@ -1473,6 +1473,28 @@ export function Session(props: {
                 >
                   <span aria-hidden="true">✎</span>
                 </button>
+                {/*
+                  Opening the project is offered here rather than on the pill,
+                  because it is about the folder — and it is the step that makes
+                  the pill possible in the first place. No window flags: which
+                  window to use is a VS Code preference the user has already set.
+                */}
+                <button
+                  type="button"
+                  className="path-edit"
+                  aria-label={t('ide.openProject')}
+                  title={t('ide.openProject')}
+                  onClick={() => {
+                    window.chorus
+                      .ideOpenProject({ conversationId })
+                      .then((result) => {
+                        if (!result.ok) setError(t(`ide.openError.${result.reason ?? 'unknown'}`))
+                      })
+                      .catch(fail(setError))
+                  }}
+                >
+                  <span aria-hidden="true">⧉</span>
+                </button>
               </span>
             ) : (
               <input

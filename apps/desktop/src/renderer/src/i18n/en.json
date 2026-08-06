@@ -183,6 +183,25 @@
     "error": {
       "tooLarge": "That selection is too large to send. Select less, or exclude the editor context.",
       "unavailable": "Could not read the editor selection ({{reason}}). Your message was not sent."
+    },
+    "openProject": "Open this project in VS Code",
+    "openError": {
+      "cli-missing": "VS Code's `code` command is not on your PATH. In VS Code, run \"Shell Command: Install 'code' command in PATH\".",
+      "open-failed": "VS Code could not open this folder.",
+      "unknown": "VS Code could not open this folder."
+    },
+    "extension": {
+      "title": "VS Code extension",
+      "install": "Install VS Code Extension",
+      "update": "Update VS Code Extension",
+      "installed": "Installed, version {{version}}.",
+      "missing": "VS Code's `code` command is not on your PATH, so Chorus cannot install the extension for you.",
+      "none": "Not installed. Chorus can install the bundled version for you.",
+      "outdated": "Version {{installed}} is installed; this build ships {{bundled}}.",
+      "working": "Installing…",
+      "done": "Installed. Reload the VS Code window to start using it.",
+      "failed": "Install failed ({{reason}}).",
+      "unavailable": "This build of Chorus does not ship the extension."
     }
   }
 }

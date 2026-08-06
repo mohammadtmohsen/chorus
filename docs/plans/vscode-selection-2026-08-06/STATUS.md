@@ -1,6 +1,6 @@
 # Status — VS Code editor context
 
-Status: **Phase 4 done.** Plan approved; implementation in progress.
+Status: **Phase 5 done.** Plan approved; implementation in progress.
 
 ## Done
 
@@ -152,9 +152,32 @@ One test of mine was wrong rather than the code: I asserted `safeLanguageId` wou
 backticks. It strips them, which is the safer behaviour and what the fence rule needs. The
 test now asserts what the implementation actually guarantees.
 
+**Phase 5 done: VSIX distribution and project opening.**
+
+The extension ships inside Chorus as `extraResources`, installed only when the user presses
+a button in Settings. `--force` doubles as the update path, since `code` otherwise refuses
+when any version is present. `code` is invoked with argument arrays, never a shell string —
+a project path containing a quote would otherwise be a command injection, and there is a
+test for exactly that path. "Open in VS Code" adds no window flags: which window to use is
+a preference the user has already set.
+
+**The VSIX is built without `@vscode/vsce`.** `vsce` pulls `keytar` — a native keychain
+module — plus a signing binary, both wanting postinstall scripts. `pnpm-workspace.yaml`
+states the policy that violates: build scripts are opt-in one package at a time, on a
+one-native-module budget, because every entry is another binary to sign if M9 triggers.
+Paying that for a credential store we do not use — publishing is out of scope for v1 — was
+the wrong trade. A VSIX is an Open Packaging Convention zip, so `package.mjs` writes the
+two XML parts and zips them, adding no dependency at all. Verified by installing the result:
+`code --list-extensions` reports `chorus.chorus-vscode@0.4.0`, matching the id the parser
+expects.
+
+Gate: `pnpm check` green — 716 tests (up from 692), 3 skipped. `pnpm package` produces a
+clean build carrying the VSIX at `Contents/Resources/chorus-vscode.vsix`, and the seal
+re-verified as the plan required: `codesign --verify --deep --strict` passes, and
+**`Sealed Resources rules=13 files=77`** — up from 76 by exactly the one added resource.
+
 ## Not started
 
-- Phase 5 — VSIX distribution and project opening
 - Phase 6 — end-to-end, live, packaged-app, and visual verification
 
 ## Approved decisions captured by the plan

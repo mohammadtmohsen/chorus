@@ -1,5 +1,6 @@
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { AgentProbeResult } from '../../shared/ipc.js'
+import type { AgentProbeResult, IpcResponse } from '../../shared/ipc.js'
 import { useDialog } from './useDialog.js'
 
 type AgentId = 'codex' | 'claude'
@@ -31,6 +32,51 @@ export function Settings(props: {
   const { t } = useTranslation()
   const dialog = useDialog<HTMLElement>(props.onClose)
 
+  /*
+   * The companion VS Code extension.
+   *
+   * Here rather than in a pane: it is a property of the machine, like which
+   * agent CLIs are installed, not of the conversation you happen to be looking
+   * at. Installing is always an explicit press — Chorus ships the VSIX but
+   * never puts anything into another application on its own.
+   */
+  const [ext, setExt] = useState<IpcResponse<'ide:extensionStatus'> | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const refreshExt = useCallback(() => {
+    window.chorus
+      .ideExtensionStatus()
+      .then(setExt)
+      .catch(() => {
+        // An optional integration must not be able to break this sheet.
+        setExt(null)
+      })
+  }, [])
+
+  useEffect(refreshExt, [refreshExt])
+
+  const install = useCallback(() => {
+    setBusy(true)
+    setNote(t('ide.extension.working'))
+    window.chorus
+      .ideInstallExtension()
+      .then((result) => {
+        setNote(
+          result.ok
+            ? t('ide.extension.done')
+            : t('ide.extension.failed', { reason: result.reason ?? 'unknown' })
+        )
+        refreshExt()
+      })
+      .catch(() => {
+        setNote(t('ide.extension.failed', { reason: 'unknown' }))
+      })
+      .finally(() => {
+        setBusy(false)
+      })
+  }, [refreshExt, t])
+
   return (
     <div className="sheet-backdrop" role="presentation">
       <section
@@ -46,6 +92,32 @@ export function Settings(props: {
         </header>
 
         <div className="sheet-body">
+          {ext !== null && (
+            <fieldset className="cast">
+              <legend>{t('ide.extension.title')}</legend>
+              <p className="hint">
+                {!ext.cliAvailable
+                  ? t('ide.extension.missing')
+                  : ext.bundledVersion === null
+                    ? t('ide.extension.unavailable')
+                    : ext.need === 'install'
+                      ? t('ide.extension.none')
+                      : ext.need === 'update'
+                        ? t('ide.extension.outdated', {
+                            installed: ext.installedVersion ?? '',
+                            bundled: ext.bundledVersion,
+                          })
+                        : t('ide.extension.installed', { version: ext.installedVersion ?? '' })}
+              </p>
+              {ext.cliAvailable && ext.need !== 'none' && (
+                <button type="button" className="btn" disabled={busy} onClick={install}>
+                  {ext.need === 'update' ? t('ide.extension.update') : t('ide.extension.install')}
+                </button>
+              )}
+              {note !== null && <p className="hint">{note}</p>}
+            </fieldset>
+          )}
+
           <fieldset className="cast">
             <legend>{t('settings.installed')}</legend>
             {AGENTS.map((id) => {
