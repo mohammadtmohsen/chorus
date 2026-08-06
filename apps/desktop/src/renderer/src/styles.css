@@ -1077,6 +1077,10 @@ body {
   border: 1px solid var(--faint);
 }
 
+.entry--reasoning .speaker {
+  padding-top: 0;
+}
+
 .reasoning-toggle {
   grid-area: said;
   justify-self: start;

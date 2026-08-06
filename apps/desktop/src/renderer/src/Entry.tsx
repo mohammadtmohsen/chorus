@@ -73,6 +73,7 @@ export const Entry = memo(function Entry({
     return (
       <article className={`entry entry--${message.actor} entry--reasoning`}>
         <span className="tick" aria-hidden="true" />
+        <span className="speaker">{message.actor}</span>
         <button
           type="button"
           className="reasoning-toggle"
