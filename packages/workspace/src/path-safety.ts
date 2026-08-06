@@ -36,8 +36,14 @@ export function resolveWithinRoot(
   return ok(real)
 }
 
-/** Prefix check on path segments — "/a/bc" must not count as inside "/a/b". */
-function isWithin(root: string, target: string): boolean {
+/**
+ * Prefix check on path segments — "/a/bc" must not count as inside "/a/b".
+ *
+ * Exported for `project-match.ts`, which needs the same rule against a root it
+ * has already canonicalized. Duplicating it there would be one more place for
+ * the sibling-prefix bug to come back.
+ */
+export function isWithin(root: string, target: string): boolean {
   if (target === root) return true
   return target.startsWith(root.endsWith(sep) ? root : root + sep)
 }
@@ -47,7 +53,7 @@ function isWithin(root: string, target: string): boolean {
  * still resolve the deepest existing ancestor, so a symlinked parent directory
  * cannot be used to escape.
  */
-function safeRealpath(p: string): string {
+export function safeRealpath(p: string): string {
   let current = p
   const trailing: string[] = []
 
