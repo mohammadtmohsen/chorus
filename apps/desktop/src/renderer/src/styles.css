@@ -891,6 +891,48 @@ body {
   --voice: var(--bone);
 }
 
+/*
+ * What you said, in a bubble.
+ *
+ * Everything in this room is one voice among several on a shared rail, and your
+ * turn is the one that started each exchange — worth finding without reading.
+ * A raised, bounded block does that where a colour could not: the two voice hues
+ * are spoken for, and a third would make the rail's dots mean less.
+ *
+ * It stays on the rail rather than crossing to the right. The transcript is a
+ * timeline several voices are measured against, and a message that leaves the
+ * line to sit opposite would be claiming a conversation with two sides — which
+ * is the one thing this app is not.
+ *
+ * `fit-content` so the bubble is the length of the sentence rather than the
+ * width of the pane; a two-word question that spanned four columns would read as
+ * an empty box with something in the corner.
+ */
+.entry--user .said {
+  width: fit-content;
+  max-width: 100%;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3.5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+}
+
+/*
+ * The dot and the name move down with the text they mark.
+ *
+ * Both are positioned against the entry, and the bubble's padding pushes its
+ * first line 7px clear of it — so without this the dot lands on the bubble's
+ * top edge instead of on the line it belongs to, and the rail runs through a
+ * border rather than through a word.
+ */
+.entry--user .tick {
+  top: calc(var(--step) * 4.5 + 7px);
+}
+
+.entry--user .speaker {
+  padding-top: 10px;
+}
+
 .entry--codex {
   --voice: var(--codex);
 }
@@ -1532,6 +1574,19 @@ input::placeholder {
   .speaker {
     justify-self: start;
     padding: 0 0 var(--step);
+  }
+
+  /*
+   * Nothing to nudge here: the name is on its own line above the bubble and the
+   * dot marks that line, so neither is looking at the text the bubble's padding
+   * moved.
+   */
+  .entry--user .speaker {
+    padding-top: 0;
+  }
+
+  .entry--user .tick {
+    top: calc(var(--step) * 4.5);
   }
 
   .tick {
