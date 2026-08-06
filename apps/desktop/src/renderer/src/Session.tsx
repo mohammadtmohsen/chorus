@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { quotePath } from './attach.js'
 import { Attachments, type Attachment } from './Attachments.js'
 import { Entry } from './Entry.js'
+import { formatContextBlock, withEditorContext } from './editor-context.js'
 import { compactTokens, money } from './format.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import {
@@ -12,6 +13,7 @@ import {
   type MentionQuery,
 } from './mention-menu.js'
 import { anchorFor, withQuote } from './quote.js'
+import type { IdeContextPush } from '../../shared/ipc.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
@@ -483,6 +485,27 @@ export function Session(props: {
     setAwaiting(false)
   }, [view.working.length, view.messages])
 
+  /*
+   * What VS Code is showing for *this* pane's project.
+   *
+   * Metadata only: a path already relative to this conversation's cwd, and a
+   * line range. No source text is here and none has crossed yet — that happens
+   * once, when Send is pressed.
+   */
+  const [ide, setIde] = useState<IdeContextPush | null>(null)
+  const [ideIncluded, setIncluded] = useState(true)
+
+  useEffect(() => {
+    return window.chorus.onIdeContext((payload) => {
+      // Main scopes this per conversation already; the pane checks anyway,
+      // because a pane showing another project's file is the one failure this
+      // feature must never have.
+      if (payload.conversationId === conversationId) setIde(payload)
+    })
+  }, [conversationId])
+
+  const ideAttached = ide !== null && ide.status === 'ready' && ideIncluded
+
   const send = useCallback(() => {
     /*
      * The paths join the message on the way out, not while you are writing it.
@@ -495,18 +518,51 @@ export function Session(props: {
     const text = [draft.trim(), paths].filter((part) => part !== '').join(' ')
     if (text === '') return
 
+    /*
+     * The editor context is captured now, not when the pill was drawn.
+     *
+     * The pill can be a few hundred milliseconds old — it is debounced — and
+     * the user may have moved the selection since. Sending what the pill said
+     * would attach the wrong lines to the question, which is worse than
+     * attaching none.
+     */
+    const compose = async (): Promise<string> => {
+      if (!ideAttached) return text
+      const snapshot = await window.chorus.ideSnapshot({ conversationId })
+      if (snapshot.outcome !== 'ok') {
+        // The draft is never lost to this. The user is told what happened and
+        // decides whether to retry or send without the context.
+        throw new Error(
+          snapshot.outcome === 'tooLarge'
+            ? t('ide.error.tooLarge')
+            : t('ide.error.unavailable', { reason: t(`ide.status.${snapshot.reason}`) })
+        )
+      }
+      const block = formatContextBlock(
+        { ...snapshot },
+        { heading: t('ide.heading'), unsaved: t('ide.unsaved') }
+      )
+      return withEditorContext(text, block)
+    }
+
     // You just spoke; you want to see the answer.
     following.current = true
-    setDraft('')
-    setAttached([])
     setAwaiting(true)
-    window.chorus.sendMessage({ conversationId, text }).catch((error: unknown) => {
-      // Nothing is coming: the message never left, so the row would be waiting
-      // for a turn that will not start.
-      setAwaiting(false)
-      fail(setError)(error)
-    })
-  }, [conversationId, draft, attached])
+    compose()
+      .then(async (body) => {
+        // Cleared only once the context is in hand, so a failed snapshot leaves
+        // the draft and its attachments exactly as they were.
+        setDraft('')
+        setAttached([])
+        await window.chorus.sendMessage({ conversationId, text: body })
+      })
+      .catch((error: unknown) => {
+        // Nothing is coming: the message never left, so the row would be
+        // waiting for a turn that will not start.
+        setAwaiting(false)
+        fail(setError)(error)
+      })
+  }, [conversationId, draft, attached, ideAttached, t])
 
   const decide = useCallback(
     (approval: PendingApproval, outcome: 'allow' | 'deny', scope: 'once' | 'session' = 'once') => {
@@ -1160,6 +1216,34 @@ export function Session(props: {
             send()
           }}
         >
+          {ide !== null && ide.status !== 'unavailable' && (
+            <div className="ide-pill" data-status={ide.status}>
+              <span className="ide-pill-what">
+                {ide.status === 'ready' && ide.file !== null
+                  ? `${ide.file.relativePath}:${String(ide.file.startLine)}${
+                      ide.file.isEmpty || ide.file.startLine === ide.file.endLine
+                        ? ''
+                        : `-${String(ide.file.endLine)}`
+                    }`
+                  : t(`ide.status.${ide.status}`)}
+              </span>
+              {ide.status === 'ready' && (
+                <button
+                  type="button"
+                  className="ide-pill-toggle"
+                  aria-pressed={ideIncluded}
+                  title={ideIncluded ? t('ide.exclude') : t('ide.include')}
+                  onClick={() => {
+                    // Once excluded it stays excluded: a live selection change
+                    // must never silently re-enable context the user turned off.
+                    setIncluded((on) => !on)
+                  }}
+                >
+                  {ideIncluded ? t('ide.on') : t('ide.off')}
+                </button>
+              )}
+            </div>
+          )}
           {menuOpen && (
             <ul className="mention-menu" id={`mentions-${conversationId}`} role="listbox">
               {options.map((option, i) => (

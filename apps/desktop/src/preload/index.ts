@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
+  IDE_PUSH_CHANNEL,
+  IdeContextPush,
   LIMITS_PUSH_CHANNEL,
   LimitsPush,
   SCALE_PUSH_CHANNEL,
@@ -58,6 +60,7 @@ const api: ChorusApi = {
   readDiagnostics: invoke('diagnostics:read'),
   exportDiagnostics: invoke('diagnostics:export'),
   readWorkspace: invoke('workspace:read'),
+  ideSnapshot: invoke('ide:snapshot'),
   prepareHandoff: invoke('handoff:prepare'),
   sendHandoff: invoke('handoff:send'),
 
@@ -71,6 +74,18 @@ const api: ChorusApi = {
     ipcRenderer.on(EVENTS_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(EVENTS_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onIdeContext: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      // Validated here as well as in main: a shape mismatch should fail at the
+      // boundary rather than as a blank pill with no explanation.
+      const parsed = IdeContextPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(IDE_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(IDE_PUSH_CHANNEL, wrapped)
     }
   },
   onLimits: (listener) => {

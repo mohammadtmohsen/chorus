@@ -163,5 +163,26 @@
     "next": "Next",
     "send": "Send answer",
     "dismiss": "Dismiss"
+  },
+  "ide": {
+    "heading": "VS Code context",
+    "unsaved": "unsaved buffer",
+    "on": "Included",
+    "off": "Excluded",
+    "include": "Include this selection with your message",
+    "exclude": "Do not send this selection",
+    "status": {
+      "unavailable": "VS Code not connected",
+      "unmatched": "No file from this project is open",
+      "untrusted": "This workspace is restricted in VS Code",
+      "unsupported": "This document cannot be referenced",
+      "ambiguous": "Several VS Code windows have this project",
+      "tooLarge": "Selection is too large to send",
+      "ready": "Ready"
+    },
+    "error": {
+      "tooLarge": "That selection is too large to send. Select less, or exclude the editor context.",
+      "unavailable": "Could not read the editor selection ({{reason}}). Your message was not sent."
+    }
   }
 }

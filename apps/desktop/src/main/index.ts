@@ -2,7 +2,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
 import { IdeBridge } from './ide-bridge.js'
-import { forwardEventsToRenderer, forwardLimitsToRenderer, registerIpcHandlers } from './ipc.js'
+import {
+  attachIdeBridge,
+  forwardEventsToRenderer,
+  forwardIdeContextToRenderer,
+  forwardLimitsToRenderer,
+  registerIpcHandlers,
+} from './ipc.js'
 import { createLogger } from './logging.js'
 import { installMenu } from './menu.js'
 import { applyScale, currentScale } from './scale.js'
@@ -111,6 +117,8 @@ void app.whenReady().then(async () => {
       log,
     })
     ideBridge = bridge
+    attachIdeBridge(bridge)
+    forwardIdeContextToRenderer(started, bridge)
     const syncRoots = (): void => {
       bridge.setRoots(started.openConversations().map((c) => c.cwd))
     }

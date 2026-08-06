@@ -1,6 +1,6 @@
 # Status — VS Code editor context
 
-Status: **Phase 3 done.** Plan approved; implementation in progress.
+Status: **Phase 4 done.** Plan approved; implementation in progress.
 
 ## Done
 
@@ -122,9 +122,38 @@ Lint also caught an `any` leak that would have violated the global rule: VS Code
 `Extension.packageJSON` as `any`, so reading `.version` off it was unchecked. Narrowed
 rather than cast, and it degrades to `0.0.0` instead of putting `undefined` on the wire.
 
+**Phase 4 done: scoped IPC, the live pill, and send-time composition.**
+
+The renderer now sees editor context, and it is scoped twice. Main sends each pane only
+its own conversation's state, and the payload deliberately omits the absolute path and the
+file URL — a pane gets a path already relative to its own `cwd`, so it cannot display, or
+leak into a screenshot, where the project sits on disk. No source text is on the live
+channel at all.
+
+`renderer/src/editor-context.ts` is the formatter, and it is not `asQuote()`. `quote.ts`
+trims each line, which is right for prose and destructive for code, where indentation is
+syntax. The fence grows to outrun the longest backtick run in the selection, because
+selected code very often contains a Markdown sample and a three-backtick fence would close
+early — handing the agent half the selection as prose. The language id is restricted rather
+than escaped, since a newline in it would break out of the fence entirely. A bare cursor
+sends no code: the agent is told where to look and reads the file itself.
+
+Send captures the snapshot rather than trusting the pill, which is debounced and can be a
+few hundred milliseconds stale. The draft and its attachments are cleared only once the
+context is in hand, so a timeout, a moved selection, or an oversized one leaves everything
+exactly as it was and explains why. The eye toggle, once off, stays off — a live selection
+change cannot silently re-enable excluded context. `unavailable` renders nothing at all,
+because a permanent "not connected" would be chrome telling the user about software they
+may not use.
+
+Gate: `pnpm check` and `pnpm build` green — 692 tests (up from 673), 3 skipped.
+
+One test of mine was wrong rather than the code: I asserted `safeLanguageId` would keep
+backticks. It strips them, which is the safer behaviour and what the fence rule needs. The
+test now asserts what the implementation actually guarantees.
+
 ## Not started
 
-- Phase 4 — scoped IPC, live context pill, and send-time composition
 - Phase 5 — VSIX distribution and project opening
 - Phase 6 — end-to-end, live, packaged-app, and visual verification
 

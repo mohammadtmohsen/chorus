@@ -4,12 +4,17 @@ import { buildDiagnostics } from '@chorus/shared'
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
+  IDE_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   IPC_CONTRACT,
+  type IdeContextPush,
   type IpcChannel,
   type IpcResponse,
   type TranscriptEvent,
 } from '../shared/ipc.js'
+import { toDisplayRange, type EditorMetadata } from '@chorus/ide-protocol'
+import { projectRelativePath, type CanonicalRoot } from '@chorus/workspace'
+import type { IdeBridge } from './ide-bridge.js'
 import { probeAgents } from './agent-probe.js'
 import type { ChorusRuntime } from './runtime.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
@@ -18,6 +23,40 @@ import { previewFile, stashFile } from './stash.js'
 type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>> }
 
 const OK = { ok: true } as const
+
+/**
+ * The bridge, if it started. Held here rather than threaded through
+ * `buildHandlers` because editor context is optional: every other handler must
+ * work identically whether or not VS Code is involved.
+ */
+let ideBridge: IdeBridge | null = null
+
+export function attachIdeBridge(bridge: IdeBridge | null): void {
+  ideBridge = bridge
+}
+
+/**
+ * What the renderer is allowed to see about an editor.
+ *
+ * The absolute path is dropped here and never sent: a pane shows a path
+ * relative to its own project, so it cannot display — or leak into a
+ * screenshot — where the project sits on disk. This is also the boundary where
+ * VS Code's zero-based lines become the one-based numbers a human reads.
+ */
+function toPushFile(root: CanonicalRoot, editor: EditorMetadata): IdeContextPush['file'] {
+  const relativePath = projectRelativePath(root, editor.filePath)
+  if (relativePath === null) return null
+  const range = toDisplayRange(editor.selection)
+  return {
+    relativePath,
+    startLine: range.startLine,
+    endLine: range.endLine,
+    isEmpty: editor.selection.isEmpty,
+    isDirty: editor.isDirty,
+    languageId: editor.languageId,
+    selectedBytes: editor.selection.selectedBytes,
+  }
+}
 
 /**
  * Exported for tests.
@@ -217,6 +256,44 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       return Promise.resolve({ path })
     },
 
+    /**
+     * The one moment source code crosses into Chorus, and it happens because
+     * the user pressed Send.
+     *
+     * Everything is re-derived here rather than trusted from the live push:
+     * the selection may have moved since the pill was drawn, and the file may
+     * no longer belong to this conversation at all. A failure returns a reason
+     * the composer can explain instead of throwing, because the caller's job is
+     * to keep the draft, not to handle an exception on a path taken constantly.
+     */
+    'ide:snapshot': async (request: { conversationId: string }) => {
+      const bridge = ideBridge
+      if (bridge === null) return { outcome: 'unavailable', reason: 'unavailable' } as const
+
+      const cwd = runtime.projectDirectory(request.conversationId)
+      const root = bridge.rootFor(cwd)
+      const result = await bridge.requestSnapshot(root)
+      if (result.outcome !== 'ok') return result
+
+      const { snapshot } = result
+      const relativePath = projectRelativePath(root, snapshot.filePath)
+      // Re-checked after the answer came back, closing the race between the
+      // live metadata and Send.
+      if (relativePath === null) return { outcome: 'unavailable', reason: 'unmatched' } as const
+
+      const range = toDisplayRange(snapshot.selection)
+      return {
+        outcome: 'ok',
+        relativePath,
+        startLine: range.startLine,
+        endLine: range.endLine,
+        isEmpty: snapshot.selection.isEmpty,
+        isDirty: snapshot.isDirty,
+        languageId: snapshot.languageId,
+        text: snapshot.selection.text,
+      } as const
+    },
+
     'workspace:read': async (request: { conversationId: string }) => {
       const { status, diff, problem } = await runtime.readWorkspace(request.conversationId)
       // Copied out of the readonly domain types; the IPC boundary is plain JSON.
@@ -356,6 +433,44 @@ export function forwardLimitsToRenderer(runtime: ChorusRuntime): void {
       if (!window.isDestroyed()) window.webContents.send(LIMITS_PUSH_CHANNEL, push)
     }
   })
+}
+
+/**
+ * Push each open conversation's editor context to the renderer.
+ *
+ * Scoped per conversation on this side of the boundary: a pane is sent its own
+ * project's state and nothing else, so a renderer bug cannot show one project's
+ * file in another's composer.
+ */
+export function forwardIdeContextToRenderer(runtime: ChorusRuntime, bridge: IdeBridge): () => void {
+  const push = (): void => {
+    const payloads: IdeContextPush[] = runtime
+      .openConversations()
+      .map(({ conversationId, cwd }) => {
+        const root = bridge.rootFor(cwd)
+        const context = bridge.contextFor(root)
+        const file = context.editor === null ? null : toPushFile(root, context.editor)
+        // A file that fails the relative-path check is not this project's, so the
+        // status must not claim otherwise.
+        const status = context.status === 'ready' && file === null ? 'unmatched' : context.status
+        return { conversationId, status, file }
+      })
+
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue
+      for (const payload of payloads) window.webContents.send(IDE_PUSH_CHANNEL, payload)
+    }
+  }
+
+  const unsubscribeBridge = bridge.subscribe(push)
+  // Also on runtime events: a conversation that opens or moves needs its first
+  // push without waiting for the editor to change.
+  const unsubscribeRuntime = runtime.subscribe(push)
+  push()
+  return () => {
+    unsubscribeBridge()
+    unsubscribeRuntime()
+  }
 }
 
 export function forwardEventsToRenderer(runtime: ChorusRuntime): () => void {

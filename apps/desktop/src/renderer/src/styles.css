@@ -2986,3 +2986,67 @@ input::placeholder {
     padding: calc(var(--step) * 4);
   }
 }
+
+/*
+ * The editor-context pill.
+ *
+ * Above the textarea rather than beside it: it describes what will be sent with
+ * the message, so it belongs in the same column as the message, in reading
+ * order before it. It occupies a line only when there is something to say —
+ * `unavailable` renders nothing at all, because a permanent "not connected"
+ * would be chrome telling you about software you may not even use.
+ */
+.ide-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--raise);
+  font-size: 12px;
+  color: var(--ink-dim);
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.ide-pill-what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+/* Anything that is not `ready` is an explanation, not a reference. */
+.ide-pill:not([data-status='ready']) .ide-pill-what {
+  font-family: inherit;
+  font-style: italic;
+}
+
+.ide-pill[data-status='tooLarge'] {
+  border-color: var(--warn, var(--line));
+}
+
+.ide-pill-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ink-dim);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ide-pill-toggle[aria-pressed='false'] {
+  opacity: 0.6;
+}
+
+@media (max-width: 560px) {
+  .ide-pill {
+    /* At phone width the pill would push the composer down; the reference
+       matters more than the rounded shape. */
+    border-radius: 8px;
+  }
+}

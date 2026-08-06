@@ -83,6 +83,7 @@ export class IdeBridge {
   readonly #pending = new Set<Socket>()
   readonly #timers = new Set<NodeJS.Timeout>()
   readonly #pendingRequests = new Map<string, (result: CurrentContextResult) => void>()
+  readonly #listeners = new Set<() => void>()
   #roots: CanonicalRoot[] = []
   #nextRequestId = 0
   #closed = false
@@ -275,6 +276,22 @@ export class IdeBridge {
     })
   }
 
+  /**
+   * Called whenever a window connects, disconnects, or reports new state.
+   *
+   * Coarse on purpose: it says "something moved", not what. The renderer needs
+   * one push per conversation regardless, so a finer signal would only mean
+   * recomputing the same answer more often.
+   */
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener)
+    return () => this.#listeners.delete(listener)
+  }
+
+  #notify(): void {
+    for (const listener of this.#listeners) listener()
+  }
+
   /** Connected windows, for diagnostics. Counts only — never paths. */
   connectionCount(): number {
     return this.#windows.size
@@ -303,6 +320,7 @@ export class IdeBridge {
     this.#pending.clear()
     for (const window of this.#windows.values()) window.socket.destroy()
     this.#windows.clear()
+    this.#listeners.clear()
 
     await new Promise<void>((resolve) => {
       this.#server.close(() => {
@@ -368,6 +386,7 @@ export class IdeBridge {
       if (windowId !== null && this.#windows.get(windowId)?.socket === socket) {
         this.#windows.delete(windowId)
         this.#log.info('ide window disconnected', { connections: this.#windows.size })
+        this.#notify()
       }
     }
     socket.on('close', drop)
@@ -459,6 +478,7 @@ export class IdeBridge {
         })
       )
       this.#log.info('ide window connected', { connections: this.#windows.size })
+      this.#notify()
       return { kind: 'open', windowId: params.windowId }
     }
 
@@ -487,6 +507,7 @@ export class IdeBridge {
       if (!this.#roots.some((r) => String(r) === report.root)) continue
       window.roots.set(report.root, { status: report.status, editor: report.editor })
     }
+    this.#notify()
     return { kind: 'open', windowId }
   }
 

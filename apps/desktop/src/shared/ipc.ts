@@ -79,6 +79,66 @@ export type QuestionAnswer = z.infer<typeof QuestionAnswer>
  * One entry per operation, each with its own request/response schema. Adding a
  * channel means adding it here first — `contextBridge` is generated from this.
  */
+/**
+ * What Chorus can say about a conversation's editor (plan §3).
+ *
+ * Mirrors the protocol's status list exactly; the renderer gives every member
+ * localized text, and `ready` is the only one that draws the card.
+ */
+export const IdeStatusShape = z.enum([
+  'unavailable',
+  'unmatched',
+  'untrusted',
+  'unsupported',
+  'ambiguous',
+  'tooLarge',
+  'ready',
+])
+export type IdeStatusShape = z.infer<typeof IdeStatusShape>
+
+/**
+ * The live frame the renderer sees.
+ *
+ * Note what is *not* here: no absolute path, no file URL, and no source text.
+ * The renderer is given a path already relative to the conversation's own cwd,
+ * so a pane cannot display — or leak into a screenshot — where the project sits
+ * on disk, and cannot show a byte of code before Send.
+ */
+export const IdeContextPush = z.object({
+  conversationId: z.string(),
+  status: IdeStatusShape,
+  file: z
+    .object({
+      relativePath: z.string(),
+      /** One-based and inclusive; converted once, at the protocol boundary. */
+      startLine: z.number().int(),
+      endLine: z.number().int(),
+      isEmpty: z.boolean(),
+      isDirty: z.boolean(),
+      languageId: z.string(),
+      selectedBytes: z.number().int(),
+    })
+    .nullable(),
+})
+export type IdeContextPush = z.infer<typeof IdeContextPush>
+
+/** The answer to a Send-time snapshot request. */
+export const IdeSnapshotResult = z.discriminatedUnion('outcome', [
+  z.object({
+    outcome: z.literal('ok'),
+    relativePath: z.string(),
+    startLine: z.number().int(),
+    endLine: z.number().int(),
+    isEmpty: z.boolean(),
+    isDirty: z.boolean(),
+    languageId: z.string(),
+    text: z.string(),
+  }),
+  z.object({ outcome: z.literal('unavailable'), reason: IdeStatusShape }),
+  z.object({ outcome: z.literal('tooLarge'), selectedBytes: z.number().int() }),
+])
+export type IdeSnapshotResult = z.infer<typeof IdeSnapshotResult>
+
 export const IPC_CONTRACT = {
   'app:getInfo': { request: z.void(), response: AppInfo },
   /**
@@ -359,6 +419,17 @@ export const IPC_CONTRACT = {
     request: z.void(),
     response: z.array(z.object({ id: z.string(), name: z.string(), summary: z.string() })),
   },
+
+  /**
+   * The selected text, asked for at Send (plan §5).
+   *
+   * Separate from the live push because it is the only moment source code
+   * crosses into Chorus, and it happens because the user pressed a button.
+   */
+  'ide:snapshot': {
+    request: z.object({ conversationId: z.string() }),
+    response: IdeSnapshotResult,
+  },
 } as const
 
 /**
@@ -366,6 +437,15 @@ export const IPC_CONTRACT = {
  * flows the other way and has no reply.
  */
 export const EVENTS_PUSH_CHANNEL = 'conversation:events'
+
+/**
+ * The editor context for each open conversation, pushed as it changes.
+ *
+ * A push rather than a query because the whole point is that it follows what
+ * the user is doing in another application; polling would show them where they
+ * were.
+ */
+export const IDE_PUSH_CHANNEL = 'ide:context'
 
 /**
  * The window's zoom factor, pushed whenever it changes.
@@ -474,6 +554,10 @@ export interface ChorusApi {
   readonly readWorkspace: (
     request: IpcRequest<'workspace:read'>
   ) => Promise<IpcResponse<'workspace:read'>>
+  readonly ideSnapshot: (
+    request: IpcRequest<'ide:snapshot'>
+  ) => Promise<IpcResponse<'ide:snapshot'>>
+  readonly onIdeContext: (listener: (payload: IdeContextPush) => void) => () => void
   readonly prepareHandoff: (
     request: IpcRequest<'handoff:prepare'>
   ) => Promise<IpcResponse<'handoff:prepare'>>
