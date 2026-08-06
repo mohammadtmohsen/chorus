@@ -22,6 +22,7 @@
     "@chorus/adapter-codex": "workspace:*",
     "@chorus/agent-protocol": "workspace:*",
     "@chorus/event-store": "workspace:*",
+    "@chorus/ide-protocol": "workspace:*",
     "@chorus/orchestrator": "workspace:*",
     "@chorus/shared": "workspace:*",
     "@chorus/workspace": "workspace:*",

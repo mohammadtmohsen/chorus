@@ -1,5 +1,7 @@
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
+import { IdeBridge } from './ide-bridge.js'
 import { forwardEventsToRenderer, forwardLimitsToRenderer, registerIpcHandlers } from './ipc.js'
 import { createLogger } from './logging.js'
 import { installMenu } from './menu.js'
@@ -63,6 +65,7 @@ function createWindow(): BrowserWindow {
 }
 
 let runtime: ChorusRuntime | null = null
+let ideBridge: IdeBridge | null = null
 
 void app.whenReady().then(async () => {
   applyContentSecurityPolicy(session.defaultSession, devServerUrl !== undefined)
@@ -92,6 +95,33 @@ void app.whenReady().then(async () => {
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
   installMenu()
   forwardEventsToRenderer(runtime)
+
+  /*
+   * The VS Code bridge. Chorus listens and the extension dials in, so this has
+   * to be up before any window connects — but a failure here must not stop the
+   * app: editor context is additive, and Chorus without it is exactly the app
+   * it was before.
+   */
+  const started = runtime
+  try {
+    const bridge = await IdeBridge.start({
+      runtimeDir: tmpdir(),
+      pid: process.pid,
+      chorusVersion: app.getVersion(),
+      log,
+    })
+    ideBridge = bridge
+    const syncRoots = (): void => {
+      bridge.setRoots(started.openConversations().map((c) => c.cwd))
+    }
+    syncRoots()
+    // Resynced from the event stream rather than from each call site, so a
+    // conversation that starts, closes, restarts or moves cannot be the one
+    // that was forgotten. `setRoots` ignores an unchanged set.
+    started.subscribe(syncRoots)
+  } catch (error) {
+    log.error('ide bridge failed to start', error)
+  }
 
   createWindow()
 
@@ -125,9 +155,17 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
   if (runtime === null) return
   const closing = runtime
+  const bridge = ideBridge
   runtime = null
+  ideBridge = null
   event.preventDefault()
-  void closing.close().finally(() => {
-    app.quit()
-  })
+  // The bridge closes first: it unlinks its socket and descriptor, and anything
+  // waiting on a snapshot is settled rather than left hanging behind the
+  // runtime's own shutdown.
+  void Promise.resolve(bridge?.close())
+    .catch(() => undefined)
+    .then(() => closing.close())
+    .finally(() => {
+      app.quit()
+    })
 })

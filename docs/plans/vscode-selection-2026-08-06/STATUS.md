@@ -1,6 +1,6 @@
 # Status — VS Code editor context
 
-Status: **Phase 1 done.** Plan approved; implementation in progress.
+Status: **Phase 2 done.** Plan approved; implementation in progress.
 
 ## Done
 
@@ -44,9 +44,46 @@ instead of `.data`, so every successful decode returned `undefined`. The round-t
 asserted only `ok === true` and passed anyway; `tsc` caught it. The test now asserts the
 decoded payload.
 
+**Phase 2 done: the Electron IDE broker.**
+
+`ide-bridge.ts` binds the Unix socket, publishes a per-pid descriptor
+(`<tmp>/chorus-ide/<pid>.{sock,json}`, `0600` in a `0700` directory it refuses to use if
+the mode or owner is wrong), authenticates the handshake against a per-launch token, and
+keeps a window registry. Nothing in it is Electron-aware, so the tests drive real sockets
+with real frames — a mocked broker would test nothing that can actually break.
+
+Resolution distinguishes the states the plan insisted on: `unavailable` when nothing is
+connected, `unmatched` when something is but this project is not open in it, `ambiguous`
+when two unfocused windows both have it. Reports are re-checked against the roots Chorus
+actually asked for, because the extension's filtering is disclosure minimisation and
+Electron main is the security boundary. A reconnect from the same `windowId` replaces the
+old connection rather than adding a phantom to focus arbitration. `setRoots` is idempotent,
+since the caller resyncs from `runtime.subscribe` and most event batches are streaming
+deltas that change nothing.
+
+Wired into `main/index.ts` after `whenReady`, inside a try/catch — editor context is
+additive, and a bridge that fails to start must leave Chorus exactly the app it was. On
+quit the bridge closes before the runtime, unlinking its socket and descriptor and settling
+anything waiting on a snapshot.
+
+Gate: `pnpm check` and `pnpm build` green — 623 tests (up from 599), 3 skipped.
+
+Two bugs the tests caught, both worth recording:
+
+- `close()` deleted each pending request before invoking its callback, and the callback
+  guards on its own `delete` returning true — so every waiter bailed out early and a quit
+  during a pending Send would have hung forever. The test written for that exit criterion
+  is what found it.
+- Responses share the data channel and carry no `method`, so they failed the message
+  schema and would have killed the socket on the first snapshot reply. They are now routed
+  first, and only for an id actually outstanding.
+
+Lint also caught a real type-design flaw rather than a style nit: `#handleLine` returned
+`string | null | 'closed'`, and since a window id is a string the sentinel was
+indistinguishable from a real id. It now returns a discriminated outcome.
+
 ## Not started
 
-- Phase 2 — Electron IDE broker
 - Phase 3 — first-party VS Code extension
 - Phase 4 — scoped IPC, live context pill, and send-time composition
 - Phase 5 — VSIX distribution and project opening

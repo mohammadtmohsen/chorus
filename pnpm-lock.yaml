@@ -53,6 +53,9 @@ importers:
       '@chorus/event-store':
         specifier: workspace:*
         version: link:../../packages/event-store
+      '@chorus/ide-protocol':
+        specifier: workspace:*
+        version: link:../../packages/ide-protocol
       '@chorus/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
