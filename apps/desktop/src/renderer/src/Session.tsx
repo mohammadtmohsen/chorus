@@ -216,7 +216,20 @@ export function Session(props: {
     // The turn's own height, less whatever room was added last time — measuring
     // the block whole would feed the spacer its own size.
     const said = block === null ? 0 : block.offsetHeight - spacer.offsetHeight
-    const spare = Math.max(0, el.clientHeight - said)
+    /*
+     * The scroller's own bottom padding counts as room.
+     *
+     * Without this the turn was a whole view tall *and* the padding sat under
+     * it, so the bottom of the scroll range fell a padding's width past the
+     * point where the question reaches the top — and the reader, sitting at the
+     * bottom, had that much of the answer's first line hidden behind the pinned
+     * header. On a short reply that is most of the only line there is.
+     *
+     * Read each time rather than cached: it is 21px normally and 18px at phone
+     * width, and a stale one would put the slice back at one size or the other.
+     */
+    const below = parseFloat(getComputedStyle(el).paddingBottom) || 0
+    const spare = Math.max(0, el.clientHeight - below - said)
     spacer.style.height = `${String(spare)}px`
     content.style.setProperty('--spare', `${String(spare)}px`)
   }, [])

@@ -288,6 +288,41 @@ export const specs = [
           timeout: 180_000,
           label: 'the first turn finished',
         })
+        await wait(600)
+
+        /*
+         * A short answer must sit *below* the pinned question, not behind it.
+         *
+         * The turn holds a view of room open beneath itself, and the scroller
+         * has its own bottom padding under that — so the end of the scroll range
+         * fell a padding's width past the point where the question reaches the
+         * top, and a reader sitting at the bottom had that much of the reply's
+         * first line hidden behind the header. On a one-line answer that is most
+         * of the answer. Only visible on a reply shorter than the view, which is
+         * every first exchange.
+         */
+        const firstReply = await app.evaluate(`(() => {
+          const score = document.querySelector('.score').getBoundingClientRect()
+          const head = document.querySelector('.turn-head').getBoundingClientRect()
+          const reply = Array.from(document.querySelectorAll('.turn .entry--message'))
+            .find(e => !e.classList.contains('entry--user'))
+          if (!reply) return null
+          const said = reply.querySelector('.said').getBoundingClientRect()
+          return {
+            offTop: Math.abs(head.top - score.top),
+            behindHeader: Math.round(head.bottom - said.top),
+          }
+        })()`)
+
+        assert(firstReply !== null, 'the first answer is inside the current turn')
+        assert(
+          firstReply.offTop <= 1,
+          `the question is pinned for a short answer too (${String(firstReply.offTop)}px off)`
+        )
+        assert(
+          firstReply.behindHeader <= 0,
+          `and none of the answer hides behind it (${String(firstReply.behindHeader)}px swallowed)`
+        )
 
         /*
          * A list, not "count to sixty": markdown folds bare lines into one
