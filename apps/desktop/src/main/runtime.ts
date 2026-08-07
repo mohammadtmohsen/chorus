@@ -905,6 +905,26 @@ export class ChorusRuntime {
     return { profileId: profile.id }
   }
 
+  /**
+   * Re-reads every live agent's account windows.
+   *
+   * Across conversations, not just one: the windows are the account's, so the
+   * answer is the same wherever it is asked from, and asking once per session
+   * would report the same number several times over.
+   */
+  async refreshLimits(): Promise<void> {
+    const asked = new Set<AgentId>()
+    const reads: Promise<void>[] = []
+    for (const conversation of this.active.values()) {
+      for (const [agentId, participant] of conversation.participants) {
+        if (asked.has(agentId)) continue
+        asked.add(agentId)
+        reads.push(participant.service.refreshLimits())
+      }
+    }
+    await Promise.allSettled(reads)
+  }
+
   /** Interrupts every agent mid-turn; the user pressed one Stop button. */
   async interrupt(conversationId: string): Promise<void> {
     const conversation = this.require(conversationId)

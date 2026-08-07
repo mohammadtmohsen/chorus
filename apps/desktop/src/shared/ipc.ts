@@ -285,6 +285,15 @@ export const IPC_CONTRACT = {
    * were briefly both called "order", which is exactly how they would have
    * drifted apart.
    */
+  /**
+   * Asks every live agent to re-read its account's usage windows.
+   *
+   * The windows otherwise only arrive after a turn, so someone who has just
+   * been cut off can only find out they are back by spending something. The
+   * answer comes back on the limits push, not here — this only asks.
+   */
+  'limits:refresh': { request: z.void(), response: z.object({ ok: z.literal(true) }) },
+
   'conversation:layout': {
     request: z.object({ order: z.array(z.string()), workspace: WorkspaceSnapshot }),
     response: z.object({ ok: z.literal(true) }),
@@ -550,6 +559,8 @@ export function isIpcChannel(value: string): value is IpcChannel {
  */
 export interface ChorusApi {
   readonly getAppInfo: () => Promise<AppInfo>
+  /** Asks; the answer arrives on `onLimits`. */
+  readonly refreshLimits: () => Promise<{ ok: true }>
   readonly probeAgents: () => Promise<AgentProbeResult[]>
   readonly startConversation: (
     request: IpcRequest<'conversation:start'>

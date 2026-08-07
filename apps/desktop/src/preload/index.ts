@@ -47,6 +47,7 @@ const api: ChorusApi = {
   // Renderers cannot read a File's path any more; only the bridge can.
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   writeConversationLayout: invoke('conversation:layout'),
+  refreshLimits: invoke('limits:refresh'),
   renameConversation: invoke('conversation:rename'),
   chooseProjectDirectory: invoke('conversation:chooseCwd'),
   setProjectDirectory: invoke('conversation:setCwd'),

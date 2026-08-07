@@ -110,6 +110,11 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'agents:probe': () => probeAgents(),
 
+    'limits:refresh': async () => {
+      await runtime.refreshLimits()
+      return OK
+    },
+
     'conversation:start': (request: {
       agents: ('codex' | 'claude')[]
       cwd: string
