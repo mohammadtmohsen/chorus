@@ -947,6 +947,122 @@ export const specs = [
   },
 
   {
+    name: 'the sidenav stops pushing and starts covering when it must',
+    /*
+     * Below 760px the shell has a second layout, and nothing had ever driven
+     * it. There is not room for a card and a readable transcript side by side,
+     * so the sidebar floats over the editor instead of reserving space beside
+     * it: the spacer collapses, the masthead takes back the inset it was
+     * holding for a sidebar that is no longer displacing anything, and the
+     * resize handle goes — it is positioned from `--sidebar`, which stops being
+     * where the card's edge is once `100% - 36px` wins the `min()`.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        const shell = () =>
+          app.evaluate(`(() => {
+            const side = document.querySelector('.workspace-sidebar')
+            const editor = document.querySelector('.workspace-editor')
+            const handle = document.querySelector('.workspace-sidebar-resize')
+            const s = side.getBoundingClientRect()
+            return {
+              window: innerWidth,
+              editorLeft: Math.round(editor.getBoundingClientRect().left),
+              cardRight: Math.round(s.right),
+              cardWidth: Math.round(s.width),
+              spacer: Math.round(document.querySelector('.workspace-sidebar-spacer').getBoundingClientRect().width),
+              handle: handle === null ? 'absent' : getComputedStyle(handle).display,
+              mastheadPad: getComputedStyle(document.querySelector('.masthead')).paddingLeft,
+            }
+          })()`)
+
+        const wide = await shell()
+        assert(
+          wide.editorLeft === wide.spacer && wide.spacer > 0,
+          `docked, the editor starts where the sidebar ends (${String(wide.editorLeft)})`
+        )
+        assert(wide.handle === 'block', 'and the edge can be dragged')
+
+        await app.viewport(700, 800)
+        await app.until(
+          `Math.round(document.querySelector('.workspace-sidebar-spacer').getBoundingClientRect().width) === 0`,
+          { timeout: 15_000, label: 'the shell went to overlay' }
+        )
+        const narrow = await shell()
+        assert(
+          narrow.editorLeft === 0,
+          `covering, the editor runs under it (${String(narrow.editorLeft)})`
+        )
+        assert(
+          narrow.cardWidth <= narrow.window - 36,
+          `the card leaves the window a margin (${String(narrow.cardWidth)} of ${String(narrow.window)})`
+        )
+        assert(
+          narrow.handle === 'none',
+          'the resize handle goes, pointing as it would at an edge that moved'
+        )
+        assert(
+          narrow.mastheadPad === '92px',
+          `and the masthead takes its traffic lights back, got ${narrow.mastheadPad}`
+        )
+
+        /*
+         * The editor is underneath, so getting to it has to still work — this
+         * is the one layout where hiding the sidebar is not a preference.
+         */
+        await app.evaluate(`(() => {
+          document.querySelector('[aria-label="Hide session sidebar"]').click()
+          return true
+        })()`)
+        await app.until(
+          `document.querySelector('.workspace-sidebar').dataset.hidden === 'true'`,
+          { timeout: 15_000, label: 'it can be got out of the way' }
+        )
+        await app.until(
+          `!!document.querySelector('.workspace-sidebar-edge')`,
+          { timeout: 15_000, label: 'and left a way back' }
+        )
+        assert(true, 'it can be dismissed, and offers a way back')
+
+        /*
+         * And back. Widening has to dock it again — waiting on the *narrow*
+         * condition here would pass on the first poll, before the layout had
+         * reflowed at all, which is a check that agrees with itself.
+         */
+        await app.evaluate(`(() => {
+          document.querySelector('.workspace-sidebar-edge').click()
+          return true
+        })()`)
+        await app.viewport()
+        /*
+         * The settled width, not merely a non-zero one: the spacer animates
+         * over 300ms, so `> 0` is true a frame into the transition and reports
+         * a number that is on its way somewhere.
+         */
+        await app.until(
+          `(() => {
+            const want = Math.round(parseFloat(
+              getComputedStyle(document.documentElement).getPropertyValue('--sidebar')))
+            const have = Math.round(
+              document.querySelector('.workspace-sidebar-spacer').getBoundingClientRect().width)
+            return have === want
+          })()`,
+          { timeout: 15_000, label: 'the shell docked again, and settled' }
+        )
+        const wideAgain = await shell()
+        assert(
+          wideAgain.editorLeft === wideAgain.spacer && wideAgain.handle === 'block',
+          `and docks again when there is room (${String(wideAgain.editorLeft)})`
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
     name: 'the sidenav resizes, clamps, and comes back that width',
     /*
      * The width is the one piece of sidebar state that does not go through
