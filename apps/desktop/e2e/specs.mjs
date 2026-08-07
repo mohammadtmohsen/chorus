@@ -1310,13 +1310,30 @@ export const specs = [
           label: 'the turn started',
         })
 
-        const controls = await app.evaluate(`(() => ({
+        /*
+         * One button, and what it does follows what is in the box.
+         *
+         * Empty and something running, the only thing left to want is to stop
+         * it. Type anything and the same button sends — because sending
+         * mid-turn steers rather than restarts, which is what makes one control
+         * honest where a Send/Stop pair implied a choice between opposites.
+         */
+        const idle = await app.evaluate(`(() => ({
           stop: !!document.querySelector('.send--stop'),
           send: !!document.querySelector('.composer-tools button[type="submit"]'),
         }))()`)
-        assert(controls.stop && controls.send, 'Stop and Send are both offered while working')
+        assert(idle.stop && !idle.send, 'working with an empty box offers Stop')
 
-        await wait(1500)
+        await draft(app, 'a change of mind')
+        await app.settle()
+        const typed = await app.evaluate(`(() => ({
+          stop: !!document.querySelector('.send--stop'),
+          send: !!document.querySelector('.composer-tools button[type="submit"]'),
+          buttons: document.querySelectorAll('.composer-tools button').length,
+        }))()`)
+        assert(typed.send && !typed.stop, 'and typing turns that same button into Send')
+        assert(typed.buttons === 1, `never two of them, got ${String(typed.buttons)}`)
+
         await say(app, 'Change of plan: stop counting and reply with exactly STEERED')
         await app.until(
           `Array.from(document.querySelectorAll('.entry--codex, .entry--claude'))

@@ -131,6 +131,9 @@ export function Session(props: {
   const [fileOver, setFileOver] = useState(false)
   /** Files waiting to be sent, shown above the box rather than typed into it. */
   const [attached, setAttached] = useState<Attachment[]>([...(props.carry?.attached ?? [])])
+
+  /** Something to send: what the one button below decides its job from. */
+  const hasDraft = draft.trim() !== '' || attached.length > 0
   /** The pane itself, so dragging its bar carries the whole thing. */
   const pane = useRef<HTMLElement | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
@@ -1117,6 +1120,16 @@ export function Session(props: {
               setAttached((current) => current.filter((item) => item.path !== path))
             }}
           />
+          {/*
+            The box and the one control that acts on it, side by side.
+            
+            Send sat under the field while the row beneath still held six other
+            controls; with those gone it was a button alone on a line of its
+            own. Aligned to the bottom rather than the middle, because the field
+            grows with what is typed into it and the button should stay where
+            the last line is.
+          */}
+          <div className="composer-line">
           <textarea
             ref={input}
             value={draft}
@@ -1192,55 +1205,46 @@ export function Session(props: {
             that used to live in this row is gone: ↵ sends is the convention, and
             saying so forever is a label for the first minute.
           */}
-          {/*
-           * What is left of the row: the one control that acts on what is
-           * typed here.
-           *
-           * The cast, the folder, the profile, the summary, the diff and
-           * the spend all moved to the session's card in the sidenav —
-           * where they are answerable for every session rather than only
-           * the one on screen. What remains is the composer, which is the
-           * only thing this row was ever really for.
-           */}
-          <div className="composer-actions">
             <div className="composer-tools">
               {/*
-              Two buttons while an agent is working, not one that changes job.
+              One button, and what it does is decided by what you have typed.
 
-              Sending mid-turn has always worked — `onSubmit` has no busy guard,
-              both adapters declare `steer`, and `runtime.send` pushes straight
-              into the running turn — and ↵ has always done it. But the only
-              *visible* control turned into Stop, which says the opposite: the
-              way to add "actually, do it this way instead" looked like the way
-              to abandon the turn, and clicking it did abandon the turn.
+              Sending mid-turn steers rather than restarts — the message reaches
+              the running turn and the agent takes it in, verified against a
+              real one — so Send and Stop are not the opposed pair they look
+              like. Which leaves a rule simple enough to need no label: if there
+              is something in the box the button sends it, and if there is not,
+              the only thing left to want is to stop what is running.
 
-              So Stop appears beside Send rather than in place of it. Glyphs
-              rather than words, because a label would crowd the text being
-              written; the names live on `aria-label`.
+              That also settles what the pair got wrong in both directions. One
+              button that *became* Stop hid the way to steer and abandoned the
+              turn when pressed; two buttons side by side asked which is which
+              every time. Glyphs rather than words, because a label would crowd
+              the text being written; the names live on `aria-label`.
             */}
-              {view.busy && (
+              {view.busy && !hasDraft ? (
                 <button
                   type="button"
                   className="send send--stop"
                   aria-label={t('conversation.stopAll', { agents: view.working.join(', ') })}
+                  title={t('conversation.stopAll', { agents: view.working.join(', ') })}
                   onClick={() => {
                     window.chorus.interrupt({ conversationId }).catch(fail(setError))
                   }}
                 >
                   <span className="send-square" aria-hidden="true" />
                 </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="send"
+                  aria-label={view.busy ? t('conversation.steer') : t('conversation.send')}
+                  title={view.busy ? t('conversation.steer') : undefined}
+                  disabled={!hasDraft || participants.length === 0}
+                >
+                  <span aria-hidden="true">↑</span>
+                </button>
               )}
-              <button
-                type="submit"
-                className="send"
-                aria-label={view.busy ? t('conversation.steer') : t('conversation.send')}
-                title={view.busy ? t('conversation.steer') : undefined}
-                disabled={
-                  (draft.trim() === '' && attached.length === 0) || participants.length === 0
-                }
-              >
-                <span aria-hidden="true">↑</span>
-              </button>
             </div>
           </div>
         </form>

@@ -419,61 +419,6 @@ body {
   container-type: inline-size;
 }
 
-/* What a pane sheds as it narrows, in the order it can afford to lose it. */
-/*
- * What the composer row sheds as its pane narrows, in the order it can afford
- * to lose it. Nothing is dropped that cannot be reached another way: the path is
- * still on the title attribute, and Review keeps its accessible name.
- */
-.label-short {
-  display: none;
-}
-
-@container (max-width: 620px) {
-  .label-full {
-    display: none;
-  }
-
-  .label-short {
-    display: inline;
-  }
-}
-
-@container (max-width: 520px) {
-  .composer-actions .path {
-    display: none;
-  }
-
-  /*
-   * The money goes before the count.
-   *
-   * "8.6M · $17.64" is the longest thing in this row and it arrived here when
-   * the spend chip moved out of the pane's tools bar — without a rung on this
-   * ladder it simply pushed the row wider than the pane. Dropping the cost
-   * keeps the part that answers "is this conversation getting expensive"
-   * roughly, and the full breakdown is still on the chip's `title`.
-   */
-  .composer-actions .spend-cost {
-    display: none;
-  }
-}
-
-@container (max-width: 430px) {
-  /* The dots stay: which agents are here outranks their names. */
-  .composer-actions .voice {
-    font-size: 0;
-    gap: 0;
-  }
-
-  .composer-actions .spend {
-    display: none;
-  }
-
-  .composer-actions {
-    gap: calc(var(--step) * 1.5);
-  }
-}
-
 /*
  * The offer to quote what you just selected.
  *
@@ -1675,12 +1620,23 @@ body {
 }
 
 .approval-actions,
-.composer-actions {
+/*
+ * The box and its one control, on a line together.
+ *
+ * `flex-end` rather than centred: the field grows downward with what is typed
+ * into it, and Send belongs beside the last line rather than drifting down the
+ * middle of a tall box.
+ */
+.composer-line {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: calc(var(--step) * 2);
-  /* The session's own details read from the left; the controls sit right. */
-  justify-content: flex-start;
+  min-width: 0;
+}
+
+.composer-line textarea {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Stop and Send sit together while a turn is running. */
