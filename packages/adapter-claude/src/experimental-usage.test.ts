@@ -30,7 +30,7 @@ describe('the experimental usage API this adapter leans on', () => {
       declarations.includes(METHOD),
       `The SDK no longer declares ${METHOD}. Claude's account usage will stop ` +
         'filling in silently — it is feature-detected, so nothing throws. Find ' +
-        "the method that replaced it in sdk.d.ts and update `readPlanUsage`.",
+        'the method that replaced it in sdk.d.ts and update `readPlanUsage`.'
     ).toBe(true)
   })
 })

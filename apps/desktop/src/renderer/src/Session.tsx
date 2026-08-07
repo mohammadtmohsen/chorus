@@ -837,7 +837,6 @@ export function Session(props: {
         </p>
       )}
 
-
       <div
         className="score"
         ref={score}
@@ -1130,72 +1129,72 @@ export function Session(props: {
             the last line is.
           */}
           <div className="composer-line">
-          <textarea
-            ref={input}
-            value={draft}
-            rows={1}
-            aria-label={t('conversation.messageLabel')}
-            placeholder={
-              participants.length === 0
-                ? t('conversation.nobodyHere')
-                : t('conversation.placeholder')
-            }
-            role="combobox"
-            aria-expanded={menuOpen}
-            aria-controls={`mentions-${conversationId}`}
-            aria-autocomplete="list"
-            onChange={(e) => {
-              setDraft(e.target.value)
-              refreshMention()
-            }}
-            onSelect={refreshMention}
-            onPaste={(e) => {
-              // Text pastes as text; anything else becomes a path.
-              if (e.clipboardData.files.length === 0) return
-              e.preventDefault()
-              void attach(e.clipboardData)
-            }}
-            onBlur={() => {
-              setMention(null)
-            }}
-            onKeyDown={(e) => {
-              /*
-               * The menu takes the keys it needs first — Enter in particular.
-               * Sending the message when the user meant to pick a name is the
-               * failure this whole feature exists to prevent.
-               */
-              if (menuOpen) {
-                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  const step = e.key === 'ArrowDown' ? 1 : options.length - 1
-                  setHighlighted((current) => (current + step) % options.length)
-                  return
-                }
-                if (e.key === 'Enter' || e.key === 'Tab') {
-                  e.preventDefault()
-                  choose(highlighted)
-                  return
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  dismissed.current = queryKey.current
-                  setMention(null)
-                  return
-                }
+            <textarea
+              ref={input}
+              value={draft}
+              rows={1}
+              aria-label={t('conversation.messageLabel')}
+              placeholder={
+                participants.length === 0
+                  ? t('conversation.nobodyHere')
+                  : t('conversation.placeholder')
               }
-              if (e.key !== 'Enter') return
-              // Mid-composition Enter commits the candidate — for Japanese,
-              // Chinese or Korean input that keypress belongs to the IME, not
-              // to us, and sending there would swallow the word being typed.
-              if (e.nativeEvent.isComposing) return
-              // Shift holds the line; every other Enter sends. Cmd and Ctrl keep
-              // working because that is what they did before.
-              if (e.shiftKey) return
-              e.preventDefault()
-              send()
-            }}
-          />
-          {/*
+              role="combobox"
+              aria-expanded={menuOpen}
+              aria-controls={`mentions-${conversationId}`}
+              aria-autocomplete="list"
+              onChange={(e) => {
+                setDraft(e.target.value)
+                refreshMention()
+              }}
+              onSelect={refreshMention}
+              onPaste={(e) => {
+                // Text pastes as text; anything else becomes a path.
+                if (e.clipboardData.files.length === 0) return
+                e.preventDefault()
+                void attach(e.clipboardData)
+              }}
+              onBlur={() => {
+                setMention(null)
+              }}
+              onKeyDown={(e) => {
+                /*
+                 * The menu takes the keys it needs first — Enter in particular.
+                 * Sending the message when the user meant to pick a name is the
+                 * failure this whole feature exists to prevent.
+                 */
+                if (menuOpen) {
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    const step = e.key === 'ArrowDown' ? 1 : options.length - 1
+                    setHighlighted((current) => (current + step) % options.length)
+                    return
+                  }
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault()
+                    choose(highlighted)
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    dismissed.current = queryKey.current
+                    setMention(null)
+                    return
+                  }
+                }
+                if (e.key !== 'Enter') return
+                // Mid-composition Enter commits the candidate — for Japanese,
+                // Chinese or Korean input that keypress belongs to the IME, not
+                // to us, and sending there would swallow the word being typed.
+                if (e.nativeEvent.isComposing) return
+                // Shift holds the line; every other Enter sends. Cmd and Ctrl keep
+                // working because that is what they did before.
+                if (e.shiftKey) return
+                e.preventDefault()
+                send()
+              }}
+            />
+            {/*
             Everything about the session sits in the composer's own row.
             
             A separate strip above the transcript put who is here, where they

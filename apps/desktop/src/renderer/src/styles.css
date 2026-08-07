@@ -4297,8 +4297,12 @@ input::placeholder {
   border-top: 1px solid var(--line);
 }
 
-.activity-account[data-agent='codex'] { --voice: var(--codex); }
-.activity-account[data-agent='claude'] { --voice: var(--claude); }
+.activity-account[data-agent='codex'] {
+  --voice: var(--codex);
+}
+.activity-account[data-agent='claude'] {
+  --voice: var(--claude);
+}
 
 /*
  * Turned on its side, reading bottom to top.

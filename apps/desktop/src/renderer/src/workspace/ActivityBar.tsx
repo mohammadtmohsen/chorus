@@ -131,7 +131,11 @@ export function ActivityBar(props: {
               }}
             >
               {usage.map((account) => (
-                <span key={account.agentId} className="activity-account" data-agent={account.agentId}>
+                <span
+                  key={account.agentId}
+                  className="activity-account"
+                  data-agent={account.agentId}
+                >
                   {/*
                     Whose account this is, turned on its side.
                     
@@ -191,7 +195,11 @@ export function ActivityBar(props: {
             */}
             {detail !== null &&
               createPortal(
-                <div className="usage-tip" style={{ top: detail.top, left: detail.left }} role="tooltip">
+                <div
+                  className="usage-tip"
+                  style={{ top: detail.top, left: detail.left }}
+                  role="tooltip"
+                >
                   <ul className="limits">
                     {usage.flatMap((account) =>
                       account.windows.map((window) => (
@@ -201,7 +209,11 @@ export function ActivityBar(props: {
                         >
                           <span className="voice-dot" aria-hidden="true" />
                           <span className="limit-window">{window.label}</span>
-                          <span className="limit-bar" aria-hidden="true" data-full={window.percent >= 90}>
+                          <span
+                            className="limit-bar"
+                            aria-hidden="true"
+                            data-full={window.percent >= 90}
+                          >
                             <i style={{ width: `${String(window.percent)}%` }} />
                           </span>
                           <span className="limit-percent">{window.percent}%</span>

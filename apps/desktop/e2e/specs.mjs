@@ -56,9 +56,7 @@ const draft = (page, text) =>
   })()`)
 
 const tabIds = (page) =>
-  page.evaluate(
-    `Array.from(document.querySelectorAll('${TAB}')).map(t => t.dataset.workspaceTab)`
-  )
+  page.evaluate(`Array.from(document.querySelectorAll('${TAB}')).map(t => t.dataset.workspaceTab)`)
 
 const clickTab = (page, conversationId) =>
   page.evaluate(`(() => {
@@ -236,7 +234,6 @@ export const specs = [
         )
         assert(/\d/.test(shown), `spend reads as a number: ${shown}`)
         await app.settle()
-
 
         const both = await app.evaluate(`(() => ({
           card: document.querySelector('.workspace-session-spend')?.textContent ?? null,
@@ -476,9 +473,8 @@ export const specs = [
           'the tab moved rather than being copied — one each, not two and one'
         )
         assert(
-          (await app.evaluate(
-            `document.querySelector('.split-branch').dataset.orientation`
-          )) === 'row',
+          (await app.evaluate(`document.querySelector('.split-branch').dataset.orientation`)) ===
+            'row',
           '⌘\\ split sideways'
         )
 
@@ -603,9 +599,7 @@ export const specs = [
         const [first, second] = await twoSessions(app)
 
         await clickTab(app, first)
-        await app.until(
-          `document.querySelector('${PANE}')?.dataset.conversation === '${first}'`
-        )
+        await app.until(`document.querySelector('${PANE}')?.dataset.conversation === '${first}'`)
         await say(app, 'Reply with exactly: KEPT')
         /*
          * An *agent* entry, not any entry: the prompt says "KEPT" too, so
@@ -630,9 +624,7 @@ export const specs = [
 
         // Away, which unmounts it outright rather than hiding it.
         await clickTab(app, second)
-        await app.until(
-          `document.querySelector('${PANE}')?.dataset.conversation === '${second}'`
-        )
+        await app.until(`document.querySelector('${PANE}')?.dataset.conversation === '${second}'`)
         assert(
           (await app.evaluate(
             `!document.querySelector('${PANE}[data-conversation="${first}"]')`
@@ -641,9 +633,7 @@ export const specs = [
         )
 
         await clickTab(app, first)
-        await app.until(
-          `document.querySelector('${PANE}')?.dataset.conversation === '${first}'`
-        )
+        await app.until(`document.querySelector('${PANE}')?.dataset.conversation === '${first}'`)
         await app.settle()
         assert(
           (await app.evaluate(`document.querySelector('.composer textarea').value`)) ===
@@ -724,7 +714,7 @@ export const specs = [
         })()`)
         assert(card.path !== null && card.profile !== null, 'the row shows its path and profile')
         assert(card.agents === 2, `and every agent, seated or not (${String(card.agents)})`)
-        assert(card.agentsAreButtons, 'as the composer\'s own switches, not labels')
+        assert(card.agentsAreButtons, "as the composer's own switches, not labels")
 
         /*
          * Three lines, and every one of them fits at the narrowest the sidebar
@@ -760,9 +750,7 @@ export const specs = [
           `at 240px no line overflows (${narrow.lines.join(',')})`
         )
         assert(narrow.namesStillShown, 'and the agents keep their names')
-        await app.evaluate(
-          `(document.documentElement.style.removeProperty('--sidebar'), true)`
-        )
+        await app.evaluate(`(document.documentElement.style.removeProperty('--sidebar'), true)`)
         assert(card.actions === 2, `Restart and End sit on it, got ${String(card.actions)}`)
         assert(card.nestedButtons === 0, 'and no button is nested inside another')
         assert(card.actionsVisible, 'and are visible without hovering the row')
@@ -892,14 +880,19 @@ export const specs = [
           'reaching past its right edge, which is what used to be cut off'
         )
         assert(menu.fitsWindow, 'and it is placed inside the window')
-        assert(menu.options >= 2, `with what each profile permits, not just its name (${String(menu.options)})`)
+        assert(
+          menu.options >= 2,
+          `with what each profile permits, not just its name (${String(menu.options)})`
+        )
         await app.evaluate(`(() => {
           document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
           return true
         })()`)
         await app.settle()
         assert(
-          (await app.evaluate(`document.querySelectorAll('.workspace-session-profile-menu').length`)) === 0,
+          (await app.evaluate(
+            `document.querySelectorAll('.workspace-session-profile-menu').length`
+          )) === 0,
           'and a click anywhere else closes it'
         )
 
@@ -1689,7 +1682,10 @@ export const specs = [
         await app.evaluate(
           `window.chorus.setProfile({ conversationId: ${JSON.stringify(conversationId)}, profileId: 'trusted' }).then(() => true)`
         )
-        await say(app, 'Run these three bash commands one at a time: pwd ; date ; echo hello. Then reply with a one sentence summary.')
+        await say(
+          app,
+          'Run these three bash commands one at a time: pwd ; date ; echo hello. Then reply with a one sentence summary.'
+        )
         await app.until(`document.querySelectorAll('.command-fold').length >= 2`, {
           timeout: 240_000,
           label: 'the commands ran',
@@ -1709,20 +1705,20 @@ export const specs = [
           }
         })()`)
         assert(folds.count >= 2, `several commands ran, got ${folds.count}`)
-        assert(
-          folds.expanded === 0,
-          `every one of them is folded, ${folds.expanded} were not`
-        )
+        assert(folds.expanded === 0, `every one of them is folded, ${folds.expanded} were not`)
         assert(
           folds.heights.every((h) => h < 40),
           `and each is a line rather than a block, got ${folds.heights.join(',')}`
         )
 
         // The fold is a fold, not a truncation.
-        await app.evaluate(`(() => { document.querySelector('.command-summary').click(); return true })()`)
+        await app.evaluate(
+          `(() => { document.querySelector('.command-summary').click(); return true })()`
+        )
         await app.settle()
         assert(
-          (await app.evaluate(`document.querySelectorAll('.command-fold pre.command').length`)) === 1,
+          (await app.evaluate(`document.querySelectorAll('.command-fold pre.command').length`)) ===
+            1,
           'and opens on click'
         )
 

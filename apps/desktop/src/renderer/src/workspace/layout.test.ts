@@ -101,20 +101,26 @@ describe('workspace layout', () => {
    * why the real rule needs pinning down.
    */
   it('gives the caret to the tab that slid into the closed one’s index', () => {
-    expect(closeTab(withActive(['a', 'b', 'c'], 'b'), 'pane-1', 'b').panes['pane-1']).toMatchObject({
-      tabs: ['a', 'c'],
-      activeTabId: 'c',
-    })
+    expect(closeTab(withActive(['a', 'b', 'c'], 'b'), 'pane-1', 'b').panes['pane-1']).toMatchObject(
+      {
+        tabs: ['a', 'c'],
+        activeTabId: 'c',
+      }
+    )
     // Closing the last tab has nothing to its right, so the index clamps back.
-    expect(closeTab(withActive(['a', 'b', 'c'], 'c'), 'pane-1', 'c').panes['pane-1']).toMatchObject({
-      tabs: ['a', 'b'],
-      activeTabId: 'b',
-    })
+    expect(closeTab(withActive(['a', 'b', 'c'], 'c'), 'pane-1', 'c').panes['pane-1']).toMatchObject(
+      {
+        tabs: ['a', 'b'],
+        activeTabId: 'b',
+      }
+    )
     // Closing a background tab must not move the caret at all.
-    expect(closeTab(withActive(['a', 'b', 'c'], 'a'), 'pane-1', 'b').panes['pane-1']).toMatchObject({
-      tabs: ['a', 'c'],
-      activeTabId: 'a',
-    })
+    expect(closeTab(withActive(['a', 'b', 'c'], 'a'), 'pane-1', 'b').panes['pane-1']).toMatchObject(
+      {
+        tabs: ['a', 'c'],
+        activeTabId: 'a',
+      }
+    )
   })
 
   it('flattens same-orientation branches and scales their sizes', () => {

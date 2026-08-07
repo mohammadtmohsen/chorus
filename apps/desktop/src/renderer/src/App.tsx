@@ -48,7 +48,10 @@ export function App(): React.JSX.Element {
    * agent is working or waiting without keeping markdown trees mounted.
    */
   useEffect(
-    () => window.chorus.onEvents((events) => { useWorkspaceStore.getState().ingestEvents(events); }),
+    () =>
+      window.chorus.onEvents((events) => {
+        useWorkspaceStore.getState().ingestEvents(events)
+      }),
     []
   )
 
@@ -118,12 +121,16 @@ export function App(): React.JSX.Element {
         setAppVersion(version)
         setHome(where)
       })
-      .catch(() => { setAppVersion(null); })
+      .catch(() => {
+        setAppVersion(null)
+      })
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
     window.chorus
       .readSettings()
-      .then(({ agents, cwd, profileId }) => { setDefaults({ agents, cwd, profileId }); })
+      .then(({ agents, cwd, profileId }) => {
+        setDefaults({ agents, cwd, profileId })
+      })
       .catch(fail(setError))
 
     /*
@@ -131,7 +138,9 @@ export function App(): React.JSX.Element {
      * restore result. That distinction prevents one slow provider from creating
      * another duplicate session on every launch.
      */
-    const grace = setTimeout(() => { setRestoring(false); }, 1_500)
+    const grace = setTimeout(() => {
+      setRestoring(false)
+    }, 1_500)
     window.chorus
       .restoreConversations()
       .then(({ sessions: reopened, workspace }) => {
@@ -143,12 +152,10 @@ export function App(): React.JSX.Element {
             ),
             ...current,
           ]
-          useWorkspaceStore
-            .getState()
-            .hydrate(
-              workspace,
-              merged.map((session) => session.conversationId)
-            )
+          useWorkspaceStore.getState().hydrate(
+            workspace,
+            merged.map((session) => session.conversationId)
+          )
           return merged
         })
       })
@@ -158,7 +165,9 @@ export function App(): React.JSX.Element {
         setRestoring(false)
         setRestored(true)
       })
-    return () => { clearTimeout(grace); }
+    return () => {
+      clearTimeout(grace)
+    }
   }, [updateSessions])
 
   const remember = useCallback((patch: Partial<Defaults>) => {
@@ -171,7 +180,9 @@ export function App(): React.JSX.Element {
     const stop = window.chorus.onScale((next) => {
       setZoom(next)
       clearTimeout(timer)
-      timer = setTimeout(() => { setZoom(null); }, 1_400)
+      timer = setTimeout(() => {
+        setZoom(null)
+      }, 1_400)
     })
     return () => {
       clearTimeout(timer)
@@ -194,7 +205,9 @@ export function App(): React.JSX.Element {
         setDefaults((current) => ({ ...current, cwd: session.cwd }))
       })
       .catch(fail(setError))
-      .finally(() => { setStarting(false); })
+      .finally(() => {
+        setStarting(false)
+      })
   }, [defaults, updateSessions])
 
   useEffect(() => {
@@ -217,7 +230,9 @@ export function App(): React.JSX.Element {
     (conversationId: string) => {
       window.chorus
         .restartConversation({ conversationId })
-        .then((restarted) => { applyRestart(conversationId, restarted); })
+        .then((restarted) => {
+          applyRestart(conversationId, restarted)
+        })
         .catch(fail(setError))
     },
     [applyRestart]
@@ -235,7 +250,7 @@ export function App(): React.JSX.Element {
     [updateSessions]
   )
 
-/*
+  /*
    * Ending asks twice while an agent is working, and the asking is done by the
    * control you pressed — the menu item arms itself, exactly as the pane's ✕
    * does. A `window.confirm` was doing this job and had to go: it is an OS
@@ -443,14 +458,23 @@ export function App(): React.JSX.Element {
       {showingSettings && (
         <Settings
           probes={probes}
-          onClose={() => { setShowingSettings(false); }}
+          onClose={() => {
+            setShowingSettings(false)
+          }}
           onOpenLogs={() => {
             setShowingSettings(false)
             setShowingLogs(true)
           }}
         />
       )}
-      {showingLogs && <LogViewer onClose={() => { setShowingLogs(false); }} onError={setError} />}
+      {showingLogs && (
+        <LogViewer
+          onClose={() => {
+            setShowingLogs(false)
+          }}
+          onError={setError}
+        />
+      )}
     </>
   )
 
@@ -463,8 +487,12 @@ export function App(): React.JSX.Element {
         <Stuck
           error={error}
           starting={starting}
-          onRetry={() => { setError(null); }}
-          onSettings={() => { setShowingSettings(true); }}
+          onRetry={() => {
+            setError(null)
+          }}
+          onSettings={() => {
+            setShowingSettings(true)
+          }}
         />
         {sheets}
       </>
@@ -495,7 +523,9 @@ export function App(): React.JSX.Element {
         onEnd={endNow}
         onReorderSessions={reorderSessions}
         onCommitLayout={commitLayout}
-        onOpenSettings={() => { setShowingSettings(true); }}
+        onOpenSettings={() => {
+          setShowingSettings(true)
+        }}
         profiles={profiles}
         installed={installed}
         onToggleAgent={toggleAgent}
@@ -509,13 +539,17 @@ export function App(): React.JSX.Element {
             key={session.conversationId}
             session={session}
             active={focused}
-            onActivate={() => { useWorkspaceStore.getState().focusPane(paneId); }}
+            onActivate={() => {
+              useWorkspaceStore.getState().focusPane(paneId)
+            }}
             panelRequest={
               panelRequest?.conversationId === session.conversationId
                 ? panelRequest.panel
                 : undefined
             }
-            onPanelOpened={() => { setPanelRequest(null); }}
+            onPanelOpened={() => {
+              setPanelRequest(null)
+            }}
             carry={carries.current.get(session.conversationId)}
             onCarry={keepCarry}
           />
@@ -559,4 +593,3 @@ function Stuck(props: {
     </div>
   )
 }
-

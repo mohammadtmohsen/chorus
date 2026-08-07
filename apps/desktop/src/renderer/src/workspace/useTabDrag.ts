@@ -110,8 +110,10 @@ function edgeTarget(
     .sort((a, b) => b.penetration - a.penetration)[0]
   if (winner === undefined) return null
 
-  const width = winner.direction === 'left' || winner.direction === 'right' ? rect.width / 2 : rect.width
-  const height = winner.direction === 'up' || winner.direction === 'down' ? rect.height / 2 : rect.height
+  const width =
+    winner.direction === 'left' || winner.direction === 'right' ? rect.width / 2 : rect.width
+  const height =
+    winner.direction === 'up' || winner.direction === 'down' ? rect.height / 2 : rect.height
   const left = winner.direction === 'right' ? rect.left + rect.width / 2 : rect.left
   const top = winner.direction === 'down' ? rect.top + rect.height / 2 : rect.top
   return { direction: winner.direction, rect: new DOMRect(left, top, width, height) }
@@ -361,4 +363,3 @@ export function useTabDrag(options: {
     },
   }
 }
-

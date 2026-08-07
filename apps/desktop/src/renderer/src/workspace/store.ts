@@ -36,7 +36,9 @@ export interface SessionPulse {
    * its own running total, so the latest wins per agent and the conversation is
    * their sum. Adding reports up would count the same tokens again each time.
    */
-  readonly usageByActor: Readonly<Record<string, { input: number; output: number; cost: number | null }>>
+  readonly usageByActor: Readonly<
+    Record<string, { input: number; output: number; cost: number | null }>
+  >
   readonly tokens: number
   readonly costUsd: number | null
 }
@@ -80,11 +82,7 @@ export interface WorkspaceActions {
   closePane: (paneId: string) => void
   reorderTab: (paneId: string, fromIndex: number, slotBefore: number) => void
   moveTab: (conversationId: string, targetPaneId: string, slotBefore: number) => void
-  splitTab: (
-    conversationId: string,
-    targetPaneId: string,
-    direction: SplitDirection
-  ) => void
+  splitTab: (conversationId: string, targetPaneId: string, direction: SplitDirection) => void
   setBranchSizes: (path: readonly number[], sizes: readonly number[]) => void
   equalizeBranch: (path: readonly number[]) => void
   replaceSession: (previousId: string, nextId: string) => void
@@ -112,11 +110,7 @@ function pulseKey(event: TranscriptEvent, field: string): string {
   return typeof value === 'string' && value !== '' ? value : event.id
 }
 
-function reducePulse(
-  pulse: SessionPulse,
-  event: TranscriptEvent,
-  visible: boolean
-): SessionPulse {
+function reducePulse(pulse: SessionPulse, event: TranscriptEvent, visible: boolean): SessionPulse {
   if (event.seq <= pulse.lastSeq) return pulse
   let working = [...pulse.working]
   let approvalIds = [...pulse.approvalIds]
@@ -219,12 +213,18 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         update((current) => activateTab(current, paneId, conversationId))
         clearUnread(conversationId)
       },
-      focusPane: (paneId) => { update((current) => focusPane(current, paneId)); },
-      closeTab: (paneId, conversationId) =>
-        { update((current) => closeTab(current, paneId, conversationId)); },
-      closePane: (paneId) => { update((current) => closePane(current, paneId)); },
-      reorderTab: (paneId, fromIndex, slotBefore) =>
-        { update((current) => reorderTab(current, paneId, fromIndex, slotBefore)); },
+      focusPane: (paneId) => {
+        update((current) => focusPane(current, paneId))
+      },
+      closeTab: (paneId, conversationId) => {
+        update((current) => closeTab(current, paneId, conversationId))
+      },
+      closePane: (paneId) => {
+        update((current) => closePane(current, paneId))
+      },
+      reorderTab: (paneId, fromIndex, slotBefore) => {
+        update((current) => reorderTab(current, paneId, fromIndex, slotBefore))
+      },
       moveTab: (conversationId, targetPaneId, slotBefore) => {
         update((current) => moveTab(current, conversationId, targetPaneId, slotBefore))
         clearUnread(conversationId)
@@ -233,16 +233,22 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         update((current) => splitTab(current, conversationId, targetPaneId, direction))
         clearUnread(conversationId)
       },
-      setBranchSizes: (path, sizes) =>
-        { update((current) => setBranchSizes(current, path, sizes)); },
-      equalizeBranch: (path) => { update((current) => equalizeBranch(current, path)); },
+      setBranchSizes: (path, sizes) => {
+        update((current) => setBranchSizes(current, path, sizes))
+      },
+      equalizeBranch: (path) => {
+        update((current) => equalizeBranch(current, path))
+      },
       replaceSession: (previousId, nextId) => {
         set((state) => {
           const next = replaceSession(snapshot(state), previousId, nextId)
           // The restarted room inherits the old one's pulse, so a badge earned
           // before the restart does not survive it as a phantom.
           const previousPulse = state.pulses[previousId]
-          const pulses = { ...without(state.pulses, previousId), [nextId]: previousPulse ?? EMPTY_PULSE }
+          const pulses = {
+            ...without(state.pulses, previousId),
+            [nextId]: previousPulse ?? EMPTY_PULSE,
+          }
           return { ...next, pulses }
         })
       },
@@ -254,8 +260,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           return { ...next, pulses: without(state.pulses, conversationId) }
         })
       },
-      setSidebarHidden: (sidebarHidden) => { set({ sidebarHidden }); },
-      setSidebarWidth: (width) => { set({ sidebarWidth: clampSidebarWidth(width) }); },
+      setSidebarHidden: (sidebarHidden) => {
+        set({ sidebarHidden })
+      },
+      setSidebarWidth: (width) => {
+        set({ sidebarWidth: clampSidebarWidth(width) })
+      },
       ingestEvents: (events) => {
         if (events.length === 0) return
         set((state) => {

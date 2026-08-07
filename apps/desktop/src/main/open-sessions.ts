@@ -1,7 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { WorkspaceSnapshot, type WorkspaceSnapshot as WorkspaceSnapshotType } from '../shared/workspace-layout.js'
+import {
+  WorkspaceSnapshot,
+  type WorkspaceSnapshot as WorkspaceSnapshotType,
+} from '../shared/workspace-layout.js'
 
 /**
  * Which conversations were open when the app last ran.
@@ -61,7 +64,9 @@ export function parseOpenSessions(value: unknown): OpenSessionsState {
     return { sessions: current.data.sessions, workspace: current.data.workspace }
   }
   const legacy = LegacyOpenSessions.safeParse(value)
-  return legacy.success ? { sessions: legacy.data, workspace: null } : { sessions: [], workspace: null }
+  return legacy.success
+    ? { sessions: legacy.data, workspace: null }
+    : { sessions: [], workspace: null }
 }
 
 export function readOpenSessions(userDataPath: string): OpenSessionsState {
