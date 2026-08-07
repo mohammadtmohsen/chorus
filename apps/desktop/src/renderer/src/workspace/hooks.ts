@@ -125,3 +125,13 @@ export function useTabPaneId(conversationId: string): string | null {
 export function useSessionPulse(conversationId: string): SessionPulse | undefined {
   return useWorkspaceStore((state) => state.pulses[conversationId])
 }
+
+/**
+ * Every pulse at once, for the things that count across sessions.
+ *
+ * Returns the store's own object rather than deriving one, so the identity is
+ * stable between unrelated renders and a consumer's `useMemo` actually holds.
+ */
+export function useAllPulses(): Readonly<Record<string, SessionPulse>> {
+  return useWorkspaceStore((state) => state.pulses)
+}

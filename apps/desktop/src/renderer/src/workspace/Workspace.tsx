@@ -4,11 +4,13 @@ import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } 
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
 import { ALL_AGENTS, shortenPath, type AgentId, type SessionInfo } from '../Session.js'
+import { ActivityBar } from './ActivityBar.js'
 import { compactTokens, money } from '../format.js'
 import { SIDEBAR_WIDTH } from '../../../shared/workspace-layout.js'
 import { clampSidebarWidth, leafPaneIds, type SplitDirection } from './layout.js'
 import {
   useActiveConversationId,
+  useAllPulses,
   usePane,
   useSessionPulse,
   useSidebarHidden,
@@ -52,6 +54,8 @@ interface WorkspaceProps {
   readonly onOpenPanel: (conversationId: string, panel: 'review' | 'summary') => void
   /** Persists the arrangement immediately, for changes that end on pointer-up. */
   readonly onCommitLayout: () => void
+  /** The activity bar's gear opens the same panel the masthead's button does. */
+  readonly onOpenSettings: () => void
   readonly renderSession: (
     session: SessionInfo,
     focused: boolean,
@@ -215,8 +219,35 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
     }
   }, [])
 
+  /*
+   * How many sessions each agent is working in.
+   *
+   * Read off the pulse rather than the mounted panes: the point of showing it
+   * here is the sessions you are *not* looking at, and those have no pane.
+   */
+  const pulses = useAllPulses()
+  const sidebarHidden = useSidebarHidden()
+  const { setSidebarHidden } = useWorkspaceActions()
+  const working = useMemo(
+    () =>
+      props.sessions.filter((session) => (pulses[session.conversationId]?.working.length ?? 0) > 0)
+        .length,
+    [props.sessions, pulses]
+  )
+
   return (
     <div className="workspace-shell">
+      <ActivityBar
+        working={working}
+        sidebarHidden={sidebarHidden}
+        onToggleSidebar={() => {
+          setSidebarHidden(!sidebarHidden)
+          props.onCommitLayout()
+        }}
+        starting={props.starting}
+        onNewSession={props.onNewSession}
+        onOpenSettings={props.onOpenSettings}
+      />
       <WorkspaceSidebar
         sessions={props.sessions}
         starting={props.starting}
@@ -614,7 +645,8 @@ function PaneTabStrip(
 const ROW_DRAG_PX = 5
 
 /** The card floats this far off the window edge; `--step * 2` in the stylesheet. */
-const SIDEBAR_GAP = 6
+/** Mirrors `--activity` in the stylesheet: the column the sidenav starts after. */
+const ACTIVITY_WIDTH = 60
 
 /**
  * The stored width, fitted to the window actually showing it.
@@ -683,7 +715,16 @@ function useSidebarResize(
       const onMove = (move: PointerEvent): void => {
         if (move.pointerId !== pointerId) return
         // Fitted here too, so the edge cannot be dragged past half the window.
-        latest = fitSidebar(move.clientX + SIDEBAR_GAP)
+        /*
+         * Measured from where the column starts, not from the window's edge.
+         *
+         * The width is the column's own; `clientX` is a window coordinate.
+         * Those were the same number until the activity bar took the first
+         * 60px, after which every drag set a width that much larger than the
+         * place the pointer was dropped. The 6px fudge that used to sit here
+         * went with the card's margin — a flush panel's edge is its edge.
+         */
+        latest = fitSidebar(move.clientX - ACTIVITY_WIDTH)
         root.style.setProperty('--sidebar', `${String(latest)}px`)
       }
       const stop = (end: PointerEvent): void => {
@@ -787,7 +828,6 @@ function WorkspaceSidebar(props: {
 
   return (
     <>
-      <div className="workspace-sidebar-spacer" data-hidden={hidden} aria-hidden="true" />
       <aside
         className="workspace-sidebar"
         data-hidden={hidden}
@@ -797,33 +837,6 @@ function WorkspaceSidebar(props: {
         onPointerEnter={beginPreview}
         onPointerLeave={endPreview}
       >
-        <header className="workspace-sidebar-head">
-          <strong>{t('workspace.sessions')}</strong>
-          <span className="workspace-sidebar-actions">
-            <button
-              type="button"
-              className="workspace-icon-button"
-              disabled={props.starting}
-              title={t('conversation.newSession')}
-              aria-label={t('conversation.newSession')}
-              onClick={props.onNewSession}
-            >
-              <span aria-hidden="true">＋</span>
-            </button>
-            <button
-              type="button"
-              className="workspace-icon-button"
-              title={t('workspace.hideSidebar')}
-              aria-label={t('workspace.hideSidebar')}
-              onClick={() => {
-                setPreviewing(false)
-                setHidden(true)
-              }}
-            >
-              <span aria-hidden="true">‹</span>
-            </button>
-          </span>
-        </header>
         <label className="workspace-search">
           <span className="sr-only">{t('workspace.search')}</span>
           <input
@@ -833,7 +846,7 @@ function WorkspaceSidebar(props: {
             onChange={(event) => { setQueryDraft(event.target.value); }}
           />
         </label>
-        <div className="workspace-tree">
+        <div className="workspace-tree" data-reordering={reorder.draggingId !== null}>
           {visible.map((session, index) => (
             <SidebarSession
               session={session}
@@ -1020,24 +1033,6 @@ function SidebarSession(props: {
    * the button swallows the clicks that would place a caret. The tab strip
    * solves it the same way.
    */
-  if (props.renaming) {
-    return (
-      <input
-        className="workspace-session-rename"
-        defaultValue={props.session.title}
-        autoFocus
-        aria-label={t('conversation.renameTitle')}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') props.onRenameEnd(null)
-          if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-            props.onRenameEnd(event.currentTarget.value)
-          }
-        }}
-        onBlur={(event) => { props.onRenameEnd(event.currentTarget.value); }}
-      />
-    )
-  }
-
   return (
     <div
       className="workspace-session-row"
@@ -1045,17 +1040,50 @@ function SidebarSession(props: {
       data-dragging={props.dragging}
       data-drop={props.drop}
       data-sidebar-conversation={props.session.conversationId}
+      /*
+       * The whole card is the grip.
+       *
+       * It was the head alone, which is a third of the card's height — so two
+       * thirds of the thing you are trying to drag did nothing, and the way to
+       * find that out was to try. The 5px threshold below is what keeps this
+       * from stealing clicks: a press that never travels is still a press, and
+       * the controls in the body get their click as usual.
+       */
+      onPointerDown={props.renaming ? undefined : props.onPointerDown}
     >
       {/*
         A wrapper rather than one button, because Restart and End live here now
         and a button cannot contain buttons. Same shape as a tab: one control
         that opens the thing, and its own controls beside it.
       */}
+      {/*
+        Renaming swaps the head, not the card.
+
+        It used to replace the whole row with a bare field, so the thing you
+        were naming vanished at the moment you named it — the cast, the folder
+        and the rest went with it, and the list jumped by a card's height. The
+        field stands in for the title alone. It cannot sit *inside* the head,
+        because the head is a button and a button may not contain a text field.
+      */}
+      {props.renaming ? (
+        <input
+          className="workspace-session-rename"
+          defaultValue={props.session.title}
+          autoFocus
+          aria-label={t('conversation.renameTitle')}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') props.onRenameEnd(null)
+            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+              props.onRenameEnd(event.currentTarget.value)
+            }
+          }}
+          onBlur={(event) => { props.onRenameEnd(event.currentTarget.value); }}
+        />
+      ) : (
       <button
         type="button"
         className="workspace-session-main"
         title={props.session.cwd}
-        onPointerDown={props.onPointerDown}
         onClick={props.onOpen}
         onDoubleClick={props.onRenameStart}
       >
@@ -1102,6 +1130,7 @@ function SidebarSession(props: {
           switches; these say who is here, they do not change it.
         */}
       </button>
+      )}
       {/*
         Everything that acts, under everything that identifies.
 
@@ -1111,7 +1140,26 @@ function SidebarSession(props: {
         pointer never has to guess which it is over, and the body can be dense
         without the name becoming so.
       */}
-      <div className="workspace-session-body">
+      {/*
+        The lower half opens the session too, but does not advertise it.
+        
+        The head is the button — named, focusable, and pointer-cursored. Down
+        here the click is a convenience on the gaps between controls: giving the
+        whole panel a pointer would promise that every part of it does the same
+        thing, when most of its area belongs to the folder, the profile and the
+        rest. So the affordance stays with the things that have one.
+      */}
+      <div
+        className="workspace-session-body"
+        onClick={(event) => {
+          // Only the gaps. Anything with its own job keeps it — and a drag that
+          // ended here is not a click, which `onOpen` already knows.
+          if (event.target instanceof Element && event.target.closest('button, input, a') !== null) {
+            return
+          }
+          props.onOpen()
+        }}
+      >
         <ul className="workspace-session-agents">
           {ALL_AGENTS.map((agent) => {
             const here = props.session.participants.includes(agent)
@@ -1314,7 +1362,7 @@ function SidebarSession(props: {
         <span className="workspace-session-actions">
           <button
             type="button"
-            className="workspace-session-action"
+            className="workspace-session-action workspace-session-action--restart"
             aria-label={t('conversation.restartLabel')}
             title={t('conversation.restartLabel')}
             onClick={props.onRestart}
@@ -1377,6 +1425,11 @@ function useRowReorder(
     startY: number
     dragging: boolean
     edges: number[]
+    /* Snapshotted with the edges, and for the same reason: the rows move once
+       the drag starts, so their resting geometry has to be taken before it. */
+    rows: HTMLElement[]
+    pitch: number
+    from: number
     /*
      * The committed slot lives here rather than in `slot` below, which exists
      * only to draw the line. Reading the state at drop time made the commit
@@ -1393,6 +1446,11 @@ function useRowReorder(
       const current = active.current
       active.current = null
       document.body.style.removeProperty('user-select')
+      // Cleared here rather than on the element that ends the gesture: a
+      // cancelled drag has to drop the offset too, or the card stays adrift.
+      for (const row of document.querySelectorAll('[data-sidebar-conversation]')) {
+        if (row instanceof HTMLElement) row.style.removeProperty('--drag-dy')
+      }
       setDraggingId(null)
       setSlot(null)
       if (current?.dragging !== true) return
@@ -1429,6 +1487,9 @@ function useRowReorder(
         startY: event.clientY,
         dragging: false,
         edges: [],
+        rows: [],
+        pitch: 0,
+        from: -1,
         slot: null,
       }
       const element = event.currentTarget
@@ -1439,12 +1500,23 @@ function useRowReorder(
         if (!current.dragging) {
           if (Math.abs(move.clientY - current.startY) <= ROW_DRAG_PX) return
           current.dragging = true
-          current.edges = [...document.querySelectorAll('[data-sidebar-conversation]')].map(
-            (row) => {
-              const rect = row.getBoundingClientRect()
-              return rect.top + rect.height / 2
-            }
+          const rows = [...document.querySelectorAll('[data-sidebar-conversation]')].filter(
+            (row): row is HTMLElement => row instanceof HTMLElement
           )
+          current.rows = rows
+          current.edges = rows.map((row) => {
+            const rect = row.getBoundingClientRect()
+            return rect.top + rect.height / 2
+          })
+          current.from = rows.findIndex(
+            (row) => row.dataset['sidebarConversation'] === current.conversationId
+          )
+          // One card's worth of travel, measured rather than assumed: it is the
+          // card plus the list's gap, and both come from the stylesheet.
+          const first = rows[0]?.getBoundingClientRect()
+          const second = rows[1]?.getBoundingClientRect()
+          current.pitch =
+            first !== undefined && second !== undefined ? second.top - first.top : 0
           try {
             element.setPointerCapture(current.pointerId)
           } catch {
@@ -1453,9 +1525,33 @@ function useRowReorder(
           document.body.style.userSelect = 'none'
           setDraggingId(current.conversationId)
         }
+        /*
+         * The card follows the pointer, written to the element rather than to
+         * state: this fires every frame, and routing it through React would
+         * re-render every card in the list to move one of them. The same reason
+         * the sash writes its width straight to the custom property.
+         */
+        element.style.setProperty('--drag-dy', `${String(move.clientY - current.startY)}px`)
         const next = current.edges.filter((middle) => middle < move.clientY).length
         current.slot = next
         setSlot(next)
+
+        /*
+         * The list opens a gap as you go, rather than drawing a line where the
+         * card would land.
+         *
+         * The rows are translated, not reordered: the drop index is read off
+         * midpoints snapshotted at drag start, and actually moving the elements
+         * would invalidate the measurement the drag is steering by. So the DOM
+         * order is untouched until the drop commits — what moves is paint.
+         */
+        for (const [index, row] of current.rows.entries()) {
+          if (index === current.from) continue
+          const shifts =
+            (index < current.from && index >= next) || (index > current.from && index < next)
+          const by = index < current.from ? current.pitch : -current.pitch
+          row.style.setProperty('--drag-dy', shifts ? `${String(by)}px` : '0px')
+        }
       }
       const onUp = (end: PointerEvent): void => {
         if (active.current !== null && end.pointerId !== active.current.pointerId) return

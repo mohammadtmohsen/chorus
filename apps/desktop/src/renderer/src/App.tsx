@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
-import { Limits } from './Limits.js'
 import { LogViewer } from './LogViewer.js'
 import { fail, Session, type AgentId, type SessionCarry, type SessionInfo } from './Session.js'
 import { Settings, type Defaults } from './Settings.js'
@@ -17,7 +16,9 @@ export function App(): React.JSX.Element {
   const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
   const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
   const [defaults, setDefaults] = useState<Defaults>({
-    agents: ['codex', 'claude'],
+    /* Matches the main process's default. It only stands until `readSettings`
+       answers, but a session started in that window used to open with both. */
+    agents: ['claude'],
     cwd: '',
     profileId: 'read-only',
   })
@@ -476,16 +477,6 @@ export function App(): React.JSX.Element {
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
           {appVersion !== null && <span className="app-version">{appVersion}</span>}
         </h1>
-        <Limits />
-        <div className="masthead-actions">
-          <button
-            type="button"
-            className="btn btn--chip"
-            onClick={() => { setShowingSettings(true); }}
-          >
-            {t('settings.open')}
-          </button>
-        </div>
       </header>
 
       {error !== null && (
@@ -503,6 +494,7 @@ export function App(): React.JSX.Element {
         onEnd={endNow}
         onReorderSessions={reorderSessions}
         onCommitLayout={commitLayout}
+        onOpenSettings={() => { setShowingSettings(true); }}
         profiles={profiles}
         installed={installed}
         onToggleAgent={toggleAgent}

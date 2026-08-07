@@ -345,6 +345,26 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       })
       return
 
+    /*
+     * The line above which the agent no longer remembers verbatim.
+     *
+     * Everything before this stays on screen and still reads as shared history,
+     * but the agent replaced it with a summary of itself to fit the context
+     * window. Saying so is the whole point: a message you can still scroll to
+     * is not necessarily one it can still recall, and without this marker there
+     * is nothing to tell you which is which.
+     */
+    case 'context.compacted':
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: 'system',
+        kind: 'notice',
+        text: 'Context compacted — the agent kept a summary of everything above.',
+        status: 'complete',
+      })
+      return
+
     case 'policy.changed':
       view.messages.push({
         key: event.id,

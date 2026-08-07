@@ -91,6 +91,8 @@
    * and a session's title is usually a project path's last segment.
    */
   --sidebar: 336px;
+  /* The activity bar's width, shared with everything that has to clear it. */
+  --activity: 60px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -420,6 +422,59 @@ body {
 }
 
 /*
+ * A long message, held to a quarter of the view.
+ *
+ * `25vh` rather than a line count: what makes a message too tall is how much of
+ * the screen it takes, and a line count would mean something different on every
+ * window. The fade says the text is cut rather than finished — without it a
+ * clamp reads as a message that happens to end mid-sentence.
+ */
+.clamp {
+  position: relative;
+  min-width: 0;
+}
+
+.clamp[data-open='false'] .clamp-body {
+  position: relative;
+  max-height: 25vh;
+  overflow: hidden;
+}
+
+/* Anchored to the clipped body, not to the wrapper: the wrapper includes the
+   toggle, so a fade positioned against it covers the control instead of the
+   cut. Matches the bubble it sits in rather than the page behind it. */
+.clamp[data-open='false'] .clamp-body::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 48px;
+  background: linear-gradient(to bottom, transparent, var(--raised));
+  pointer-events: none;
+}
+
+.clamp-toggle {
+  margin-top: calc(var(--step) * 1.5);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.clamp-toggle:hover,
+.clamp-toggle:focus-visible {
+  color: var(--bone);
+  outline: none;
+}
+
+/*
  * The offer to quote what you just selected.
  *
  * Anchored to the passage rather than parked in a toolbar: the thing it acts on
@@ -709,7 +764,9 @@ body {
 }
 
 /* Sidebar away: the masthead takes the traffic lights back. */
-.stage:has(.workspace-sidebar[data-hidden='true']) .masthead {
+/* The traffic lights sit over the header's left end, so the mark starts clear
+   of them. Constant now that nothing else claims that corner. */
+.masthead {
   padding-left: 92px;
 }
 
@@ -1223,7 +1280,6 @@ body {
   color: var(--faint);
   font-size: 10px;
 }
-
 
 .md-code {
   position: relative;
@@ -1876,6 +1932,7 @@ input::placeholder {
   font-family: var(--mono);
   font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     border-color 120ms ease,
     background 120ms ease;
@@ -2557,7 +2614,6 @@ input::placeholder {
 }
 
 @container (max-width: 430px) {
-
 }
 
 /* The path reads as text until you edit it, then it is a field in the same place. */
@@ -2996,16 +3052,6 @@ input::placeholder {
   background: var(--ground);
 }
 
-.workspace-sidebar-spacer {
-  width: var(--sidebar);
-  flex: 0 0 auto;
-  transition: width 300ms ease;
-}
-
-.workspace-sidebar-spacer[data-hidden='true'] {
-  width: 0;
-}
-
 /*
  * A card, floated off the window edge rather than welded to it.
  *
@@ -3016,71 +3062,51 @@ input::placeholder {
  * the radius reads as "this is a different kind of thing" rather than as a
  * style applied unevenly.
  */
+/*
+ * A column, not a card floating over one.
+ *
+ * It used to be `position: fixed` so it could run the full height of the window
+ * behind the traffic lights, with a sibling spacer standing in for it in the
+ * flex row. Two elements describing one column is a thing to keep in sync, and
+ * it was the reason the resize handle, the masthead's inset and the card's own
+ * width each had to know about the others. The header owns the top of the
+ * window now, so the three columns simply sit in a row underneath it.
+ */
 .workspace-sidebar {
-  /*
-   * Fixed, so the card is as tall as the window rather than as tall as the
-   * space under the masthead.
-   *
-   * That means it runs up behind the traffic lights, which is the usual macOS
-   * arrangement for a full-height sidebar — the head below pads itself down to
-   * clear them, and takes over as the drag region for that corner.
-   */
-  position: fixed;
+  position: relative;
   z-index: 60;
-  inset: calc(var(--step) * 2) auto calc(var(--step) * 2) calc(var(--step) * 2);
   display: grid;
-  grid-template-rows: 59px auto minmax(0, 1fr);
-  width: calc(var(--sidebar) - var(--step) * 4);
-  /* Clips the head's bottom rule and the tree's scroll to the radius. */
+  flex: 0 0 auto;
+  /* Search, then the list. The head that used to sit above them held a title
+     and two buttons that the activity bar now carries — a panel label plus
+     duplicates of controls one column to its left. */
+  grid-template-rows: auto minmax(0, 1fr);
+  width: var(--sidebar);
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: calc(var(--radius) * 2);
+  /* One rule on the side it meets the editor, matching the activity bar's —
+     the three columns are panels against each other, not cards on a surface. */
+  border-right: 1px solid var(--line);
   background: var(--raised);
-  transform: translateX(0);
-  transition: transform 300ms ease;
+  transition:
+    width 300ms ease,
+    opacity 200ms ease;
 }
 
-/* Its own width *and* the gap, or the card leaves a sliver against the edge. */
+/*
+ * Collapsed to nothing, margins included.
+ *
+ * Width rather than a transform now that it occupies real space: a transform
+ * would slide it out of view and leave the column behind it.
+ */
 .workspace-sidebar[data-hidden='true'] {
-  transform: translateX(calc(-100% - var(--step) * 2));
+  width: 0;
+  border-width: 0;
+  opacity: 0;
 }
 
 /* Only slides back into view — the card already sits above the shell at 60. */
 .workspace-sidebar[data-previewing='true'] {
   transform: translateX(0);
-}
-
-.workspace-sidebar-head {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 2);
-  min-width: 0;
-  /*
-   * 26px of headroom for the traffic lights, which macOS draws over this corner
-   * now that the card reaches the top of the window. The card is inset 6px, so
-   * this clears the 28pt the OS reserves with a little to spare.
-   */
-  padding: 26px calc(var(--step) * 3) 0;
-  border-bottom: 1px solid var(--line);
-  /* The strip the lights sit in has to stay draggable, or that corner is dead. */
-  -webkit-app-region: drag;
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.workspace-sidebar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--step);
-  margin-left: auto;
-  /*
-   * The head is a drag region now that the card owns the traffic-light corner,
-   * and a drag region swallows the clicks of everything inside it. Same guard
-   * the masthead has carried since it became one.
-   */
-  -webkit-app-region: no-drag;
 }
 
 .workspace-icon-button,
@@ -3147,9 +3173,20 @@ input::placeholder {
   border-color: var(--muted);
 }
 
+/*
+ * A flex column, not a grid.
+ *
+ * As a grid it sized its rows smaller than the cards standing in them — 94px
+ * rows holding 121px cards — so every card overlapped the one below by 21px and
+ * the list read as garbled text. The card carries `overflow: hidden` for its
+ * rounded corners, and a box with hidden overflow has no automatic minimum
+ * size, which is what let the row algorithm decide a card was shorter than it
+ * is. A flex column with `flex: none` items has no such negotiation: each card
+ * is its own height and the column scrolls when they no longer fit.
+ */
 .workspace-tree {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: calc(var(--step) * 2);
   min-height: 0;
   overflow: auto;
@@ -3185,11 +3222,18 @@ input::placeholder {
    * turns rather than squaring off the corners under it.
    */
   overflow: hidden;
+  /* Never shrunk to make the list fit — the list scrolls instead. Load-bearing
+     because `overflow: hidden` above removes the automatic minimum that would
+     otherwise stop it. */
+  flex: none;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: transparent;
   color: var(--faint);
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 /*
@@ -3326,7 +3370,9 @@ input::placeholder {
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
 }
 
 .workspace-session-folder-clear:hover,
@@ -3401,7 +3447,9 @@ input::placeholder {
   text-transform: uppercase;
   white-space: nowrap;
   cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
 }
 
 .workspace-session-output-button:hover,
@@ -3440,26 +3488,53 @@ input::placeholder {
 .workspace-session-action {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
   border-radius: calc(var(--radius) - 2px);
   background: transparent;
-  color: color-mix(in srgb, var(--faint) 70%, transparent);
-  font-size: 12px;
+  /*
+   * Coloured at rest, not only on hover.
+   *
+   * They were both the same grey until you were already pointing at one, which
+   * is the wrong moment to learn that one of them ends the session. Restart is
+   * the recoverable one and reads cool; End is not, and reads in the colour
+   * this app uses for everything that cannot be taken back.
+   */
+  color: color-mix(in srgb, var(--voice, var(--faint)) 62%, transparent);
+  font-size: 16px;
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+
+/*
+ * A larger size for the same apparent weight.
+ *
+ * `↻` and `✕` are not drawn to the same proportions: at one size the arrow
+ * measured 10px across against the cross's 12, so the pair read as a small
+ * button beside a big one. The number differs so the marks do not.
+ */
+.workspace-session-action--restart {
+  --voice: var(--codex);
+
+  font-size: 19px;
+}
+
+.workspace-session-action--end {
+  --voice: var(--alert);
 }
 
 .workspace-session-row:hover .workspace-session-action {
-  color: var(--faint);
+  color: color-mix(in srgb, var(--voice, var(--faint)) 85%, transparent);
 }
 
 .workspace-session-action:hover,
 .workspace-session-action:focus-visible {
-  background: color-mix(in srgb, var(--bone) 8%, transparent);
-  color: var(--bone);
+  background: color-mix(in srgb, var(--voice, var(--bone)) 16%, transparent);
+  color: var(--voice, var(--bone));
   outline: none;
 }
 
@@ -3481,9 +3556,21 @@ input::placeholder {
   outline: none;
 }
 
+/*
+ * The one you are looking at, said plainly.
+ *
+ * A border a shade lighter than its neighbours is a difference you find by
+ * comparing, and a list exists to be scanned. A stripe down the edge is
+ * positional — you see which one it is without reading any of them.
+ */
 .workspace-session-row[data-state='active'] {
-  border-color: color-mix(in srgb, var(--line) 55%, var(--bone));
-  background: var(--ground);
+  border-color: color-mix(in srgb, var(--line) 30%, var(--bone));
+  background: color-mix(in srgb, var(--bone) 7%, var(--ground));
+  box-shadow: inset 3px 0 0 var(--bone);
+  color: var(--bone);
+}
+
+.workspace-session-row[data-state='active'] .workspace-session-title {
   color: var(--bone);
 }
 
@@ -3500,43 +3587,59 @@ input::placeholder {
   color: var(--muted);
 }
 
-
 /* Lifted, so the row you are carrying reads as detached from the list. */
+/*
+ * Picked up, not faded out.
+ *
+ * It used to drop to 40% opacity, which reads as disabled — the card you are
+ * holding looked like the one thing you could not act on, and against a dark
+ * surface a faint card is also the hardest one to track. It lifts instead: full
+ * strength, its own shadow, tilted a degree so it is plainly off the stack.
+ */
 .workspace-session-row[data-dragging='true'] {
-  opacity: 0.4;
+  z-index: 2;
+  border-color: var(--muted);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 45%);
+  opacity: 0.92;
+  /* Tracks the pointer. No transition on it — an eased transform would trail
+     the cursor by its duration, which reads as lag rather than as weight. */
+  transform: translateY(var(--drag-dy, 0px)) scale(1.02) rotate(-0.4deg);
+  transition: none;
+  cursor: grabbing;
 }
 
 /*
- * Drawn on the neighbouring row rather than inserted into the list: a real
- * element between rows would change their heights mid-drag, and the geometry
- * was snapshotted before that.
+ * The rest of the list makes room, and glides doing it.
+ *
+ * Eased, unlike the card in hand: these are following a decision rather than a
+ * pointer, and a hard cut between positions reads as the list flickering.
  */
-.workspace-session-row[data-drop]::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--bone);
-}
-
-.workspace-session-row[data-drop='before']::after {
-  top: calc(var(--step) * -1);
-}
-
-.workspace-session-row[data-drop='after']::after {
-  bottom: calc(var(--step) * -1);
+.workspace-tree[data-reordering='true'] .workspace-session-row:not([data-dragging='true']) {
+  transform: translateY(var(--drag-dy, 0px));
+  transition: transform 160ms ease;
 }
 
 /* Sits exactly where the row's title does, so renaming does not shift the list. */
+/*
+ * Sits where the title sits, so the card does not move around it.
+ *
+ * Matched to `.workspace-session-main`'s own padding rather than given its own
+ * margins: the field replaces the head, and any difference between the two is a
+ * jump at the moment you start typing.
+ */
 .workspace-session-rename {
-  min-height: 36px;
-  margin-inline: calc(var(--step) * 2);
-  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
-  border: 1px solid var(--muted);
-  border-radius: calc(var(--radius) - 2px);
-  background: var(--sunken);
+  /*
+   * The head's own box, to the pixel.
+   *
+   * A border and a `min-height` of their own made the card 6px taller the
+   * moment you double-clicked it, so the list nudged everything below down and
+   * back again. The field is the same size as the text it replaces; what says
+   * it is editable is the ground under it and the caret in it, neither of which
+   * takes up space.
+   */
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border: 0;
+  background: color-mix(in srgb, var(--bone) 8%, var(--sunken));
   color: var(--bone);
   font: 14px var(--mono);
   outline: none;
@@ -3621,11 +3724,15 @@ input::placeholder {
  * for content and the target is still 7px wide. Same hit area as a pane sash.
  */
 .workspace-sidebar-resize {
-  position: fixed;
+  /* Absolute within the shell rather than fixed to the window: the columns
+     start below the header now, and the shell is exactly that region. */
+  position: absolute;
   z-index: 61;
-  top: calc(var(--step) * 2);
-  bottom: calc(var(--step) * 2);
-  left: calc(var(--sidebar) - var(--step) * 2 - 3px);
+  top: 0;
+  bottom: 0;
+  /* Clears the activity bar, like the card it belongs to. Without this the
+     grab target lands inside the card and the edge cannot be dragged at all. */
+  left: calc(var(--activity) + var(--sidebar) - 3px);
   width: 7px;
   cursor: col-resize;
   touch-action: none;
@@ -3657,8 +3764,7 @@ input::placeholder {
  * collapse glides; during a drag that same easing makes the edge trail the
  * cursor by a third of a second and feel broken.
  */
-[data-sidebar-resizing='true'] .workspace-sidebar-spacer,
-[data-sidebar-resizing='true'] .masthead {
+[data-sidebar-resizing='true'] .workspace-sidebar {
   transition: none;
 }
 
@@ -3867,8 +3973,10 @@ input::placeholder {
   background: transparent;
 }
 
+/* Marked along the top edge, the way an editor marks the file you are in. */
 .workspace-tab[data-active='true'] {
-  background: var(--sunken);
+  background: color-mix(in srgb, var(--bone) 6%, var(--sunken));
+  box-shadow: inset 0 2px 0 var(--bone);
 }
 
 .workspace-tab[data-dragging='true'] {
@@ -3885,7 +3993,10 @@ input::placeholder {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font: 11px var(--mono);
+  /* The size the sidenav names a session at. A tab and a card are the same
+     thing in two places, and reading one at 11px and the other at 14px made
+     them look like different kinds of object. */
+  font: 14px var(--mono);
   text-align: left;
   cursor: default;
   outline: none;
@@ -4045,31 +4156,330 @@ input::placeholder {
  * `--sidebar` — which is no longer where the card's edge is once `100% - 36px`
  * wins the `min()`.
  */
-@media (max-width: 760px) {
-  .workspace-sidebar-spacer {
-    width: 0;
-  }
-
-  .workspace-sidebar {
-    width: min(var(--sidebar), calc(100% - 36px));
-  }
-
-  .masthead {
-    padding-left: 92px;
-  }
-
-  .workspace-sidebar-resize {
-    display: none;
-  }
-
-  .workspace-sidebar:not([data-hidden='true']) + .workspace-sidebar-edge {
-    display: none;
-  }
+/*
+ * The strip down the left edge.
+ *
+ * Fixed width and never hidden: its whole value is being in the same place
+ * every time you look, and a bar that comes and goes is one you have to find
+ * before you can read it.
+ */
+.activity-bar {
+  display: flex;
+  z-index: 61;
+  flex: none;
+  flex-direction: column;
+  justify-content: space-between;
+  width: var(--activity);
+  padding: calc(var(--step) * 1.5) 0;
+  border-right: 1px solid var(--line);
+  background: var(--sunken);
+  -webkit-app-region: drag;
 }
 
+.activity-group {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 1.5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.activity-item:hover:not(:disabled),
+.activity-item:focus-visible {
+  background: color-mix(in srgb, var(--bone) 7%, transparent);
+  color: var(--bone);
+  outline: none;
+}
+
+/* Stroked, so one weight controls every icon and they match at any size. */
+.activity-icon {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The selected one keeps an edge, the way an editor marks its active view. */
+.activity-item[data-active='true'] {
+  background: color-mix(in srgb, var(--bone) 9%, transparent);
+  color: var(--bone);
+  box-shadow: inset 2px 0 0 var(--bone);
+}
+
+/* A count of what is running, in the agent's own colour. */
+.activity-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--claude);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/*
+ * What is left of the account, as a ring.
+ *
+ * Both providers stop answering when a window fills, and the masthead's bar was
+ * too quiet to notice — an account hit its ceiling mid-task and the first sign
+ * was an agent that would not answer.
+ */
+/*
+ * The account's windows, as figures rather than an arc.
+ *
+ * Taller than the other items because it holds two lines per window and there
+ * are usually two windows — it is the one thing on this bar that is read rather
+ * than pressed, so it earns the height.
+ */
+.activity-usage {
+  display: flex;
+  /*
+   * Stretch, not the `place-items: center` inherited from `.activity-item`.
+   *
+   * Centring is right for a 24px icon in a 44px button. On a column flex
+   * container it is the *cross* axis, so each account row was sized to its own
+   * content — 36px for claude, 50px for codex — and their figures ended on
+   * different edges however they were aligned inside.
+   */
+  align-items: stretch;
+  flex-direction: column;
+  gap: calc(var(--step) * 2);
+  width: calc(var(--activity) - var(--step) * 2);
+  height: auto;
+  padding: calc(var(--step) * 1.5) 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* The name down the side, the figures beside it. */
+.activity-account {
+  display: flex;
+  align-items: stretch;
+  gap: calc(var(--step) * 1.5);
+}
+
+/* One account from the next. Their figures are the same shape, so without a
+   rule the six lines read as one list with an odd label down the middle. */
+.activity-account + .activity-account {
+  padding-top: calc(var(--step) * 2);
+  border-top: 1px solid var(--line);
+}
+
+.activity-account[data-agent='codex'] { --voice: var(--codex); }
+.activity-account[data-agent='claude'] { --voice: var(--claude); }
+
+/*
+ * Turned on its side, reading bottom to top.
+ *
+ * `vertical-rl` alone reads top-down, which for a label on the left edge of
+ * something puts its end nearest the thing it names. The rotation flips it so
+ * the name begins where the figures begin.
+ */
+.activity-account-name {
+  color: var(--voice);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  /* A rule in the account's colour, so the pairing survives at a glance even
+     when the name itself is too small to read. */
+  border-right: 1px solid color-mix(in srgb, var(--voice) 45%, transparent);
+  padding-right: calc(var(--step) * 1.5);
+}
+
+.activity-account-windows {
+  display: grid;
+  flex: 1;
+  gap: calc(var(--step) * 1.5);
+  justify-items: end;
+  min-width: 0;
+}
+
+/*
+ * Right-aligned, so the figures share an edge.
+ *
+ * Left-aligned, a three-digit percentage is wider than a one-digit one and the
+ * numbers stagger down the column — 4%, 8% and 100% each starting somewhere
+ * different. Ending them on the same edge stacks the % signs, which is the
+ * character the eye tracks down a column of percentages.
+ */
+.activity-window {
+  display: grid;
+  gap: 1px;
+  justify-items: end;
+  font-family: var(--mono);
+  line-height: 1.1;
+  text-align: right;
+}
+
+.activity-window-label {
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.activity-window-percent {
+  color: color-mix(in srgb, var(--voice, var(--muted)) 78%, var(--bone));
+  font-size: 12px;
+}
+
+/* Quieter than the figure it belongs to: the percentage is the reading, this
+   is the caveat on it. */
+.activity-window-reset {
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Only the last tenth is worth alarming about; below that it is information. */
+.activity-window[data-spent='nearly'] .activity-window-percent {
+  color: var(--alert);
+}
+
+.activity-usage:hover .activity-window-percent,
+.activity-usage:focus-visible .activity-window-percent {
+  color: var(--bone);
+}
+
+.activity-usage:focus-visible {
+  outline: none;
+}
+
+/*
+ * The full reading, beside the column rather than inside it.
+ *
+ * Fixed and portalled: the shell clips its overflow, so a panel rendered in
+ * place would be cut at 60px. `z-index` above the sidebar's 60 for the same
+ * reason the profile menu needed it — escaping the clip is not the same as
+ * winning the stack, and the two are separate bugs.
+ */
+.usage-tip {
+  position: fixed;
+  z-index: 70;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 45%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/*
+ * One grid for every row, not one grid per row.
+ *
+ * Each `.limit` was its own grid container, so its `auto` tracks were sized
+ * from its own content — three rows meant three independent column layouts and
+ * nothing lined up, however the tracks were written. `display: contents` on the
+ * rows lifts their cells into this grid, where one set of columns serves all of
+ * them. The rows keep their `voice--*` class, and with it the custom property
+ * the bar's colour reads.
+ */
+.usage-tip .limits {
+  display: grid;
+  grid-template-columns: auto auto 44px auto auto;
+  align-items: center;
+  gap: var(--step) calc(var(--step) * 1.5);
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * Shared columns, so the rows read down as well as across.
+ *
+ * As flex each row sized its own parts, and the percentages are not the same
+ * width — a 100% row pushed its reset time further right than a 3% row beside
+ * it, so five short columns came out looking like a ragged paragraph. A grid
+ * with fixed tracks lines them up; the percentage is right-aligned inside its
+ * track so the digits stack on the % sign rather than drifting off it.
+ */
+.usage-tip .limit {
+  display: contents;
+}
+
+/*
+ * On the row, not the list.
+ *
+ * `.limit` carries its own `font-size: 10px`, which beats anything inherited
+ * from its parent however specific that parent's selector is — a declared value
+ * always wins over an inherited one. The size has to be set on the element that
+ * declares it.
+ */
+.usage-tip .limit {
+  font-size: 14px;
+}
+
+/* Likewise: `.limit-bar` declares its own 34px width, so the wider track alone
+   left it the old size with a gap after it. */
+.usage-tip .limit-bar {
+  width: 44px;
+  height: 5px;
+}
+
+/* Right-aligned so the % signs stack, whatever the digit count. */
+.usage-tip .limit-percent {
+  text-align: right;
+}
+
+.usage-tip .limit-percent {
+  text-align: right;
+}
+
+/* Dimmed while it asks, so a click that changes no number still answers. */
+.activity-usage[data-refreshing='true'] {
+  opacity: 0.45;
+}
+
+/*
+ * The sidenav docks at every width. It does not float.
+ *
+ * It used to go over the editor below 760px, on the reasoning that there is not
+ * room for a card and a readable transcript side by side. But a panel that
+ * changes what it *is* at a width boundary is a second layout to learn, and the
+ * one it changed into covered the thing you were reading — which is the one
+ * behaviour a list of sessions should never have.
+ *
+ * `fitSidebar` still holds it to half the window, so a narrow window gets a
+ * narrower sidenav rather than a sidenav and no room to read.
+ */
+
 @media (prefers-reduced-motion: reduce) {
-  .workspace-sidebar,
-  .workspace-sidebar-spacer {
+  .workspace-sidebar {
     transition: none;
   }
 }
@@ -4137,4 +4547,3 @@ input::placeholder {
     border-radius: 8px;
   }
 }
-

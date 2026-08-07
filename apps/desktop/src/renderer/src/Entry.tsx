@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { CodeRun } from './CodeRun.js'
 import { useTranslation } from 'react-i18next'
 import { MarkdownView } from './MarkdownView.js'
@@ -69,6 +69,60 @@ function CommandEntry(props: {
     </div>
   )
 }
+
+/**
+ * Holds a long message to a fraction of the view, with a way to see the rest.
+ *
+ * The control appears only when there is something hidden, and the measurement
+ * is against the limit rather than against the element's own height — a clamp
+ * that measures `scrollHeight > clientHeight` reports "fits" the moment it is
+ * opened, and the button to close it again disappears with the overflow that
+ * justified it.
+ */
+function Clamped(props: { children: React.ReactNode }): React.JSX.Element {
+  const body = useRef<HTMLDivElement>(null)
+  const [tall, setTall] = useState(false)
+  const [open, setOpen] = useState(false)
+  const { t } = useTranslation()
+
+  useLayoutEffect(() => {
+    const element = body.current
+    if (element === null) return undefined
+    const measure = (): void => {
+      setTall(element.scrollHeight > window.innerHeight * LIMIT + 1)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [])
+
+  return (
+    <div className="clamp" data-open={open || !tall ? 'true' : 'false'}>
+      <div className="clamp-body" ref={body}>
+        {props.children}
+      </div>
+      {tall && (
+        <button
+          type="button"
+          className="clamp-toggle"
+          onClick={() => {
+            setOpen(!open)
+          }}
+        >
+          {open ? t('conversation.showLess') : t('conversation.showMore')}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** A quarter of the view: enough to recognise, not enough to bury. */
+const LIMIT = 0.25
 
 export const Entry = memo(function Entry({
   message,
@@ -190,6 +244,18 @@ export const Entry = memo(function Entry({
           />
         ) : message.kind === 'notice' ? (
           <p className="notice-line">{message.text}</p>
+        ) : message.actor === 'user' ? (
+          /*
+           * Capped, because what a person pastes has no upper bound.
+           *
+           * Quoting a long reply back is a normal thing to do and it filled the
+           * whole view with something already read, pushing the answer it was
+           * asking about off the bottom. A quarter of the height is enough to
+           * recognise what was said without it becoming the screen.
+           */
+          <Clamped>
+            <MarkdownView source={typed} />
+          </Clamped>
         ) : (
           <MarkdownView source={typed} />
         )}
