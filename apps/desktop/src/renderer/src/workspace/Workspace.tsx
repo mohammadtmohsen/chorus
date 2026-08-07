@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
-import { shortenPath, type SessionInfo } from '../Session.js'
+import { ALL_AGENTS, shortenPath, type AgentId, type SessionInfo } from '../Session.js'
 import { SIDEBAR_WIDTH } from '../../../shared/workspace-layout.js'
 import { clampSidebarWidth, leafPaneIds, type SplitDirection } from './layout.js'
 import {
@@ -29,6 +29,13 @@ interface WorkspaceProps {
   readonly onReorderSessions: (order: readonly string[]) => void
   /** So a session's `profileId` can be shown as the name the chip uses. */
   readonly profiles: readonly { readonly id: string; readonly name: string }[]
+  /** Which agents exist on this machine; an absent one cannot be seated. */
+  readonly installed: readonly AgentId[]
+  readonly onToggleAgent: (
+    conversationId: string,
+    agentId: AgentId,
+    present: boolean
+  ) => Promise<void>
   /** Persists the arrangement immediately, for changes that end on pointer-up. */
   readonly onCommitLayout: () => void
   readonly renderSession: (
@@ -188,6 +195,8 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         onReorderSessions={props.onReorderSessions}
         onCommitLayout={props.onCommitLayout}
         profiles={props.profiles}
+        installed={props.installed}
+        onToggleAgent={props.onToggleAgent}
         onRestart={props.onRestart}
         onEnd={props.onEnd}
       />
@@ -656,6 +665,8 @@ function WorkspaceSidebar(props: {
   onReorderSessions: (order: readonly string[]) => void
   onCommitLayout: () => void
   profiles: readonly { readonly id: string; readonly name: string }[]
+  installed: readonly AgentId[]
+  onToggleAgent: (conversationId: string, agentId: AgentId, present: boolean) => Promise<void>
   onRestart: (conversationId: string) => void
   onEnd: (conversationId: string) => void
 }): React.JSX.Element {
@@ -777,6 +788,10 @@ function WorkspaceSidebar(props: {
               profileName={
                 props.profiles.find((p) => p.id === session.profileId)?.name ?? session.profileId
               }
+              installed={props.installed}
+              onToggleAgent={(agentId, present) =>
+                props.onToggleAgent(session.conversationId, agentId, present)
+              }
               onRestart={() => { props.onRestart(session.conversationId); }}
               onEnd={() => { props.onEnd(session.conversationId); }}
               onPointerDown={(event) => { reorder.onPointerDown(session.conversationId, event); }}
@@ -842,6 +857,8 @@ function SidebarSession(props: {
   dragging: boolean
   drop: 'before' | 'after' | undefined
   profileName: string
+  installed: readonly AgentId[]
+  onToggleAgent: (agentId: AgentId, present: boolean) => Promise<void>
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void
   onOpen: () => void
   onRenameStart: () => void
@@ -857,6 +874,8 @@ function SidebarSession(props: {
   const state = props.active ? 'active' : paneId === null ? 'offscreen' : 'open'
   /* Reset whenever the session stops working, so a warning cannot lie in wait. */
   const [armedEnd, setArmedEnd] = useState(false)
+  /** Which agent is mid-flight, so the pair disables rather than double-fires. */
+  const [moving, setMoving] = useState<string | null>(null)
   useEffect(() => {
     if (!working) setArmedEnd(false)
   }, [working])
@@ -934,19 +953,55 @@ function SidebarSession(props: {
           place that knowledge cannot be assumed. The composer keeps the cast as
           switches; these say who is here, they do not change it.
         */}
-        <span className="workspace-session-agents">
-          {props.session.participants.map((agent) => (
-            <span className={`workspace-session-voice voice--${agent}`} key={agent}>
-              <span className="voice-dot" aria-hidden="true" />
-              {agent}
-            </span>
-          ))}
-        </span>
         <span className="workspace-session-meta">
           <span className="workspace-session-path">{shortenPath(props.session.cwd)}</span>
           <span className="workspace-session-profile">{props.profileName}</span>
         </span>
       </button>
+      {/*
+        The cast, as the switches it is in the composer — the same control, the
+        same class, so an agent added from the list and one added from the room
+        are visibly the same act.
+
+        Below the two identity lines rather than between them, because those two
+        are one focusable target for "open this" and a button cannot hold
+        buttons. Splitting them to keep the old order would have made the card
+        two tab stops for one action.
+      */}
+      <ul className="workspace-session-agents">
+        {ALL_AGENTS.map((agent) => {
+          const here = props.session.participants.includes(agent)
+          const available = props.installed.includes(agent)
+          return (
+            <li key={agent}>
+              <button
+                type="button"
+                className={`voice voice--${agent}`}
+                data-on={here}
+                data-live={pulse?.working.includes(agent) === true}
+                aria-pressed={here}
+                disabled={moving !== null || (!here && !available)}
+                title={
+                  available
+                    ? t(here ? 'conversation.removeAgent' : 'conversation.addAgent', {
+                        agent,
+                      })
+                    : t('agents.notFound', { agent })
+                }
+                onClick={() => {
+                  setMoving(agent)
+                  void props.onToggleAgent(agent, here).finally(() => {
+                    setMoving(null)
+                  })
+                }}
+              >
+                <span className="voice-dot" aria-hidden="true" />
+                {agent}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
       {/*
         Held back until the row is under the pointer or holding focus. Both are
         rare acts on a session you are only glancing at, and End is the one

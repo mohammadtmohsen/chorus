@@ -619,14 +619,17 @@ export const specs = [
             path: row.querySelector('.workspace-session-path')?.textContent ?? null,
             profile: row.querySelector('.workspace-session-profile')?.textContent ?? null,
             actions: [...row.querySelectorAll('.workspace-session-action')].length,
-            agents: row.querySelectorAll('.workspace-session-voice').length,
+            agents: row.querySelectorAll('.workspace-session-agents .voice').length,
+            agentsAreButtons: [...row.querySelectorAll('.workspace-session-agents .voice')]
+              .every(b => b.tagName === 'BUTTON' && b.hasAttribute('aria-pressed')),
             nestedButtons: main.querySelectorAll('button').length,
             actionsIdle: getComputedStyle(row.querySelector('.workspace-session-actions')).opacity,
             menus: document.querySelectorAll('.workspace-context-menu').length,
           }
         })()`)
         assert(card.path !== null && card.profile !== null, 'the row shows its path and profile')
-        assert(card.agents >= 1, `and who is in it, by name (${String(card.agents)})`)
+        assert(card.agents === 2, `and every agent, seated or not (${String(card.agents)})`)
+        assert(card.agentsAreButtons, 'as the composer\'s own switches, not labels')
 
         /*
          * Three lines, and every one of them fits at the narrowest the sidebar
@@ -653,7 +656,8 @@ export const specs = [
               over('.workspace-session-meta'),
             ],
             namesStillShown:
-              getComputedStyle(row.querySelector('.workspace-session-voice')).fontSize !== '0px',
+              getComputedStyle(row.querySelector('.workspace-session-agents .voice')).fontSize !==
+              '0px',
           }
         })()`)
         assert(

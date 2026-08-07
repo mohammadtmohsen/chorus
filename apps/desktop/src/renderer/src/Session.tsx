@@ -38,8 +38,9 @@ import {
 const FOCUS_KEEPS_ITS_OWN =
   'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question'
 
-type AgentId = 'codex' | 'claude'
-const ALL_AGENTS: AgentId[] = ['codex', 'claude']
+export type AgentId = 'codex' | 'claude'
+/** Every agent Chorus knows how to seat, present or not. */
+export const ALL_AGENTS: AgentId[] = ['codex', 'claude']
 
 export interface SessionInfo {
   readonly conversationId: string

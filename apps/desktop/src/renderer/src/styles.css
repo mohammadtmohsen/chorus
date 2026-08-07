@@ -3217,7 +3217,8 @@ input::placeholder {
  */
 .workspace-session-row {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   min-width: 0;
   margin-inline: calc(var(--step) * 2);
@@ -3230,7 +3231,7 @@ input::placeholder {
 .workspace-session-main {
   display: grid;
   gap: 2px;
-  flex: 1;
+  grid-column: 1;
   min-width: 0;
   padding: calc(var(--step) * 2) calc(var(--step) * 3);
   border: 0;
@@ -3253,13 +3254,34 @@ input::placeholder {
   min-width: 0;
 }
 
-/* Who is in it. Its own line, so two named agents never crowd anything else. */
+/*
+ * The cast, on its own line and made of the composer's own `.voice` switches.
+ *
+ * A list, because that is what it is, and the markup is the composer's so the
+ * two cannot drift: a chip added here and one added in the room are the same
+ * control. Its own line so two named agents never crowd anything else, and so
+ * the two identity lines above stay one focusable target for "open this".
+ */
 .workspace-session-agents {
   display: flex;
   align-items: center;
-  gap: calc(var(--step) * 3);
+  gap: var(--step);
   min-width: 0;
+  margin: 0;
+  padding: 0 calc(var(--step) * 2) calc(var(--step) * 1.5);
+  list-style: none;
   font-size: 10px;
+}
+
+.workspace-session-agents .voice {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.workspace-session-agents .voice-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--voice, var(--muted));
 }
 
 /*
@@ -3304,6 +3326,8 @@ input::placeholder {
 .workspace-session-actions {
   display: flex;
   align-items: center;
+  grid-column: 2;
+  grid-row: 1 / -1;
   flex: none;
   gap: 1px;
   padding-right: var(--step);
@@ -3452,12 +3476,6 @@ input::placeholder {
   align-items: center;
   gap: 4px;
   color: var(--voice, var(--muted));
-}
-
-.workspace-session-agents .voice-dot {
-  width: 6px;
-  height: 6px;
-  background: var(--voice, var(--muted));
 }
 
 .workspace-session-title,

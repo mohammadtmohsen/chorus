@@ -4,7 +4,7 @@ import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
 import { Limits } from './Limits.js'
 import { LogViewer } from './LogViewer.js'
-import { fail, Session, type SessionCarry, type SessionInfo } from './Session.js'
+import { fail, Session, type AgentId, type SessionCarry, type SessionInfo } from './Session.js'
 import { Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
@@ -255,6 +255,46 @@ export function App(): React.JSX.Element {
     carries.current.set(conversationId, carry)
   }, [])
 
+  /** Who is in a conversation, changed from wherever the cast is shown. */
+  const setParticipants = useCallback(
+    (conversationId: string, participants: AgentId[]) => {
+      updateSessions((current) =>
+        current.map((candidate) =>
+          candidate.conversationId === conversationId ? { ...candidate, participants } : candidate
+        )
+      )
+      if (participants.length > 0) remember({ agents: participants })
+    },
+    [updateSessions, remember]
+  )
+
+  /*
+   * The IPC and the error live here rather than in the control, because the
+   * cast is now shown in two places and neither of them owns a place to report
+   * a failure. The caller awaits this only to know when to stop disabling
+   * itself.
+   */
+  const toggleAgent = useCallback(
+    async (conversationId: string, agentId: AgentId, present: boolean) => {
+      const session = sessionsRef.current.find((s) => s.conversationId === conversationId)
+      if (session === undefined) return
+      try {
+        await (present
+          ? window.chorus.removeAgent({ conversationId, agentId })
+          : window.chorus.addAgent({ conversationId, agentId }))
+        setParticipants(
+          conversationId,
+          present
+            ? session.participants.filter((p) => p !== agentId)
+            : [...session.participants, agentId]
+        )
+      } catch (error) {
+        fail(setError)(error)
+      }
+    },
+    [setParticipants]
+  )
+
   /*
    * Writes the arrangement now, without waiting on the 180ms debounce.
    *
@@ -302,6 +342,8 @@ export function App(): React.JSX.Element {
     },
     [updateSessions]
   )
+
+  const installed = (probes ?? []).filter((probe) => probe.installed).map((probe) => probe.id)
 
   const badge =
     zoom === null ? null : (
@@ -378,6 +420,8 @@ export function App(): React.JSX.Element {
         onReorderSessions={reorderSessions}
         onCommitLayout={commitLayout}
         profiles={profiles}
+        installed={installed}
+        onToggleAgent={toggleAgent}
         renderSession={(session, focused, paneId) => (
           <Session
             key={session.conversationId}
@@ -397,16 +441,9 @@ export function App(): React.JSX.Element {
               )
               remember({ profileId })
             }}
-            installed={(probes ?? []).filter((probe) => probe.installed).map((probe) => probe.id)}
+            installed={installed}
             onParticipants={(participants) => {
-              updateSessions((current) =>
-                current.map((candidate) =>
-                  candidate.conversationId === session.conversationId
-                    ? { ...candidate, participants }
-                    : candidate
-                )
-              )
-              if (participants.length > 0) remember({ agents: participants })
+              setParticipants(session.conversationId, participants)
             }}
             onCwd={(cwd, title) => {
               updateSessions((current) =>
