@@ -25,7 +25,8 @@ const started = (page) => page.until(`document.querySelectorAll('${PANE}').lengt
 /** The ＋ in the sidenav header. It left the masthead when the shell arrived. */
 const newSession = (page) =>
   page.evaluate(`(() => {
-    document.querySelector('.workspace-sidebar-head [aria-label="New session"]').click()
+    // The activity bar's plus, the head having gone.
+    document.querySelectorAll('.activity-group:first-child .activity-item')[1].click()
     return true
   })()`)
 
@@ -275,19 +276,40 @@ export const specs = [
      * and shows nothing, which is correct. What must never happen again is a
      * number that is wrong — a fraction shown as a percentage, or seconds read
      * as milliseconds, which put the reset time in 1970.
+     *
+     * The figures moved from the masthead to the activity bar, where the detail
+     * is behind a hover. Reading `.limit` off the page without opening it would
+     * find nothing and take the empty-account branch — passing while checking
+     * no number at all.
      */
     async run(assert) {
       const app = await launch()
       try {
         await started(app)
         await wait(6_000)
-        const windows = await app.evaluate(`(() => {
-          const now = Date.now()
-          return Array.from(document.querySelectorAll('.limit')).map(l => ({
+
+        // No panel at all is the API-key case, and saying nothing is right.
+        if (!(await app.evaluate(`!!document.querySelector('.activity-usage')`))) {
+          assert(true, 'no plan window on this account, and nothing claimed')
+          return
+        }
+
+        await app.evaluate(`(() => {
+          // React derives enter/leave from delegated pointerover/pointerout, so
+          // a synthetic pointerenter never reaches the handler.
+          document.querySelector('.activity-usage')
+            .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.usage-tip')`, {
+          timeout: 10_000,
+          label: 'the usage detail opened',
+        })
+        const windows = await app.evaluate(`(() =>
+          Array.from(document.querySelectorAll('.usage-tip .limit')).map((l) => ({
             percent: parseInt(l.querySelector('.limit-percent').textContent, 10),
             reset: l.querySelector('.limit-reset')?.textContent ?? null,
-          }))
-        })()`)
+          })))()`)
 
         if (windows.length === 0) {
           assert(true, 'no plan window on this account, and nothing claimed')
@@ -922,7 +944,14 @@ export const specs = [
           const from = rows[0].getBoundingClientRect()
           const to = rows[1].getBoundingClientRect()
           const x = from.left + from.width / 2
-          rows[0].querySelector('.workspace-session-main').dispatchEvent(new PointerEvent('pointerdown', {
+          /*
+           * Grabbed by the body, not the head.
+           *
+           * The grip used to be the head alone — a third of the card — so the
+           * other two thirds looked draggable and were not, and a spec that
+           * always grabbed the head could never see it.
+           */
+          rows[0].querySelector('.workspace-session-body').dispatchEvent(new PointerEvent('pointerdown', {
             pointerId: 1, button: 0, bubbles: true, cancelable: true,
             clientX: x, clientY: from.top + from.height / 2,
           }))
@@ -947,15 +976,15 @@ export const specs = [
   },
 
   {
-    name: 'the sidenav stops pushing and starts covering when it must',
+    name: 'the sidenav docks at every width and never floats over the editor',
     /*
-     * Below 760px the shell has a second layout, and nothing had ever driven
-     * it. There is not room for a card and a readable transcript side by side,
-     * so the sidebar floats over the editor instead of reserving space beside
-     * it: the spacer collapses, the masthead takes back the inset it was
-     * holding for a sidebar that is no longer displacing anything, and the
-     * resize handle goes — it is positioned from `--sidebar`, which stops being
-     * where the card's edge is once `100% - 36px` wins the `min()`.
+     * It used to go over the editor below 760px. That is gone: a panel that
+     * changes what it *is* at a width boundary is a second layout to learn, and
+     * the one it changed into covered the thing you were reading.
+     *
+     * What replaces it is arithmetic rather than a second mode — `fitSidebar`
+     * holds the width to half the window on every resize, so a narrow window
+     * gets a narrower sidenav instead of a sidenav and nowhere to read.
      */
     async run(assert) {
       const app = await launch()
@@ -966,96 +995,66 @@ export const specs = [
             const side = document.querySelector('.workspace-sidebar')
             const editor = document.querySelector('.workspace-editor')
             const handle = document.querySelector('.workspace-sidebar-resize')
-            const s = side.getBoundingClientRect()
             return {
               window: innerWidth,
               editorLeft: Math.round(editor.getBoundingClientRect().left),
-              cardRight: Math.round(s.right),
-              cardWidth: Math.round(s.width),
-              spacer: Math.round(document.querySelector('.workspace-sidebar-spacer').getBoundingClientRect().width),
+              sidebarRight: Math.round(side.getBoundingClientRect().right),
+              sidebar: Math.round(side.getBoundingClientRect().width),
               handle: handle === null ? 'absent' : getComputedStyle(handle).display,
-              mastheadPad: getComputedStyle(document.querySelector('.masthead')).paddingLeft,
             }
           })()`)
 
-        const wide = await shell()
-        assert(
-          wide.editorLeft === wide.spacer && wide.spacer > 0,
-          `docked, the editor starts where the sidebar ends (${String(wide.editorLeft)})`
-        )
-        assert(wide.handle === 'block', 'and the edge can be dragged')
-
-        await app.viewport(700, 800)
-        await app.until(
-          `Math.round(document.querySelector('.workspace-sidebar-spacer').getBoundingClientRect().width) === 0`,
-          { timeout: 15_000, label: 'the shell went to overlay' }
-        )
-        const narrow = await shell()
-        assert(
-          narrow.editorLeft === 0,
-          `covering, the editor runs under it (${String(narrow.editorLeft)})`
-        )
-        assert(
-          narrow.cardWidth <= narrow.window - 36,
-          `the card leaves the window a margin (${String(narrow.cardWidth)} of ${String(narrow.window)})`
-        )
-        assert(
-          narrow.handle === 'none',
-          'the resize handle goes, pointing as it would at an edge that moved'
-        )
-        assert(
-          narrow.mastheadPad === '92px',
-          `and the masthead takes its traffic lights back, got ${narrow.mastheadPad}`
-        )
-
         /*
-         * The editor is underneath, so getting to it has to still work — this
-         * is the one layout where hiding the sidebar is not a preference.
+         * Waits for the width the *new* window allows, not merely for the
+         * column to agree with the variable.
+         *
+         * Agreement is already true the instant the viewport changes — nothing
+         * has moved yet — so waiting on it measured the old width and passed
+         * whenever the refit happened to land first. It did in isolation and
+         * did not in a full run, which is the failure telling the truth.
          */
-        await app.evaluate(`(() => {
-          document.querySelector('[aria-label="Hide session sidebar"]').click()
-          return true
-        })()`)
-        await app.until(
-          `document.querySelector('.workspace-sidebar').dataset.hidden === 'true'`,
-          { timeout: 15_000, label: 'it can be got out of the way' }
-        )
-        await app.until(
-          `!!document.querySelector('.workspace-sidebar-edge')`,
-          { timeout: 15_000, label: 'and left a way back' }
-        )
-        assert(true, 'it can be dismissed, and offers a way back')
+        const settled = async () => {
+          await app.until(
+            `(() => {
+              const ceiling = Math.max(240, Math.round(innerWidth / 2))
+              const want = Math.min(
+                Math.round(parseFloat(
+                  getComputedStyle(document.documentElement).getPropertyValue('--sidebar'))),
+                ceiling
+              )
+              const have = Math.round(
+                document.querySelector('.workspace-sidebar').getBoundingClientRect().width)
+              return have <= ceiling && Math.abs(have - want) <= 2
+            })()`,
+            { timeout: 15_000, label: 'the column refitted to the window' }
+          )
+          return shell()
+        }
 
-        /*
-         * And back. Widening has to dock it again — waiting on the *narrow*
-         * condition here would pass on the first poll, before the layout had
-         * reflowed at all, which is a check that agrees with itself.
-         */
-        await app.evaluate(`(() => {
-          document.querySelector('.workspace-sidebar-edge').click()
-          return true
-        })()`)
+        for (const width of [1280, 700, 480]) {
+          if (width !== 1280) await app.viewport(width, 800)
+          const now = await settled()
+          assert(
+            now.editorLeft === now.sidebarRight && now.sidebarRight > 0,
+            `at ${String(now.window)}px the editor still starts where the sidenav ends (${String(now.editorLeft)} vs ${String(now.sidebarRight)})`
+          )
+          assert(
+            now.handle === 'block',
+            `and its edge is still draggable at ${String(now.window)}px`
+          )
+          /*
+           * Half the window or the 240px floor, whichever is larger — the floor
+           * wins on the narrowest windows, which is deliberate: a sidenav too
+           * narrow to read a session name in is not worth the space it saves.
+           */
+          const ceiling = Math.max(240, Math.round(now.window / 2))
+          assert(
+            now.sidebar <= ceiling,
+            `and it leaves room to read: ${String(now.sidebar)} of ${String(now.window)}`
+          )
+        }
+
         await app.viewport()
-        /*
-         * The settled width, not merely a non-zero one: the spacer animates
-         * over 300ms, so `> 0` is true a frame into the transition and reports
-         * a number that is on its way somewhere.
-         */
-        await app.until(
-          `(() => {
-            const want = Math.round(parseFloat(
-              getComputedStyle(document.documentElement).getPropertyValue('--sidebar')))
-            const have = Math.round(
-              document.querySelector('.workspace-sidebar-spacer').getBoundingClientRect().width)
-            return have === want
-          })()`,
-          { timeout: 15_000, label: 'the shell docked again, and settled' }
-        )
-        const wideAgain = await shell()
-        assert(
-          wideAgain.editorLeft === wideAgain.spacer && wideAgain.handle === 'block',
-          `and docks again when there is room (${String(wideAgain.editorLeft)})`
-        )
       } finally {
         await app.quit()
       }
@@ -1089,8 +1088,15 @@ export const specs = [
             document.dispatchEvent(new PointerEvent('pointermove', {
               pointerId: 1, bubbles: true, clientX: ${String(toX)}, clientY: y,
             }))
-            const during = getComputedStyle(document.documentElement)
-              .getPropertyValue('--sidebar').trim()
+            /*
+             * Where the card's edge actually landed, not what the variable
+             * says. The variable is the column's own width and the pointer is a
+             * window coordinate; those stopped being the same number when the
+             * activity bar took the first 60px, and asserting on the variable
+             * quietly encoded the old geometry.
+             */
+            const during = Math.round(
+              document.querySelector('.workspace-sidebar').getBoundingClientRect().right)
             document.dispatchEvent(new PointerEvent('pointerup', {
               pointerId: 1, bubbles: true, clientX: ${String(toX)}, clientY: y,
             }))
@@ -1101,46 +1107,83 @@ export const specs = [
             `Math.round(document.querySelector('.workspace-editor').getBoundingClientRect().left)`
           )
 
+        const sidebarRight = () =>
+          first.evaluate(
+            `Math.round(document.querySelector('.workspace-sidebar').getBoundingClientRect().right)`
+          )
+
         const before = await editorLeft()
         const during = await drag(500)
-        assert(during === '506px', `the edge tracks the pointer mid-drag, got ${during}`)
+        assert(
+          Math.abs(during - 500) <= 2,
+          `the edge lands under the pointer mid-drag, got ${String(during)} for 500`
+        )
         await first.settle()
         const after = await editorLeft()
-        assert(after === 506, `the editor moved with it (${before} → ${after})`)
+        assert(after !== before, `the editor moved with it (${before} → ${after})`)
+        /*
+         * Against the card's own edge rather than a fixed number: the editor
+         * starts after the activity bar as well as the card now, so the pixel
+         * the drag asked for is no longer the pixel the editor lands on. The
+         * invariant that survives the layout is that they meet.
+         */
+        assert(
+          after === (await sidebarRight()),
+          `and lands against it, not at some absolute (${after})`
+        )
 
         // Well past the maximum: a width nobody can read past is refused.
         await drag(2000)
         await first.settle()
+        /*
+         * The stored width itself, rather than a number derived from where the
+         * editor starts: the editor's left is the bar, plus the column's
+         * margin, plus the card — so deriving the width back out of it merely
+         * re-states the layout arithmetic, and gets it wrong by a margin.
+         */
+        const clampedWidth = await first.evaluate(
+          `Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar')))`
+        )
         assert(
-          (await editorLeft()) === 640,
-          `dragged past the limit, clamped to 640, got ${await editorLeft()}`
+          clampedWidth === 640,
+          `dragged past the limit, the column clamps to 640, got ${String(clampedWidth)}`
         )
 
         /*
          * A width remembered from a wide window must not swallow a narrow one.
-         * The card is fixed, so an unfitted 640 in a 900px window leaves a
-         * 260px editor, and at 640 it covers the workspace outright — the
-         * stored value is kept, but what is shown is fitted to the room.
+         * An unfitted 640 in a 900px window leaves the editor a sliver — the
+         * stored value is kept, but what is shown is fitted to the room, which
+         * is half the window.
          */
         await first.viewport(900, 800)
         /*
          * Wait on the editor, which is the last link in the chain.
          *
-         * The refit runs off a `resize` listener and writes `--sidebar`; the
-         * spacer that holds the editor clear reads it through a 300ms width
-         * transition. Waiting for the variable and then measuring the editor
+         * The refit runs off a resize listener and writes the sidebar variable,
+         * which the column reads through a 300ms width transition. Waiting for
+         * the variable and then measuring the editor
          * catches it mid-animation — which is a slower, quieter version of the
          * fixed sleep this replaced.
          */
         await first.until(
-          `Math.round(document.querySelector('.workspace-editor').getBoundingClientRect().left) === 450`,
+          `(() => {
+            const side = document.querySelector('.workspace-sidebar').getBoundingClientRect()
+            const editor = document.querySelector('.workspace-editor').getBoundingClientRect()
+            // Half of 900, with the editor against its edge.
+            return Math.abs(Math.round(side.width) - 450) <= 2 &&
+              Math.round(editor.left) === Math.round(side.right)
+          })()`,
           { timeout: 15_000, label: 'the sidebar refitted and the editor followed it' }
         )
         const fitted = await first.evaluate(
           `getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim()`
         )
         assert(fitted === '450px', `fitted to half a narrower window, got ${fitted}`)
-        assert((await editorLeft()) === 450, 'and the editor keeps the other half')
+        // Against the column's edge — the editor starts after the bar as well.
+        assert(
+          (await editorLeft()) === (await sidebarRight()),
+          `and the editor keeps the rest (${String(await editorLeft())})`
+        )
         await first.viewport()
         await wait(300)
       } finally {
