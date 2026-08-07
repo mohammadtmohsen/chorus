@@ -499,24 +499,6 @@ export function App(): React.JSX.Element {
             onPanelOpened={() => { setPanelRequest(null); }}
             carry={carries.current.get(session.conversationId)}
             onCarry={keepCarry}
-            profiles={profiles}
-            onProfile={(profileId) => {
-              updateSessions((current) =>
-                current.map((candidate) =>
-                  candidate.conversationId === session.conversationId
-                    ? { ...candidate, profileId }
-                    : candidate
-                )
-              )
-              remember({ profileId })
-            }}
-            installed={installed}
-            onParticipants={(participants) => {
-              setParticipants(session.conversationId, participants)
-            }}
-            onCwd={(cwd, title) => {
-              setCwd(session.conversationId, cwd, title)
-            }}
           />
         )}
       />

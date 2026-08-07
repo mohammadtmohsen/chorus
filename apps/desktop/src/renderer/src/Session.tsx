@@ -4,7 +4,6 @@ import { quotePath } from './attach.js'
 import { Attachments, type Attachment } from './Attachments.js'
 import { Entry } from './Entry.js'
 import { formatContextBlock, withEditorContext } from './editor-context.js'
-import { compactTokens, money } from './format.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import {
   applyMention,
@@ -74,14 +73,6 @@ export interface SessionCarry {
  */
 export function Session(props: {
   session: SessionInfo
-  profiles: { id: string; name: string; summary: string }[]
-  /** Reported upward so the pane's chip and the log agree on what is in force. */
-  onProfile: (profileId: string) => void
-  /** Carries the title too: an untouched one follows the folder. */
-  onCwd: (cwd: string, title: string) => void
-  /** Which agents exist on this machine at all; an absent one cannot be added. */
-  installed: readonly AgentId[]
-  onParticipants: (participants: AgentId[]) => void
   /** Set when the sidenav asked for a panel this pane owns. */
   panelRequest?: 'review' | 'summary' | undefined
   onPanelOpened: () => void
@@ -103,8 +94,7 @@ export function Session(props: {
   onActivate: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { conversationId, participants, cwd, profileId } = props.session
-  const profile = props.profiles.find((p) => p.id === profileId)
+  const { conversationId, participants, cwd } = props.session
   const [view, setView] = useState<TranscriptView>(props.carry?.view ?? EMPTY_VIEW)
   const [draft, setDraft] = useState(props.carry?.draft ?? '')
   const [error, setError] = useState<string | null>(null)
@@ -134,17 +124,13 @@ export function Session(props: {
     top: number
     placement: 'above' | 'below'
   } | null>(null)
-  const [pickingProfile, setPickingProfile] = useState(false)
-  /* Restart and End, with their arming and their in-flight state, live on the
-     tab's context menu now — the only place either is offered. */
+  /* The cast, the folder, the profile, Restart and End all live on the
+     session's card in the sidenav now, along with the state each of them needs
+     while it is mid-flight. */
   /** True while a file from outside is over this pane. */
   const [fileOver, setFileOver] = useState(false)
   /** Files waiting to be sent, shown above the box rather than typed into it. */
   const [attached, setAttached] = useState<Attachment[]>([...(props.carry?.attached ?? [])])
-  /** Non-null while the path is being edited; holds the draft, not the truth. */
-  const [pathDraft, setPathDraft] = useState<string | null>(null)
-  /** The agent currently joining or leaving, so its chip can say so. */
-  const [moving, setMoving] = useState<AgentId | null>(null)
   /** The pane itself, so dragging its bar carries the whole thing. */
   const pane = useRef<HTMLElement | null>(null)
   const [mention, setMention] = useState<MentionQuery | null>(null)
@@ -1206,277 +1192,17 @@ export function Session(props: {
             that used to live in this row is gone: ↵ sends is the convention, and
             saying so forever is a label for the first minute.
           */}
+          {/*
+           * What is left of the row: the one control that acts on what is
+           * typed here.
+           *
+           * The cast, the folder, the profile, the summary, the diff and
+           * the spend all moved to the session's card in the sidenav —
+           * where they are answerable for every session rather than only
+           * the one on screen. What remains is the composer, which is the
+           * only thing this row was ever really for.
+           */}
           <div className="composer-actions">
-            {/*
-              A glyph, not a word, and first in the row.
-
-              The row already sheds labels as the pane narrows, so a fourth named
-              control would be the thing that broke it. This one is the same
-              shape as Send at the other end: a mark you learn once, with the
-              name on `aria-label` and `title` so it is never only a shape.
-            */}
-            <button
-              type="button"
-              className="summary-open"
-              aria-label={t('summary.open')}
-              title={t('summary.open')}
-              onClick={() => {
-                setSummarising(true)
-              }}
-            >
-              <span aria-hidden="true">≡</span>
-            </button>
-            {/*
-              The cast is a set of switches, not a label.
-              
-              An agent can leave a conversation and another take its place, and
-              whoever joins reads the whole transcript on the first thing it is
-              asked — including what the one it replaced said. Which is why this
-              belongs here rather than on a start screen: who is in the room is a
-              thing you change while in it.
-            */}
-            <ul className="voices voices--pane">
-              {ALL_AGENTS.map((id) => {
-                const here = participants.includes(id)
-                const available = props.installed.includes(id)
-                return (
-                  <li key={id}>
-                    <button
-                      type="button"
-                      className={`voice voice--${id}`}
-                      data-live={view.working.includes(id)}
-                      data-on={here}
-                      aria-pressed={here}
-                      disabled={moving !== null || (!here && !available)}
-                      title={
-                        available
-                          ? t(here ? 'conversation.removeAgent' : 'conversation.addAgent', {
-                              agent: id,
-                            })
-                          : t('agents.notFound', { agent: id })
-                      }
-                      onClick={() => {
-                        setMoving(id)
-                        const move = here
-                          ? window.chorus.removeAgent({ conversationId, agentId: id })
-                          : window.chorus.addAgent({ conversationId, agentId: id })
-                        move
-                          .then(() => {
-                            props.onParticipants(
-                              here ? participants.filter((p) => p !== id) : [...participants, id]
-                            )
-                          })
-                          .catch(fail(setError))
-                          .finally(() => {
-                            setMoving(null)
-                          })
-                      }}
-                    >
-                      <span className="voice-dot" aria-hidden="true" />
-                      {id}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-            {/*
-              The path edits in place.
-              
-              It decides what "the diff" means — the review panel and any handoff
-              brief follow it — so being able to correct it without ending the
-              session is the difference between a wrong panel and a right one. It
-              does not move an agent's shell; that is what telling the agent
-              does, and the change is replayed to whoever is addressed next.
-            */}
-            {pathDraft === null ? (
-              <span className="path-pair">
-                <button
-                  type="button"
-                  className="path path--button"
-                  title={t('conversation.choosePath')}
-                  onClick={() => {
-                    window.chorus
-                      .chooseProjectDirectory({ conversationId })
-                      .then(({ cwd: applied, title: named }) => {
-                        props.onCwd(applied, named)
-                      })
-                      .catch(fail(setError))
-                  }}
-                >
-                  {shortenPath(cwd)}
-                </button>
-                {/*
-                  Two ways in, because they suit different hands. The path opens
-                  the folder chooser, which is how you find a directory you would
-                  have to remember to type. The ✎ opens the field, which is how
-                  you paste one you already have.
-                */}
-                <button
-                  type="button"
-                  className="path-edit"
-                  aria-label={t('conversation.editPath', { path: cwd })}
-                  title={t('conversation.editPath', { path: cwd })}
-                  onClick={() => {
-                    setPathDraft(cwd)
-                  }}
-                >
-                  <span aria-hidden="true">✎</span>
-                </button>
-                {/*
-                  Opening the project is offered here rather than on the pill,
-                  because it is about the folder — and it is the step that makes
-                  the pill possible in the first place. No window flags: which
-                  window to use is a VS Code preference the user has already set.
-                */}
-                <button
-                  type="button"
-                  className="path-edit"
-                  aria-label={t('ide.openProject')}
-                  title={t('ide.openProject')}
-                  onClick={() => {
-                    window.chorus
-                      .ideOpenProject({ conversationId })
-                      .then((result) => {
-                        if (!result.ok) setError(t(`ide.openError.${result.reason ?? 'unknown'}`))
-                      })
-                      .catch(fail(setError))
-                  }}
-                >
-                  <span aria-hidden="true">⧉</span>
-                </button>
-              </span>
-            ) : (
-              <input
-                className="path path--input"
-                value={pathDraft}
-                autoFocus
-                spellCheck={false}
-                aria-label={t('conversation.projectPath')}
-                onChange={(e) => {
-                  setPathDraft(e.target.value)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    e.preventDefault()
-                    setPathDraft(null)
-                    return
-                  }
-                  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-                  e.preventDefault()
-                  const next = pathDraft
-                  setPathDraft(null)
-                  window.chorus
-                    .setProjectDirectory({ conversationId, cwd: next })
-                    .then(({ cwd: applied, title: named }) => {
-                      props.onCwd(applied, named)
-                    })
-                    .catch(fail(setError))
-                }}
-                // Cancels rather than commits: leaving a field is not agreement,
-                // and a half-typed path is exactly what a stray click produces.
-                onBlur={() => {
-                  setPathDraft(null)
-                }}
-              />
-            )}
-            {/*
-              The chip is the control, not a label.
-              
-              What agents may do without asking is the thing you most want to change
-              once a session is under way — you start read-only, watch an agent get
-              it right, and stop wanting to approve every command. Sending someone
-              back to a start screen for that would mean ending the conversation
-              that earned the trust.
-            */}
-            <div className="profile-picker">
-              <button
-                type="button"
-                className="profile-chip"
-                title={profile?.summary}
-                aria-haspopup="listbox"
-                aria-expanded={pickingProfile}
-                onClick={() => {
-                  setPickingProfile((open) => !open)
-                }}
-              >
-                {profile?.name ?? profileId}
-              </button>
-              {pickingProfile && (
-                <ul className="profile-menu" role="listbox">
-                  {props.profiles.map((option) => (
-                    <li key={option.id}>
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={option.id === profileId}
-                        data-on={option.id === profileId}
-                        className="profile-option"
-                        onClick={() => {
-                          setPickingProfile(false)
-                          if (option.id === profileId) return
-                          window.chorus
-                            .setProfile({ conversationId, profileId: option.id })
-                            .then(({ profileId: applied }) => {
-                              props.onProfile(applied)
-                            })
-                            .catch(fail(setError))
-                        }}
-                      >
-                        <span className="profile-option-name">{option.name}</span>
-                        <span className="profile-option-summary">{option.summary}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            {/*
-              What the conversation has cost, beside what it is pointed at and
-              what it is allowed to do.
-
-              It used to have a bar of its own above the transcript. That bar
-              held nothing else once the name moved to the tab and Restart and
-              End moved to the tab's context menu, so a full-width rule and 27px
-              of height were being spent on one chip. Down here it sits with the
-              other session-level facts and costs no height at all.
-            */}
-            {view.spend.inputTokens + view.spend.outputTokens > 0 && (
-              <span
-                className="spend"
-                title={t('spend.tokens', {
-                  input: view.spend.inputTokens.toLocaleString(),
-                  output: view.spend.outputTokens.toLocaleString(),
-                })}
-                aria-label={t('spend.label')}
-              >
-                {compactTokens(view.spend.inputTokens + view.spend.outputTokens)}
-                {/* Its own element so a narrow pane can drop the money and keep
-                    the count, rather than losing both at once. */}
-                {view.spend.costUsd !== null && (
-                  <span className="spend-cost">{` · ${money(view.spend.costUsd)}`}</span>
-                )}
-              </span>
-            )}
-            <div className="pane-actions">
-              {/*
-                Two labels, one button. The row has to survive a pane a third of
-                the window wide, and dropping the control would be worse than
-                naming it briefly — "Diff" is what it opens either way.
-              */}
-              <button
-                type="button"
-                className="btn btn--chip"
-                aria-label={t('review.open')}
-                onClick={() => {
-                  setReviewing(true)
-                }}
-              >
-                <span className="label-full">{t('review.open')}</span>
-                <span className="label-short" aria-hidden="true">
-                  {t('review.openShort')}
-                </span>
-              </button>
-            </div>
             <div className="composer-tools">
               {/*
               Two buttons while an agent is working, not one that changes job.

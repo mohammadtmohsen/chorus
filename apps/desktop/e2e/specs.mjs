@@ -211,33 +211,13 @@ export const specs = [
       try {
         await started(app)
         /*
-         * The footer splits once, whether or not there is a spend chip in it.
+         * The spend is on the session's card, not under the composer.
          *
-         * The chip arrives partway through a session — it renders only once an
-         * agent reports usage — so it is the one element in this row that can
-         * appear under a reader mid-conversation. It used to carry a
-         * `margin-left: auto` from the pane-title bar it was moved out of,
-         * which is a second auto margin beside `.pane-actions`; flex splits the
-         * free space between them, so an 894px row went from one gap of 287px
-         * to two of 135 and 134 the first time a token was spent, with the chip
-         * stranded between the details and the controls.
+         * It moved with the rest of what describes a session rather than a
+         * message, and it had to be reduced a second time to get there: the
+         * transcript belongs to a mounted pane, and most cards in the list are
+         * for sessions that do not have one.
          */
-        const controlsAtRight = () =>
-          app.evaluate(`(() => {
-            const row = document.querySelector('.composer-actions')
-            const tools = row.querySelector('.composer-tools')
-            return Math.round(row.getBoundingClientRect().right - tools.getBoundingClientRect().right)
-          })()`)
-        const bigGaps = () =>
-          app.evaluate(`(() => {
-            const kids = [...document.querySelector('.composer-actions').children]
-            return kids.slice(1).filter((c, i) =>
-              c.getBoundingClientRect().left - kids[i].getBoundingClientRect().right > 12).length
-          })()`)
-
-        assert((await controlsAtRight()) === 0, 'before any spend, the controls sit hard right')
-        const gapsBefore = await bigGaps()
-
         await app.evaluate(`(() => {
           const ta = document.querySelector('.composer textarea')
           Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
@@ -246,43 +226,41 @@ export const specs = [
           document.querySelector('.composer').requestSubmit()
           return true
         })()`)
-        await app.until(`!!document.querySelector('.spend')`, {
+        await app.until(`!!document.querySelector('.workspace-session-spend')`, {
           timeout: 180_000,
-          label: 'the spend appears once an agent reports usage',
+          label: 'the card learns what the session cost',
         })
-        const shown = await app.evaluate(`document.querySelector('.spend').textContent`)
+        const shown = await app.evaluate(
+          `document.querySelector('.workspace-session-spend').textContent`
+        )
         assert(/\d/.test(shown), `spend reads as a number: ${shown}`)
-
         await app.settle()
-        assert((await controlsAtRight()) === 0, 'and still hard right once it appears')
 
-        /*
-         * The card says the same number, by a different route.
-         *
-         * The composer reads it off the transcript its pane reduced; the card
-         * reads it off the global pulse, because half the cards in the list are
-         * for sessions with no mounted pane to have reduced anything. Two
-         * reducers, one arithmetic — if they disagree one of them is wrong, and
-         * nothing else would say so.
-         */
+
         const both = await app.evaluate(`(() => ({
-          composer: document.querySelector('.composer-actions .spend')?.textContent ?? null,
           card: document.querySelector('.workspace-session-spend')?.textContent ?? null,
           buttons: [...document.querySelectorAll('.workspace-session-output-button')]
             .map(b => b.textContent),
+          leftInComposer: document.querySelectorAll(
+            '.composer-actions .spend, .composer-actions .voice, .composer-actions .path,' +
+            ' .composer-actions .profile-chip, .composer-actions .summary-open'
+          ).length,
         }))()`)
         assert(
-          both.card !== null && both.card === both.composer,
-          `the card agrees with the composer (${String(both.card)} vs ${String(both.composer)})`
-        )
-        assert(
           both.buttons.length === 2,
-          `and offers both ways to read it, got ${both.buttons.join(',')}`
+          `the card offers both ways to read it, got ${both.buttons.join(',')}`
         )
-        const gapsAfter = await bigGaps()
+        /*
+         * The composer keeps the one control that acts on what is typed in it.
+         *
+         * Everything else answers for a session rather than for a message, and
+         * a session is what the sidenav lists — so those controls belong to a
+         * card, where they exist for all six sessions rather than the one on
+         * screen.
+         */
         assert(
-          gapsAfter === gapsBefore,
-          `the row keeps its shape rather than growing a second gap (${gapsBefore} → ${gapsAfter})`
+          both.leftInComposer === 0,
+          `and the composer kept none of them, found ${String(both.leftInComposer)}`
         )
       } finally {
         await app.quit()
