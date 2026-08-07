@@ -1331,6 +1331,89 @@ body {
   padding-left: calc(var(--step) * 5);
 }
 
+/* A nested list belongs to the item above it, so it takes an item's gap, not a
+   paragraph's — and no trailing gap at all, which the parent list already has. */
+.md-list .md-list {
+  margin: var(--step) 0 0;
+}
+
+/* A block that ends a list item or a quote keeps that container's rhythm rather
+   than adding a paragraph's gap inside it. */
+.md-list li > :last-child,
+.md-quote > :last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * The checkbox is the marker, so the bullet would be a second one.
+ *
+ * The pull is on the box rather than the item, which is the difference between
+ * a nested list sitting under its parent's text and sitting to the left of it.
+ */
+.md-task {
+  list-style: none;
+}
+
+.md-task > input {
+  margin-left: calc(var(--step) * -5);
+  margin-right: calc(var(--step) * 1.5);
+  accent-color: var(--voice);
+  vertical-align: baseline;
+}
+
+/*
+ * A table is the one block that cannot wrap, and the transcript column is
+ * narrow by design — so the table scrolls inside its own box instead of
+ * stretching the pane or being clipped by `.grid`'s `overflow-x: hidden`.
+ */
+.md-table-wrap {
+  margin: 0 0 calc(var(--step) * 3);
+  overflow-x: auto;
+}
+
+.md-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.md-table th,
+.md-table td {
+  padding: var(--step) calc(var(--step) * 2);
+  border: 1px solid var(--line);
+  text-align: left;
+  /* Cells in one row rarely have equal height; aligning to the top keeps the
+     first line of every cell on the same baseline. */
+  vertical-align: top;
+}
+
+.md-table th {
+  background: var(--sunken);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  /* A header is short and a column is easier to read than a wrapped label. */
+  white-space: nowrap;
+}
+
+/*
+ * `--faint`, not the `--line` every other border here uses.
+ *
+ * A break is a deliberate divider and it has no background to sit against, so
+ * at `--line` it is invisible on `--raised` — which is the one thing a
+ * thematic break cannot be.
+ */
+.md-hr {
+  margin: calc(var(--step) * 4) 0;
+  border: 0;
+  border-top: 1px solid var(--faint);
+}
+
+/* Struck-through text is text the agent retracted, so it recedes. */
+.said del {
+  color: var(--faint);
+}
+
 .md-quote {
   margin: calc(var(--step) * 2) 0;
   padding-left: calc(var(--step) * 3);

@@ -1,32 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import { issueHref, linkifyIssues, TRACKER, type Tracker } from './issue-links.js'
-import { isSafeHref, parseInline, parseMarkdown } from './markdown.js'
+import { isSafeHref, parseInline, parseMarkdown, type Inline } from './markdown.js'
 
 const text = (s: string) => ({ kind: 'text' as const, text: s })
+const issue = (key: string) => ({
+  kind: 'link' as const,
+  href: issueHref(key),
+  content: [text(key)],
+})
 
 describe('linkifyIssues', () => {
   it('turns a key into a link and leaves the rest as text', () => {
     expect(linkifyIssues([text('ACME-383 has the wrong parent')])).toEqual([
-      { kind: 'link', text: 'ACME-383', href: `${TRACKER.baseUrl}/browse/ACME-383` },
+      { kind: 'link', href: `${TRACKER.baseUrl}/browse/ACME-383`, content: [text('ACME-383')] },
       text(' has the wrong parent'),
     ])
   })
 
   it('keeps the sentence punctuation outside the link', () => {
     const out = linkifyIssues([text('See ACME-383.')])
-    expect(out).toEqual([
-      text('See '),
-      { kind: 'link', text: 'ACME-383', href: issueHref('ACME-383') },
-      text('.'),
-    ])
+    expect(out).toEqual([text('See '), issue('ACME-383'), text('.')])
   })
 
   it('links every key in a run of prose', () => {
     const out = linkifyIssues([text('ACME-1 blocks ACME-22 and ACME-333')])
-    expect(out.filter((n) => n.kind === 'link').map((n) => n.text)).toEqual([
-      'ACME-1',
-      'ACME-22',
-      'ACME-333',
+    expect(out.filter((n) => n.kind === 'link')).toEqual([
+      issue('ACME-1'),
+      issue('ACME-22'),
+      issue('ACME-333'),
     ])
   })
 
@@ -54,10 +55,11 @@ describe('linkifyIssues', () => {
   })
 
   it('leaves non-text nodes alone', () => {
-    const nodes = [
-      { kind: 'code' as const, text: 'ACME-383' },
-      { kind: 'link' as const, text: 'ACME-383', href: 'https://example.com' },
-      { kind: 'strong' as const, text: 'ACME-383' },
+    const nodes: Inline[] = [
+      { kind: 'code', text: 'ACME-383' },
+      { kind: 'link', href: 'https://example.com', content: [text('ACME-383')] },
+      { kind: 'strong', content: [text('ACME-383')] },
+      { kind: 'image', href: 'https://example.com/ACME-383.png', alt: 'ACME-383' },
     ]
     expect(linkifyIssues(nodes)).toEqual(nodes)
   })
@@ -86,7 +88,11 @@ describe('linkifyIssues', () => {
 describe('through the markdown parser', () => {
   it('links a key in ordinary prose', () => {
     const nodes = parseInline('ACME-383 has the wrong parent')
-    expect(nodes[0]).toMatchObject({ kind: 'link', text: 'ACME-383' })
+    expect(nodes[0]).toMatchObject({
+      kind: 'link',
+      href: issueHref('ACME-383'),
+      content: [{ kind: 'text', text: 'ACME-383' }],
+    })
   })
 
   it('leaves a key inside a code span as code', () => {
@@ -112,6 +118,6 @@ describe('through the markdown parser', () => {
     const list = blocks[0]
     expect(list?.kind).toBe('list')
     const items = list?.kind === 'list' ? list.items : []
-    expect(items[0]?.some((n) => n.kind === 'link')).toBe(true)
+    expect(items[0]?.content.some((n) => n.kind === 'link')).toBe(true)
   })
 })

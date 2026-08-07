@@ -84,7 +84,11 @@ export function linkifyIssues(nodes: readonly Inline[], tracker: Tracker = TRACK
     pattern.lastIndex = 0
     for (let m = pattern.exec(node.text); m !== null; m = pattern.exec(node.text)) {
       if (m.index > last) out.push({ kind: 'text', text: node.text.slice(last, m.index) })
-      out.push({ kind: 'link', text: m[0], href: issueHref(m[0], tracker) })
+      out.push({
+        kind: 'link',
+        href: issueHref(m[0], tracker),
+        content: [{ kind: 'text', text: m[0] }],
+      })
       last = m.index + m[0].length
     }
     if (last === 0) out.push(node)
