@@ -268,6 +268,51 @@ export function App(): React.JSX.Element {
     [updateSessions, remember]
   )
 
+  /** What a conversation may do, changed from wherever the profile is shown. */
+  const applyProfile = useCallback(
+    async (conversationId: string, profileId: string) => {
+      try {
+        const { profileId: applied } = await window.chorus.setProfile({ conversationId, profileId })
+        updateSessions((current) =>
+          current.map((candidate) =>
+            candidate.conversationId === conversationId
+              ? { ...candidate, profileId: applied }
+              : candidate
+          )
+        )
+        remember({ profileId: applied })
+      } catch (error) {
+        fail(setError)(error)
+      }
+    },
+    [updateSessions, remember]
+  )
+
+  /** Where a conversation is pointed, changed from wherever the path is shown. */
+  const setCwd = useCallback(
+    (conversationId: string, cwd: string, title: string) => {
+      updateSessions((current) =>
+        current.map((candidate) =>
+          candidate.conversationId === conversationId ? { ...candidate, cwd, title } : candidate
+        )
+      )
+      remember({ cwd })
+    },
+    [updateSessions, remember]
+  )
+
+  const chooseFolder = useCallback(
+    async (conversationId: string) => {
+      try {
+        const { cwd, title } = await window.chorus.chooseProjectDirectory({ conversationId })
+        setCwd(conversationId, cwd, title)
+      } catch (error) {
+        fail(setError)(error)
+      }
+    },
+    [setCwd]
+  )
+
   /*
    * The IPC and the error live here rather than in the control, because the
    * cast is now shown in two places and neither of them owns a place to report
@@ -422,6 +467,8 @@ export function App(): React.JSX.Element {
         profiles={profiles}
         installed={installed}
         onToggleAgent={toggleAgent}
+        onChooseFolder={chooseFolder}
+        onChooseProfile={applyProfile}
         renderSession={(session, focused, paneId) => (
           <Session
             key={session.conversationId}
@@ -446,14 +493,7 @@ export function App(): React.JSX.Element {
               setParticipants(session.conversationId, participants)
             }}
             onCwd={(cwd, title) => {
-              updateSessions((current) =>
-                current.map((candidate) =>
-                  candidate.conversationId === session.conversationId
-                    ? { ...candidate, cwd, title }
-                    : candidate
-                )
-              )
-              remember({ cwd })
+              setCwd(session.conversationId, cwd, title)
             }}
           />
         )}

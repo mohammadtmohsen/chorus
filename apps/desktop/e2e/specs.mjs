@@ -623,7 +623,14 @@ export const specs = [
             agentsAreButtons: [...row.querySelectorAll('.workspace-session-agents .voice')]
               .every(b => b.tagName === 'BUTTON' && b.hasAttribute('aria-pressed')),
             nestedButtons: main.querySelectorAll('button').length,
-            actionsIdle: getComputedStyle(row.querySelector('.workspace-session-actions')).opacity,
+            actionsVisible:
+              getComputedStyle(row.querySelector('.workspace-session-actions')).opacity === '1',
+            /* clientWidth, not the bounding box: the card is border-box, so
+               the head spans its inner width and is 2px narrower. */
+            headIsFullWidth:
+              Math.round(row.querySelector('.workspace-session-main').getBoundingClientRect().width) ===
+              row.clientWidth,
+            headCursor: getComputedStyle(row.querySelector('.workspace-session-main')).cursor,
             menus: document.querySelectorAll('.workspace-context-menu').length,
           }
         })()`)
@@ -653,7 +660,7 @@ export const specs = [
             lines: [
               over('.workspace-session-line'),
               over('.workspace-session-agents'),
-              over('.workspace-session-meta'),
+              over('.workspace-session-body'),
             ],
             namesStillShown:
               getComputedStyle(row.querySelector('.workspace-session-agents .voice')).fontSize !==
@@ -670,7 +677,12 @@ export const specs = [
         )
         assert(card.actions === 2, `Restart and End sit on it, got ${String(card.actions)}`)
         assert(card.nestedButtons === 0, 'and no button is nested inside another')
-        assert(card.actionsIdle === '0', 'held back until the row is hovered or focused')
+        assert(card.actionsVisible, 'and are visible without hovering the row')
+        assert(
+          card.headIsFullWidth,
+          'the head is the whole band, so a click near the name lands on it'
+        )
+        assert(card.headCursor === 'pointer', 'and says so with the pointer')
 
         // Right-clicking a tab used to open a menu. It should do nothing now.
         await app.evaluate(`(() => {

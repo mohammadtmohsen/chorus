@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
@@ -28,7 +28,11 @@ interface WorkspaceProps {
   /** The sidebar's own order, which is the `order` half of `conversation:layout`. */
   readonly onReorderSessions: (order: readonly string[]) => void
   /** So a session's `profileId` can be shown as the name the chip uses. */
-  readonly profiles: readonly { readonly id: string; readonly name: string }[]
+  readonly profiles: readonly {
+    readonly id: string
+    readonly name: string
+    readonly summary: string
+  }[]
   /** Which agents exist on this machine; an absent one cannot be seated. */
   readonly installed: readonly AgentId[]
   readonly onToggleAgent: (
@@ -36,6 +40,9 @@ interface WorkspaceProps {
     agentId: AgentId,
     present: boolean
   ) => Promise<void>
+  /** Opens the picker and re-points the conversation at what comes back. */
+  readonly onChooseFolder: (conversationId: string) => Promise<void>
+  readonly onChooseProfile: (conversationId: string, profileId: string) => Promise<void>
   /** Persists the arrangement immediately, for changes that end on pointer-up. */
   readonly onCommitLayout: () => void
   readonly renderSession: (
@@ -197,6 +204,8 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         profiles={props.profiles}
         installed={props.installed}
         onToggleAgent={props.onToggleAgent}
+        onChooseFolder={props.onChooseFolder}
+        onChooseProfile={props.onChooseProfile}
         onRestart={props.onRestart}
         onEnd={props.onEnd}
       />
@@ -664,9 +673,11 @@ function WorkspaceSidebar(props: {
   onRename: (conversationId: string, title: string) => void
   onReorderSessions: (order: readonly string[]) => void
   onCommitLayout: () => void
-  profiles: readonly { readonly id: string; readonly name: string }[]
+  profiles: readonly { readonly id: string; readonly name: string; readonly summary: string }[]
   installed: readonly AgentId[]
   onToggleAgent: (conversationId: string, agentId: AgentId, present: boolean) => Promise<void>
+  onChooseFolder: (conversationId: string) => Promise<void>
+  onChooseProfile: (conversationId: string, profileId: string) => Promise<void>
   onRestart: (conversationId: string) => void
   onEnd: (conversationId: string) => void
 }): React.JSX.Element {
@@ -792,6 +803,11 @@ function WorkspaceSidebar(props: {
               onToggleAgent={(agentId, present) =>
                 props.onToggleAgent(session.conversationId, agentId, present)
               }
+              onChooseFolder={() => props.onChooseFolder(session.conversationId)}
+              profiles={props.profiles}
+              onChooseProfile={(profileId) =>
+                props.onChooseProfile(session.conversationId, profileId)
+              }
               onRestart={() => { props.onRestart(session.conversationId); }}
               onEnd={() => { props.onEnd(session.conversationId); }}
               onPointerDown={(event) => { reorder.onPointerDown(session.conversationId, event); }}
@@ -859,6 +875,9 @@ function SidebarSession(props: {
   profileName: string
   installed: readonly AgentId[]
   onToggleAgent: (agentId: AgentId, present: boolean) => Promise<void>
+  onChooseFolder: () => Promise<void>
+  profiles: readonly { readonly id: string; readonly name: string; readonly summary: string }[]
+  onChooseProfile: (profileId: string) => Promise<void>
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void
   onOpen: () => void
   onRenameStart: () => void
@@ -876,6 +895,61 @@ function SidebarSession(props: {
   const [armedEnd, setArmedEnd] = useState(false)
   /** Which agent is mid-flight, so the pair disables rather than double-fires. */
   const [moving, setMoving] = useState<string | null>(null)
+  /** Where the menu sits, and whether that has been checked against the window. */
+  const [picking, setPicking] = useState<{
+    x: number
+    y: number
+    chipTop: number
+    placed: boolean
+  } | null>(null)
+  const picker = useRef<HTMLDivElement | null>(null)
+  const menu = useRef<HTMLUListElement | null>(null)
+
+  /*
+   * Closes on anything that is not this menu.
+   *
+   * By asking whether the click landed inside *this* picker rather than by
+   * stopping the event at the picker's edge: stopping it meant another card's
+   * chip never reached this listener, so opening a second menu left the first
+   * one hanging open behind it.
+   */
+  useEffect(() => {
+    if (picking === null) return
+    const close = (event: Event): void => {
+      if (picker.current?.contains(event.target as Node) === true) return
+      setPicking(null)
+    }
+    const key = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === 'Escape') setPicking(null)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', key)
+    }
+  }, [picking])
+
+  /*
+   * Flips it above the chip, or pulls it back from the edge, once it is real.
+   *
+   * Measured rather than predicted: the menu's height is three summaries of
+   * whatever length the profiles happen to have, and a card near the foot of a
+   * long list would otherwise open a menu into the space below the window.
+   * Runs once per opening — `placed` is what stops it chasing itself.
+   */
+  useLayoutEffect(() => {
+    if (picking === null || picking.placed || menu.current === null) return
+    const box = menu.current.getBoundingClientRect()
+    const margin = 8
+    const belowOverflows = box.bottom > window.innerHeight - margin
+    setPicking({
+      ...picking,
+      placed: true,
+      y: belowOverflows ? Math.max(margin, picking.chipTop - box.height - 4) : picking.y,
+      x: Math.min(picking.x, Math.max(margin, window.innerWidth - box.width - margin)),
+    })
+  }, [picking])
   useEffect(() => {
     if (!working) setArmedEnd(false)
   }, [working])
@@ -932,7 +1006,21 @@ function SidebarSession(props: {
               {t('workspace.waiting', { count: waiting })}
             </span>
           ) : working ? (
-            <span className="workspace-session-status">{t('workspace.working')}</span>
+            /*
+             * Coloured by whoever is working, using the voice vocabulary the
+             * dots and the rail already use — so "something is happening" and
+             * "who is doing it" arrive together rather than as two lookups.
+             * Two at once falls back to bone: no single voice owns it.
+             */
+            <span
+              className={`workspace-session-status${
+                pulse?.working.length === 1 ? ` voice--${String(pulse.working[0])}` : ''
+              }`}
+              data-working="true"
+            >
+              <span className="workspace-session-pip" aria-hidden="true" />
+              {t('workspace.working')}
+            </span>
           ) : (pulse?.unread ?? 0) > 0 ? (
             <span
               className="workspace-session-badge"
@@ -953,89 +1041,149 @@ function SidebarSession(props: {
           place that knowledge cannot be assumed. The composer keeps the cast as
           switches; these say who is here, they do not change it.
         */}
-        <span className="workspace-session-meta">
-          <span className="workspace-session-path">{shortenPath(props.session.cwd)}</span>
-          <span className="workspace-session-profile">{props.profileName}</span>
-        </span>
       </button>
       {/*
-        The cast, as the switches it is in the composer — the same control, the
-        same class, so an agent added from the list and one added from the room
-        are visibly the same act.
+        Everything that acts, under everything that identifies.
 
-        Below the two identity lines rather than between them, because those two
-        are one focusable target for "open this" and a button cannot hold
-        buttons. Splitting them to keep the old order would have made the card
-        two tab stops for one action.
+        That split is the point of the card. The top half is a single target
+        that opens the session — all of it, not only the words — and the bottom
+        half is controls, none of which should open anything. Two halves means a
+        pointer never has to guess which it is over, and the body can be dense
+        without the name becoming so.
       */}
-      <ul className="workspace-session-agents">
-        {ALL_AGENTS.map((agent) => {
-          const here = props.session.participants.includes(agent)
-          const available = props.installed.includes(agent)
-          return (
-            <li key={agent}>
-              <button
-                type="button"
-                className={`voice voice--${agent}`}
-                data-on={here}
-                data-live={pulse?.working.includes(agent) === true}
-                aria-pressed={here}
-                disabled={moving !== null || (!here && !available)}
-                title={
-                  available
-                    ? t(here ? 'conversation.removeAgent' : 'conversation.addAgent', {
-                        agent,
-                      })
-                    : t('agents.notFound', { agent })
-                }
-                onClick={() => {
-                  setMoving(agent)
-                  void props.onToggleAgent(agent, here).finally(() => {
-                    setMoving(null)
-                  })
-                }}
-              >
-                <span className="voice-dot" aria-hidden="true" />
-                {agent}
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-      {/*
-        Held back until the row is under the pointer or holding focus. Both are
-        rare acts on a session you are only glancing at, and End is the one
-        thing here that cannot be undone.
-      */}
-      <span className="workspace-session-actions">
+      <div className="workspace-session-body">
+        <ul className="workspace-session-agents">
+          {ALL_AGENTS.map((agent) => {
+            const here = props.session.participants.includes(agent)
+            const available = props.installed.includes(agent)
+            return (
+              <li key={agent}>
+                <button
+                  type="button"
+                  className={`voice voice--${agent}`}
+                  data-on={here}
+                  data-live={pulse?.working.includes(agent) === true}
+                  aria-pressed={here}
+                  disabled={moving !== null || (!here && !available)}
+                  title={
+                    available
+                      ? t(here ? 'conversation.removeAgent' : 'conversation.addAgent', {
+                          agent,
+                        })
+                      : t('agents.notFound', { agent })
+                  }
+                  onClick={() => {
+                    setMoving(agent)
+                    void props.onToggleAgent(agent, here).finally(() => {
+                      setMoving(null)
+                    })
+                  }}
+                >
+                  <span className="voice-dot" aria-hidden="true" />
+                  {agent}
+                </button>
+              </li>
+              )
+            })}
+          </ul>
         <button
           type="button"
-          className="workspace-session-action"
-          aria-label={t('conversation.restartLabel')}
-          title={t('conversation.restartLabel')}
-          onClick={props.onRestart}
+          className="path path--button workspace-session-path"
+          title={t('conversation.choosePath')}
+          onClick={() => { void props.onChooseFolder(); }}
         >
-          <span aria-hidden="true">↻</span>
+          {shortenPath(props.session.cwd)}
         </button>
-        <button
-          type="button"
-          className="workspace-session-action workspace-session-action--end"
-          data-armed={armedEnd}
-          aria-label={armedEnd ? t('conversation.endConfirm') : t('conversation.endLabel')}
-          title={armedEnd ? t('conversation.endConfirm') : t('conversation.endLabel')}
-          onClick={() => {
-            // Asks twice only while an agent is working — the one moment there
-            // is anything to lose.
-            if (working && !armedEnd) {
-              setArmedEnd(true)
-              return
-            }
-            props.onEnd()
-          }}
-        >
-          <span aria-hidden="true">✕</span>
-        </button>
-      </span>
+        {/*
+          The profile, as the picker it is in the composer — same classes, same
+          menu, so what a session may do is changed the same way from the list
+          as from the room.
+        */}
+        <div className="profile-picker workspace-session-profile" ref={picker}>
+          <button
+            type="button"
+            className="profile-chip"
+            aria-haspopup="listbox"
+            aria-expanded={picking !== null}
+            onClick={(event) => {
+              const at = event.currentTarget.getBoundingClientRect()
+              setPicking(
+                picking === null
+                  ? { x: at.left, y: at.bottom + 4, chipTop: at.top, placed: false }
+                  : null
+              )
+            }}
+          >
+            {props.profileName}
+          </button>
+          {picking !== null && (
+            /*
+             * Fixed, and placed from the chip's own box.
+             *
+             * The list scrolls, so a menu positioned inside it is clipped by
+             * `overflow: auto` however it is anchored — the same reason the
+             * tab's context menu was fixed before it was removed.
+             */
+            <ul
+              ref={menu}
+              className="profile-menu workspace-session-profile-menu"
+              role="listbox"
+              /* Hidden for the frame it takes to measure, or it is seen in the
+                 wrong place first. */
+              style={{ left: picking.x, top: picking.y, visibility: picking.placed ? 'visible' : 'hidden' }}
+            >
+              {props.profiles.map((option) => (
+                <li key={option.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={option.id === props.session.profileId}
+                    data-on={option.id === props.session.profileId}
+                    className="profile-option"
+                    onClick={() => {
+                      setPicking(null)
+                      if (option.id === props.session.profileId) return
+                      void props.onChooseProfile(option.id)
+                    }}
+                  >
+                    <span className="profile-option-name">{option.name}</span>
+                    <span className="profile-option-summary">{option.summary}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <span className="workspace-session-actions">
+          <button
+            type="button"
+            className="workspace-session-action"
+            aria-label={t('conversation.restartLabel')}
+            title={t('conversation.restartLabel')}
+            onClick={props.onRestart}
+          >
+            <span aria-hidden="true">↻</span>
+          </button>
+          <button
+            type="button"
+            className="workspace-session-action workspace-session-action--end"
+            data-armed={armedEnd}
+            aria-label={armedEnd ? t('conversation.endConfirm') : t('conversation.endLabel')}
+            title={armedEnd ? t('conversation.endConfirm') : t('conversation.endLabel')}
+            onClick={() => {
+              // Asks twice only while an agent is working — the one moment
+              // there is anything to lose.
+              if (working && !armedEnd) {
+                setArmedEnd(true)
+                return
+              }
+              props.onEnd()
+            }}
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
+        </span>
+      </div>
     </div>
   )
 }

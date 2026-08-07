@@ -3194,7 +3194,7 @@ input::placeholder {
 .workspace-tree {
   display: grid;
   align-content: start;
-  gap: 1px;
+  gap: calc(var(--step) * 2);
   min-height: 0;
   overflow: auto;
   padding-block: calc(var(--step) * 2);
@@ -3209,37 +3209,49 @@ input::placeholder {
  * for who is in each session.
  */
 /*
- * A card now, not a line: the row carries what the composer's own footer says
- * about a session, for the sessions you are not looking at.
+ * Two halves: what it is, and what you can do to it.
  *
- * A wrapper rather than one button, because Restart and End sit inside it and
- * a button cannot contain buttons — the same shape a tab already has.
+ * The top is one target and opens the session — the whole band, not just the
+ * words, so a click near the name is a click on the name. The bottom is
+ * controls, ruled off, and none of them opens anything. Splitting them means a
+ * pointer never has to guess which it is over, and the controls can be dense
+ * without crowding the name.
  */
 .workspace-session-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
   min-width: 0;
   margin-inline: calc(var(--step) * 2);
-  border-radius: calc(var(--radius) - 2px);
+  /*
+   * One border for the card, and the divider between its halves is the same
+   * line at the same inset — which is the whole of what makes the two halves
+   * read as one object. Clipped, so the body's fill stops where the border
+   * turns rather than squaring off the corners under it.
+   */
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: transparent;
   color: var(--faint);
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
+/*
+ * The name, and the whole band around it.
+ *
+ * Full width so a click near the title is a click on the title, and a pointer
+ * because this half genuinely is one control — the body below it is not, which
+ * is the distinction the two halves exist to make.
+ */
 .workspace-session-main {
   display: grid;
-  gap: 2px;
-  grid-column: 1;
+  width: 100%;
   min-width: 0;
   padding: calc(var(--step) * 2) calc(var(--step) * 3);
   border: 0;
   background: transparent;
   color: inherit;
   font-family: var(--mono);
-  /* The transcript's size. A session's name is content, not chrome, and it was
-     being set three steps below the text it names. */
   font-size: 14px;
   text-align: left;
   cursor: pointer;
@@ -3248,32 +3260,54 @@ input::placeholder {
 
 .workspace-session-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
   gap: calc(var(--step) * 2);
   min-width: 0;
 }
 
 /*
- * The cast, on its own line and made of the composer's own `.voice` switches.
- *
- * A list, because that is what it is, and the markup is the composer's so the
- * two cannot drift: a chip added here and one added in the room are the same
- * control. Its own line so two named agents never crowd anything else, and so
- * the two identity lines above stay one focusable target for "open this".
+ * The controls, on their own two rows: who is in it and what it may do, then
+ * where it points and the two things that end it.
+ */
+.workspace-session-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--step) calc(var(--step) * 2);
+  min-width: 0;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-top: 1px solid var(--line);
+  /* Sunk a shade, so the halves read as two surfaces and not one with a line
+     drawn across it. The card clips, so no radius is needed here. */
+  background: color-mix(in srgb, var(--sunken) 45%, transparent);
+}
+
+/*
+ * The cast, made of the composer's own `.voice` switches so the two cannot
+ * drift. A list, stripped of its markers — which is all `list-style` is for.
  */
 .workspace-session-agents {
   display: flex;
   align-items: center;
+  grid-column: 1;
+  grid-row: 1;
   gap: var(--step);
   min-width: 0;
   margin: 0;
-  padding: 0 calc(var(--step) * 2) calc(var(--step) * 1.5);
+  padding: 0;
   list-style: none;
-  font-size: 10px;
 }
 
+/*
+ * Tighter than the composer's, by the width of the card's own border.
+ *
+ * Two named chips fit a 240px card to within a pixel, and adding an edge to
+ * every card took exactly that pixel. Narrowing the chip is the honest place to
+ * find it: the padding is decoration, the names are the content.
+ */
 .workspace-session-agents .voice {
+  padding: 2px 4px;
   font-family: var(--mono);
   font-size: 10px;
 }
@@ -3284,74 +3318,73 @@ input::placeholder {
   background: var(--voice, var(--muted));
 }
 
-/*
- * Where it is pointed and what it may do there. The path is the part that
- * yields: a profile name is short and fixed, a path is neither.
- */
-.workspace-session-meta {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 2);
-  min-width: 0;
-  color: var(--faint);
-  font-size: 10px;
+/* A wrapper now; the pill it used to draw is `.profile-chip`'s job. */
+.workspace-session-profile {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
 }
 
-.workspace-session-path {
+.workspace-session-profile .profile-chip {
+  padding: 1px 6px;
+}
+
+.workspace-session-profile-menu {
+  position: fixed;
+  bottom: auto;
+  /* Wide enough for the summaries, which are the reason to open it at all. */
+  width: 280px;
+}
+
+/* A control with no cursor of its own inherits an I-beam over its own label. */
+.workspace-session-path.path--button {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: start;
   overflow: hidden;
-  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.workspace-session-profile {
-  flex: none;
-  margin-left: auto;
-  padding: 1px 5px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
+  cursor: pointer;
 }
 
 /*
- * Held back until the row is under the pointer or holding focus.
+ * Always there, drawn quietly.
  *
- * Opacity rather than `display`, so both stay in the tab order — a control you
- * can only reach by hovering is one a keyboard cannot reach at all. End is the
- * only irreversible thing in the sidenav, and it arms itself while an agent is
- * working exactly as the tab's did.
+ * Revealing them on hover hid half the card's controls from anyone not holding
+ * a pointer over that particular row, and made what a card can do a thing you
+ * had to discover. Muted at rest carries the same "secondary" reading without
+ * the disappearing act. End is still the only irreversible thing here, and it
+ * still arms itself while an agent is working.
  */
 .workspace-session-actions {
   display: flex;
   align-items: center;
   grid-column: 2;
-  grid-row: 1 / -1;
-  flex: none;
+  grid-row: 2;
+  justify-self: end;
   gap: 1px;
-  padding-right: var(--step);
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.workspace-session-row:hover .workspace-session-actions,
-.workspace-session-actions:focus-within {
-  opacity: 1;
 }
 
 .workspace-session-action {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
   border-radius: calc(var(--radius) - 2px);
   background: transparent;
-  color: var(--faint);
+  color: color-mix(in srgb, var(--faint) 70%, transparent);
   font-size: 12px;
   cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.workspace-session-row:hover .workspace-session-action {
+  color: var(--faint);
 }
 
 .workspace-session-action:hover,
@@ -3380,44 +3413,24 @@ input::placeholder {
 }
 
 .workspace-session-row[data-state='active'] {
+  border-color: color-mix(in srgb, var(--line) 55%, var(--bone));
   background: var(--ground);
   color: var(--bone);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 70%, var(--bone));
-}
-
-.workspace-session-row[data-state='open'] {
-  color: var(--muted);
 }
 
 /*
- * The three states, as a stub of colour rather than a full-height border.
+ * Three states, now carried by the border the card already has.
  *
- * A rounded row cannot carry a square left border without the two fighting at
- * the corners, and the stub says the same thing in less ink: nothing when the
- * session is off screen, the voice's colour when it is open elsewhere, bone
- * when it is the one you are looking at.
+ * Off screen is the plain edge; open elsewhere is lifted a shade; the one you
+ * are looking at is lifted toward bone and filled. That replaced a stub of
+ * colour outside the card, which said the same thing in a second vocabulary and
+ * could not have survived the clip that keeps the divider aligned.
  */
-.workspace-session-row::before {
-  content: '';
-  position: absolute;
-  left: calc(var(--step) * -1);
-  top: 50%;
-  width: 2px;
-  height: 0;
-  border-radius: 1px;
-  background: var(--codex);
-  transform: translateY(-50%);
-  transition: height 140ms ease;
+.workspace-session-row[data-state='open'] {
+  border-color: color-mix(in srgb, var(--line) 60%, var(--muted));
+  color: var(--muted);
 }
 
-.workspace-session-row[data-state='open']::before {
-  height: 16px;
-}
-
-.workspace-session-row[data-state='active']::before {
-  height: 20px;
-  background: var(--bone);
-}
 
 /* Lifted, so the row you are carrying reads as detached from the list. */
 .workspace-session-row[data-dragging='true'] {
@@ -3492,8 +3505,33 @@ input::placeholder {
   white-space: nowrap;
 }
 
+/*
+ * Waiting on you is the loud one, and it stays the alert colour: it is the only
+ * state in this list that is a request rather than a report.
+ */
 .workspace-session-status[data-waiting='true'] {
-  color: var(--claude);
+  color: var(--alert);
+}
+
+/* Working takes the voice of whoever is working, bone when that is several. */
+.workspace-session-status[data-working='true'] {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--step) * 1.5);
+  color: var(--voice, var(--bone));
+}
+
+/*
+ * A pip that breathes, on the same 1.6s as the cast's own live dot — the two
+ * are saying the same thing about the same agent, so they should say it at the
+ * same rate.
+ */
+.workspace-session-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+  animation: breathe 1.6s ease-in-out infinite;
 }
 
 .workspace-session-badge {
