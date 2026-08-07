@@ -232,7 +232,12 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
       case 'userinput.answered':
       case 'handoff.created':
       case 'usage.updated':
+      case 'context.compacted':
         /*
+         * `context.compacted` is here for a related reason: it records that an
+         * agent lost its own history, which says nothing about what the
+         * conversation contains, and a handoff summary is about the latter.
+         *
          * Questions are left out of a handoff summary for the same reason
          * approvals are: this is what the *user* was asked and answered, not
          * what the conversation said. Carrying them would also mean deciding

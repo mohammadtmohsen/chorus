@@ -154,6 +154,15 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     brief: z.string(),
   }),
 
+  /**
+   * The agent summarised its own history to fit the context window.
+   *
+   * No payload: the codex notification carries only encrypted content, and the
+   * fact is the whole of what a reader needs. It marks the point above which
+   * the transcript and the agent's memory of it stop being the same thing.
+   */
+  z.object({ type: z.literal('context.compacted') }),
+
   z.object({
     type: z.literal('usage.updated'),
     inputTokens: z.number().int(),

@@ -425,6 +425,28 @@ function mapResult(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {
     })
   }
 
+  /*
+   * A failed turn says why, before it says it is over.
+   *
+   * `status: 'failed'` alone renders as nothing: the composer goes idle and no
+   * reply arrives, which is indistinguishable from an agent that ignored you.
+   * The result already carries `errors` and `subtype` — hitting an account
+   * limit came through here and was thrown away.
+   */
+  if (msg.subtype !== undefined && msg.subtype !== 'success') {
+    const reported = Array.isArray(msg.errors)
+      ? msg.errors.filter((e): e is string => typeof e === 'string')
+      : []
+    events.push({
+      ...base,
+      seq: ctx.seq + events.length,
+      type: 'error',
+      message: reported.length > 0 ? reported.join('; ') : describeFailure(msg.subtype),
+      // The turn is over either way; what varies is whether trying again helps.
+      recoverable: msg.subtype === 'error_max_turns',
+    })
+  }
+
   events.push({
     ...base,
     seq: ctx.seq + events.length,
@@ -434,6 +456,22 @@ function mapResult(msg: SdkMessageLike, ctx: MapContext): AgentEvent[] {
   })
 
   return events
+}
+
+/** The SDK's subtype, in words a reader can act on. */
+function describeFailure(subtype: string): string {
+  switch (subtype) {
+    case 'error_max_turns':
+      return 'The agent reached its turn limit before finishing.'
+    case 'error_max_budget_usd':
+      return 'The agent reached its spend limit before finishing.'
+    case 'error_max_structured_output_retries':
+      return 'The agent could not produce a valid structured answer.'
+    default:
+      // Covers `error_during_execution`, which is what an account over its
+      // usage limit arrives as.
+      return 'The turn ended without an answer — the account may be over its usage limit.'
+  }
 }
 
 /**

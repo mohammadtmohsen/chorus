@@ -166,6 +166,35 @@ export function mapNotification(n: Notification, ctx: MapContext): AgentEvent | 
       }
     }
 
+    /*
+     * Codex has always sent this and nothing has ever read it. The payload
+     * carries only encrypted content, so there is nothing to show but the
+     * fact — which is the part that matters.
+     */
+    case 'thread/compacted':
+      return { ...base, type: 'context.compacted' }
+
+    /*
+     * A turn that failed, said out loud.
+     *
+     * Codex sends this and the mapper had no case for it, so it fell through to
+     * `null` — which is why a turn refused for hitting an account limit showed
+     * nothing at all: no reply, no notice, an idle composer. `willRetry` is the
+     * difference between "waiting" and "over", and both are worth saying.
+     */
+    case 'error': {
+      const error = record(p['error'])
+      const detail = str(error['additionalDetails'], '')
+      return {
+        ...base,
+        type: 'error',
+        message: detail === ''
+          ? str(error['message'], 'The agent stopped without saying why')
+          : `${str(error['message'], 'Error')} — ${detail}`,
+        recoverable: p['willRetry'] === true,
+      }
+    }
+
     case 'warning':
       return {
         ...base,

@@ -309,27 +309,75 @@ export class ClaudeSession implements AgentSession {
    * its absence is a normal outcome rather than an error: the event path still
    * works and the header just says less.
    */
-  private async readPlanUsage(): Promise<void> {
+  /**
+   * The protocol's name for it, so the UI can ask without knowing which
+   * provider it is asking. Everything below already existed and ran once at
+   * session start; all that was missing was a way to ask again.
+   */
+  async readLimits(): Promise<void> {
+    await this.readPlanUsage()
+  }
+
+  /**
+   * Asks until the query is awake enough to answer, then stops.
+   *
+   * The read on `system` was the intended moment, but this adapter runs the SDK
+   * in streaming-input mode: the query is lazy, so no `system` message arrives
+   * until something is sent — and the account panel therefore stayed empty
+   * until the user spent a turn. Which is precisely backwards, because the
+   * moment you most want to know your remaining quota is before you spend it.
+   *
+   * Bounded and silent: three tries over about nine seconds, stopping at the
+   * first that answers. An account with no plan window never answers, and that
+   * is a normal outcome rather than something to report.
+   */
+  primeLimits(): void {
+    void this.primeLimitsLoop()
+  }
+
+  private async primeLimitsLoop(): Promise<void> {
+    for (const delay of [700, 2500, 6000]) {
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      if (this.closed) return
+      if (await this.readPlanUsage()) return
+    }
+  }
+
+  private async readPlanUsage(): Promise<boolean> {
     const ask = (
       this.q as unknown as {
         usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<unknown>
       }
     ).usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET
-    if (typeof ask !== 'function') return
+    if (typeof ask !== 'function') return false
 
     try {
       const usage = await ask.call(this.q)
-      for (const event of mapPlanUsage(usage, {
+      const events = mapPlanUsage(usage, {
         agentId: 'claude',
         seq: this.seq + 1,
         at: this.now(),
-      })) {
-        this.emit(event)
-      }
+      })
+      for (const event of events) this.emit(event)
+      // Whether it actually said anything, which is what the priming loop
+      // needs to know — a call that succeeds and reports no windows has not
+      // answered the question.
+      return events.length > 0
     } catch {
       // Experimental, and answered only while the query is open. Neither is
       // worth a word in the transcript.
+      return false
     }
+  }
+
+  /** Called from the PostCompact hook, which fires outside the message stream. */
+  noteCompacted(): void {
+    this.emit({
+      agentId: 'claude',
+      seq: ++this.seq,
+      at: this.now(),
+      type: 'context.compacted',
+    })
   }
 
   private emit(event: AgentEvent): void {
@@ -434,6 +482,34 @@ export class ClaudeAdapter implements AgentAdapter {
        * while adaptive spends nothing on a question that does not warrant it.
        */
       thinking: { type: 'adaptive', display: 'summarized' },
+      /*
+       * The one moment the transcript and the agent stop agreeing.
+       *
+       * Claude reports compaction through a hook rather than the message
+       * stream, which is why it went unnoticed while codex's `thread/compacted`
+       * notification sat unread — two different shapes for the same fact.
+       *
+       * It matters that both report it. A marker that appears for one agent
+       * teaches you to read its absence as "nothing was compacted", which would
+       * be wrong every time the other agent did the compacting — worse than
+       * having no marker at all.
+       *
+       * The summary itself is discarded: what a reader needs is where the line
+       * falls, and the summary is the agent's own words about a conversation
+       * already shown in full above it.
+       */
+      hooks: {
+        PostCompact: [
+          {
+            hooks: [
+              () => {
+                holder.session?.noteCompacted()
+                return Promise.resolve({ continue: true })
+              },
+            ],
+          },
+        ],
+      },
       permissionMode: opts.sandbox.mode === 'readOnly' ? 'default' : 'acceptEdits',
       ...(opts.model === undefined ? {} : { model: opts.model }),
       ...(this.executablePath === undefined
@@ -462,6 +538,10 @@ export class ClaudeAdapter implements AgentAdapter {
     const q = factory(options, inbox)
     const session = new ClaudeSession(resume ?? '', q, inbox, this.approvalTtlMs, this.now)
     holder.session = session
+
+    // Not awaited: the caller wants a session, not a quota. It fills the
+    // account panel a few seconds later, or never, and either is fine.
+    session.primeLimits()
 
     this.sessions.push(session)
     return session

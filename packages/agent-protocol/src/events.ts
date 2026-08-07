@@ -105,6 +105,19 @@ export interface UsageUpdated extends AgentEventBase {
   readonly costUsd?: number
 }
 
+/**
+ * The agent summarised its own history to stay inside the context window.
+ *
+ * Worth recording because it is the one moment the transcript and the agent
+ * stop agreeing. Everything above stays on screen and reads as shared history,
+ * while the agent now holds a summary of it — so a message you can still point
+ * at is not necessarily one it can still recall. Both CLIs do this on their own
+ * schedule; all we can do is say when.
+ */
+export interface ContextCompacted extends AgentEventBase {
+  readonly type: 'context.compacted'
+}
+
 export interface TurnCompleted extends AgentEventBase {
   readonly type: 'turn.completed'
   readonly turnRef: string
@@ -165,6 +178,7 @@ export type AgentEvent =
    */
   | LimitsUpdated
   | TurnStarted
+  | ContextCompacted
   | MessageDelta
   | MessageCompleted
   | ReasoningDelta
