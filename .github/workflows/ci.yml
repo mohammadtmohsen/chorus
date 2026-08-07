@@ -24,9 +24,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.20.0
+      # v6, not v4: v4 declares node20, which the runners now force onto node24
+      # and warn about — a deprecation that becomes a red build on some future
+      # runner image. v5 was the node24 move and v6 added pnpm 11 support, so
+      # neither major changes anything this workflow relies on.
+      #
+      # No `version` input: package.json's `packageManager` field already pins
+      # pnpm, and the action reads it. Two places stating one version is a thing
+      # to keep in sync, and they drift silently — the check that would catch it
+      # is the build that stops matching the lockfile.
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:
@@ -52,9 +59,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.20.0
+      # See the note in `check` above.
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 22
