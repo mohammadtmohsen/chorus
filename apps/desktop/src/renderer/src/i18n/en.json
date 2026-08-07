@@ -20,15 +20,21 @@
     "messageLabel": "Message",
     "placeholder": "Say something. Type @ to choose who answers.",
     "send": "Send",
+    "steer": "Send — the agent keeps working and takes this in",
+    "moreLines": "+{{count}} more",
     "stop": "Stop",
     "stopAll": "Stop {{agents}}",
     "showThinking": "Show thinking",
+    "showMore": "Show the rest",
+    "showLess": "Show less",
     "hideThinking": "Hide thinking",
     "newSession": "New session",
     "tryAgain": "Try again",
     "sessionLabel": "Session in {{path}}",
     "editPath": "Change the project directory",
     "choosePath": "Choose the project folder",
+    "noFolder": "No folder",
+    "clearFolder": "Work without a folder",
     "renameTitle": "Rename this session",
     "titlePlaceholder": "Empty for the folder's name",
     "addAgent": "Bring {{agent}} in — it reads the conversation so far",
@@ -41,6 +47,42 @@
     "cancel": "Cancel",
     "waiting": "waiting"
   },
+  "workspace": {
+    "sessions": "Sessions",
+    "search": "Search sessions",
+    "hideSidebar": "Hide session sidebar",
+    "showSidebar": "Show session sidebar",
+    "resizeSidebar": "Resize sidebar — double-click to reset",
+    "empty": "No session is open in the editor",
+    "emptyHint": "Choose a running session from the sidebar.",
+    "working": "working",
+    "waiting_one": "{{count}} waiting",
+    "waiting_other": "{{count}} waiting",
+    "unread_one": "{{count}} unread update",
+    "unread_other": "{{count}} unread updates",
+    "closeTab": "Close {{title}} — the session keeps running",
+    "closePane": "Close editor group — sessions keep running",
+    "close": "Close",
+    "closeOthers": "Close Others",
+    "closeAll": "Close All",
+    "rename": "Rename",
+    "restart": "Restart Session",
+    "end": "End Session",
+    "endConfirm": "An agent is still working. End this session?",
+    "moveHere": "MOVE HERE",
+    "split": {
+      "up": "Split Up",
+      "down": "Split Down",
+      "left": "Split Left",
+      "right": "Split Right"
+    },
+    "dropSplit": {
+      "up": "SPLIT UP",
+      "down": "SPLIT DOWN",
+      "left": "SPLIT LEFT",
+      "right": "SPLIT RIGHT"
+    }
+  },
   "settings": {
     "open": "Settings",
     "heading": "Settings",
@@ -48,6 +90,13 @@
     "installed": "Agents found",
     "paneNote": "Agents, folder and permissions belong to each session — change them in its own bar. A new session starts where the last one was.",
     "done": "Done"
+  },
+  "activity": {
+    "label": "Agents and settings",
+    "show": "Show sessions",
+    "hide": "Hide sessions",
+    "usage": "{{agent}}: {{percent}}% of the {{window}} window used — resets {{reset}}",
+    "refresh": "Re-check account usage"
   },
   "attachments": {
     "view": "Open {{name}}",

@@ -183,6 +183,17 @@ export class ConversationService {
     return this.profile.id
   }
 
+  /**
+   * Asks the provider to re-read its account windows, if it can be asked.
+   *
+   * Silent when the session is not up or the provider has no such notion — the
+   * caller is a button, and a button that reports "this agent does not meter"
+   * is noise rather than news.
+   */
+  async refreshLimits(): Promise<void> {
+    await this.session?.readLimits?.()
+  }
+
   async interrupt(): Promise<void> {
     this.interruptRequested = true
     await this.session?.interrupt()
@@ -504,6 +515,15 @@ export class ConversationService {
           outputTokens: event.outputTokens,
           costUsd: event.costUsd ?? null,
         })
+        return
+
+      /*
+       * Recorded, not merely shown: the moment an agent stopped holding the
+       * whole conversation is a fact about that conversation, and one you would
+       * want when reading the log back and wondering why it forgot something.
+       */
+      case 'context.compacted':
+        this.lifecycle({ type: 'context.compacted' })
         return
 
       case 'plan.updated':

@@ -22,6 +22,36 @@ const perm = (tool: string, input: Record<string, unknown> = {}) =>
   mapToolPermission(tool, input, CTX, ID)
 
 describe('message mapping', () => {
+  /*
+   * The failure a user actually meets: an account over its limit ends the turn
+   * with no reply, and `status: 'failed'` alone renders as nothing at all.
+   */
+  it('says why a turn failed instead of ending it silently', () => {
+    const events = mapSdkMessage(
+      { type: 'result', subtype: 'error_during_execution', uuid: 'r1', session_id: 's1' },
+      { seq: 1, now: 1_000, approvalTtlMs: 1_000 }
+    )
+    const error = events.find((e) => e.type === 'error')
+    expect(error).toBeDefined()
+    expect(error && 'message' in error && error.message).toContain('usage limit')
+    expect(events.some((e) => e.type === 'turn.completed')).toBe(true)
+  })
+
+  it('prefers the errors the result reported over a generic line', () => {
+    const events = mapSdkMessage(
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        errors: ['rate_limit: weekly quota exhausted'],
+        uuid: 'r2',
+        session_id: 's1',
+      },
+      { seq: 1, now: 1_000, approvalTtlMs: 1_000 }
+    )
+    const error = events.find((e) => e.type === 'error')
+    expect(error && 'message' in error && error.message).toBe('rate_limit: weekly quota exhausted')
+  })
+
   it('maps a text_delta stream event', () => {
     const events = mapSdkMessage(
       {

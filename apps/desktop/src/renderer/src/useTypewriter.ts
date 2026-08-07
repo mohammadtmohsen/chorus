@@ -36,13 +36,19 @@ export function useTypewriter(text: string, startWhole: boolean): string {
     let last = performance.now()
 
     const tick = (now: number): void => {
-      const step = nextShown(position.current, text.length, now - last, perSecond.current)
+      const next = nextShown(position.current, text.length, now - last, perSecond.current)
       last = now
-      if (step !== position.current) {
-        position.current = step
-        setShown(step)
-      }
-      if (step < text.length) frame = requestAnimationFrame(tick)
+      /*
+       * The position is fractional and stays that way; only what is drawn is
+       * whole. Re-rendering is the expensive half of this — a growing markdown
+       * string is reparsed each time — so the state only moves when the visible
+       * character count actually changes, rather than on every frame.
+       */
+      const wasVisible = Math.floor(position.current)
+      position.current = next
+      const visible = Math.floor(next)
+      if (visible !== wasVisible) setShown(visible)
+      if (next < text.length) frame = requestAnimationFrame(tick)
     }
 
     frame = requestAnimationFrame(tick)

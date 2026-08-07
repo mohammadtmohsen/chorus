@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { WorkspaceSnapshot } from './workspace-layout.js'
 
 /**
  * The single source of truth for the IPC surface.
@@ -23,6 +24,18 @@ export const AppInfo = z.object({
   nodeVersion: z.string(),
   chromeVersion: z.string(),
   platform: z.string(),
+  /*
+   * Home, so the renderer can tell "no folder chosen" from "a folder that
+   * happens to be home".
+   *
+   * An empty directory has always meant "start at home" — the runtime resolves
+   * it that way on both `startConversation` and `setProjectDirectory`, because
+   * a directory is a starting point rather than a boundary. But it resolves it
+   * *before* the renderer ever sees it, so a session that was never given a
+   * project looked identical to one deliberately pointed at home, and there was
+   * no way to say "no particular folder" back.
+   */
+  home: z.string(),
 })
 export type AppInfo = z.infer<typeof AppInfo>
 
@@ -211,15 +224,18 @@ export const IPC_CONTRACT = {
    */
   'conversation:restore': {
     request: z.object({}),
-    response: z.array(
-      z.object({
-        conversationId: z.string(),
-        participants: z.array(z.enum(['codex', 'claude'])),
-        profileId: z.string(),
-        cwd: z.string(),
-        title: z.string(),
-      })
-    ),
+    response: z.object({
+      sessions: z.array(
+        z.object({
+          conversationId: z.string(),
+          participants: z.array(z.enum(['codex', 'claude'])),
+          profileId: z.string(),
+          cwd: z.string(),
+          title: z.string(),
+        })
+      ),
+      workspace: WorkspaceSnapshot.nullable(),
+    }),
   },
 
   /**
@@ -261,9 +277,25 @@ export const IPC_CONTRACT = {
     }),
   },
 
-  /** Records the order the panes were arranged into, so a restore keeps it. */
-  'conversation:reorder': {
-    request: z.object({ order: z.array(z.string()) }),
+  /**
+   * Persists the whole arrangement in one write.
+   *
+   * `order` is the **sidebar's** order of running conversations, and only that.
+   * Each pane's tab order lives inside `workspace`, where it belongs — the two
+   * were briefly both called "order", which is exactly how they would have
+   * drifted apart.
+   */
+  /**
+   * Asks every live agent to re-read its account's usage windows.
+   *
+   * The windows otherwise only arrive after a turn, so someone who has just
+   * been cut off can only find out they are back by spending something. The
+   * answer comes back on the limits push, not here — this only asks.
+   */
+  'limits:refresh': { request: z.void(), response: z.object({ ok: z.literal(true) }) },
+
+  'conversation:layout': {
+    request: z.object({ order: z.array(z.string()), workspace: WorkspaceSnapshot }),
     response: z.object({ ok: z.literal(true) }),
   },
 
@@ -527,6 +559,8 @@ export function isIpcChannel(value: string): value is IpcChannel {
  */
 export interface ChorusApi {
   readonly getAppInfo: () => Promise<AppInfo>
+  /** Asks; the answer arrives on `onLimits`. */
+  readonly refreshLimits: () => Promise<{ ok: true }>
   readonly probeAgents: () => Promise<AgentProbeResult[]>
   readonly startConversation: (
     request: IpcRequest<'conversation:start'>
@@ -552,8 +586,8 @@ export interface ChorusApi {
   readonly stashFile: (request: IpcRequest<'files:stash'>) => Promise<IpcResponse<'files:stash'>>
   /** The real path of a dropped file; `File.path` was removed in Electron 32. */
   readonly pathForFile: (file: File) => string
-  readonly reorderConversations: (
-    request: IpcRequest<'conversation:reorder'>
+  readonly writeConversationLayout: (
+    request: IpcRequest<'conversation:layout'>
   ) => Promise<{ ok: true }>
   readonly renameConversation: (
     request: IpcRequest<'conversation:rename'>

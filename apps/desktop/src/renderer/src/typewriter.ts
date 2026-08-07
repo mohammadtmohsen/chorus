@@ -12,11 +12,24 @@
  * only decides how much of what has *already arrived* is on screen yet.
  */
 
-/** Never slower than this, or a long reply would still be typing minutes later. */
-export const MIN_CHARS_PER_SECOND = 160
+/**
+ * Never slower than this, or a long reply would still be typing minutes later.
+ *
+ * Raised from 160 once the rate was measured rather than assumed: what a reader
+ * notices is not the pace but the gap between an agent finishing and the last
+ * word landing, and 160 spent most of a second on it.
+ */
+export const MIN_CHARS_PER_SECOND = 320
 
-/** How long a fresh backlog should take to clear. */
-export const DRAIN_MS = 500
+/**
+ * How long a fresh backlog should take to clear.
+ *
+ * This is the lag, near enough: whatever arrives in the final delta is still
+ * being drawn for this long after the turn is over. Measured at 500 it was a
+ * 399ms tail on a four-sentence reply — small enough to sound harmless, long
+ * enough to read as the app being behind the agent.
+ */
+export const DRAIN_MS = 140
 
 /**
  * The rate to clear `remaining` within the drain window.
@@ -32,7 +45,17 @@ export function paceFor(remaining: number): number {
   return Math.max(MIN_CHARS_PER_SECOND, (remaining * 1000) / DRAIN_MS)
 }
 
-/** How many characters of `total` should be visible after `elapsedMs` more. */
+/**
+ * How far through `total` the reveal should be after `elapsedMs` more.
+ *
+ * Fractional, and the caller keeps it that way between frames — only the
+ * display rounds down. The previous version rounded here, which quietly made
+ * the rate a function of the display: at 160 a second, a 60Hz frame is 2.67
+ * characters and a 120Hz frame is 1.33. Rounding those gives 3 and 1 — 180 a
+ * second on one machine and 125 on another, and the floor this constant
+ * promises on neither. The remainder is worth a character or two per frame and
+ * a fifth of the rate over a reply.
+ */
 export function nextShown(
   shown: number,
   total: number,
@@ -43,6 +66,9 @@ export function nextShown(
   const from = Math.min(Math.max(shown, 0), total)
   if (from >= total) return total
 
-  const step = Math.max(1, Math.round((perSecond * Math.max(elapsedMs, 0)) / 1000))
+  // No guaranteed minimum step: with the remainder carried, any real frame
+  // advances, and forcing a whole character per frame was the cap as well as
+  // the floor.
+  const step = (perSecond * Math.max(elapsedMs, 0)) / 1000
   return Math.min(total, from + step)
 }

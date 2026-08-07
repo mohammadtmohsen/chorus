@@ -35,10 +35,35 @@ describe('nextShown', () => {
     expect(nextShown(0, 5, 10_000, 5_000)).toBe(5)
   })
 
-  it('moves at least one character, so it cannot stall', () => {
+  it('advances whenever time passes, and not when it does not', () => {
+    // The remainder is carried between frames, so a fraction of a character is
+    // real progress and nothing stalls. That replaced a forced whole character
+    // per frame, which was a cap as much as a floor.
     expect(nextShown(0, 1_000, 1, MIN_CHARS_PER_SECOND)).toBeGreaterThan(0)
-    expect(nextShown(10, 100, 0, 500)).toBe(11)
-    expect(nextShown(10, 100, -50, 500)).toBe(11)
+    expect(nextShown(10, 100, 0, 500)).toBe(10)
+    expect(nextShown(10, 100, -50, 500)).toBe(10)
+  })
+
+  it('runs at the same rate whatever the display does', () => {
+    /*
+     * The bug this pins: rounding each frame's step made the rate a function of
+     * the refresh rate. At the 160/s floor it once was, a 60Hz frame rounded
+     * 2.67 up to 3 and a 120Hz frame rounded 1.33 down to 1 — 180 a second on
+     * one machine, 125 on another, and the promised floor on neither.
+     */
+    const msToReveal = (frameMs: number): number => {
+      let shown = 0
+      let elapsed = 0
+      while (shown < 400 && elapsed < 30_000) {
+        shown = nextShown(shown, 400, frameMs, MIN_CHARS_PER_SECOND)
+        elapsed += frameMs
+      }
+      return elapsed
+    }
+    const ideal = (400 / MIN_CHARS_PER_SECOND) * 1000
+    for (const frameMs of [8, 16, 33]) {
+      expect(Math.abs(msToReveal(frameMs) - ideal)).toBeLessThanOrEqual(frameMs)
+    }
   })
 
   it('reads as typing when text trickles in', () => {

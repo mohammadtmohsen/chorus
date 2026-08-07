@@ -264,6 +264,39 @@ describe('account rate limits', () => {
     ])
   })
 
+  /*
+   * Codex has always sent this and the adapter dropped it for as long as it
+   * existed. It is the one notification that says the agent and the transcript
+   * have stopped agreeing, so losing it means a reader cannot tell which
+   * messages the agent still holds.
+   */
+  /*
+   * There was no case for this at all, so a turn refused for hitting an account
+   * limit fell through to null: no reply, no notice, an idle composer.
+   */
+  it('reports a failed turn rather than dropping it', () => {
+    expect(
+      map('error', {
+        error: { message: 'Usage limit reached', additionalDetails: 'resets in 3h' },
+        willRetry: false,
+      })
+    ).toMatchObject({
+      type: 'error',
+      message: 'Usage limit reached — resets in 3h',
+      recoverable: false,
+    })
+  })
+
+  it('marks a retryable failure as recoverable', () => {
+    expect(
+      map('error', { error: { message: 'Overloaded', additionalDetails: null }, willRetry: true })
+    ).toMatchObject({ type: 'error', recoverable: true })
+  })
+
+  it('keeps the moment an agent summarised its own history', () => {
+    expect(map('thread/compacted', {})).toMatchObject({ type: 'context.compacted' })
+  })
+
   it('reports both windows when both are there', () => {
     const event = mapNotification(
       {

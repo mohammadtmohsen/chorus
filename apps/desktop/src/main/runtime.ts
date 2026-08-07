@@ -29,6 +29,7 @@ import {
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
+import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { findExecutable } from './which.js'
 
 /**
@@ -126,6 +127,8 @@ export interface SendResult {
 
 export class ChorusRuntime {
   private readonly active = new Map<string, ActiveConversation>()
+  /** Last renderer-owned editor arrangement, persisted beside the active sessions. */
+  private workspaceSnapshot: WorkspaceSnapshot | null = null
   /** The latest windows each provider reported, for a window opened later. */
   private readonly limits = new Map<AgentId, readonly UsageWindow[]>()
   private onLimits: ((push: { agentId: AgentId; windows: UsageWindow[] }) => void) | undefined
@@ -505,16 +508,19 @@ export class ChorusRuntime {
    * deleted is dropped rather than failing the restore — the others are still
    * worth having, and the log keeps the one that could not come back.
    */
-  async restoreOpenConversations(): Promise<
-    {
+  async restoreOpenConversations(): Promise<{
+    sessions: {
       conversationId: string
       participants: AgentId[]
       profileId: string
       cwd: string
       title: string
     }[]
-  > {
-    const saved = readOpenSessions(this.userDataPath)
+    workspace: WorkspaceSnapshot | null
+  }> {
+    const savedState = readOpenSessions(this.userDataPath)
+    const saved = savedState.sessions
+    this.workspaceSnapshot = savedState.workspace
     const restored: {
       conversationId: string
       participants: AgentId[]
@@ -557,7 +563,7 @@ export class ChorusRuntime {
 
     this.rememberOpen()
     if (restored.length > 0) this.log.info('sessions reopened', { count: restored.length })
-    return restored
+    return { sessions: restored, workspace: this.workspaceSnapshot }
   }
 
   private async reopen(entry: OpenSession): Promise<ActiveConversation | null> {
@@ -643,9 +649,8 @@ export class ChorusRuntime {
 
   /** Written after anything that changes what is open, or what it is. */
   private rememberOpen(): void {
-    writeOpenSessions(
-      this.userDataPath,
-      [...this.active.values()].map((c) => ({
+    writeOpenSessions(this.userDataPath, {
+      sessions: [...this.active.values()].map((c) => ({
         conversationId: c.conversationId,
         agents: [...c.participants.keys()],
         cwd: c.cwd,
@@ -658,8 +663,9 @@ export class ChorusRuntime {
             .filter((p) => p.session.sessionRef.trim() !== '')
             .map((p) => [p.agentId, p.session.sessionRef])
         ),
-      }))
-    )
+      })),
+      workspace: this.workspaceSnapshot,
+    })
   }
 
   /**
@@ -685,6 +691,20 @@ export class ChorusRuntime {
     this.active.clear()
     for (const [id, conversation] of next) this.active.set(id, conversation)
     this.rememberOpen()
+  }
+
+  /**
+   * Stores the editor arrangement and the sidebar's order together.
+   *
+   * `order` is the sidebar's list of running conversations; the panes' tab
+   * orders travel inside `workspace`. The snapshot is set first so that
+   * `reorderConversations`' single `rememberOpen()` writes both in one go
+   * rather than leaving the file briefly holding a new order against an old
+   * layout.
+   */
+  setConversationLayout(order: readonly string[], workspace: WorkspaceSnapshot): void {
+    this.workspaceSnapshot = workspace
+    this.reorderConversations(order)
   }
 
   /**
@@ -883,6 +903,26 @@ export class ChorusRuntime {
     this.rememberOpen()
     this.log.info('policy changed', { conversationId, from: previous.id, to: profile.id })
     return { profileId: profile.id }
+  }
+
+  /**
+   * Re-reads every live agent's account windows.
+   *
+   * Across conversations, not just one: the windows are the account's, so the
+   * answer is the same wherever it is asked from, and asking once per session
+   * would report the same number several times over.
+   */
+  async refreshLimits(): Promise<void> {
+    const asked = new Set<AgentId>()
+    const reads: Promise<void>[] = []
+    for (const conversation of this.active.values()) {
+      for (const [agentId, participant] of conversation.participants) {
+        if (asked.has(agentId)) continue
+        asked.add(agentId)
+        reads.push(participant.service.refreshLimits())
+      }
+    }
+    await Promise.allSettled(reads)
   }
 
   /** Interrupts every agent mid-turn; the user pressed one Stop button. */

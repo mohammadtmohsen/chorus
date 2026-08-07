@@ -58,6 +58,14 @@ export interface AgentSession {
    */
   respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void>
   setModel?(model: string): Promise<void>
+  /**
+   * Re-reads the account's usage windows, for providers that can be asked.
+   *
+   * Optional because not every provider answers: the windows otherwise only
+   * arrive after a turn, so a user who has just been cut off has no way to find
+   * out they are back without spending something to ask.
+   */
+  readLimits?(): Promise<void>
   close(): Promise<void>
 }
 

@@ -28,12 +28,16 @@ interface Driver {
   interrupts: number
 }
 
+/** The last options object handed to the SDK, so tests can reach its hooks. */
+let lastOptions: { hooks?: Record<string, { hooks: (() => Promise<unknown>)[] }[]> } | undefined
+
 function stubTarget(): ConformanceTarget & { driver: () => Driver } {
   const drivers: Driver[] = []
 
   const adapter = new ClaudeAdapter({
     now: () => 1_000,
-    createQuery: () => {
+    createQuery: (options) => {
+      lastOptions = options as typeof lastOptions
       const messages = new AsyncQueue<unknown>()
       const driver: Driver = {
         push: (m) => {
@@ -106,6 +110,37 @@ describe('conformance: ClaudeAdapter', () => {
     expect(events.length).toBeGreaterThan(0)
     expect(CONFORMANCE_CHECKS.monotonicSeq(events)).toBeNull()
     expect(CONFORMANCE_CHECKS.stampsAgentId(target.adapter, events)).toBeNull()
+  })
+
+  /*
+   * The refresh button on the activity bar calls this by the protocol's name,
+   * not the adapter's — a private `readPlanUsage` was already there and doing
+   * the work, and the only thing missing was a way for the UI to ask again.
+   */
+  it('answers a limits refresh by the name the protocol uses', async () => {
+    const target = stubTarget()
+    const session = await target.adapter.start(OPTS)
+    expect(typeof session.readLimits).toBe('function')
+    // Resolves rather than throwing when the provider has nothing to say.
+    await expect(session.readLimits?.()).resolves.toBeUndefined()
+  })
+
+  /*
+   * Claude reports compaction through a hook, not the message stream — which
+   * is why it needs its own test: nothing that pushes a message can reach it,
+   * and the whole point of wiring it was that both agents report the same fact.
+   */
+  it('reports a compaction, which reaches it by hook rather than by message', async () => {
+    const target = stubTarget()
+    const session = await target.adapter.start(OPTS)
+
+    const hook = lastOptions?.hooks?.['PostCompact']?.[0]?.hooks[0]
+    expect(hook).toBeTypeOf('function')
+    await hook?.()
+    await target.killProvider(session)
+
+    const events = await collectEvents(session, 10)
+    expect(events.map((e) => e.type)).toContain('context.compacted')
   })
 
   it('ends its event stream when the provider dies', async () => {

@@ -29,18 +29,19 @@
     "better-sqlite3": "^13.0.2",
     "i18next": "^26.3.6",
     "react-i18next": "^17.0.11",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
     "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "vite": "^8.2.0",
-    "electron-builder": "^26.15.3"
+    "vite": "^8.2.0"
   },
   "author": "Chorus"
 }
