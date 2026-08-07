@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildDiagnostics } from '@chorus/shared'
+import { homedir } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import {
   EVENTS_PUSH_CHANNEL,
@@ -104,6 +105,7 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         nodeVersion: process.versions.node,
         chromeVersion: process.versions.chrome,
         platform: process.platform,
+        home: homedir(),
       }),
 
     'agents:probe': () => probeAgents(),

@@ -24,6 +24,18 @@ export const AppInfo = z.object({
   nodeVersion: z.string(),
   chromeVersion: z.string(),
   platform: z.string(),
+  /*
+   * Home, so the renderer can tell "no folder chosen" from "a folder that
+   * happens to be home".
+   *
+   * An empty directory has always meant "start at home" — the runtime resolves
+   * it that way on both `startConversation` and `setProjectDirectory`, because
+   * a directory is a starting point rather than a boundary. But it resolves it
+   * *before* the renderer ever sees it, so a session that was never given a
+   * project looked identical to one deliberately pointed at home, and there was
+   * no way to say "no particular folder" back.
+   */
+  home: z.string(),
 })
 export type AppInfo = z.infer<typeof AppInfo>
 

@@ -12,6 +12,8 @@ import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
   const [appVersion, setAppVersion] = useState<string | null>(null)
+  /** Where "no folder" resolves to, so a card can say which it is looking at. */
+  const [home, setHome] = useState('')
   const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
   const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
   const [defaults, setDefaults] = useState<Defaults>({
@@ -110,7 +112,10 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     window.chorus
       .getAppInfo()
-      .then(({ appVersion: version }) => { setAppVersion(version); })
+      .then(({ appVersion: version, home: where }) => {
+        setAppVersion(version)
+        setHome(where)
+      })
       .catch(() => { setAppVersion(null); })
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
@@ -329,6 +334,25 @@ export function App(): React.JSX.Element {
   )
 
   /*
+   * A path typed rather than picked, and an empty one meaning "no folder".
+   *
+   * The runtime has always read an empty directory as "start at home" — a
+   * directory is a starting point, not a boundary — so clearing the field is
+   * how a session goes back to having no project of its own.
+   */
+  const setFolder = useCallback(
+    async (conversationId: string, cwd: string) => {
+      try {
+        const applied = await window.chorus.setProjectDirectory({ conversationId, cwd })
+        setCwd(conversationId, applied.cwd, applied.title)
+      } catch (error) {
+        fail(setError)(error)
+      }
+    },
+    [setCwd]
+  )
+
+  /*
    * The IPC and the error live here rather than in the control, because the
    * cast is now shown in two places and neither of them owns a place to report
    * a failure. The caller awaits this only to know when to stop disabling
@@ -483,6 +507,8 @@ export function App(): React.JSX.Element {
         installed={installed}
         onToggleAgent={toggleAgent}
         onChooseFolder={chooseFolder}
+        onSetFolder={setFolder}
+        home={home}
         onChooseProfile={applyProfile}
         onOpenPanel={openPanel}
         renderSession={(session, focused, paneId) => (

@@ -687,6 +687,90 @@ export const specs = [
         assert(card.headCursor === 'pointer', 'and says so with the pointer')
 
         /*
+         * A folder can be typed, and a session can have none.
+         *
+         * The runtime has always read an empty directory as "start at home" — a
+         * directory is a starting point, not a boundary — but it resolved that
+         * before the renderer saw it, so a session that was never given a
+         * project looked exactly like one deliberately pointed at home, and
+         * there was no way to say "no particular folder" back. The card names
+         * that state and can return to it.
+         */
+        const folder = () =>
+          app.evaluate(`(() => {
+            const el = document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path')
+            return { tag: el.tagName, text: el.textContent || el.value, empty: el.dataset.empty ?? null }
+          })()`)
+        const editFolder = async (value) => {
+          await app.evaluate(`(() => {
+            document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path')
+              .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+            return true
+          })()`)
+          await app.until(
+            `document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path').tagName === 'INPUT'`,
+            { timeout: 15_000, label: 'the folder field opened' }
+          )
+          await app.evaluate(`(() => {
+            const f = document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path')
+            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+              .set.call(f, ${JSON.stringify(value)})
+            f.dispatchEvent(new Event('input', { bubbles: true }))
+            f.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+            return true
+          })()`)
+        }
+
+        const atStart = await folder()
+        assert(
+          atStart.empty === 'true',
+          `a session starts with no folder of its own, got ${atStart.text}`
+        )
+
+        await editFolder('/tmp')
+        await app.until(
+          `document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path').dataset.empty === 'false'`,
+          { timeout: 20_000, label: 'the typed folder took' }
+        )
+        assert(true, 'and a path can be typed rather than only picked')
+
+        /*
+         * And one click gives it back.
+         *
+         * Emptying the field works and nobody finds it — "double-click, select
+         * all, delete, Enter" is not a gesture. The × only exists when there is
+         * a folder to drop, and sits beside the path rather than in the actions
+         * column, because the card's other × ends the session.
+         */
+        const clear = await app.evaluate(`(() => {
+          const row = document.querySelector('[data-sidebar-conversation="${first}"]')
+          const x = row.querySelector('.workspace-session-folder-clear')
+          const end = row.querySelector('.workspace-session-action--end')
+          return {
+            present: x !== null,
+            clearOfTheEndButton:
+              x && end ? end.getBoundingClientRect().left - x.getBoundingClientRect().right > 40 : false,
+          }
+        })()`)
+        assert(clear.present, 'a folder can be dropped without editing anything')
+        assert(clear.clearOfTheEndButton, 'and its × is nowhere near the one that ends the session')
+
+        await app.evaluate(`(() => {
+          document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-folder-clear').click()
+          return true
+        })()`)
+        await app.until(
+          `document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path').dataset.empty === 'true'`,
+          { timeout: 20_000, label: 'the folder went back to none' }
+        )
+        assert(
+          (await app.evaluate(
+            `!document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-folder-clear')`
+          )) === true,
+          'and the × goes with it, there being nothing left to clear'
+        )
+
+        /*
          * The profile menu has to leave the sidebar's subtree entirely.
          *
          * The sidebar carries a `transform` for its slide, which makes it the

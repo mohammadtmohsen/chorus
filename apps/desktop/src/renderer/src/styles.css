@@ -3302,11 +3302,64 @@ input::placeholder {
   width: 280px;
 }
 
-/* A control with no cursor of its own inherits an I-beam over its own label. */
-.workspace-session-path.path--button {
+/* The path and the one control that takes it away, kept together. */
+.workspace-session-folder {
+  display: flex;
+  align-items: center;
   grid-column: 1;
   grid-row: 2;
-  justify-self: start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-session-folder-clear {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: color-mix(in srgb, var(--faint) 70%, transparent);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.workspace-session-folder-clear:hover,
+.workspace-session-folder-clear:focus-visible {
+  background: color-mix(in srgb, var(--bone) 8%, transparent);
+  color: var(--bone);
+  outline: none;
+}
+
+/* Says what it is rather than where it is: a session with no project of its own. */
+.workspace-session-path[data-empty='true'] {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+/* Typed rather than picked; sits exactly where the button it replaces did. */
+.workspace-session-path.path--input {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: stretch;
+  min-width: 0;
+  padding: 0 calc(var(--step) * 1.5);
+  border: 1px solid var(--muted);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--sunken);
+  color: var(--bone);
+  font: 10px var(--mono);
+  outline: none;
+}
+
+/* A control with no cursor of its own inherits an I-beam over its own label. */
+.workspace-session-path.path--button {
+  min-width: 0;
   overflow: hidden;
   max-width: 100%;
   padding: 0;

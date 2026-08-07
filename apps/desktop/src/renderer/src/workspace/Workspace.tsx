@@ -44,6 +44,9 @@ interface WorkspaceProps {
   ) => Promise<void>
   /** Opens the picker and re-points the conversation at what comes back. */
   readonly onChooseFolder: (conversationId: string) => Promise<void>
+  readonly onSetFolder: (conversationId: string, cwd: string) => Promise<void>
+  /** Where an unset folder resolves to, so a card can name that state. */
+  readonly home: string
   readonly onChooseProfile: (conversationId: string, profileId: string) => Promise<void>
   /** Opens a panel the pane owns, activating the session on the way. */
   readonly onOpenPanel: (conversationId: string, panel: 'review' | 'summary') => void
@@ -209,6 +212,8 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         installed={props.installed}
         onToggleAgent={props.onToggleAgent}
         onChooseFolder={props.onChooseFolder}
+        onSetFolder={props.onSetFolder}
+        home={props.home}
         onChooseProfile={props.onChooseProfile}
         onOpenPanel={props.onOpenPanel}
         onRestart={props.onRestart}
@@ -682,6 +687,8 @@ function WorkspaceSidebar(props: {
   installed: readonly AgentId[]
   onToggleAgent: (conversationId: string, agentId: AgentId, present: boolean) => Promise<void>
   onChooseFolder: (conversationId: string) => Promise<void>
+  onSetFolder: (conversationId: string, cwd: string) => Promise<void>
+  home: string
   onChooseProfile: (conversationId: string, profileId: string) => Promise<void>
   onOpenPanel: (conversationId: string, panel: 'review' | 'summary') => void
   onRestart: (conversationId: string) => void
@@ -810,6 +817,8 @@ function WorkspaceSidebar(props: {
                 props.onToggleAgent(session.conversationId, agentId, present)
               }
               onChooseFolder={() => props.onChooseFolder(session.conversationId)}
+              onSetFolder={(cwd) => props.onSetFolder(session.conversationId, cwd)}
+              home={props.home}
               profiles={props.profiles}
               onChooseProfile={(profileId) =>
                 props.onChooseProfile(session.conversationId, profileId)
@@ -883,6 +892,8 @@ function SidebarSession(props: {
   installed: readonly AgentId[]
   onToggleAgent: (agentId: AgentId, present: boolean) => Promise<void>
   onChooseFolder: () => Promise<void>
+  onSetFolder: (cwd: string) => Promise<void>
+  home: string
   profiles: readonly { readonly id: string; readonly name: string; readonly summary: string }[]
   onChooseProfile: (profileId: string) => Promise<void>
   onOpenPanel: (panel: 'review' | 'summary') => void
@@ -905,6 +916,8 @@ function SidebarSession(props: {
   /** Which agent is mid-flight, so the pair disables rather than double-fires. */
   const [moving, setMoving] = useState<string | null>(null)
   /** Where the menu sits, and whether that has been checked against the window. */
+  /** Non-null while the folder is being typed; holds the draft, not the truth. */
+  const [editingPath, setEditingPath] = useState<string | null>(null)
   const [picking, setPicking] = useState<{
     x: number
     y: number
@@ -1100,14 +1113,72 @@ function SidebarSession(props: {
               )
             })}
           </ul>
-        <button
-          type="button"
-          className="path path--button workspace-session-path"
-          title={t('conversation.choosePath')}
-          onClick={() => { void props.onChooseFolder(); }}
-        >
-          {shortenPath(props.session.cwd)}
-        </button>
+        {/*
+          The folder: click to pick one, double-click to type one.
+
+          Both, because they answer different needs — a dialog to go looking, a
+          field when the path is already known. Clearing the field is how a
+          session goes back to no folder at all, which the runtime has always
+          allowed and the UI had no way to say.
+        */}
+        {editingPath === null ? (
+          <span className="workspace-session-folder">
+            <button
+              type="button"
+              className="path path--button workspace-session-path"
+              data-empty={props.session.cwd === props.home}
+              title={t('conversation.choosePath')}
+              onClick={() => { void props.onChooseFolder(); }}
+              onDoubleClick={() => {
+                setEditingPath(props.session.cwd === props.home ? '' : props.session.cwd)
+              }}
+            >
+              {props.session.cwd === props.home
+                ? t('conversation.noFolder')
+                : shortenPath(props.session.cwd)}
+            </button>
+            {/*
+              Only when there is one to drop, and beside the path rather than in
+              the actions column — proximity is what keeps it from reading as
+              the End button, which is the other ✕ on this card and ends the
+              session rather than a setting.
+
+              It exists because clearing the field was the only way back to no
+              folder, and "double-click, select all, delete, Enter" is a gesture
+              nobody finds.
+            */}
+            {props.session.cwd !== props.home && (
+              <button
+                type="button"
+                className="workspace-session-folder-clear"
+                aria-label={t('conversation.clearFolder')}
+                title={t('conversation.clearFolder')}
+                onClick={() => { void props.onSetFolder(''); }}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            )}
+          </span>
+        ) : (
+          <input
+            className="path path--input workspace-session-path"
+            value={editingPath}
+            autoFocus
+            aria-label={t('conversation.choosePath')}
+            placeholder={t('conversation.noFolder')}
+            onChange={(event) => { setEditingPath(event.target.value); }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setEditingPath(null)
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                void props.onSetFolder(editingPath)
+                setEditingPath(null)
+              }
+            }}
+            /* Leaving is not agreeing: a half-typed path is what a stray click
+               produces, which is the rule the composer's field used too. */
+            onBlur={() => { setEditingPath(null); }}
+          />
+        )}
         {/*
           The profile, as the picker it is in the composer — same classes, same
           menu, so what a session may do is changed the same way from the list
