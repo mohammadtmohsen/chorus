@@ -33,11 +33,14 @@ export const DEFAULT_SETTINGS: Settings = {
    *
    * A session opens the moment the app does, so its cast is what you pay for
    * without asking — and two agents is two provider processes and twice the
-   * wait before anything can be typed. Codex alone is the cheap start; the other
+   * wait before anything can be typed. One alone is the cheap start; the other
    * can be brought in from its chip whenever the conversation needs it, and it
    * reads everything said so far when it arrives.
+   *
+   * Only the default. Toggling the cast on any session persists it, so this is
+   * what a machine with no settings file yet begins with, not a rule.
    */
-  agents: ['codex'],
+  agents: ['claude'],
   cwd: '',
   // Permissive defaults ship by accident, not on purpose (plan §4.4).
   profileId: 'read-only',
