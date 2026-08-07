@@ -424,6 +424,42 @@ and correctly refuses to split again. Focusing the crowded group with `⌘1`
 before each split fixes it. Neither would have been visible in the numbers
 alone; both were caught by asserting the state the sample was taken in.
 
+## Memory: unmounting gives back the CPU, not the bytes
+
+The CPU measurement above answered what a background session costs to *draw*.
+It did not ask what one costs to *hold*, and nothing else had either — memory
+appears nowhere in this plan.
+
+Measured the same way: a session with one long reply, heap sampled after a
+forced collection, before and after backgrounding it.
+
+| | |
+|---|---|
+| transcript while mounted | **0.9 MB** |
+| released by unmounting | **0.1 MB** |
+| still held | **0.9 MB — 94%** |
+
+The DOM goes; the transcript does not. The carry map keeps `{ view, draft,
+attached }` per conversation so a returning tab restores instantly and asks only
+for what it missed, and `view` is the whole reduced transcript. So
+unmount-on-background is a CPU policy that happens to leave memory where it was.
+
+That is a trade rather than a defect — and the trade was never written down.
+Two things make it worth revisiting rather than accepting:
+
+- **It scales with transcript length, not session count.** 0.9 MB is one reply
+  of 700 lines. A day-long session is many times that, and six of them are held
+  at once.
+- **Nothing evicts.** A carry is dropped when its session is restarted or ended.
+  Closing a *tab* deliberately keeps it, which is the point — but it means the
+  only bound is how many sessions have ever been open.
+
+The cheap fix, if it is wanted: `view` is an optimisation, not a source of
+truth. The event store can rebuild it, and `conversation:history` already takes
+`afterSeq`. Dropping the carried view above some size trades a slower restore
+for a bounded one, which is the same seam ACME's `idleUnmountMinutes` occupies —
+already defaulted the other way here.
+
 ## Known deviations from the plan
 
 - The sidebar edge hot-zone is **3px, not 2px**. Kept: at 2px it competes with
