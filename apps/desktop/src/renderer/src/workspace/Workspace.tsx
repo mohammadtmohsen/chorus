@@ -645,8 +645,26 @@ function PaneTabStrip(
 const ROW_DRAG_PX = 5
 
 /** The card floats this far off the window edge; `--step * 2` in the stylesheet. */
-/** Mirrors `--activity` in the stylesheet: the column the sidenav starts after. */
-const ACTIVITY_WIDTH = 60
+/**
+ * The activity bar's width, read from the stylesheet that decides it.
+ *
+ * It was a constant here mirroring `--activity` there, which is two statements
+ * of one fact and only correct while somebody keeps them equal. They already
+ * disagreed once: the bar was widened and the constant was not, which put the
+ * resize handle eighteen pixels inside the card and made the edge undraggable —
+ * a bug whose cause is invisible at the place it shows up.
+ *
+ * Read per call rather than cached: it is one `getComputedStyle` on pointer
+ * down, not per frame, and caching it would reintroduce the same staleness in a
+ * different shape.
+ */
+function activityWidth(): number {
+  const declared = getComputedStyle(document.documentElement).getPropertyValue('--activity')
+  const parsed = Number.parseFloat(declared)
+  // A stylesheet that has not loaded is the only way this is NaN, and falling
+  // back to zero puts the handle at the window's edge rather than nowhere.
+  return Number.isFinite(parsed) ? parsed : 0
+}
 
 /**
  * The stored width, fitted to the window actually showing it.
@@ -724,7 +742,7 @@ function useSidebarResize(
          * place the pointer was dropped. The 6px fudge that used to sit here
          * went with the card's margin — a flush panel's edge is its edge.
          */
-        latest = fitSidebar(move.clientX - ACTIVITY_WIDTH)
+        latest = fitSidebar(move.clientX - activityWidth())
         root.style.setProperty('--sidebar', `${String(latest)}px`)
       }
       const stop = (end: PointerEvent): void => {

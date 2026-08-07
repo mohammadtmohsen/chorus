@@ -4,6 +4,7 @@ import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
 import { LogViewer } from './LogViewer.js'
 import { fail, Session, type AgentId, type SessionCarry, type SessionInfo } from './Session.js'
+import { trimCarry } from './carry.js'
 import { Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
@@ -258,7 +259,7 @@ export function App(): React.JSX.Element {
   )
 
   const keepCarry = useCallback((conversationId: string, carry: SessionCarry) => {
-    carries.current.set(conversationId, carry)
+    carries.current.set(conversationId, trimCarry(carry))
   }, [])
 
   /** Who is in a conversation, changed from wherever the cast is shown. */

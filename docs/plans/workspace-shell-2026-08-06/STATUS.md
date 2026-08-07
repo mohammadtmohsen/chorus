@@ -454,11 +454,17 @@ Two things make it worth revisiting rather than accepting:
   Closing a *tab* deliberately keeps it, which is the point — but it means the
   only bound is how many sessions have ever been open.
 
-The cheap fix, if it is wanted: `view` is an optimisation, not a source of
-truth. The event store can rebuild it, and `conversation:history` already takes
-`afterSeq`. Dropping the carried view above some size trades a slower restore
-for a bounded one, which is the same seam ACME's `idleUnmountMinutes` occupies —
-already defaulted the other way here.
+**Fixed.** `carry.ts` holds the view to a 120,000-character budget and drops it
+above that, keeping only what the event store cannot give back — the draft, the
+attachments, the scroll position. A character budget rather than a message
+count, because the memory is the text: one reply that counted to seven hundred
+outweighs fifty short exchanges.
+
+Safe because `view` was never a source of truth. `Session` asks for everything
+after `lastSeq`, so a dropped view means a `lastSeq` of zero and a full replay
+from the event store, which is where the transcript actually lives. The trade is
+now explicit: a short conversation returns instantly, a long one pays a refetch,
+and neither holds a megabyte to do it.
 
 ## Known deviations from the plan
 
