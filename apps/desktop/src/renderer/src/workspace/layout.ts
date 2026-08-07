@@ -78,8 +78,7 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
       const source = workspace.panes[node.paneId]
       if (source === undefined) return null
 
-      const activeIndex =
-        source.activeTabId === null ? -1 : source.tabs.indexOf(source.activeTabId)
+      const activeIndex = source.activeTabId === null ? -1 : source.tabs.indexOf(source.activeTabId)
       const tabs = source.tabs.filter((id) => {
         if (seenTabs.has(id)) return false
         seenTabs.add(id)
@@ -242,7 +241,6 @@ export function closeTab(
   })
 }
 
-
 function closeAllTabs(workspace: WorkspaceSnapshot, paneId: string): WorkspaceSnapshot {
   const pane = workspace.panes[paneId]
   if (pane === undefined) return workspace
@@ -321,7 +319,10 @@ function insertSplit(
       sizes: [0.5, 0.5],
     }
   }
-  return { ...node, children: node.children.map((child) => insertSplit(child, targetPaneId, newPaneId, direction)) }
+  return {
+    ...node,
+    children: node.children.map((child) => insertSplit(child, targetPaneId, newPaneId, direction)),
+  }
 }
 
 /**
@@ -343,7 +344,10 @@ export function splitTab(
     return workspace
   }
   const sourcePane = workspace.panes[source.paneId]
-  if (sourcePane === undefined || (source.paneId === targetPaneId && sourcePane.tabs.length === 1)) {
+  if (
+    sourcePane === undefined ||
+    (source.paneId === targetPaneId && sourcePane.tabs.length === 1)
+  ) {
     return workspace
   }
   const paneCount = leafPaneIds(workspace.layout).length

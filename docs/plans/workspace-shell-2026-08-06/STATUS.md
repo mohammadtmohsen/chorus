@@ -69,7 +69,7 @@ reorder by drag any more, tabs do. Three specs replace it:
 
 One of those three specs was itself wrong, and passed for four runs before
 saying so. `a backgrounded session keeps its transcript` waited on
-`.entry` containing "KEPT" — but the *prompt* contains "KEPT" too, so it
+`.entry` containing "KEPT" — but the _prompt_ contains "KEPT" too, so it
 resolved the moment the user's own message rendered. The entry count it then
 took was of a turn still in flight, and the reply landed while the tabs were
 being switched, which surfaced at the end as a transcript that came back the
@@ -78,19 +78,19 @@ the turn to go idle, and additionally asserts the answer appears exactly
 **once** — the failure mode `afterSeq` would actually produce is a doubled
 transcript, not a short one, and nothing had been checking for it.
 
-**`.pane` now means a *mounted session*, not an editor group.** Only a group's
+**`.pane` now means a _mounted session_, not an editor group.** Only a group's
 active tab mounts, so two sessions in one group is two tabs and one `.pane`.
 The specs keep `PANE` / `GROUP` / `TAB` separate for exactly that reason. The
 launch and IDE specs still key off `.pane` and still pass unchanged.
 
 ## Open defects — all four closed
 
-| # | Was | Now |
-|---|---|---|
-| 1 | `reconcileWorkspace` resurrected deliberately closed tabs | `layout.ts` force-opens only when `saved === null`; two tests pin both halves |
-| 2 | `parseOpenSessions` returned `version` past its declared type | destructures to `{ sessions, workspace }` |
-| 3 | typecheck red at `App.tsx:118` | green |
-| 4 | `order` vs `workspace` tab order undefined | `conversation:layout` now says in the contract that `order` is the **sidebar's** order and pane tab orders live inside `workspace` |
+| #   | Was                                                           | Now                                                                                                                                |
+| --- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `reconcileWorkspace` resurrected deliberately closed tabs     | `layout.ts` force-opens only when `saved === null`; two tests pin both halves                                                      |
+| 2   | `parseOpenSessions` returned `version` past its declared type | destructures to `{ sessions, workspace }`                                                                                          |
+| 3   | typecheck red at `App.tsx:118`                                | green                                                                                                                              |
+| 4   | `order` vs `workspace` tab order undefined                    | `conversation:layout` now says in the contract that `order` is the **sidebar's** order and pane tab orders live inside `workspace` |
 
 ## Cleanups taken since
 
@@ -122,9 +122,9 @@ Worth recording because it was the app's **default** state, not an edge case,
 and nothing in the suite had been able to see it.
 
 `.workspace-pane` set `width: 100%` but not `height: 100%`, unlike its siblings
-`.split-branch` and `.workspace-empty`. A *split* pane is a flex item and gets
+`.split-branch` and `.workspace-empty`. A _split_ pane is a flex item and gets
 stretched by `.split-child`, so it looked right the moment you split — which is
-what made this so easy to miss. An *unsplit* pane is a direct child of
+what made this so easy to miss. An _unsplit_ pane is a direct child of
 `.workspace-editor`, which lays out as a block, so its height stayed auto, the
 `minmax(0, 1fr)` row resolved against the content rather than the view, and the
 pane grew as tall as the whole transcript.
@@ -154,8 +154,8 @@ left every tab closed, so the session came back running and off screen.
 The cause was in `App`'s persistence subscription, not in the layout core.
 `hydrate` flips `hydrated` false→true, the selector counts that as a change, and
 the first emission is the store echoing back what it has just read. On a first
-run that echo replaces the `null` that means *"this file predates the shell,
-open everything"* with an empty snapshot meaning *"the user closed every tab"* —
+run that echo replaces the `null` that means _"this file predates the shell,
+open everything"_ with an empty snapshot meaning _"the user closed every tab"_ —
 and it lands before the auto-started session has opened its pane, so the
 force-open path could never fire again on that profile.
 
@@ -164,7 +164,7 @@ user's. Verified both ways — with the debounced write landing, the real layout
 round-trips; without it, `workspace` stays `null` and the next launch
 force-opens.
 
-**Mostly closed since.** Changes that *end* — a dropped row, a finished resize
+**Mostly closed since.** Changes that _end_ — a dropped row, a finished resize
 — now write straight through `commitLayout` rather than waiting on the
 debounce. The debounce exists to coalesce a stream of updates, and pointer-up
 is not a stream; quitting inside that 180ms window was silently discarding the
@@ -195,7 +195,7 @@ Asked for after the shell landed. What changed:
   lines" reads as a ban on curvature, but `main` already carried 53
   `border-radius` rules — the composer, the user's own message, approval and
   question cards, the mention menu, every chip. What is square is the
-  *structure*: panes, tabs, sashes, the grid. Content surfaces have always been
+  _structure_: panes, tabs, sashes, the grid. Content surfaces have always been
   rounded. A sidenav card is content, so it needed no exception at all.
 
   The real fault was the one not flagged: it shipped on 9px and 6px, beside an
@@ -206,6 +206,7 @@ Asked for after the shell landed. What changed:
   same as the composer, 7px for the search field and icon buttons, 5px for a
   session row — and the plan's wording says structure-versus-content rather than
   claiming nothing is round.
+
 - **Full height.** `position: fixed`, 6px to 854px in an 860px window — 848px
   against the old 808px. It runs up behind the traffic lights, which is the
   usual macOS arrangement; `.workspace-sidebar-head` pads 26px down to clear
@@ -214,7 +215,7 @@ Asked for after the shell landed. What changed:
   than a prop, so a sidebar toggle does not re-render every mounted transcript.
 - **Rows set at the transcript's size, and the card widened to suit.** They
   were 11px, matching the tab strip and the rest of the chrome. But a session's
-  name is *content* — it is the thing the sidenav exists to show — and it was
+  name is _content_ — it is the thing the sidenav exists to show — and it was
   being set three steps below the text it names. Rows are 14px now, the size of
   `.said .md-p`; row height 30px → 36px, search field 11px → 13px, and the
   unread badge, the voice dots and the state stub scaled with them.
@@ -231,7 +232,7 @@ Asked for after the shell landed. What changed:
 
   **The stored width and the shown width are not the same number.** A width
   chosen in a maximised window and reopened at 640px wide covered the editor
-  outright — the card is `fixed`, so it sits *on top* rather than pushing
+  outright — the card is `fixed`, so it sits _on top_ rather than pushing
   anything aside, and the workspace was simply gone until you found the
   collapse button. `fitSidebar` bounds the displayed width to half the window
   and re-runs on `resize`, but never writes back: the width the user chose is
@@ -252,6 +253,7 @@ Asked for after the shell landed. What changed:
   re-render every mounted transcript sixty times a second to move one edge, and
   the three rules that read the width are CSS anyway. The store still owns what
   gets persisted.
+
 - **Voice dots moved to the right.** Leading them made every row open with the
   same two marks, so the eye stepped over identical punctuation to reach the
   part that differs. On the right they form a column you can read down.
@@ -277,11 +279,11 @@ lives on the drag ref and the state is only what draws the line.
 
 Two stacking bugs came with the fixed card and were fixed with it:
 `.sheet-backdrop` was z-index 20 and would have been covered by the card (now
-80), and the sidebar's own `[data-previewing]` rule *lowered* it to 40 (the
+80), and the sidebar's own `[data-previewing]` rule _lowered_ it to 40 (the
 z-index is dropped; the base 60 already wins).
 
 `onReorderSessions` writes through `conversation:layout` immediately rather
-than via the debounced subscription — that one only fires on workspace *store*
+than via the debounced subscription — that one only fires on workspace _store_
 changes, and the sidebar's order lives in React state beside it, so a dragged
 row would have sat right until the next relaunch and then jumped back.
 
@@ -314,7 +316,7 @@ splits the footer into a left group (voices, path, profile) and a right one
 (spend, Review changes, Send) instead of pushing the chip past a session name.
 
 **Removing the bar broke the pane's layout, and no spec caught it.** `.pane`
-laid its children out on `grid-template-rows: auto 1fr auto` — a *positional*
+laid its children out on `grid-template-rows: auto 1fr auto` — a _positional_
 template meaning title, transcript, dock. With the title gone the transcript
 took `auto` and the composer took `1fr`, so the composer floated up under the
 last message with the rest of the pane empty beneath it.
@@ -357,7 +359,7 @@ the guarantee that actually regressed.
 no busy guard, both adapters declare `steer: true`, the Claude adapter runs in
 streaming-input mode so `send()` pushes onto the live prompt iterable, and
 `runtime.send` delivers into the running turn. `↵` had always worked. But the
-only *visible* control became Stop the moment an agent started, so the way to
+only _visible_ control became Stop the moment an agent started, so the way to
 say "actually, do it this way instead" looked exactly like the way to abandon
 the turn — and clicking it did abandon it. Stop sits beside Send now instead of
 replacing it. Verified against a real agent: the new instruction landed, the
@@ -380,7 +382,7 @@ a quieter way: it resolved before a scroll finished and reported a pinned header
 ## The renderer CPU measurement — Phase 8's last line
 
 Asked for as "six sessions streaming and two on screen, before and after". The
-*before* cannot be run: the old grid capped at four columns, so six sessions
+_before_ cannot be run: the old grid capped at four columns, so six sessions
 never fit in it — which was the reason for the shell in the first place. What
 can be measured is the claim the mount policy rests on, which is the useful
 half: **an unmounted session costs the renderer nothing while its agent
@@ -391,12 +393,12 @@ Six sessions, all sent the same 4000-line count so every window lands
 mid-stream. Renderer task time from `Performance.getMetrics`, sampled over 10
 seconds, as a fraction of wall clock. Two runs:
 
-| mounted | streaming | CPU | layout |
-|---|---|---|---|
-| 1 | 0 | 0.3% / 0.3% | 0% |
-| 1 | 1 | 13.7% / 12.3% | 1.2% / 0.9% |
-| 1 | **6** | **14.7% / 13.9%** | 1.6% / 1.7% |
-| **4** | 6 | **35.6% / 36.7%** | 10.8% / 12% |
+| mounted | streaming | CPU               | layout      |
+| ------- | --------- | ----------------- | ----------- |
+| 1       | 0         | 0.3% / 0.3%       | 0%          |
+| 1       | 1         | 13.7% / 12.3%     | 1.2% / 0.9% |
+| 1       | **6**     | **14.7% / 13.9%** | 1.6% / 1.7% |
+| **4**   | 6         | **35.6% / 36.7%** | 10.8% / 12% |
 
 - **Five extra streams, none of them mounted: +0.9% and +1.5%.** An agent
   streaming into a session nobody is looking at is very close to free, which is
@@ -405,39 +407,39 @@ seconds, as a fraction of wall clock. Two runs:
   **7–7.6% per mounted streaming session**, and layout time is where it goes,
   1.6% → 12%.
 
-Cost scales with what is *mounted*, not with what is *running*. That is the
+Cost scales with what is _mounted_, not with what is _running_. That is the
 whole of the divergence from the app this was modelled on, measured: their
 policy keeps hidden tabs mounted because their storm is on reload, and ours is
 continuous.
 
-Extrapolating the *before* rather than pretending to have run it: the old grid
+Extrapolating the _before_ rather than pretending to have run it: the old grid
 mounted every session it showed, so six of them would have been roughly six
 times the per-session cost — order of 45%, against 14% now, and it could only
 ever have shown four.
 
 Two measurement mistakes, both mine, both worth the note. The first pass used a
 300-line count that finished before the sampling window, so "6 streaming"
-measured a renderer with nothing left to do and read *lower* than one stream.
+measured a renderer with nothing left to do and read _lower_ than one stream.
 The second used `⌘\` three times from a fresh split each time and got two
-groups, not four — a split *moves* the tab, so the new group holds exactly one
+groups, not four — a split _moves_ the tab, so the new group holds exactly one
 and correctly refuses to split again. Focusing the crowded group with `⌘1`
 before each split fixes it. Neither would have been visible in the numbers
 alone; both were caught by asserting the state the sample was taken in.
 
 ## Memory: unmounting gives back the CPU, not the bytes
 
-The CPU measurement above answered what a background session costs to *draw*.
-It did not ask what one costs to *hold*, and nothing else had either — memory
+The CPU measurement above answered what a background session costs to _draw_.
+It did not ask what one costs to _hold_, and nothing else had either — memory
 appears nowhere in this plan.
 
 Measured the same way: a session with one long reply, heap sampled after a
 forced collection, before and after backgrounding it.
 
-| | |
-|---|---|
-| transcript while mounted | **0.9 MB** |
-| released by unmounting | **0.1 MB** |
-| still held | **0.9 MB — 94%** |
+|                          |                  |
+| ------------------------ | ---------------- |
+| transcript while mounted | **0.9 MB**       |
+| released by unmounting   | **0.1 MB**       |
+| still held               | **0.9 MB — 94%** |
 
 The DOM goes; the transcript does not. The carry map keeps `{ view, draft,
 attached }` per conversation so a returning tab restores instantly and asks only
@@ -451,7 +453,7 @@ Two things make it worth revisiting rather than accepting:
   of 700 lines. A day-long session is many times that, and six of them are held
   at once.
 - **Nothing evicts.** A carry is dropped when its session is restarted or ended.
-  Closing a *tab* deliberately keeps it, which is the point — but it means the
+  Closing a _tab_ deliberately keeps it, which is the point — but it means the
   only bound is how many sessions have ever been open.
 
 **Fixed.** `carry.ts` holds the view to a 120,000-character budget and drops it

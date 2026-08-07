@@ -12,7 +12,7 @@ history, keeps two `ResizeObserver`s, a `selectionchange` listener, and its own
 `onEvents` subscription that filters the global stream. Four of those at once is
 four transcripts painting while you read one.
 
-Worse, it is four transcripts painting while you *think*. The grid caps at four
+Worse, it is four transcripts painting while you _think_. The grid caps at four
 columns, so a fifth session has nowhere to go — the only way to reduce the noise
 today is to End a session, which kills the agent and loses the thread.
 
@@ -44,18 +44,18 @@ holding the composer and approval cards, and the app's vocabulary is already
 theatrical — the stage, the score, the voice rail. A session in the wings is off
 stage and about to come back on, which is exactly the state being described.
 
-Bottom rather than a left rail: the panes are short of *horizontal* space, not
+Bottom rather than a left rail: the panes are short of _horizontal_ space, not
 vertical — the grid already steps 4→3→2→1 columns as the window narrows.
 
 ### Three states, not two
 
-| State | Agents | Renderer cost | How you get there |
-|---|---|---|---|
-| On stage | running | full pane | default; click a chip |
-| In the wings | **running** | one chip | the — button, or Focus |
-| Ended | stopped | nothing | the ✕ button |
+| State        | Agents      | Renderer cost | How you get there      |
+| ------------ | ----------- | ------------- | ---------------------- |
+| On stage     | running     | full pane     | default; click a chip  |
+| In the wings | **running** | one chip      | the — button, or Focus |
+| Ended        | stopped     | nothing       | the ✕ button           |
 
-Minimize is a *view* decision and nothing else: no interrupt, no process
+Minimize is a _view_ decision and nothing else: no interrupt, no process
 teardown, no `sessionRef` churn. The distinction from End has to be legible in
 the UI or people will avoid the feature for fear of losing work.
 
@@ -97,9 +97,9 @@ Bonus: this also fixes a latent bug — Restart currently discards a typed draft
 ```ts
 interface Pulse {
   lastSeq: number
-  unread: number        // messages since it went to the wings
+  unread: number // messages since it went to the wings
   working: boolean
-  waiting: number       // approvals + questions blocking
+  waiting: number // approvals + questions blocking
 }
 ```
 
@@ -125,7 +125,7 @@ minimized sessions instead of one per pane.
   `main/open-sessions.ts`. `.default()` keeps existing `open-sessions.json`
   files parsing, so nobody's grid resets on upgrade.
 - Replace `conversation:reorder { order }` with `conversation:layout
-  { order, minimized: string[] }` — order and minimized change together and a
+{ order, minimized: string[] }` — order and minimized change together and a
   single channel means a single write. Update `shared/ipc.ts`, `main/ipc.ts`,
   `preload/index.ts`, `runtime.ts`.
 - `App` holds `minimized: Set<string>`; `restoreConversations` seeds it.

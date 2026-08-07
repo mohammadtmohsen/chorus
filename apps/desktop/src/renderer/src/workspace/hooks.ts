@@ -1,7 +1,12 @@
 import { useShallow } from 'zustand/react/shallow'
 import type { WorkspaceLayoutNode, WorkspacePane } from '../../../shared/workspace-layout.js'
 import { tabLocation } from './layout.js'
-import { useWorkspaceStore, type SessionPulse, type WorkspaceActions, type WorkspaceStore } from './store.js'
+import {
+  useWorkspaceStore,
+  type SessionPulse,
+  type WorkspaceActions,
+  type WorkspaceStore,
+} from './store.js'
 
 /**
  * The seam between the store and the views.
@@ -96,7 +101,6 @@ export function useWorkspaceLayout(): WorkspaceLayoutView {
 export function usePane(paneId: string): WorkspacePane | undefined {
   return useWorkspaceStore((state) => state.panes[paneId])
 }
-
 
 export function useSidebarHidden(): boolean {
   return useWorkspaceStore((state) => state.sidebarHidden)

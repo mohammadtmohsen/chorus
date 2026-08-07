@@ -188,9 +188,10 @@ export function mapNotification(n: Notification, ctx: MapContext): AgentEvent | 
       return {
         ...base,
         type: 'error',
-        message: detail === ''
-          ? str(error['message'], 'The agent stopped without saying why')
-          : `${str(error['message'], 'Error')} — ${detail}`,
+        message:
+          detail === ''
+            ? str(error['message'], 'The agent stopped without saying why')
+            : `${str(error['message'], 'Error')} — ${detail}`,
         recoverable: p['willRetry'] === true,
       }
     }

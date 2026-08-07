@@ -87,13 +87,7 @@ function directionalPane(paneId: string, direction: SplitDirection): string | nu
       const dx = x - sx
       const dy = y - sy
       const primary =
-        direction === 'left'
-          ? -dx
-          : direction === 'right'
-            ? dx
-            : direction === 'up'
-              ? -dy
-              : dy
+        direction === 'left' ? -dx : direction === 'right' ? dx : direction === 'up' ? -dy : dy
       if (primary <= 1) return []
       const cross = direction === 'left' || direction === 'right' ? Math.abs(dy) : Math.abs(dx)
       return [{ id, primary, cross }]
@@ -160,7 +154,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
           const target = targetPaneId === null ? undefined : state.panes[targetPaneId]
           if (targetPaneId !== null && target !== undefined) {
             state.moveTab(activeId, targetPaneId, target.tabs.length)
-          commitRef.current()
+            commitRef.current()
           }
         } else {
           state.splitTab(activeId, paneId, direction)
@@ -172,7 +166,11 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
 
       if (event.metaKey && event.altKey && direction !== null && paneId !== null) {
         event.preventDefault()
-        if (event.shiftKey && (direction === 'left' || direction === 'right') && pane !== undefined) {
+        if (
+          event.shiftKey &&
+          (direction === 'left' || direction === 'right') &&
+          pane !== undefined
+        ) {
           const from = activeId === null ? -1 : pane.tabs.indexOf(activeId)
           if (from >= 0) state.reorderTab(paneId, from, from + (direction === 'left' ? -1 : 2))
           commitRef.current()
@@ -186,13 +184,13 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       if (event.metaKey && !event.altKey && !event.shiftKey && event.key === '\\') {
         event.preventDefault()
         if (paneId !== null && activeId !== null) state.splitTab(activeId, paneId, 'right')
-          commitRef.current()
+        commitRef.current()
         return
       }
       if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'w') {
         event.preventDefault()
         if (paneId !== null && activeId !== null) state.closeTab(paneId, activeId)
-          commitRef.current()
+        commitRef.current()
         return
       }
       if (event.metaKey && event.shiftKey && (event.key === '[' || event.key === ']')) {
@@ -507,7 +505,6 @@ function PaneTabStrip(
   const [renaming, setRenaming] = useState<string | null>(null)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-
   /*
    * A strip that scrolls can hold the active tab off screen.
    *
@@ -583,12 +580,7 @@ function PaneTabStrip(
                   aria-controls={`panel-${props.paneId}-${conversationId}`}
                   title={session.title}
                   onPointerDown={(event) => {
-                    props.onTabPointerDown(
-                      conversationId,
-                      session.title,
-                      props.paneId,
-                      event
-                    )
+                    props.onTabPointerDown(conversationId, session.title, props.paneId, event)
                   }}
                   onClick={() => {
                     if (props.consumeSuppressedClick()) return
@@ -600,7 +592,9 @@ function PaneTabStrip(
                   onDoubleClick={() => {
                     setRenaming(conversationId)
                   }}
-                  onKeyDown={(event) => { onTabKeyDown(index, event); }}
+                  onKeyDown={(event) => {
+                    onTabKeyDown(index, event)
+                  }}
                 >
                   <span className="workspace-tab-title">{session.title}</span>
                   <span className="workspace-tab-voices" aria-hidden="true">
@@ -799,8 +793,12 @@ function WorkspaceSidebar(props: {
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    const timer = setTimeout(() => { setQuery(queryDraft.trim().toLocaleLowerCase()); }, 200)
-    return () => { clearTimeout(timer); }
+    const timer = setTimeout(() => {
+      setQuery(queryDraft.trim().toLocaleLowerCase())
+    }, 200)
+    return () => {
+      clearTimeout(timer)
+    }
   }, [queryDraft])
 
   useEffect(() => {
@@ -841,7 +839,9 @@ function WorkspaceSidebar(props: {
   }
   const endPreview = (): void => {
     if (!hidden) return
-    closeTimer.current = setTimeout(() => { setPreviewing(false); }, 150)
+    closeTimer.current = setTimeout(() => {
+      setPreviewing(false)
+    }, 150)
   }
 
   return (
@@ -861,7 +861,9 @@ function WorkspaceSidebar(props: {
             type="search"
             value={queryDraft}
             placeholder={t('workspace.search')}
-            onChange={(event) => { setQueryDraft(event.target.value); }}
+            onChange={(event) => {
+              setQueryDraft(event.target.value)
+            }}
           />
         </label>
         <div className="workspace-tree" data-reordering={reorder.draggingId !== null}>
@@ -887,16 +889,26 @@ function WorkspaceSidebar(props: {
               onChooseProfile={(profileId) =>
                 props.onChooseProfile(session.conversationId, profileId)
               }
-              onOpenPanel={(panel) => { props.onOpenPanel(session.conversationId, panel); }}
-              onRestart={() => { props.onRestart(session.conversationId); }}
-              onEnd={() => { props.onEnd(session.conversationId); }}
-              onPointerDown={(event) => { reorder.onPointerDown(session.conversationId, event); }}
+              onOpenPanel={(panel) => {
+                props.onOpenPanel(session.conversationId, panel)
+              }}
+              onRestart={() => {
+                props.onRestart(session.conversationId)
+              }}
+              onEnd={() => {
+                props.onEnd(session.conversationId)
+              }}
+              onPointerDown={(event) => {
+                reorder.onPointerDown(session.conversationId, event)
+              }}
               onOpen={() => {
                 if (reorder.consumeSuppressedClick()) return
                 openSession(session.conversationId)
                 if (hidden) setHidden(false)
               }}
-              onRenameStart={() => { setRenaming(session.conversationId); }}
+              onRenameStart={() => {
+                setRenaming(session.conversationId)
+              }}
               onRenameEnd={(title) => {
                 if (title !== null) props.onRename(session.conversationId, title)
                 setRenaming(null)
@@ -1095,48 +1107,50 @@ function SidebarSession(props: {
               props.onRenameEnd(event.currentTarget.value)
             }
           }}
-          onBlur={(event) => { props.onRenameEnd(event.currentTarget.value); }}
+          onBlur={(event) => {
+            props.onRenameEnd(event.currentTarget.value)
+          }}
         />
       ) : (
-      <button
-        type="button"
-        className="workspace-session-main"
-        title={props.session.cwd}
-        onClick={props.onOpen}
-        onDoubleClick={props.onRenameStart}
-      >
-        <span className="workspace-session-line">
-          <span className="workspace-session-title">{props.session.title}</span>
-          {waiting > 0 ? (
-            <span className="workspace-session-status" data-waiting="true">
-              {t('workspace.waiting', { count: waiting })}
-            </span>
-          ) : working ? (
-            /*
-             * Coloured by whoever is working, using the voice vocabulary the
-             * dots and the rail already use — so "something is happening" and
-             * "who is doing it" arrive together rather than as two lookups.
-             * Two at once falls back to bone: no single voice owns it.
-             */
-            <span
-              className={`workspace-session-status${
-                pulse?.working.length === 1 ? ` voice--${String(pulse.working[0])}` : ''
-              }`}
-              data-working="true"
-            >
-              <span className="workspace-session-pip" aria-hidden="true" />
-              {t('workspace.working')}
-            </span>
-          ) : (pulse?.unread ?? 0) > 0 ? (
-            <span
-              className="workspace-session-badge"
-              aria-label={t('workspace.unread', { count: pulse?.unread })}
-            >
-              {pulse?.unread}
-            </span>
-          ) : null}
-        </span>
-        {/*
+        <button
+          type="button"
+          className="workspace-session-main"
+          title={props.session.cwd}
+          onClick={props.onOpen}
+          onDoubleClick={props.onRenameStart}
+        >
+          <span className="workspace-session-line">
+            <span className="workspace-session-title">{props.session.title}</span>
+            {waiting > 0 ? (
+              <span className="workspace-session-status" data-waiting="true">
+                {t('workspace.waiting', { count: waiting })}
+              </span>
+            ) : working ? (
+              /*
+               * Coloured by whoever is working, using the voice vocabulary the
+               * dots and the rail already use — so "something is happening" and
+               * "who is doing it" arrive together rather than as two lookups.
+               * Two at once falls back to bone: no single voice owns it.
+               */
+              <span
+                className={`workspace-session-status${
+                  pulse?.working.length === 1 ? ` voice--${String(pulse.working[0])}` : ''
+                }`}
+                data-working="true"
+              >
+                <span className="workspace-session-pip" aria-hidden="true" />
+                {t('workspace.working')}
+              </span>
+            ) : (pulse?.unread ?? 0) > 0 ? (
+              <span
+                className="workspace-session-badge"
+                aria-label={t('workspace.unread', { count: pulse?.unread })}
+              >
+                {pulse?.unread}
+              </span>
+            ) : null}
+          </span>
+          {/*
           What the composer's own footer says about a session, for the sessions
           you are not looking at: who is in it, where it is pointed, and what it
           may do there.
@@ -1147,7 +1161,7 @@ function SidebarSession(props: {
           place that knowledge cannot be assumed. The composer keeps the cast as
           switches; these say who is here, they do not change it.
         */}
-      </button>
+        </button>
       )}
       {/*
         Everything that acts, under everything that identifies.
@@ -1172,7 +1186,10 @@ function SidebarSession(props: {
         onClick={(event) => {
           // Only the gaps. Anything with its own job keeps it — and a drag that
           // ended here is not a click, which `onOpen` already knows.
-          if (event.target instanceof Element && event.target.closest('button, input, a') !== null) {
+          if (
+            event.target instanceof Element &&
+            event.target.closest('button, input, a') !== null
+          ) {
             return
           }
           props.onOpen()
@@ -1209,9 +1226,9 @@ function SidebarSession(props: {
                   {agent}
                 </button>
               </li>
-              )
-            })}
-          </ul>
+            )
+          })}
+        </ul>
         {/*
           The folder: click to pick one, double-click to type one.
 
@@ -1227,7 +1244,9 @@ function SidebarSession(props: {
               className="path path--button workspace-session-path"
               data-empty={props.session.cwd === props.home}
               title={t('conversation.choosePath')}
-              onClick={() => { void props.onChooseFolder(); }}
+              onClick={() => {
+                void props.onChooseFolder()
+              }}
               onDoubleClick={() => {
                 setEditingPath(props.session.cwd === props.home ? '' : props.session.cwd)
               }}
@@ -1252,7 +1271,9 @@ function SidebarSession(props: {
                 className="workspace-session-folder-clear"
                 aria-label={t('conversation.clearFolder')}
                 title={t('conversation.clearFolder')}
-                onClick={() => { void props.onSetFolder(''); }}
+                onClick={() => {
+                  void props.onSetFolder('')
+                }}
               >
                 <span aria-hidden="true">×</span>
               </button>
@@ -1265,7 +1286,9 @@ function SidebarSession(props: {
             autoFocus
             aria-label={t('conversation.choosePath')}
             placeholder={t('conversation.noFolder')}
-            onChange={(event) => { setEditingPath(event.target.value); }}
+            onChange={(event) => {
+              setEditingPath(event.target.value)
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Escape') setEditingPath(null)
               if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
@@ -1275,7 +1298,9 @@ function SidebarSession(props: {
             }}
             /* Leaving is not agreeing: a half-typed path is what a stray click
                produces, which is the rule the composer's field used too. */
-            onBlur={() => { setEditingPath(null); }}
+            onBlur={() => {
+              setEditingPath(null)
+            }}
           />
         )}
         {/*
@@ -1313,32 +1338,36 @@ function SidebarSession(props: {
              */
             createPortal(
               <ul
-              ref={menu}
-              className="profile-menu workspace-session-profile-menu"
-              role="listbox"
-              /* Hidden for the frame it takes to measure, or it is seen in the
+                ref={menu}
+                className="profile-menu workspace-session-profile-menu"
+                role="listbox"
+                /* Hidden for the frame it takes to measure, or it is seen in the
                  wrong place first. */
-              style={{ left: picking.x, top: picking.y, visibility: picking.placed ? 'visible' : 'hidden' }}
-            >
-              {props.profiles.map((option) => (
-                <li key={option.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={option.id === props.session.profileId}
-                    data-on={option.id === props.session.profileId}
-                    className="profile-option"
-                    onClick={() => {
-                      setPicking(null)
-                      if (option.id === props.session.profileId) return
-                      void props.onChooseProfile(option.id)
-                    }}
-                  >
-                    <span className="profile-option-name">{option.name}</span>
-                    <span className="profile-option-summary">{option.summary}</span>
-                  </button>
-                </li>
-              ))}
+                style={{
+                  left: picking.x,
+                  top: picking.y,
+                  visibility: picking.placed ? 'visible' : 'hidden',
+                }}
+              >
+                {props.profiles.map((option) => (
+                  <li key={option.id}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={option.id === props.session.profileId}
+                      data-on={option.id === props.session.profileId}
+                      className="profile-option"
+                      onClick={() => {
+                        setPicking(null)
+                        if (option.id === props.session.profileId) return
+                        void props.onChooseProfile(option.id)
+                      }}
+                    >
+                      <span className="profile-option-name">{option.name}</span>
+                      <span className="profile-option-summary">{option.summary}</span>
+                    </button>
+                  </li>
+                ))}
               </ul>,
               document.body
             )}
@@ -1356,7 +1385,9 @@ function SidebarSession(props: {
             type="button"
             className="workspace-session-output-button"
             title={t('summary.open')}
-            onClick={() => { props.onOpenPanel('summary'); }}
+            onClick={() => {
+              props.onOpenPanel('summary')
+            }}
           >
             {t('summary.open')}
           </button>
@@ -1364,7 +1395,9 @@ function SidebarSession(props: {
             type="button"
             className="workspace-session-output-button"
             title={t('review.open')}
-            onClick={() => { props.onOpenPanel('review'); }}
+            onClick={() => {
+              props.onOpenPanel('review')
+            }}
           >
             {t('review.openShort')}
           </button>
@@ -1533,8 +1566,7 @@ function useRowReorder(
           // card plus the list's gap, and both come from the stylesheet.
           const first = rows[0]?.getBoundingClientRect()
           const second = rows[1]?.getBoundingClientRect()
-          current.pitch =
-            first !== undefined && second !== undefined ? second.top - first.top : 0
+          current.pitch = first !== undefined && second !== undefined ? second.top - first.top : 0
           try {
             element.setPointerCapture(current.pointerId)
           } catch {

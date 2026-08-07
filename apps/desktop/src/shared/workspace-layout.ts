@@ -49,4 +49,3 @@ export const WorkspaceSnapshot = z.object({
   sidebarWidth: z.number().default(SIDEBAR_WIDTH.default),
 })
 export type WorkspaceSnapshot = z.infer<typeof WorkspaceSnapshot>
-
