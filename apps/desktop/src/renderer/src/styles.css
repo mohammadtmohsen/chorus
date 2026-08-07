@@ -3332,6 +3332,16 @@ input::placeholder {
 .workspace-session-profile-menu {
   position: fixed;
   bottom: auto;
+  /*
+   * Above the sidebar it belongs to.
+   *
+   * Portalling to the body escaped the clip but not the stacking: the card's
+   * menu inherited `.profile-menu`'s z-index of 30, written when it only ever
+   * opened inside a pane, and the sidebar sits at 60 — so the half of the menu
+   * overlapping the sidebar was painted over rather than cut off. Below the 80
+   * a sheet uses, which is meant to cover everything.
+   */
+  z-index: 70;
   /* Wide enough for the summaries, which are the reason to open it at all. */
   width: 280px;
 }
@@ -3348,6 +3358,56 @@ input::placeholder {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+/*
+ * What the session has produced: the two ways to read it, and what it cost.
+ *
+ * Its own band under the folder, because these are outputs rather than
+ * settings — the row above says how the session is configured, this one says
+ * what has come of it.
+ */
+.workspace-session-output {
+  display: flex;
+  align-items: center;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  gap: calc(var(--step) * 2);
+  min-width: 0;
+  margin-top: calc(var(--step) * 1.5);
+  padding-top: calc(var(--step) * 1.5);
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  font-size: 10px;
+}
+
+.workspace-session-output-button {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.workspace-session-output-button:hover,
+.workspace-session-output-button:focus-visible {
+  border-color: var(--muted);
+  color: var(--bone);
+  outline: none;
+}
+
+/* Pushed right: it is a fact, not a control, and the controls read from left. */
+.workspace-session-spend {
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  white-space: nowrap;
 }
 
 /*

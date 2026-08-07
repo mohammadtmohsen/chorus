@@ -27,6 +27,18 @@ export interface SessionPulse {
   readonly working: readonly TranscriptEvent['actor'][]
   readonly approvalIds: readonly string[]
   readonly questionIds: readonly string[]
+  /*
+   * What the conversation has spent, reduced here as well as in the transcript.
+   *
+   * The transcript's copy belongs to a mounted `Session`, and the sidenav shows
+   * every session including the ones that are not — so the number a card needs
+   * cannot come from there. Same rule as the transcript's: each agent reports
+   * its own running total, so the latest wins per agent and the conversation is
+   * their sum. Adding reports up would count the same tokens again each time.
+   */
+  readonly usageByActor: Readonly<Record<string, { input: number; output: number; cost: number | null }>>
+  readonly tokens: number
+  readonly costUsd: number | null
 }
 
 /** Drops one key without `delete`, which the lint rules forbid on a computed key. */
@@ -43,6 +55,9 @@ const EMPTY_PULSE: SessionPulse = {
   working: [],
   approvalIds: [],
   questionIds: [],
+  usageByActor: {},
+  tokens: 0,
+  costUsd: null,
 }
 
 /**
@@ -126,6 +141,29 @@ function reducePulse(
     const id = pulseKey(event, 'userInputId')
     questionIds = questionIds.filter((candidate) => candidate !== id)
   }
+  let usageByActor = pulse.usageByActor
+  let tokens = pulse.tokens
+  let costUsd = pulse.costUsd
+  if (event.type === 'usage.updated') {
+    const num = (key: string): number =>
+      typeof event.payload[key] === 'number' ? event.payload[key] : 0
+    const cost = event.payload['costUsd']
+    usageByActor = {
+      ...usageByActor,
+      [event.actor]: {
+        input: num('inputTokens'),
+        output: num('outputTokens'),
+        cost: typeof cost === 'number' ? cost : null,
+      },
+    }
+    const totals = Object.values(usageByActor)
+    const priced = totals.filter((t) => t.cost !== null)
+    tokens = totals.reduce((sum, t) => sum + t.input + t.output, 0)
+    // Null until an agent actually reports a price: a zero would be a claim
+    // that cannot be made, and Codex does not always report one.
+    costUsd = priced.length === 0 ? null : priced.reduce((sum, t) => sum + (t.cost ?? 0), 0)
+  }
+
   if (
     !visible &&
     (event.type === 'agent.message.completed' ||
@@ -134,7 +172,16 @@ function reducePulse(
   ) {
     unread += 1
   }
-  return { lastSeq: event.seq, unread, working, approvalIds, questionIds }
+  return {
+    lastSeq: event.seq,
+    unread,
+    working,
+    approvalIds,
+    questionIds,
+    usageByActor,
+    tokens,
+    costUsd,
+  }
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>()(

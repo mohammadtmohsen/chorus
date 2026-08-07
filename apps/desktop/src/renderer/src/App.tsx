@@ -268,6 +268,21 @@ export function App(): React.JSX.Element {
     [updateSessions, remember]
   )
 
+  /*
+   * A panel the sidenav asked for, held until the session it belongs to is
+   * mounted. Opening one means activating that session first — the panels read
+   * a transcript, and a background session does not have one on screen.
+   */
+  const [panelRequest, setPanelRequest] = useState<{
+    conversationId: string
+    panel: 'review' | 'summary'
+  } | null>(null)
+
+  const openPanel = useCallback((conversationId: string, panel: 'review' | 'summary') => {
+    useWorkspaceStore.getState().openSession(conversationId)
+    setPanelRequest({ conversationId, panel })
+  }, [])
+
   /** What a conversation may do, changed from wherever the profile is shown. */
   const applyProfile = useCallback(
     async (conversationId: string, profileId: string) => {
@@ -469,12 +484,19 @@ export function App(): React.JSX.Element {
         onToggleAgent={toggleAgent}
         onChooseFolder={chooseFolder}
         onChooseProfile={applyProfile}
+        onOpenPanel={openPanel}
         renderSession={(session, focused, paneId) => (
           <Session
             key={session.conversationId}
             session={session}
             active={focused}
             onActivate={() => { useWorkspaceStore.getState().focusPane(paneId); }}
+            panelRequest={
+              panelRequest?.conversationId === session.conversationId
+                ? panelRequest.panel
+                : undefined
+            }
+            onPanelOpened={() => { setPanelRequest(null); }}
             carry={carries.current.get(session.conversationId)}
             onCarry={keepCarry}
             profiles={profiles}

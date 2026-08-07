@@ -255,6 +255,30 @@ export const specs = [
 
         await app.settle()
         assert((await controlsAtRight()) === 0, 'and still hard right once it appears')
+
+        /*
+         * The card says the same number, by a different route.
+         *
+         * The composer reads it off the transcript its pane reduced; the card
+         * reads it off the global pulse, because half the cards in the list are
+         * for sessions with no mounted pane to have reduced anything. Two
+         * reducers, one arithmetic — if they disagree one of them is wrong, and
+         * nothing else would say so.
+         */
+        const both = await app.evaluate(`(() => ({
+          composer: document.querySelector('.composer-actions .spend')?.textContent ?? null,
+          card: document.querySelector('.workspace-session-spend')?.textContent ?? null,
+          buttons: [...document.querySelectorAll('.workspace-session-output-button')]
+            .map(b => b.textContent),
+        }))()`)
+        assert(
+          both.card !== null && both.card === both.composer,
+          `the card agrees with the composer (${String(both.card)} vs ${String(both.composer)})`
+        )
+        assert(
+          both.buttons.length === 2,
+          `and offers both ways to read it, got ${both.buttons.join(',')}`
+        )
         const gapsAfter = await bigGaps()
         assert(
           gapsAfter === gapsBefore,

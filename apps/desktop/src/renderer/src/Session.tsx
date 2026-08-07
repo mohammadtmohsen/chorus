@@ -82,6 +82,9 @@ export function Session(props: {
   /** Which agents exist on this machine at all; an absent one cannot be added. */
   installed: readonly AgentId[]
   onParticipants: (participants: AgentId[]) => void
+  /** Set when the sidenav asked for a panel this pane owns. */
+  panelRequest?: 'review' | 'summary' | undefined
+  onPanelOpened: () => void
   /*
    * Undefined is spelled out because `exactOptionalPropertyTypes` is on: the
    * caller reads this out of a Map, and a miss is a real value it has to be
@@ -108,6 +111,22 @@ export function Session(props: {
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const [summarising, setSummarising] = useState(false)
+
+  /*
+   * A panel asked for from outside — the sidenav card, which has the buttons
+   * but not the panels.
+   *
+   * The panels live in here because they are about one conversation and read
+   * its transcript, and a card can be showing a session that is not mounted at
+   * all. So the card activates the session first and leaves a request; this
+   * picks it up on the mount that follows and clears it, so it fires once.
+   */
+  useEffect(() => {
+    if (props.panelRequest === undefined) return
+    if (props.panelRequest === 'review') setReviewing(true)
+    if (props.panelRequest === 'summary') setSummarising(true)
+    props.onPanelOpened()
+  }, [props])
   /** A passage selected in this pane's transcript, and where to offer to quote it. */
   const [selected, setSelected] = useState<{
     text: string

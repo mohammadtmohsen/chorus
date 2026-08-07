@@ -4,6 +4,7 @@ import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } 
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
 import { ALL_AGENTS, shortenPath, type AgentId, type SessionInfo } from '../Session.js'
+import { compactTokens, money } from '../format.js'
 import { SIDEBAR_WIDTH } from '../../../shared/workspace-layout.js'
 import { clampSidebarWidth, leafPaneIds, type SplitDirection } from './layout.js'
 import {
@@ -44,6 +45,8 @@ interface WorkspaceProps {
   /** Opens the picker and re-points the conversation at what comes back. */
   readonly onChooseFolder: (conversationId: string) => Promise<void>
   readonly onChooseProfile: (conversationId: string, profileId: string) => Promise<void>
+  /** Opens a panel the pane owns, activating the session on the way. */
+  readonly onOpenPanel: (conversationId: string, panel: 'review' | 'summary') => void
   /** Persists the arrangement immediately, for changes that end on pointer-up. */
   readonly onCommitLayout: () => void
   readonly renderSession: (
@@ -207,6 +210,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         onToggleAgent={props.onToggleAgent}
         onChooseFolder={props.onChooseFolder}
         onChooseProfile={props.onChooseProfile}
+        onOpenPanel={props.onOpenPanel}
         onRestart={props.onRestart}
         onEnd={props.onEnd}
       />
@@ -679,6 +683,7 @@ function WorkspaceSidebar(props: {
   onToggleAgent: (conversationId: string, agentId: AgentId, present: boolean) => Promise<void>
   onChooseFolder: (conversationId: string) => Promise<void>
   onChooseProfile: (conversationId: string, profileId: string) => Promise<void>
+  onOpenPanel: (conversationId: string, panel: 'review' | 'summary') => void
   onRestart: (conversationId: string) => void
   onEnd: (conversationId: string) => void
 }): React.JSX.Element {
@@ -809,6 +814,7 @@ function WorkspaceSidebar(props: {
               onChooseProfile={(profileId) =>
                 props.onChooseProfile(session.conversationId, profileId)
               }
+              onOpenPanel={(panel) => { props.onOpenPanel(session.conversationId, panel); }}
               onRestart={() => { props.onRestart(session.conversationId); }}
               onEnd={() => { props.onEnd(session.conversationId); }}
               onPointerDown={(event) => { reorder.onPointerDown(session.conversationId, event); }}
@@ -879,6 +885,7 @@ function SidebarSession(props: {
   onChooseFolder: () => Promise<void>
   profiles: readonly { readonly id: string; readonly name: string; readonly summary: string }[]
   onChooseProfile: (profileId: string) => Promise<void>
+  onOpenPanel: (panel: 'review' | 'summary') => void
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void
   onOpen: () => void
   onRenameStart: () => void
@@ -891,6 +898,7 @@ function SidebarSession(props: {
   const pulse = useSessionPulse(props.session.conversationId)
   const waiting = (pulse?.approvalIds.length ?? 0) + (pulse?.questionIds.length ?? 0)
   const working = (pulse?.working.length ?? 0) > 0
+  const tokens = pulse?.tokens ?? 0
   const state = props.active ? 'active' : paneId === null ? 'offscreen' : 'open'
   /* Reset whenever the session stops working, so a warning cannot lie in wait. */
   const [armedEnd, setArmedEnd] = useState(false)
@@ -1165,6 +1173,40 @@ function SidebarSession(props: {
               document.body
             )}
         </div>
+        {/*
+          What it has produced, and the two ways to read it.
+
+          The spend comes from the pulse rather than the transcript: the
+          transcript belongs to a mounted pane and half these cards do not have
+          one. The panels do live in the pane, so these buttons activate the
+          session on the way — wanting a session's diff is a reason to be in it.
+        */}
+        <span className="workspace-session-output">
+          <button
+            type="button"
+            className="workspace-session-output-button"
+            title={t('summary.open')}
+            onClick={() => { props.onOpenPanel('summary'); }}
+          >
+            {t('summary.open')}
+          </button>
+          <button
+            type="button"
+            className="workspace-session-output-button"
+            title={t('review.open')}
+            onClick={() => { props.onOpenPanel('review'); }}
+          >
+            {t('review.openShort')}
+          </button>
+          {tokens > 0 && (
+            <span className="workspace-session-spend">
+              {compactTokens(tokens)}
+              {pulse?.costUsd != null && (
+                <span className="spend-cost">{` · ${money(pulse.costUsd)}`}</span>
+              )}
+            </span>
+          )}
+        </span>
         <span className="workspace-session-actions">
           <button
             type="button"
