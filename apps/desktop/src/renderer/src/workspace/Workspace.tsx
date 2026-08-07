@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
@@ -916,7 +917,12 @@ function SidebarSession(props: {
   useEffect(() => {
     if (picking === null) return
     const close = (event: Event): void => {
-      if (picker.current?.contains(event.target as Node) === true) return
+      const target = event.target as Node
+      // The menu is portalled, so it is not inside the picker any more — both
+      // have to be asked, or pressing an option closes the menu on pointerdown
+      // and the click lands on whatever the list scrolled under it.
+      if (picker.current?.contains(target) === true) return
+      if (menu.current?.contains(target) === true) return
       setPicking(null)
     }
     const key = (event: globalThis.KeyboardEvent): void => {
@@ -1116,15 +1122,19 @@ function SidebarSession(props: {
           >
             {props.profileName}
           </button>
-          {picking !== null && (
+          {picking !== null &&
             /*
-             * Fixed, and placed from the chip's own box.
+             * Portalled to the body, and placed from the chip's own box.
              *
-             * The list scrolls, so a menu positioned inside it is clipped by
-             * `overflow: auto` however it is anchored — the same reason the
-             * tab's context menu was fixed before it was removed.
+             * `position: fixed` is not enough here: the sidebar carries a
+             * `transform` for its slide, and a transformed ancestor becomes the
+             * containing block for fixed descendants — so the menu was being
+             * positioned against the sidebar and clipped by its `overflow`.
+             * Only leaving the subtree escapes both that and the list's own
+             * scroll clipping.
              */
-            <ul
+            createPortal(
+              <ul
               ref={menu}
               className="profile-menu workspace-session-profile-menu"
               role="listbox"
@@ -1151,8 +1161,9 @@ function SidebarSession(props: {
                   </button>
                 </li>
               ))}
-            </ul>
-          )}
+              </ul>,
+              document.body
+            )}
         </div>
         <span className="workspace-session-actions">
           <button

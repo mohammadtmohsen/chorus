@@ -684,6 +684,53 @@ export const specs = [
         )
         assert(card.headCursor === 'pointer', 'and says so with the pointer')
 
+        /*
+         * The profile menu has to leave the sidebar's subtree entirely.
+         *
+         * The sidebar carries a `transform` for its slide, which makes it the
+         * containing block for anything `position: fixed` inside it — so a
+         * fixed menu was positioned against the sidebar and then clipped by its
+         * `overflow`. Being wider than the sidebar, it lost its right-hand
+         * half. Only a portal escapes both that and the list's own scrolling.
+         */
+        await app.evaluate(`(() => {
+          const chip = document.querySelector('.workspace-session-profile .profile-chip')
+          chip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+          chip.click()
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.workspace-session-profile-menu')`, {
+          timeout: 15_000,
+          label: 'the profile menu opened',
+        })
+        const menu = await app.evaluate(`(() => {
+          const el = document.querySelector('.workspace-session-profile-menu')
+          const m = el.getBoundingClientRect()
+          const side = document.querySelector('.workspace-sidebar').getBoundingClientRect()
+          return {
+            inSidebar: document.querySelector('.workspace-sidebar').contains(el),
+            spillsPastSidebar: m.right > side.right,
+            fitsWindow: m.left >= 0 && m.right <= innerWidth && m.top >= 0 && m.bottom <= innerHeight,
+            options: el.querySelectorAll('.profile-option-summary').length,
+          }
+        })()`)
+        assert(!menu.inSidebar, 'the profile menu is portalled clear of the sidebar')
+        assert(
+          menu.spillsPastSidebar,
+          'reaching past its right edge, which is what used to be cut off'
+        )
+        assert(menu.fitsWindow, 'and it is placed inside the window')
+        assert(menu.options >= 2, `with what each profile permits, not just its name (${String(menu.options)})`)
+        await app.evaluate(`(() => {
+          document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelectorAll('.workspace-session-profile-menu').length`)) === 0,
+          'and a click anywhere else closes it'
+        )
+
         // Right-clicking a tab used to open a menu. It should do nothing now.
         await app.evaluate(`(() => {
           document.querySelector('${TAB}')
