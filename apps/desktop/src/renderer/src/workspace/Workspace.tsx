@@ -106,20 +106,31 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
     () => new Map(props.sessions.map((session) => [session.conversationId, session])),
     [props.sessions]
   )
+  /*
+   * Both of these are the *end* of a drag rather than a step in one, so they
+   * write through instead of waiting on the 180ms debounce. That window exists
+   * to coalesce a stream — a sash moving under the pointer — and a tab that has
+   * been dropped is not a stream. Quitting inside it lost the arrangement.
+   */
+  const commit = props.onCommitLayout
   const insert = useCallback(
     (conversationId: string, paneId: string, slot: number) => {
       moveTab(conversationId, paneId, slot)
+      commit()
     },
-    [moveTab]
+    [moveTab, commit]
   )
   const split = useCallback(
     (conversationId: string, paneId: string, direction: SplitDirection) => {
       splitTab(conversationId, paneId, direction)
+      commit()
     },
-    [splitTab]
+    [splitTab, commit]
   )
   const drag = useTabDrag({ onInsert: insert, onSplit: split })
   const chordUntil = useRef(0)
+  const commitRef = useRef(commit)
+  commitRef.current = commit
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent): void => {
@@ -145,9 +156,11 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
           const target = targetPaneId === null ? undefined : state.panes[targetPaneId]
           if (targetPaneId !== null && target !== undefined) {
             state.moveTab(activeId, targetPaneId, target.tabs.length)
+          commitRef.current()
           }
         } else {
           state.splitTab(activeId, paneId, direction)
+          commitRef.current()
         }
         return
       }
@@ -158,6 +171,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         if (event.shiftKey && (direction === 'left' || direction === 'right') && pane !== undefined) {
           const from = activeId === null ? -1 : pane.tabs.indexOf(activeId)
           if (from >= 0) state.reorderTab(paneId, from, from + (direction === 'left' ? -1 : 2))
+          commitRef.current()
           return
         }
         const target = directionalPane(paneId, direction)
@@ -168,11 +182,13 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       if (event.metaKey && !event.altKey && !event.shiftKey && event.key === '\\') {
         event.preventDefault()
         if (paneId !== null && activeId !== null) state.splitTab(activeId, paneId, 'right')
+          commitRef.current()
         return
       }
       if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'w') {
         event.preventDefault()
         if (paneId !== null && activeId !== null) state.closeTab(paneId, activeId)
+          commitRef.current()
         return
       }
       if (event.metaKey && event.shiftKey && (event.key === '[' || event.key === ']')) {
@@ -238,6 +254,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
             onRename={props.onRename}
             onRestart={props.onRestart}
             onEnd={props.onEnd}
+            onCommitLayout={props.onCommitLayout}
             renderSession={props.renderSession}
           />
         )}
@@ -277,6 +294,7 @@ function LayoutView(props: {
   onRename: (conversationId: string, title: string) => void
   onRestart: (conversationId: string) => void
   onEnd: (conversationId: string) => void
+  onCommitLayout: () => void
   renderSession: (session: SessionInfo, focused: boolean, paneId: string) => React.JSX.Element
 }): React.JSX.Element {
   if (props.node.kind === 'leaf') {
@@ -298,6 +316,7 @@ function LayoutView(props: {
               path={props.path}
               index={index}
               sizes={branch.sizes}
+              onCommitLayout={props.onCommitLayout}
             />
           )}
         </div>
@@ -311,6 +330,7 @@ function Sash(props: {
   path: readonly number[]
   index: number
   sizes: readonly number[]
+  onCommitLayout: () => void
 }): React.JSX.Element {
   const { setBranchSizes: setSizes, equalizeBranch: equalize } = useWorkspaceActions()
   const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -354,6 +374,15 @@ function Sash(props: {
       } catch {
         // It may have been released by a pointer cancellation.
       }
+      /*
+       * Letting go is the write.
+       *
+       * This is the one gesture in the workspace that really is a stream —
+       * `setSizes` fires every frame the pointer moves — so the 180ms debounce
+       * is the right tool for the middle of it and the wrong one for the end.
+       * Quitting inside that window put the sashes back where they were.
+       */
+      props.onCommitLayout()
     }
     document.addEventListener('pointermove', onMove)
     document.addEventListener('pointerup', stop)
@@ -393,8 +422,12 @@ function Sash(props: {
       aria-orientation={props.orientation === 'row' ? 'vertical' : 'horizontal'}
       onPointerDown={startResize}
       onKeyDown={keyboardResize}
+      /* Held arrows repeat, so the debounce still coalesces them; releasing is
+         what settles the size, exactly as releasing the pointer does. */
+      onKeyUp={props.onCommitLayout}
       onDoubleClick={() => {
         equalize(props.path)
+        props.onCommitLayout()
       }}
     />
   )

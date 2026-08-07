@@ -503,6 +503,70 @@ export const specs = [
   },
 
   {
+    name: 'a gesture survives a quit that gives the debounce no time',
+    /*
+     * Layout is written 180ms after it changes, which is right for a sash
+     * moving under the pointer — `setSizes` fires every frame — and wrong for
+     * the moment the pointer comes up. Quitting inside that window put the
+     * panes back where they were, and the only tell was that your arrangement
+     * quietly did not survive lunch.
+     *
+     * Nothing here waits. The relaunch is the assertion.
+     */
+    async run(assert) {
+      const first = await launch({ keepData: true })
+      const dataPath = first.dataPath
+      try {
+        await twoSessions(first)
+        await press(first, '\\', { meta: true })
+        await first.until(`document.querySelectorAll('${GROUP}').length === 2`, {
+          label: 'the split happened',
+        })
+        await first.evaluate(`(() => {
+          const sash = document.querySelector('.workspace-sash')
+          const b = sash.getBoundingClientRect()
+          const x = b.left + b.width / 2
+          const y = b.top + b.height / 2
+          sash.dispatchEvent(new PointerEvent('pointerdown', {
+            pointerId: 1, button: 0, bubbles: true, cancelable: true, clientX: x, clientY: y,
+          }))
+          document.dispatchEvent(new PointerEvent('pointermove', {
+            pointerId: 1, bubbles: true, clientX: x - 150, clientY: y,
+          }))
+          document.dispatchEvent(new PointerEvent('pointerup', {
+            pointerId: 1, bubbles: true, clientX: x - 150, clientY: y,
+          }))
+          return true
+        })()`)
+      } finally {
+        // Straight to quit: no settle, no wait, nothing that would let a
+        // debounce land on its own.
+        await first.stop()
+      }
+
+      const again = await launch({ userData: dataPath })
+      try {
+        await started(again)
+        await again.settle()
+        const restored = await again.evaluate(`(() => {
+          const kids = [...document.querySelectorAll('.split-child')]
+          return {
+            groups: document.querySelectorAll('${GROUP}').length,
+            sizes: kids.map(c => Number(getComputedStyle(c).flexGrow)),
+          }
+        })()`)
+        assert(restored.groups === 2, `the split came back, got ${String(restored.groups)} groups`)
+        assert(
+          restored.sizes.length === 2 && Math.abs(restored.sizes[0] - 0.5) > 0.05,
+          `and the sash where it was left, not at the default (${restored.sizes.join(',')})`
+        )
+      } finally {
+        await again.quit()
+      }
+    },
+  },
+
+  {
     name: 'a backgrounded session keeps its transcript and its unsent draft',
     /*
      * Unmounting a background tab is what makes the shell affordable, and it is
