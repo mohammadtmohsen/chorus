@@ -36,6 +36,15 @@ function raise(notice: Notice, title: string, t: TFunction): void {
   }
 }
 
+/**
+ * How long to sit on read-watermarks before writing them down.
+ *
+ * `open-sessions.json` is rewritten whole on every `markSeen`, and a streaming
+ * turn would otherwise trigger one per push. A second of lag costs nothing: the
+ * worst case is a card that says one unread instead of none.
+ */
+const SEEN_DEBOUNCE_MS = 1_000
+
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
   const [appVersion, setAppVersion] = useState<string | null>(null)
@@ -60,6 +69,15 @@ export function App(): React.JSX.Element {
    * subscription means a language change re-subscribing cannot reset the count.
    */
   const pending = useRef<Readonly<Record<string, readonly string[]>>>({})
+  /**
+   * How far each on-screen conversation has been read, waiting to be written down.
+   *
+   * Batched rather than sent per push: a streaming turn produces many, the file
+   * behind it is rewritten whole on every call, and being a second behind costs
+   * nothing — the worst case is a card that says one unread instead of none.
+   */
+  const seen = useRef<Readonly<Record<string, number>>>({})
+  const seenTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
@@ -67,6 +85,26 @@ export function App(): React.JSX.Element {
   const [restoring, setRestoring] = useState(true)
   const [restored, setRestored] = useState(false)
   const [zoom, setZoom] = useState<number | null>(null)
+
+  const markSeenSoon = useCallback(() => {
+    clearTimeout(seenTimer.current)
+    seenTimer.current = setTimeout(() => {
+      const batch = seen.current
+      seen.current = {}
+      for (const [conversationId, seq] of Object.entries(batch)) {
+        // Fire and forget: the runtime ignores a watermark that moves backwards,
+        // and a lost one costs a card that overstates by one after the next launch.
+        void window.chorus.markSeen({ conversationId, seq })
+      }
+    }, SEEN_DEBOUNCE_MS)
+  }, [])
+
+  useEffect(
+    () => () => {
+      clearTimeout(seenTimer.current)
+    },
+    []
+  )
 
   const updateSessions = useCallback((change: (current: SessionInfo[]) => SessionInfo[]) => {
     setSessions((current) => {
@@ -103,13 +141,32 @@ export function App(): React.JSX.Element {
         pending.current = trackPending(pending.current, events)
         void window.chorus.setBadge({ count: roomsWaiting(pending.current) })
 
-        // Absent in a test renderer, and not worth a failed turn.
-        if (!('Notification' in window)) return
         const panes = useWorkspaceStore.getState().panes
         const visibleConversationIds = Object.values(panes)
           .map((pane) => pane.activeTabId)
           .filter((id): id is string => id !== null)
 
+        /*
+         * Record how far each visible card has been read, so the next launch can
+         * count what was missed rather than claiming nothing happened.
+         *
+         * The sequence comes from the batch, not from the store: two subscribers
+         * read the same push and their order is undefined, so the pulse may not
+         * have folded these events yet. What is in hand cannot be stale.
+         */
+        for (const id of visibleConversationIds) {
+          const highest = events.reduce(
+            (best, event) => (event.conversationId === id && event.seq > best ? event.seq : best),
+            0
+          )
+          if (highest > (seen.current[id] ?? 0)) {
+            seen.current = { ...seen.current, [id]: highest }
+          }
+        }
+        markSeenSoon()
+
+        // Absent in a test renderer, and not worth a failed turn.
+        if (!('Notification' in window)) return
         for (const notice of noticesFrom(events)) {
           if (
             !shouldRaise(notice, { windowFocused: document.hasFocus(), visibleConversationIds })
@@ -122,7 +179,7 @@ export function App(): React.JSX.Element {
           raise(notice, session?.title ?? '', t)
         }
       }),
-    [t]
+    [t, markSeenSoon]
   )
 
   /*
@@ -239,7 +296,10 @@ export function App(): React.JSX.Element {
           ]
           useWorkspaceStore.getState().hydrate(
             workspace,
-            merged.map((session) => session.conversationId)
+            merged.map((session) => session.conversationId),
+            // Counted by the main process out of the log, against the watermark
+            // saved when each card was last on screen.
+            Object.fromEntries(reopened.map((session) => [session.conversationId, session.unread]))
           )
           return merged
         })

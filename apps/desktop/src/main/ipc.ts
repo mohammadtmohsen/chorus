@@ -165,6 +165,11 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'conversation:restore': () => runtime.restoreOpenConversations(),
 
+    'conversation:markSeen': (request: { conversationId: string; seq: number }) => {
+      runtime.markSeen(request.conversationId, request.seq)
+      return Promise.resolve(OK)
+    },
+
     'conversation:restart': (request: { conversationId: string }) =>
       runtime.restartConversation(request.conversationId),
 

@@ -29,6 +29,7 @@ import {
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
 import type { ContextUsagePush } from '../shared/ipc.js'
+import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { findExecutable } from './which.js'
@@ -90,6 +91,8 @@ interface ActiveConversation {
   title: string
   /** Who the user last addressed, so an unaddressed follow-up stays with them. */
   lastAddressed: AgentId | undefined
+  /** How far this conversation's card had been read. See `OpenSession`. */
+  lastSeenSeq: number
 }
 
 /**
@@ -281,6 +284,9 @@ export class ChorusRuntime {
       cwd,
       title: options.title ?? folderName(cwd),
       lastAddressed: undefined,
+      // A new room has nothing unread in it, and the log's end is what "nothing"
+      // means — seeding 0 would count the whole database as news.
+      lastSeenSeq: this.store.lastSeq(),
     }
     const failures: string[] = []
 
@@ -529,6 +535,7 @@ export class ChorusRuntime {
       profileId: string
       cwd: string
       title: string
+      unread: number
     }[]
     workspace: WorkspaceSnapshot | null
   }> {
@@ -541,6 +548,7 @@ export class ChorusRuntime {
       profileId: string
       cwd: string
       title: string
+      unread: number
     }[] = []
 
     for (const entry of saved) {
@@ -554,6 +562,7 @@ export class ChorusRuntime {
           profileId: open.profile.id,
           cwd: open.cwd,
           title: open.title,
+          unread: this.unreadSince(entry.conversationId, open.lastSeenSeq),
         })
         continue
       }
@@ -572,6 +581,7 @@ export class ChorusRuntime {
         profileId: conversation.profile.id,
         cwd: conversation.cwd,
         title: conversation.title,
+        unread: this.unreadSince(entry.conversationId, entry.lastSeenSeq),
       })
     }
 
@@ -591,6 +601,7 @@ export class ChorusRuntime {
       cwd: entry.cwd,
       title: entry.title,
       lastAddressed: undefined,
+      lastSeenSeq: entry.lastSeenSeq,
     }
     const sessionOpts = this.sessionOptsFor(conversation)
 
@@ -670,6 +681,7 @@ export class ChorusRuntime {
         cwd: c.cwd,
         profileId: c.profile.id,
         title: c.title,
+        lastSeenSeq: c.lastSeenSeq,
         // Only real ones: an agent that has not spoken yet has no thread to
         // resume, and writing an empty string down makes it look like it does.
         sessionRefs: Object.fromEntries(
@@ -756,6 +768,37 @@ export class ChorusRuntime {
   }
 
   /** Conversations with live agents right now, newest last. */
+  /**
+   * How much a card has to say happened while nobody was looking.
+   *
+   * Counted out of the log rather than remembered, which is the whole reason the
+   * watermark is a sequence number instead of a tally: the log is the thing that
+   * actually knows what happened, so the count cannot drift away from the
+   * transcript underneath it.
+   */
+  private unreadSince(conversationId: string, lastSeenSeq: number): number {
+    return this.store.read(conversationId, {
+      afterSeq: lastSeenSeq,
+      types: [...UNREAD_EVENT_TYPES],
+    }).length
+  }
+
+  /**
+   * Records that a conversation's card has been caught up to `seq`.
+   *
+   * The renderer is the only side that knows this: whether something has been
+   * read depends on which tab is in front, which is not a fact the main process
+   * has. Backwards moves are ignored — pushes and history replays interleave, so
+   * a late report of an older position is expected rather than exceptional.
+   */
+  markSeen(conversationId: string, seq: number): void {
+    const conversation = this.active.get(conversationId)
+    if (conversation === undefined) return
+    if (seq <= conversation.lastSeenSeq) return
+    conversation.lastSeenSeq = seq
+    this.rememberOpen()
+  }
+
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {
     return [...this.active.values()].map((c) => ({
       conversationId: c.conversationId,

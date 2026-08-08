@@ -52,9 +52,57 @@ pane is active, and macOS notification permission granted to the built app.
 Worth checking that the packaged build gets permission at all — an unsigned dev
 build sometimes does not, and the failure is silent by design here.
 
-## Phase 2 — Persist unread
+## Phase 2 done: Persist unread
 
-Not started.
+Relaunching no longer claims nothing happened while you were away.
+
+**Changed**
+
+- `apps/desktop/src/shared/unread.ts` (new) — `UNREAD_EVENT_TYPES`,
+  `countsAsUnread`.
+- `apps/desktop/src/main/open-sessions.ts` — `lastSeenSeq`, defaulted.
+- `apps/desktop/src/main/runtime.ts` — `lastSeenSeq` on `ActiveConversation`,
+  `markSeen`, `unreadSince`; `unread` in the restore payload.
+- `shared/ipc.ts`, `main/ipc.ts`, `preload/index.ts` —
+  `conversation:markSeen`.
+- `renderer/src/App.tsx` — debounced watermark reporting.
+- `renderer/src/workspace/store.ts` — `hydrate` seeds unread; the reducer now
+  uses the shared list.
+
+**The design decision: store a watermark, not a count.**
+
+The plan said "add `unread` per session". Persisting the number would have been
+smaller and wrong — a stored count can disagree with the transcript underneath
+it and there is no way to tell which is lying. What is persisted instead is
+`lastSeenSeq`, the point a card had been read to, and the count is derived by
+asking the log how many noteworthy events came after it. The log is the thing
+that actually knows what happened, so the two cannot drift.
+
+That is also why `UNREAD_EVENT_TYPES` is in `shared/`: the renderer counts these
+live as pushes arrive and the main process counts the same ones back out of the
+log at launch. Two lists would mean a card that says 3 before a restart and 5
+after it. A test pins the list.
+
+**Three smaller calls**
+
+1. The watermark comes from the **event batch**, not from the store. Two
+   subscribers read the same push and their order is undefined, so the pulse may
+   not have folded them yet; what is in hand cannot be stale.
+2. Reporting is debounced a second. `open-sessions.json` is rewritten whole on
+   every `markSeen`, and a streaming turn would otherwise trigger one per push.
+   Worst case of losing one is a card that overstates by one.
+3. A new conversation seeds its watermark at `store.lastSeq()`, not zero.
+   Starting at zero would count the entire existing database as news.
+
+**Verification** — full `pnpm run check` green: 18 typecheck tasks, eslint,
+prettier, **871 tests**. Six new.
+
+Two existing `open-sessions` tests changed: old files now parse with
+`lastSeenSeq: 0`, which is the back-compat default working. Their assertions say
+so rather than being loosened.
+
+**Not verified in the running app.** Needs a turn to finish in a background tab,
+then a relaunch — the card should come back with a count on it.
 
 ## Phase 3 — Reopen an ended conversation
 
