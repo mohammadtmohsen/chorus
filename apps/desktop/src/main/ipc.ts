@@ -185,6 +185,15 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       })),
     }),
 
+    'tasks:stop': async (request: {
+      conversationId: string
+      agentId: 'codex' | 'claude'
+      taskId: string
+    }) => {
+      await runtime.stopTask(request.conversationId, request.agentId, request.taskId)
+      return OK
+    },
+
     'agents:account': async () => ({
       accounts: (await runtime.accounts()).map(({ agentId, account }) => ({
         agentId,

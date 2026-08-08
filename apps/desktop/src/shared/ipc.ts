@@ -276,6 +276,22 @@ export const IPC_CONTRACT = {
    * because off the first-party API most of them do not exist — a Bedrock
    * session has credentials, not a plan.
    */
+  /**
+   * Ends one thing an agent left running.
+   *
+   * Carries the agent because a task id belongs to the provider that issued it.
+   * Answers `ok` once the request is delivered, not once the task is gone — the
+   * next push is what reports that.
+   */
+  'tasks:stop': {
+    request: z.object({
+      conversationId: z.string(),
+      agentId: z.enum(['codex', 'claude']),
+      taskId: z.string(),
+    }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
   'agents:account': {
     request: z.object({}),
     response: z.object({
@@ -866,6 +882,7 @@ export interface ChorusApi {
   readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
   readonly mcpServers: () => Promise<IpcResponse<'agents:mcp'>>
   readonly accounts: () => Promise<IpcResponse<'agents:account'>>
+  readonly stopTask: (request: IpcRequest<'tasks:stop'>) => Promise<IpcResponse<'tasks:stop'>>
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

@@ -298,6 +298,27 @@ export class ClaudeSession implements AgentSession {
   }
 
   /**
+   * Ends one background task.
+   *
+   * Feature-detected like the rest, and deliberately silent on failure: the id
+   * comes from a snapshot that is only as fresh as the last push, so asking to
+   * stop something that has already finished is an ordinary race rather than an
+   * error worth showing. The next `background_tasks_changed` is what says
+   * whether it is gone, and it is the only thing that can.
+   */
+  async stopTask(taskId: string): Promise<void> {
+    const ask = (this.q as unknown as { stopTask?: (id: string) => Promise<void> }).stopTask
+    if (typeof ask !== 'function') return
+
+    try {
+      await ask.call(this.q, taskId)
+    } catch {
+      // Already gone, or the query closed under us. Both are the same to a
+      // caller who wanted it stopped.
+    }
+  }
+
+  /**
    * Which account this CLI is signed in as.
    *
    * The probe against this machine answered `Claude Max` on `firstParty`, with

@@ -161,6 +161,10 @@ export class SupervisedSession implements AgentSession {
     return this.current.accountInfo?.() ?? Promise.resolve(null)
   }
 
+  stopTask(taskId: string): Promise<void> {
+    return this.current.stopTask?.(taskId) ?? Promise.resolve()
+  }
+
   /**
    * Remembered, not merely forwarded.
    *

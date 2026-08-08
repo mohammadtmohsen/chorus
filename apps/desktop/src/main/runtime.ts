@@ -1053,6 +1053,22 @@ export class ChorusRuntime {
     return [...found].map(([agentId, account]) => ({ agentId, account }))
   }
 
+  /**
+   * Ends one background task, on the agent that owns it.
+   *
+   * Routed by agent rather than broadcast: task ids come from one provider's
+   * snapshot and mean nothing to the other, so asking both would be asking a
+   * stranger to stop something it never started.
+   *
+   * No confirmation is returned. The provider's next snapshot is what says the
+   * task is gone, and it is the only thing that can — a success here would only
+   * mean the request was delivered.
+   */
+  async stopTask(conversationId: string, agentId: AgentId, taskId: string): Promise<void> {
+    const participant = this.active.get(conversationId)?.participants.get(agentId)
+    await participant?.session.stopTask(taskId)
+  }
+
   /** What the settings sheet offers, from whichever session last answered. */
   knownModels(): { agentId: AgentId; models: ModelChoice[] }[] {
     return [...this.knownModelsByAgent].map(([agentId, models]) => ({

@@ -324,6 +324,8 @@
   },
   "tasks": {
     "running_one": "{{count}} running",
-    "running_other": "{{count}} running"
+    "running_other": "{{count}} running",
+    "stop": "Stop this task",
+    "stopShort": "Stop"
   }
 }

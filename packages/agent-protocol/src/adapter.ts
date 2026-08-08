@@ -170,6 +170,15 @@ export interface AgentSession {
    */
   accountInfo?(): Promise<AccountSummary | null>
   /**
+   * Ends one thing the agent left running.
+   *
+   * Per task rather than "stop everything", because that is the shape the
+   * providers offer and the shape the question takes: a backgrounded command is
+   * stopped because *that* command is no longer wanted, and the subagent running
+   * beside it usually still is.
+   */
+  stopTask?(taskId: string): Promise<void>
+  /**
    * How hard the model should think, for providers that expose the control.
    *
    * Separate from `setModel` because it outlives a model change: the level is a
