@@ -46,6 +46,7 @@ const api: ChorusApi = {
   markSeen: invoke('conversation:markSeen'),
   listConversations: () => invoke('conversation:list')({}),
   listModels: invoke('conversation:models'),
+  knownModels: () => invoke('agents:models')({}),
   setModel: invoke('conversation:setModel'),
   setEffort: invoke('conversation:setEffort'),
   reopenConversation: invoke('conversation:reopen'),

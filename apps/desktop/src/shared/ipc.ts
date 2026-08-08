@@ -56,6 +56,9 @@ export const SettingsShape = z.object({
   agents: z.array(z.enum(['codex', 'claude'])),
   cwd: z.string(),
   profileId: z.string(),
+  /** Empty means the provider's own choice, which is not a model name. */
+  model: z.string().default(''),
+  effortLevel: z.string().default(''),
 })
 
 export const ApprovalChoice = z.object({
@@ -237,6 +240,32 @@ export const IPC_CONTRACT = {
         })
       ),
       workspace: WorkspaceSnapshot.nullable(),
+    }),
+  },
+
+  /**
+   * The model lists last reported by each agent, for the settings sheet.
+   *
+   * A cache rather than a live ask: `supportedModels()` is a control request to
+   * a running CLI, and the sheet can be opened with nothing running. The list
+   * does not change under an installed CLI, so the one a session already
+   * answered with is the right one to remember.
+   */
+  'agents:models': {
+    request: z.object({}),
+    response: z.object({
+      agents: z.array(
+        z.object({
+          agentId: z.enum(['codex', 'claude']),
+          models: z.array(
+            z.object({
+              value: z.string(),
+              label: z.string(),
+              effortLevels: z.array(z.string()).default([]),
+            })
+          ),
+        })
+      ),
     }),
   },
 
@@ -746,6 +775,7 @@ export interface ChorusApi {
   readonly onScale: (listener: (scale: number) => void) => () => void
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
+  readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

@@ -174,6 +174,18 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
     'conversation:reopen': (request: { conversationId: string }) =>
       runtime.reopenConversation(request.conversationId),
 
+    'agents:models': () =>
+      Promise.resolve({
+        agents: runtime.knownModels().map((agent) => ({
+          agentId: agent.agentId,
+          models: agent.models.map((model) => ({
+            value: model.value,
+            label: model.label,
+            effortLevels: [...(model.effortLevels ?? [])],
+          })),
+        })),
+      }),
+
     'conversation:models': async (request: { conversationId: string }) => ({
       // Normalised at the boundary: a model with no effort control carries no
       // `effortLevels` in the domain type, and the renderer should not have to
