@@ -1,17 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { quotePath } from './attach.js'
-import { Attachments, type Attachment } from './Attachments.js'
+import type { Attachment } from './Attachments.js'
+import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
-import { formatContextBlock, withEditorContext } from './editor-context.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
-import {
-  applyMention,
-  findMentionQuery,
-  mentionOptions,
-  type MentionQuery,
-} from './mention-menu.js'
-import { anchorFor, withQuote } from './quote.js'
+import { anchorFor } from './quote.js'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
@@ -96,7 +89,14 @@ export function Session(props: {
   const { t } = useTranslation()
   const { conversationId, participants, cwd } = props.session
   const [view, setView] = useState<TranscriptView>(props.carry?.view ?? EMPTY_VIEW)
-  const [draft, setDraft] = useState(props.carry?.draft ?? '')
+  /** The composer holds the draft now; the pane only reads it on unmount. */
+  const composer = useRef<ComposerHandle | null>(null)
+  /** Where the composer leaves its draft, so the pane can carry it out. */
+  const box = useRef<ComposerState>({
+    draft: props.carry?.draft ?? '',
+    attached: [...(props.carry?.attached ?? [])],
+    ideIncluded: props.carry?.ideIncluded ?? true,
+  })
   const [error, setError] = useState<string | null>(null)
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
@@ -130,14 +130,10 @@ export function Session(props: {
   /** True while a file from outside is over this pane. */
   const [fileOver, setFileOver] = useState(false)
   /** Files waiting to be sent, shown above the box rather than typed into it. */
-  const [attached, setAttached] = useState<Attachment[]>([...(props.carry?.attached ?? [])])
 
   /** Something to send: what the one button below decides its job from. */
-  const hasDraft = draft.trim() !== '' || attached.length > 0
   /** The pane itself, so dragging its bar carries the whole thing. */
   const pane = useRef<HTMLElement | null>(null)
-  const [mention, setMention] = useState<MentionQuery | null>(null)
-  const [highlighted, setHighlighted] = useState(0)
   const score = useRef<HTMLDivElement | null>(null)
   /** The growing part, which is what a resize observer has to watch. */
   const transcript = useRef<HTMLDivElement | null>(null)
@@ -145,7 +141,6 @@ export function Session(props: {
   const turn = useRef<HTMLDivElement | null>(null)
   /** Empty space at the foot of the current turn, so its question can reach the top. */
   const tail = useRef<HTMLDivElement | null>(null)
-  const input = useRef<HTMLTextAreaElement | null>(null)
   /** Read once: whether this pane was the active one at the moment it mounted. */
   const activeOnMount = useRef(props.active)
 
@@ -172,7 +167,7 @@ export function Session(props: {
      * happened to finish last rather than in the pane you are looking at.
      */
     if (!activeOnMount.current) return
-    input.current?.focus()
+    composer.current?.focus()
   }, [])
 
   useEffect(() => {
@@ -276,51 +271,6 @@ export function Session(props: {
     }
   }, [makeRoom])
 
-  useEffect(() => {
-    /*
-     * The box grows with what is in it, up to a ceiling set in CSS.
-     *
-     * Collapsed to `auto` first: `scrollHeight` is the content height *or* the
-     * current box height, whichever is larger, so without the reset the field
-     * would grow and never shrink back.
-     */
-    const el = input.current
-    if (el === null) return
-    el.style.height = 'auto'
-    el.style.height = `${String(el.scrollHeight)}px`
-  }, [draft])
-
-  /** Identifies one mention being typed, so a refresh can tell it from the next. */
-  const queryKey = useRef<string | null>(null)
-  /** The query Escape dismissed; it stays shut until you type a different one. */
-  const dismissed = useRef<string | null>(null)
-
-  /**
-   * Re-reads the caret after any edit or cursor move.
-   *
-   * Runs on every keystroke *and* every selection change, so it has to be able
-   * to tell "the same mention as a moment ago" from a new one — otherwise it
-   * resets the highlight under an arrow key, and re-opens a menu that Escape
-   * just closed. Both happened.
-   */
-  const refreshMention = useCallback(() => {
-    const el = input.current
-    if (el === null) return
-    const found = findMentionQuery(el.value, el.selectionStart)
-    const key = found === null ? null : `${String(found.start)}:${found.query}`
-
-    if (key !== queryKey.current) {
-      queryKey.current = key
-      setHighlighted(0)
-    }
-    if (key !== null && key === dismissed.current) {
-      setMention(null)
-      return
-    }
-    dismissed.current = null
-    setMention(found)
-  }, [])
-
   /** Agents already writing: their words say more than a label would. */
   const streaming = new Set(
     view.messages.filter((m) => m.status === 'streaming').map((m) => m.actor)
@@ -353,64 +303,6 @@ export function Session(props: {
     makeRoom()
     if (following.current) el.scrollTop = el.scrollHeight
   }, [turnKey, makeRoom])
-
-  const options = mention === null ? [] : mentionOptions(participants, mention.query)
-  const menuOpen = options.length > 0
-
-  const choose = useCallback(
-    (index: number) => {
-      const el = input.current
-      const option = options[index]
-      if (el === null || mention === null || option === undefined) return
-      const next = applyMention(el.value, mention, el.selectionStart, option)
-      setDraft(next.text)
-      setMention(null)
-      // After React has written the new value, or the caret lands wherever the
-      // browser last left it.
-      requestAnimationFrame(() => {
-        el.focus()
-        el.setSelectionRange(next.caret, next.caret)
-      })
-    },
-    [mention, options]
-  )
-
-  /**
-   * Files become paths in the draft, not attachments.
-   *
-   * An agent reads a file the same way you would, so a drop needs no upload and
-   * no change to what a message is. A clipboard image has no path — only bytes —
-   * so those are written down first and the path is what you get.
-   */
-  const attach = useCallback(async (items: DataTransfer): Promise<void> => {
-    const files = [...items.files]
-    if (files.length === 0) return
-
-    const paths = await Promise.all(
-      files.map(async (file) => {
-        const path = window.chorus.pathForFile(file)
-        if (path !== '') return path
-        // Pasted rather than dragged: it exists nowhere until we put it somewhere.
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        let binary = ''
-        for (const byte of bytes) binary += String.fromCharCode(byte)
-        const stashed = await window.chorus.stashFile({
-          name: file.name === '' ? 'pasted' : file.name,
-          base64: btoa(binary),
-        })
-        return stashed.path
-      })
-    )
-
-    const previews = await Promise.all(
-      paths.map(async (path) => ({ path, ...(await window.chorus.previewFile({ path })) }))
-    )
-    setAttached((current) => [
-      ...current,
-      ...previews.filter((p) => !current.some((c) => c.path === p.path)),
-    ])
-    input.current?.focus()
-  }, [])
 
   /**
    * Offers to quote whatever was just selected in this pane's transcript.
@@ -467,10 +359,9 @@ export function Session(props: {
   const quoteSelection = useCallback(() => {
     const passage = selected
     if (passage === null) return
-    setDraft((current) => withQuote(current, passage.text))
+    composer.current?.quote(passage.text)
     setSelected(null)
     window.getSelection()?.removeAllRanges()
-    input.current?.focus()
   }, [selected])
 
   /*
@@ -503,28 +394,29 @@ export function Session(props: {
    * once, when Send is pressed.
    */
   const [ide, setIde] = useState<IdeContextPush | null>(null)
-  const [ideIncluded, setIncluded] = useState(props.carry?.ideIncluded ?? true)
 
-  const latest = useRef<SessionCarry>({
+  /*
+   * What must survive the pane being unmounted.
+   *
+   * The transcript half is mirrored on every render because it changes with
+   * every event; the composer half is *read* on the way out instead, which is
+   * what lets the draft live in the composer and a keystroke repaint a textarea
+   * rather than a conversation.
+   */
+  const latest = useRef<Omit<SessionCarry, 'draft' | 'attached' | 'ideIncluded'>>({
     view,
-    draft,
-    attached,
     following: following.current,
     scrollTop: props.carry?.scrollTop ?? 0,
-    ideIncluded,
   })
   latest.current = {
     view,
-    draft,
-    attached,
     following: following.current,
     scrollTop: score.current?.scrollTop ?? latest.current.scrollTop,
-    ideIncluded,
   }
 
   useEffect(
     () => () => {
-      props.onCarry(conversationId, latest.current)
+      props.onCarry(conversationId, { ...latest.current, ...box.current })
     },
     [conversationId, props.onCarry]
   )
@@ -544,66 +436,6 @@ export function Session(props: {
       if (payload.conversationId === conversationId) setIde(payload)
     })
   }, [conversationId])
-
-  const ideAttached = ide !== null && ide.status === 'ready' && ideIncluded
-
-  const send = useCallback(() => {
-    /*
-     * The paths join the message on the way out, not while you are writing it.
-     *
-     * The agent still receives text with paths in it — that has not changed —
-     * but a draft is no longer a place where a screenshot looks like forty
-     * characters of noise.
-     */
-    const paths = attached.map((item) => quotePath(item.path)).join(' ')
-    const text = [draft.trim(), paths].filter((part) => part !== '').join(' ')
-    if (text === '') return
-
-    /*
-     * The editor context is captured now, not when the pill was drawn.
-     *
-     * The pill can be a few hundred milliseconds old — it is debounced — and
-     * the user may have moved the selection since. Sending what the pill said
-     * would attach the wrong lines to the question, which is worse than
-     * attaching none.
-     */
-    const compose = async (): Promise<string> => {
-      if (!ideAttached) return text
-      const snapshot = await window.chorus.ideSnapshot({ conversationId })
-      if (snapshot.outcome !== 'ok') {
-        // The draft is never lost to this. The user is told what happened and
-        // decides whether to retry or send without the context.
-        throw new Error(
-          snapshot.outcome === 'tooLarge'
-            ? t('ide.error.tooLarge')
-            : t('ide.error.unavailable', { reason: t(`ide.status.${snapshot.reason}`) })
-        )
-      }
-      const block = formatContextBlock(
-        { ...snapshot },
-        { heading: t('ide.heading'), unsaved: t('ide.unsaved') }
-      )
-      return withEditorContext(text, block)
-    }
-
-    // You just spoke; you want to see the answer.
-    following.current = true
-    setAwaiting(true)
-    compose()
-      .then(async (body) => {
-        // Cleared only once the context is in hand, so a failed snapshot leaves
-        // the draft and its attachments exactly as they were.
-        setDraft('')
-        setAttached([])
-        await window.chorus.sendMessage({ conversationId, text: body })
-      })
-      .catch((error: unknown) => {
-        // Nothing is coming: the message never left, so the row would be
-        // waiting for a turn that will not start.
-        setAwaiting(false)
-        fail(setError)(error)
-      })
-  }, [conversationId, draft, attached, ideAttached, t])
 
   const decide = useCallback(
     (approval: PendingApproval, outcome: 'allow' | 'deny', scope: 'once' | 'session' = 'once') => {
@@ -669,7 +501,7 @@ export function Session(props: {
     hadApprovals.current = false
     // Only where you are working. In a background pane this used to reach across
     // and pull the caret out of the sentence you were typing.
-    if (props.active) input.current?.focus()
+    if (props.active) composer.current?.focus()
   }, [queued, props.active])
 
   /**
@@ -806,7 +638,7 @@ export function Session(props: {
         if (e.target instanceof Element && e.target.closest(FOCUS_KEEPS_ITS_OWN) !== null) return
         const selection = window.getSelection()
         if (selection !== null && !selection.isCollapsed) return
-        input.current?.focus()
+        composer.current?.focus()
       }}
       onDragOver={(e) => {
         // Workspace tabs use pointer events. HTML drag here now means a file
@@ -825,7 +657,7 @@ export function Session(props: {
         setFileOver(false)
         if (e.dataTransfer.files.length > 0) {
           e.preventDefault()
-          void attach(e.dataTransfer)
+          void composer.current?.attach(e.dataTransfer)
           return
         }
       }}
@@ -1046,207 +878,33 @@ export function Session(props: {
           />
         )}
 
-        <form
-          className="composer"
-          onSubmit={(e) => {
-            e.preventDefault()
-            send()
+        <Composer
+          ref={composer}
+          conversationId={conversationId}
+          participants={participants}
+          busy={view.busy}
+          working={view.working}
+          ide={ide}
+          report={box}
+          {...(props.carry === undefined
+            ? {}
+            : {
+                initial: {
+                  draft: props.carry.draft,
+                  attached: props.carry.attached,
+                  ideIncluded: props.carry.ideIncluded,
+                },
+              })}
+          onError={fail(setError)}
+          onSending={() => {
+            // You just spoke; you want to see the answer.
+            following.current = true
+            setAwaiting(true)
           }}
-        >
-          {ide !== null && ide.status !== 'unavailable' && (
-            <div className="ide-pill" data-status={ide.status}>
-              <span className="ide-pill-what">
-                {ide.status === 'ready' && ide.file !== null
-                  ? `${ide.file.relativePath}:${String(ide.file.startLine)}${
-                      ide.file.isEmpty || ide.file.startLine === ide.file.endLine
-                        ? ''
-                        : `-${String(ide.file.endLine)}`
-                    }`
-                  : t(`ide.status.${ide.status}`)}
-              </span>
-              {ide.status === 'ready' && (
-                <button
-                  type="button"
-                  className="ide-pill-toggle"
-                  aria-pressed={ideIncluded}
-                  title={ideIncluded ? t('ide.exclude') : t('ide.include')}
-                  onClick={() => {
-                    // Once excluded it stays excluded: a live selection change
-                    // must never silently re-enable context the user turned off.
-                    setIncluded((on) => !on)
-                  }}
-                >
-                  {ideIncluded ? t('ide.on') : t('ide.off')}
-                </button>
-              )}
-            </div>
-          )}
-          {menuOpen && (
-            <ul className="mention-menu" id={`mentions-${conversationId}`} role="listbox">
-              {options.map((option, i) => (
-                <li key={option.label}>
-                  <button
-                    type="button"
-                    className="mention-option"
-                    role="option"
-                    aria-selected={i === highlighted}
-                    data-on={i === highlighted}
-                    // Pointer down, not click: the textarea blurs on click and
-                    // the menu would be gone before the choice registered.
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      choose(i)
-                    }}
-                    onMouseEnter={() => {
-                      setHighlighted(i)
-                    }}
-                  >
-                    <span className="mention-dots" aria-hidden="true">
-                      {option.agents.map((agent) => (
-                        <span key={agent} className={`voice-dot voice--${agent}`} />
-                      ))}
-                    </span>
-                    <span className="mention-name">@{option.label}</span>
-                    <span className="mention-detail">{option.detail}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Attachments
-            items={attached}
-            onRemove={(path) => {
-              setAttached((current) => current.filter((item) => item.path !== path))
-            }}
-          />
-          {/*
-            The box and the one control that acts on it, side by side.
-            
-            Send sat under the field while the row beneath still held six other
-            controls; with those gone it was a button alone on a line of its
-            own. Aligned to the bottom rather than the middle, because the field
-            grows with what is typed into it and the button should stay where
-            the last line is.
-          */}
-          <div className="composer-line">
-            <textarea
-              ref={input}
-              value={draft}
-              rows={1}
-              aria-label={t('conversation.messageLabel')}
-              placeholder={
-                participants.length === 0
-                  ? t('conversation.nobodyHere')
-                  : t('conversation.placeholder')
-              }
-              role="combobox"
-              aria-expanded={menuOpen}
-              aria-controls={`mentions-${conversationId}`}
-              aria-autocomplete="list"
-              onChange={(e) => {
-                setDraft(e.target.value)
-                refreshMention()
-              }}
-              onSelect={refreshMention}
-              onPaste={(e) => {
-                // Text pastes as text; anything else becomes a path.
-                if (e.clipboardData.files.length === 0) return
-                e.preventDefault()
-                void attach(e.clipboardData)
-              }}
-              onBlur={() => {
-                setMention(null)
-              }}
-              onKeyDown={(e) => {
-                /*
-                 * The menu takes the keys it needs first — Enter in particular.
-                 * Sending the message when the user meant to pick a name is the
-                 * failure this whole feature exists to prevent.
-                 */
-                if (menuOpen) {
-                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                    e.preventDefault()
-                    const step = e.key === 'ArrowDown' ? 1 : options.length - 1
-                    setHighlighted((current) => (current + step) % options.length)
-                    return
-                  }
-                  if (e.key === 'Enter' || e.key === 'Tab') {
-                    e.preventDefault()
-                    choose(highlighted)
-                    return
-                  }
-                  if (e.key === 'Escape') {
-                    e.preventDefault()
-                    dismissed.current = queryKey.current
-                    setMention(null)
-                    return
-                  }
-                }
-                if (e.key !== 'Enter') return
-                // Mid-composition Enter commits the candidate — for Japanese,
-                // Chinese or Korean input that keypress belongs to the IME, not
-                // to us, and sending there would swallow the word being typed.
-                if (e.nativeEvent.isComposing) return
-                // Shift holds the line; every other Enter sends. Cmd and Ctrl keep
-                // working because that is what they did before.
-                if (e.shiftKey) return
-                e.preventDefault()
-                send()
-              }}
-            />
-            {/*
-            Everything about the session sits in the composer's own row.
-            
-            A separate strip above the transcript put who is here, where they
-            are and what they may do at the top of the pane, while the thing you
-            act with was at the bottom — so changing permissions meant crossing
-            the whole transcript. Here it is all one place, and the keyboard hint
-            that used to live in this row is gone: ↵ sends is the convention, and
-            saying so forever is a label for the first minute.
-          */}
-            <div className="composer-tools">
-              {/*
-              One button, and what it does is decided by what you have typed.
-
-              Sending mid-turn steers rather than restarts — the message reaches
-              the running turn and the agent takes it in, verified against a
-              real one — so Send and Stop are not the opposed pair they look
-              like. Which leaves a rule simple enough to need no label: if there
-              is something in the box the button sends it, and if there is not,
-              the only thing left to want is to stop what is running.
-
-              That also settles what the pair got wrong in both directions. One
-              button that *became* Stop hid the way to steer and abandoned the
-              turn when pressed; two buttons side by side asked which is which
-              every time. Glyphs rather than words, because a label would crowd
-              the text being written; the names live on `aria-label`.
-            */}
-              {view.busy && !hasDraft ? (
-                <button
-                  type="button"
-                  className="send send--stop"
-                  aria-label={t('conversation.stopAll', { agents: view.working.join(', ') })}
-                  title={t('conversation.stopAll', { agents: view.working.join(', ') })}
-                  onClick={() => {
-                    window.chorus.interrupt({ conversationId }).catch(fail(setError))
-                  }}
-                >
-                  <span className="send-square" aria-hidden="true" />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  className="send"
-                  aria-label={view.busy ? t('conversation.steer') : t('conversation.send')}
-                  title={view.busy ? t('conversation.steer') : undefined}
-                  disabled={!hasDraft || participants.length === 0}
-                >
-                  <span aria-hidden="true">↑</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </form>
+          onSendFailed={() => {
+            setAwaiting(false)
+          }}
+        />
       </div>
     </section>
   )
