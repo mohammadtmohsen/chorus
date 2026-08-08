@@ -163,14 +163,43 @@ a second dialog kind appears, or the payload is ever documented, this changes.
 sending the literal text — so it works through the slash menu, and there was
 never anything else to build.
 
-**Checkpoints are blocked on something the plan did not see.**
-`enableFileCheckpointing` is indeed one option, but the option is not the
-prerequisite. `rewindFiles(userMessageId)` wants **the CLI's own uuid for a user
-message**, and Chorus has never recorded one: it logs its own `user.message`
-event with its own id, and `mapping.ts` reads `uuid` only from `system/init` and
-from assistant messages. Live `SDKUserMessage`s do carry one, so the path exists
-— capture it, correlate it with our event, and only then can a "rewind to here"
-affordance point at anything.
+**Checkpoints are blocked, and the previous entry named the wrong obstacle.**
+
+`rewindFiles(userMessageId)` wants **the CLI's own uuid for a user message**, and
+Chorus has never recorded one. That much was right. What followed was not: this
+file said "live `SDKUserMessage`s do carry one, so the path exists — capture it,
+correlate it with our event". That path does not exist.
+
+Probed rather than reasoned about. Sending a prompt and logging **every** message
+the SDK yields gives, in full:
+
+```
+system/init      uuid=…
+assistant        uuid=…
+rate_limit_event uuid=…
+result/success   uuid=…
+```
+
+**The CLI never echoes the user's own message back.** There is no live
+`SDKUserMessage` for our prompt and therefore no uuid to capture. `user` messages
+do arrive — that is how tool results come back, which is why `mapToolResults`
+exists — but never for the thing the user typed. Repeating the probe with
+`enableFileCheckpointing: true` changes nothing, which also disposes of the
+hopeful theory that the option makes the CLI start announcing them.
+
+The uuid does exist in exactly one place: the CLI's own transcript at
+`~/.claude/projects/<slug>/<sessionId>.jsonl`, where each user line carries
+`uuid`, `parentUuid` and `sessionId`. So a route is available, and it is the
+wrong one to take. It is an undocumented private file format belonging to a
+self-updating binary, read to drive an operation that **reverts files on disk** —
+the blast radius is the user's working tree, and the failure mode of a format
+change is rewinding to the wrong point rather than an error. This project already
+refuses to infer payload shapes from prose; inferring them from someone else's
+on-disk journal to do something destructive is the same bet with worse stakes.
+
+**So: not blocked on plumbing, declined on the available route.** It reopens if
+the SDK exposes the id — an echoed user message, or a `rewindFiles` that accepts
+something a host can legitimately know.
 
 Enabling checkpointing before that would buy disk snapshots nobody can reach,
 which is the dead-code shape this project keeps deciding against.
