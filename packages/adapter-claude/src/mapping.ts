@@ -53,6 +53,11 @@ export interface MapContext {
 interface SdkMessageLike {
   type: string
   subtype?: string
+  /**
+   * Set only on `SDKUserMessageReplay`, and the one field that tells it from a
+   * live user message — every other property is identical.
+   */
+  isReplay?: boolean
   session_id?: string
   message?: { id?: string; content?: unknown[] }
   event?: {
@@ -116,10 +121,17 @@ export function mapSdkMessage(msg: SdkMessageLike, ctx: MapContext): AgentEvent[
       return mapAssistant(msg, base, ctx)
 
     case 'user':
-      // Tool results come back as a user message. Dropping them left every
-      // Claude command hanging in the transcript with no result, and left the
-      // other agent nothing to read when asked why something failed.
-      return mapToolResults(msg, base, ctx)
+      /*
+       * Tool results come back as a user message. Dropping them left every
+       * Claude command hanging in the transcript with no result, and left the
+       * other agent nothing to read when asked why something failed.
+       *
+       * A replay is the same shape and must not be mapped. Resuming a session
+       * re-sends its history, so without this a reopened conversation appends a
+       * second copy of every command and tool call it already contains — the
+       * log is ours and already holds them.
+       */
+      return msg.isReplay === true ? [] : mapToolResults(msg, base, ctx)
 
     case 'rate_limit_event':
       return mapRateLimits(msg, at(0))
@@ -203,6 +215,14 @@ const QUIET_SUBTYPES: ReadonlySet<string> = new Set([
    * risking a row attached to the wrong id.
    */
   'task_updated',
+  /*
+   * Now that `includeHookEvents` is on, these two arrive for every hook on
+   * every matching tool call. Neither carries an outcome — a start is not news,
+   * and progress is a hook still running. `hook_response` is the one that says
+   * what happened, and it is handled below.
+   */
+  'hook_started',
+  'hook_progress',
 ])
 
 function notice(
