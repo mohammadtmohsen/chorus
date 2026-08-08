@@ -310,10 +310,51 @@ the afternoon re-testing them:
    before any agent joins, the menu opens immediately — the cast comes from the
    session record rather than from the join.
 
-So it is none of the obvious three. The next person should reproduce it
-**in-suite** rather than in isolation, since that is the only place it has ever
-happened, and instrument `options`, `mention` and `participants` at the moment
-of failure rather than reasoning about them.
+So it is none of the obvious three.
+
+### Narrowed sharply, still not solved
+
+A later run failed the _sibling_ spec — `a leading slash opened the menu` — and
+that one **does** reproduce in isolation, about two runs in eight. Same
+component: both menus are gated by `menuOpen = options.length > 0`.
+
+Caught with instrumentation at the moment of failure. Everything that could
+plausibly be wrong is not:
+
+| checked at failure  | value                |
+| ------------------- | -------------------- |
+| textarea value      | `"/"`                |
+| caret               | `1`, after the slash |
+| focus               | on the textarea      |
+| disabled / readonly | no                   |
+| composers / panes   | one each             |
+| commands over IPC   | **49**               |
+
+And dispatching the identical input event a second time opens the menu
+immediately.
+
+**Four more explanations tested and dead**, on top of the three above:
+
+4. _The command list is empty because the fetch raced session start._ No: 49
+   over IPC at the moment of failure, and 49 at every interval from 0ms after
+   mount.
+5. _React never heard the event._ No: the send button is enabled from React's
+   own `hasDraft`, and it is enabled — so the change reached the component and
+   `setDraft` ran.
+6. _Focus was never established, and the composer clears its mention on blur._
+   No: focusing before typing does not change the rate.
+7. _A repeated dispatch is skipped because React's value tracker already holds
+   the text._ True, and it matters for any retry — going through the empty
+   string first is required — but it is not the cause.
+
+So: React received the text, the data was there, and `mention` was still null.
+The only paths that null it are a blur and `dismissed`. Neither is explained yet.
+
+**What not to do:** a retry in the spec helper reduced eight-run failures from
+about three to about two, which is not a fix and was reverted rather than
+committed. Nothing here is a product defect that has been demonstrated — a real
+keypress cannot lose its own event — but the mechanism is not understood, and
+that is the honest state.
 
 ### The first flake was a real bug, and not where it looked
 
