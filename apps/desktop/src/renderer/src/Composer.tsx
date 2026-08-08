@@ -294,6 +294,37 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     }, [])
 
     /*
+     * And asked again the moment someone actually wants them.
+     *
+     * The retry above races the session's start against a clock, which is the
+     * wrong shape: on a loaded machine the CLI can take longer than any window
+     * worth waiting, and the menu is then empty for the life of the pane. This
+     * removes the timing question instead of tuning it — a slash typed against
+     * an empty list asks for one right then, because a person opening the menu
+     * is the only signal that the answer matters yet.
+     *
+     * Guarded by `asking` so a fast typist does not queue one request per
+     * keystroke, and only for `/`: the cast and the files have their own
+     * sources.
+     */
+    const asking = useRef(false)
+    useEffect(() => {
+      if (mention?.trigger !== '/' || commands.length > 0 || asking.current) return
+      asking.current = true
+      window.chorus
+        .listCommands({ conversationId })
+        .then((result) => {
+          if (result.commands.length > 0) setCommands(result.commands)
+        })
+        .catch(() => {
+          // Still nothing to offer, which the menu already renders as nothing.
+        })
+        .finally(() => {
+          asking.current = false
+        })
+    }, [mention, commands.length, conversationId])
+
+    /*
      * Agents first, then files.
      *
      * There are two agents and thousands of files, so ordering by count would

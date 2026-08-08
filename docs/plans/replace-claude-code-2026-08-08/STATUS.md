@@ -49,7 +49,31 @@ was wrong and would have closed a real bug.
 Everything finished lives in [`DONE.md`](./DONE.md), unedited. What follows is
 what is not.
 
-### 1. Two menu failures, one partly explained
+### 1. Two menu failures — reframed, and the clock taken out of the fix
+
+**The residual failures look like load, not a second bug.** They were measured
+during a stretch when this machine was running suites, probes and real agent
+turns back to back. Since then: 12 spec runs clean, 12 more with the app
+instrumented, 16 reproducer rounds, and 8 runs under six busy CPU loops — all
+passing. Pure CPU load does not reproduce it; the earlier condition was heavier
+and different in kind, many concurrent Electron starts and CLI launches at once.
+
+Not proven, and not claimed as fixed. What it does mean is that the open item is
+no longer "the product misbehaves for reasons nobody can explain" but "the
+retry window can be exceeded under load", which is a different and much smaller
+thing.
+
+**So the clock came out of the fix.** Retrying on a timer races the session's
+start, and no window is right on every machine. A slash typed against an empty
+command list now asks for one _right then_ — a person opening the menu is the
+only signal that the answer matters yet. The background retry stays, because it
+makes the common case instant; it is no longer what correctness depends on.
+
+This is shipped on the strength of the mechanism, which is proven, rather than on
+a demonstration that it fixes the residual failures, which are not reproducible.
+That distinction is the point of this note.
+
+### The investigation, kept for the half still open
 
 The slash half is understood and fixed: an empty command list, needing a change
 on both sides of the IPC boundary. A residual failure survives that fix, and the
