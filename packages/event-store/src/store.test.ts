@@ -96,6 +96,83 @@ describe('append', () => {
   })
 })
 
+describe('listConversations', () => {
+  it('names a conversation the log holds', () => {
+    store.append({
+      conversationId: CONV,
+      actor: 'claude',
+      payload: {
+        type: 'session.started',
+        agentId: 'claude',
+        sessionRef: 'thread-1',
+        cwd: '/repo/app',
+        model: null,
+        cliVersion: null,
+      },
+    })
+    const [only] = store.listConversations()
+    expect(only).toMatchObject({
+      conversationId: CONV,
+      title: 'Spike',
+      cwd: '/repo/app',
+      agents: ['claude'],
+    })
+  })
+
+  it('falls back to the directory it was created in when no agent recorded one', () => {
+    // `project_id` holds the cwd a conversation was created with, so a room
+    // nobody ever started an agent in can still say where it was.
+    const [only] = store.listConversations()
+    expect(only?.cwd).toBe('p1')
+  })
+
+  it('lists every agent that was ever in it, not only the last', () => {
+    for (const agentId of ['claude', 'codex'] as const) {
+      store.append({
+        conversationId: CONV,
+        actor: agentId,
+        payload: {
+          type: 'session.started',
+          agentId,
+          sessionRef: `thread-${agentId}`,
+          cwd: '/repo/app',
+          model: null,
+          cliVersion: null,
+        },
+      })
+    }
+    expect([...(store.listConversations()[0]?.agents ?? [])].sort()).toEqual(['claude', 'codex'])
+  })
+
+  it('puts the most recently active first', () => {
+    store.append({
+      conversationId: 'conv-2',
+      actor: 'user',
+      payload: { type: 'conversation.created', projectId: 'p2', title: 'Later' },
+    })
+    store.append({
+      conversationId: 'conv-2',
+      actor: 'user',
+      payload: { type: 'user.message', text: 'hi' },
+    })
+    expect(store.listConversations()[0]?.conversationId).toBe('conv-2')
+  })
+
+  it('counts what was said, which is how a row is recognised', () => {
+    store.append({
+      conversationId: CONV,
+      actor: 'user',
+      payload: { type: 'user.message', text: 'a' },
+    })
+    store.append({
+      conversationId: CONV,
+      actor: 'user',
+      payload: { type: 'user.message', text: 'b' },
+    })
+    expect(store.listConversations().find((c) => c.conversationId === CONV)?.messages).toBe(2)
+  })
+})
+
 describe('notices', () => {
   it('round-trips through the log with its detail intact', () => {
     store.append({

@@ -7,6 +7,7 @@ import { LogViewer } from './LogViewer.js'
 import { fail, Session, type AgentId, type SessionCarry, type SessionInfo } from './Session.js'
 import { trimCarry } from './carry.js'
 import { noticesFrom, roomsWaiting, shouldRaise, trackPending, type Notice } from './notify.js'
+import { HistoryPanel } from './HistoryPanel.js'
 import { Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
@@ -82,6 +83,7 @@ export function App(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
   const [showingSettings, setShowingSettings] = useState(false)
+  const [showingHistory, setShowingHistory] = useState(false)
   const [restoring, setRestoring] = useState(true)
   const [restored, setRestored] = useState(false)
   const [zoom, setZoom] = useState<number | null>(null)
@@ -113,6 +115,27 @@ export function App(): React.JSX.Element {
       return next
     })
   }, [])
+
+  /**
+   * Puts a conversation from the history list on screen.
+   *
+   * One that is already open only needs focusing — reopening it would ask the
+   * runtime to start a second set of agents for a room that already has them.
+   * Anything else comes back through the runtime, which starts its agents and
+   * hands them the transcript as catch-up.
+   */
+  const openFromHistory = useCallback(
+    async (conversationId: string) => {
+      if (sessionsRef.current.some((session) => session.conversationId === conversationId)) {
+        useWorkspaceStore.getState().openSession(conversationId)
+        return
+      }
+      const reopened = await window.chorus.reopenConversation({ conversationId })
+      updateSessions((current) => [...current, reopened])
+      useWorkspaceStore.getState().openSession(reopened.conversationId)
+    },
+    [updateSessions]
+  )
 
   /*
    * Status is global and deliberately tiny. Active Session components still
@@ -600,6 +623,14 @@ export function App(): React.JSX.Element {
 
   const sheets = (
     <>
+      {showingHistory && (
+        <HistoryPanel
+          onClose={() => {
+            setShowingHistory(false)
+          }}
+          onPick={openFromHistory}
+        />
+      )}
       {showingSettings && (
         <Settings
           probes={probes}
@@ -670,6 +701,9 @@ export function App(): React.JSX.Element {
         onCommitLayout={commitLayout}
         onOpenSettings={() => {
           setShowingSettings(true)
+        }}
+        onOpenHistory={() => {
+          setShowingHistory(true)
         }}
         profiles={profiles}
         installed={installed}

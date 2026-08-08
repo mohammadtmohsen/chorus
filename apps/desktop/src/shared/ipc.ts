@@ -241,6 +241,48 @@ export const IPC_CONTRACT = {
   },
 
   /**
+   * Every conversation the log holds, most recently active first.
+   *
+   * A query rather than a push: it is only wanted when someone opens the list,
+   * and the answer is a projection read that is cheap to repeat.
+   */
+  'conversation:list': {
+    request: z.object({}),
+    response: z.object({
+      conversations: z.array(
+        z.object({
+          conversationId: z.string(),
+          title: z.string(),
+          cwd: z.string(),
+          agents: z.array(z.string()),
+          updatedAt: z.number().int(),
+          messages: z.number().int(),
+          /** Already on screen, so choosing it focuses rather than reopens. */
+          open: z.boolean(),
+        })
+      ),
+    }),
+  },
+
+  /**
+   * Brings a past conversation back with its transcript.
+   *
+   * Its agents are started rather than resumed — the provider threads died with
+   * the session — so they read the history as catch-up on the first thing asked.
+   */
+  'conversation:reopen': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({
+      conversationId: z.string(),
+      participants: z.array(z.enum(['codex', 'claude'])),
+      profileId: z.string(),
+      cwd: z.string(),
+      title: z.string(),
+      unread: z.number().int().min(0),
+    }),
+  },
+
+  /**
    * Records how far a conversation's card has been read.
    *
    * Renderer-driven because only it knows which tab is in front, and "read"
@@ -626,6 +668,10 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly markSeen: (request: IpcRequest<'conversation:markSeen'>) => Promise<{ ok: true }>
+  readonly listConversations: () => Promise<IpcResponse<'conversation:list'>>
+  readonly reopenConversation: (
+    request: IpcRequest<'conversation:reopen'>
+  ) => Promise<IpcResponse<'conversation:reopen'>>
   readonly restartConversation: (
     request: IpcRequest<'conversation:restart'>
   ) => Promise<IpcResponse<'conversation:restart'>>

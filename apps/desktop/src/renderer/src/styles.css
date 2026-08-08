@@ -1205,6 +1205,102 @@ body {
   color: var(--muted);
 }
 
+/* ------------------------------------------------------- past conversations */
+
+.workspace-sidebar-head {
+  display: flex;
+  gap: 0.5ch;
+  align-items: center;
+}
+
+.workspace-sidebar-head .workspace-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.workspace-history {
+  flex: none;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.workspace-history:hover {
+  color: var(--bone);
+}
+
+.history-list {
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+/*
+ * One row per conversation, and the row is the button.
+ *
+ * A separate "open" control would be a second thing to aim at for a list whose
+ * only verb is open.
+ */
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) auto auto auto;
+  gap: 1ch;
+  align-items: baseline;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-row:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bone) 5%, transparent);
+}
+
+.history-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.history-title {
+  overflow: hidden;
+  color: var(--bone);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-meta,
+.history-when {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-when {
+  justify-self: end;
+  color: var(--faint);
+}
+
+/* Already on screen: choosing it focuses rather than starting anything. */
+.history-row[data-open='true'] .history-when {
+  color: var(--voice, var(--muted));
+}
+
+.history-note {
+  margin: 0.6rem 0 0;
+  font-size: 12px;
+}
+
 /*
  * A tool call reads as one dense line, so a turn's working can be skimmed.
  *

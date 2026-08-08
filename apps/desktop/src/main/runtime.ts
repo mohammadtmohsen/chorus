@@ -10,10 +10,17 @@ import type {
   UsageWindow,
   UserInputResponse,
 } from '@chorus/agent-protocol'
-import { EventStore, openSqlite, type SqliteHandle, type StoredEvent } from '@chorus/event-store'
+import {
+  EventStore,
+  openSqlite,
+  type ConversationSummary,
+  type SqliteHandle,
+  type StoredEvent,
+} from '@chorus/event-store'
 import {
   composeBrief,
   ConversationService,
+  DEFAULT_PROFILE_ID,
   defaultIntent,
   parseMentions,
   profileById,
@@ -797,6 +804,89 @@ export class ChorusRuntime {
     if (seq <= conversation.lastSeenSeq) return
     conversation.lastSeenSeq = seq
     this.rememberOpen()
+  }
+
+  /**
+   * Every conversation the log holds, with the open ones marked.
+   *
+   * The list is the log's, not the window's. `open-sessions.json` only records
+   * what was on screen, so ending a conversation removed the last thing that
+   * knew its name while its transcript stayed in the database forever.
+   */
+  listConversations(): (ConversationSummary & { open: boolean })[] {
+    return this.store.listConversations().map((summary) => ({
+      ...summary,
+      open: this.active.has(summary.conversationId),
+    }))
+  }
+
+  /**
+   * Brings a past conversation back, transcript and all.
+   *
+   * Its agents are **started, not resumed**: the provider threads died with the
+   * session, and a resume against a forgotten id is the one call that can hang
+   * without failing. They pick the history up the way an agent joining
+   * mid-conversation does — `reopen` sets their watermark to zero, so the first
+   * thing asked arrives with the transcript attached.
+   *
+   * The permission profile deliberately falls back to the default rather than to
+   * whatever the conversation last ran under. Reopening something from last week
+   * should not silently restore permissions granted for a task nobody remembers.
+   */
+  async reopenConversation(conversationId: string): Promise<{
+    conversationId: string
+    participants: AgentId[]
+    profileId: string
+    cwd: string
+    title: string
+    unread: number
+  }> {
+    const open = this.active.get(conversationId)
+    if (open !== undefined) {
+      return {
+        conversationId,
+        participants: [...open.participants.keys()],
+        profileId: open.profile.id,
+        cwd: open.cwd,
+        title: open.title,
+        unread: this.unreadSince(conversationId, open.lastSeenSeq),
+      }
+    }
+
+    const summary = this.store
+      .listConversations()
+      .find((candidate) => candidate.conversationId === conversationId)
+    if (summary === undefined) throw new Error('That conversation is not in the log.')
+
+    const problem = describeDirectory(summary.cwd)
+    if (problem !== null) throw new Error(problem)
+
+    const agents = summary.agents.filter((id): id is AgentId => this.adapters.has(id as AgentId))
+    if (agents.length === 0) throw new Error('No agent from that conversation is available.')
+
+    const conversation = await this.reopen({
+      conversationId,
+      agents,
+      cwd: summary.cwd,
+      profileId: DEFAULT_PROFILE_ID,
+      title: summary.title,
+      // Nothing to resume: those threads ended with their sessions.
+      sessionRefs: {},
+      // Opened in order to be read, so it starts caught up rather than shouting
+      // about every message it already contains.
+      lastSeenSeq: this.store.lastSeq(),
+    })
+    if (conversation === null) throw new Error('That conversation could not be reopened.')
+
+    this.rememberOpen()
+    return {
+      conversationId,
+      participants: [...conversation.participants.keys()],
+      profileId: conversation.profile.id,
+      cwd: conversation.cwd,
+      title: conversation.title,
+      unread: 0,
+    }
   }
 
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {

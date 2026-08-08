@@ -276,5 +276,22 @@
     "waiting": "{{agent}} needs a decision",
     "done": "{{agent}} finished",
     "failed": "{{agent}} stopped with an error"
+  },
+  "history": {
+    "open": "Past conversations",
+    "heading": "Past conversations",
+    "close": "Close",
+    "loading": "Reading the log…",
+    "empty": "Nothing here yet. Conversations appear once something is said in them.",
+    "messages": "{{count}} message",
+    "messages_plural": "{{count}} messages",
+    "noAgents": "no agents",
+    "alreadyOpen": "already open",
+    "opening": "opening…",
+    "justNow": "just now",
+    "minutes": "{{count}}m ago",
+    "hours": "{{count}}h ago",
+    "days": "{{count}}d ago",
+    "note": "Reopening starts its agents again. They read the transcript before answering, and permissions return to Read only."
   }
 }

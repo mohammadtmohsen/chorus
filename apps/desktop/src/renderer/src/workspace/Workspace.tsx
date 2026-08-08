@@ -56,6 +56,8 @@ interface WorkspaceProps {
   readonly onCommitLayout: () => void
   /** The activity bar's gear opens the same panel the masthead's button does. */
   readonly onOpenSettings: () => void
+  /** Opens the list of every conversation the log holds, not only the open ones. */
+  readonly onOpenHistory: () => void
   readonly renderSession: (
     session: SessionInfo,
     focused: boolean,
@@ -247,6 +249,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         onOpenSettings={props.onOpenSettings}
       />
       <WorkspaceSidebar
+        onOpenHistory={props.onOpenHistory}
         sessions={props.sessions}
         starting={props.starting}
         onNewSession={props.onNewSession}
@@ -775,6 +778,7 @@ function useSidebarResize(
 }
 
 function WorkspaceSidebar(props: {
+  onOpenHistory: () => void
   sessions: readonly SessionInfo[]
   starting: boolean
   onNewSession: () => void
@@ -867,17 +871,33 @@ function WorkspaceSidebar(props: {
         onPointerEnter={beginPreview}
         onPointerLeave={endPreview}
       >
-        <label className="workspace-search">
-          <span className="sr-only">{t('workspace.search')}</span>
-          <input
-            type="search"
-            value={queryDraft}
-            placeholder={t('workspace.search')}
-            onChange={(event) => {
-              setQueryDraft(event.target.value)
-            }}
-          />
-        </label>
+        <div className="workspace-sidebar-head">
+          <label className="workspace-search">
+            <span className="sr-only">{t('workspace.search')}</span>
+            <input
+              type="search"
+              value={queryDraft}
+              placeholder={t('workspace.search')}
+              onChange={(event) => {
+                setQueryDraft(event.target.value)
+              }}
+            />
+          </label>
+          {/*
+           * Beside the search on purpose. The search filters what is open; this
+           * reaches what is not, and the two are the same question asked of
+           * different sets.
+           */}
+          <button
+            type="button"
+            className="workspace-history"
+            aria-label={t('history.open')}
+            title={t('history.open')}
+            onClick={props.onOpenHistory}
+          >
+            {'\u25F4'}
+          </button>
+        </div>
         <div className="workspace-tree" data-reordering={reorder.draggingId !== null}>
           {visible.map((session, index) => (
             <SidebarSession
