@@ -234,25 +234,41 @@ function Accounts(): React.JSX.Element | null {
  */
 function DefaultModel(): React.JSX.Element | null {
   const { t } = useTranslation()
-  const [models, setModels] = useState<{ value: string; label: string; effortLevels: string[] }[]>(
-    []
-  )
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
 
+  /*
+   * Asked until a session can answer, like the panels above.
+   *
+   * The list comes from a running CLI, and this sheet can be opened before any
+   * session has started — in which case a single fetch got nothing and the whole
+   * "New sessions start with" section returned null, permanently, for that
+   * opening. Measured: opened at launch it did not exist; opened twelve seconds
+   * later it had both rows.
+   *
+   * Claude's list, when there is one. It is the agent with an effort control,
+   * and a single pair of selects cannot honestly speak for two providers.
+   */
+  const models = useFromLiveSession<{ value: string; label: string; effortLevels: string[] }>(
+    () =>
+      window.chorus
+        .knownModels()
+        .then((known) => known.agents.find((agent) => agent.agentId === 'claude')?.models ?? []),
+    []
+  )
+
+  /* The saved choices are ours and on disk, so one ask is the whole story. */
   useEffect(() => {
     let live = true
-    Promise.all([window.chorus.knownModels(), window.chorus.readSettings()])
-      .then(([known, settings]) => {
+    window.chorus
+      .readSettings()
+      .then((settings) => {
         if (!live) return
-        // Claude's, when there is one: it is the agent with an effort control,
-        // and a single pair of selects cannot honestly speak for two providers.
-        setModels(known.agents.find((agent) => agent.agentId === 'claude')?.models ?? [])
         setModel(settings.model)
         setEffort(settings.effortLevel)
       })
       .catch(() => {
-        // Nothing to offer is a state this renders, not an error it reports.
+        // Defaults stand, which is what the empty strings already mean.
       })
     return () => {
       live = false

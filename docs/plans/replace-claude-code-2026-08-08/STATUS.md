@@ -239,3 +239,41 @@ enumeration anywhere in the SDK**, so a picker would have to guess the available
 styles and then write them into the user's own configuration file. Reading a
 user's config to show what it says is one thing; writing it from a settings sheet
 that cannot name the valid values is another.
+
+## A class of bug, swept rather than waited for
+
+Three separate failures this week were the same mistake wearing different
+clothes: **an empty first answer treated as the final one**.
+
+1. The MCP panel fetched once on mount and kept the empty answer forever.
+2. `runtime.listCommands` cached an empty list with `??=`, which is not nullish
+   and so was kept.
+3. The composer fetched the command list once, before its session had started.
+
+Having named the class, the rest of the app was checked for it rather than left
+to produce a fourth report. It had one:
+
+**The model and effort picker.** `knownModels()` reads a cache the runtime fills
+when a session answers `supportedModels()`. Settings can be opened before that,
+and `DefaultModel` asked once — so the whole "New sessions start with" section
+returned null. Not a blank row: **the section did not exist**.
+
+Measured with one probe across both versions, which is the only comparison worth
+quoting:
+
+```
+without the fix   opened immediately:  NEVER appeared within 20s
+                  opened after 12s:    appeared after ~0s
+with the fix      opened immediately:  appeared after ~3s
+                  opened after 12s:    appeared after ~0s
+```
+
+Fixed with the retry helper this file already had, which is the point of having
+extracted it. Two panels that look fine were checked and are: `knownModels`
+already refuses to cache an empty list on the main side, and the plugin panel
+asks the CLI on disk, where empty legitimately means none installed.
+
+**The general lesson.** Every one of these looked like a rare glitch and was a
+permanent state for whoever met it. "Ask once, keep whatever comes back" is
+correct only when the answer cannot change, and an answer that depends on a
+subprocess finishing its startup always can.
