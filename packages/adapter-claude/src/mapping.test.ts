@@ -383,6 +383,22 @@ describe('system notices', () => {
     expect(sys({ type: 'system', subtype: 'compact_boundary' })).toEqual([])
   })
 
+  it('keeps the running-tasks snapshot out of the log entirely', () => {
+    /*
+     * State, not history — the payload is documented as "every live background
+     * task after the change. REPLACE semantics", so it describes the agent right
+     * now rather than anything that happened. The default arm used to turn it
+     * into a durable notice reading, in full, `background_tasks_changed`.
+     */
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 't1', task_type: 'shell', description: 'sleep 60' }],
+      })
+    ).toEqual([])
+  })
+
   it('degrades an unmapped top-level type to a notice', () => {
     expect(sys({ type: 'tool_progress' })).toMatchObject([
       { type: 'notice', source: 'system', text: 'tool_progress' },

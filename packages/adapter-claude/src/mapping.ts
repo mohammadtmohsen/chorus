@@ -223,6 +223,25 @@ const QUIET_SUBTYPES: ReadonlySet<string> = new Set([
    */
   'hook_started',
   'hook_progress',
+  /*
+   * The one entry here that is quiet for a reason of principle rather than
+   * volume.
+   *
+   * `background_tasks_changed` carries "every live background task after the
+   * change. REPLACE semantics" — so it is a snapshot of what is running *right
+   * now*, which is the same category as `limits` and `context.usage`: state,
+   * not history. Applying this file's own test to it, reading it back a week
+   * later is worse than having none, because it describes processes that
+   * stopped existing when the session did.
+   *
+   * Until it travels on a push channel of its own, the default arm was turning
+   * each one into a durable notice whose entire text was the string
+   * `background_tasks_changed` — a protocol identifier shown to a person, and a
+   * row in an append-only log that nothing can act on or rebuild from. Silence
+   * is the smaller wrong of the two, and the honest one until the channel
+   * exists.
+   */
+  'background_tasks_changed',
 ])
 
 function notice(
