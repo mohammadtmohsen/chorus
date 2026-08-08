@@ -680,7 +680,29 @@ export class ClaudeAdapter implements AgentAdapter {
           },
         ],
       },
-      permissionMode: opts.sandbox.mode === 'readOnly' ? 'default' : 'acceptEdits',
+      /*
+       * Always `default`, so every tool goes through `canUseTool`.
+       *
+       * This was `acceptEdits` for any profile above read-only, which reads
+       * like a convenience and is really a hole: `acceptEdits` makes the CLI
+       * auto-accept file edits *without calling the permission callback at
+       * all*, so Chorus's policy engine never saw them. Every rule that matches
+       * a `fileChange` was dead — including `ask-credential-files`, which meant
+       * an agent could write to `.env` or `~/.ssh` with nothing evaluating it,
+       * in every profile.
+       *
+       * Nothing about the felt experience changes, because the profiles already
+       * say the same thing and now get to: `workspace-write` carries
+       * `allow-file-edits` and `trusted` carries `allow-edits`, both session
+       * scope, so an ordinary edit is still auto-allowed — by the rule that was
+       * written to allow it, which is the difference. Read-only asks, as it
+       * always did.
+       *
+       * The permission decision belongs to one place. Two of them, one of which
+       * silently outranks the other, is how a rule ends up dead without anyone
+       * noticing.
+       */
+      permissionMode: 'default',
       ...(opts.model === undefined ? {} : { model: opts.model }),
       ...(this.executablePath === undefined
         ? {}
