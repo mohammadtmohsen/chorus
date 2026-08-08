@@ -1,5 +1,6 @@
 import type {
   ModelChoice,
+  ProviderPermissionMode,
   AgentAdapter,
   AgentEvent,
   AgentInput,
@@ -61,6 +62,8 @@ export class SupervisedSession implements AgentSession {
   private chosenModel: string | undefined
   /** Likewise the effort level — same hazard, same fix. */
   private chosenEffort: string | undefined
+  /** And the handover of edit decisions, which a restart would quietly revoke. */
+  private chosenPermissionMode: ProviderPermissionMode | undefined
   private closing = false
   private givenUp = false
   /** Set when the adapter reported a failure it says retrying cannot fix. */
@@ -162,6 +165,19 @@ export class SupervisedSession implements AgentSession {
     await this.current.setEffort?.(level)
   }
 
+  /**
+   * Remembered, and for a sharper reason than the other two.
+   *
+   * A crash would put the replacement back on `default`, so a user who said
+   * "always" to edits an hour ago would start being asked again with no event
+   * to explain it. Silently *widening* on a restart would be the dangerous
+   * direction; this is the safe one, and still wrong.
+   */
+  async setPermissionMode(mode: ProviderPermissionMode): Promise<void> {
+    this.chosenPermissionMode = mode
+    await this.current.setPermissionMode?.(mode)
+  }
+
   async close(): Promise<void> {
     // Set first: this is what distinguishes a clean shutdown from a crash.
     this.closing = true
@@ -227,6 +243,9 @@ export class SupervisedSession implements AgentSession {
       // before the crash has to be made again on its behalf.
       if (this.chosenModel !== undefined) await resumed.setModel?.(this.chosenModel)
       if (this.chosenEffort !== undefined) await resumed.setEffort?.(this.chosenEffort)
+      if (this.chosenPermissionMode !== undefined) {
+        await resumed.setPermissionMode?.(this.chosenPermissionMode)
+      }
       this.pump = this.consume(resumed)
     } catch (error) {
       // A failed resume is not recoverable by trying harder — the thread may be

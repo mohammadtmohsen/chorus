@@ -232,6 +232,29 @@ export class ConversationService {
     const entry = this.queue.get(approvalId)
     if (entry !== undefined && decision.outcome === 'allow' && decision.scope === 'session') {
       this.grants.add(entry.request)
+
+      /*
+       * "Always" on an edit means always, not "always this file".
+       *
+       * A grant is keyed on its subject, which for a file change is the paths
+       * it touched — so on its own it answers for `src/a.ts` and asks again for
+       * `src/b.ts`. That is right for a command, where the subject *is* the
+       * action, and wrong for editing, where the next file is the same act.
+       *
+       * So the decision is handed to the provider, which is also where it
+       * belongs once it has been made: the CLI accepts edits itself, with no
+       * round trip through here at all.
+       *
+       * The cost is real and is why this needs an explicit "always" rather than
+       * a profile or a setting. From here to the end of the session the CLI
+       * stops calling the permission callback for edits, so no `fileChange`
+       * rule sees them — including the credential one. That is the user
+       * choosing it, once, knowingly; it is not a default, and it was a default
+       * until very recently.
+       */
+      if (entry.request.kind === 'fileChange') {
+        void this.acceptEditsFromNowOn()
+      }
     }
 
     const handled = await this.queue.resolve(approvalId, decision, decidedBy)
@@ -600,6 +623,22 @@ export class ConversationService {
           detail: event.detail ?? null,
         })
         return
+    }
+  }
+
+  /**
+   * Tells the provider to accept edits from now on.
+   *
+   * Best effort by design: a provider that cannot be told simply keeps asking,
+   * which is a worse experience and not a broken one. Failing the decision the
+   * user just made because a preference could not be forwarded would be the
+   * wrong trade.
+   */
+  private async acceptEditsFromNowOn(): Promise<void> {
+    try {
+      await this.session?.setPermissionMode?.('acceptEdits')
+    } catch {
+      // Nothing to report: the edits keep being asked about, which is safe.
     }
   }
 
