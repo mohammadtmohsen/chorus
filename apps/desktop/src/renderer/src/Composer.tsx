@@ -146,18 +146,64 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     }, [draft])
 
     useEffect(() => {
+      /*
+       * Asked again while the answer is empty, because the first one often is.
+       *
+       * A pane mounts the moment its conversation exists, which is before the
+       * session has finished starting — and a CLI that has not started yet
+       * reports no commands. A single fetch therefore kept that empty answer for
+       * the life of the pane, and `/` opened nothing, forever, while the CLI had
+       * forty-nine commands to offer a second later.
+       *
+       * This is half of a fix. The other half is in `runtime.listCommands`,
+       * which cached the empty answer with `??=` — an empty array is not
+       * nullish, so it was kept and every retry from here would have been
+       * answered from that cache with the same nothing. Neither half works
+       * alone, which is exactly why an earlier attempt at this retry looked
+       * useless and was thrown away.
+       *
+       * Found by instrumenting `refreshMention`: at the moment of failure the
+       * query was detected correctly — `found: "/::0"` — so `mention` was set
+       * and the menu still did not open, which leaves only an empty
+       * `commands`.
+       *
+       * Four tries over about ten seconds, which is a judgement rather than a
+       * measurement. Eight tries over forty seconds was tried and the spec that
+       * catches this failed three runs in twelve against one in twelve — the
+       * difference is noise at that sample size, and tuning the constant against
+       * it would be fitting to randomness. A conversation whose agents really
+       * have no commands answers empty each time and then stops being asked,
+       * which is an ordinary outcome rather than something to retry at forever.
+       */
       let live = true
-      window.chorus
-        .listCommands({ conversationId })
-        .then((result) => {
-          if (live) setCommands(result.commands)
-        })
-        .catch(() => {
-          // No commands is a state this renders as no menu, not an error. A CLI
-          // too old to be asked simply has none.
-        })
+      let attempt = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const ask = (): void => {
+        const again = (): void => {
+          attempt += 1
+          if (attempt < 4) timer = setTimeout(ask, attempt * 1_500)
+        }
+        window.chorus
+          .listCommands({ conversationId })
+          .then((result) => {
+            if (!live) return
+            if (result.commands.length === 0) {
+              again()
+              return
+            }
+            setCommands(result.commands)
+          })
+          .catch(() => {
+            // No session to ask yet, or a CLI too old to be asked. Both look the
+            // same from here, and both are worth asking again.
+            if (live) again()
+          })
+      }
+      ask()
       return () => {
         live = false
+        // A closed pane asks nothing more.
+        if (timer !== undefined) clearTimeout(timer)
       }
     }, [conversationId])
 

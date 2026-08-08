@@ -352,9 +352,41 @@ The only paths that null it are a blur and `dismissed`. Neither is explained yet
 
 **What not to do:** a retry in the spec helper reduced eight-run failures from
 about three to about two, which is not a fix and was reverted rather than
-committed. Nothing here is a product defect that has been demonstrated — a real
-keypress cannot lose its own event — but the mechanism is not understood, and
-that is the honest state.
+committed.
+
+### Solved: it was an empty command list, and it needed both halves
+
+Instrumenting `refreshMention` itself ended it. At the moment of failure the
+query is detected perfectly:
+
+```json
+{ "value": "/", "selectionStart": 1, "activeIsBox": true, "found": "/::0", "dismissed": null }
+```
+
+`found` is non-null, so `setMention` ran with a valid command query and the menu
+still did not open — which leaves exactly one possibility, `options.length === 0`,
+which for a slash means the component's `commands` were empty.
+
+**Why the first attempt at this looked useless.** The renderer fetches the list
+once on mount, and a pane mounts before its session has finished starting, so the
+answer is often empty. Retrying from the renderer alone changes nothing, because
+`runtime.listCommands` cached that empty answer with `??=` — an empty array is
+not nullish — and every retry was answered from the cache with the same nothing.
+**Neither half works without the other**, which is why the retry was tried,
+measured as useless, and thrown away before the cache bug was known.
+
+That also means this is a real defect independent of any test: open a pane, type
+`/` within a second, and the menu is empty for the life of that pane.
+
+**Honest about what the fix does and does not do.** The mechanism is proven and
+the cache half is unarguable. The retry half reduced the spec's failures from
+two in eight to one in twelve; widening it to eight tries over forty seconds gave
+three in twelve. At that sample size those are the same number, so the constant
+stays at the value the mechanism justifies rather than the one the last
+measurement liked. A residual failure remains and is not explained.
+
+**Still unexplained, and probably the same family:** the `@` sibling, which has
+never reproduced in isolation at all.
 
 ### The first flake was a real bug, and not where it looked
 
