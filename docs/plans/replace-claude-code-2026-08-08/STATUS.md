@@ -255,7 +255,38 @@ and was passed on rather than discarded as "no news".
 
 ## Phase 4 — the unused SDK surface
 
-### The flake was a real bug, and not where it looked
+### A second flake, still open — and three explanations it is not
+
+`an @ offers the cast, then the project's files` failed once with
+`never became true: a bare @ opened the menu`. Recorded here because the first
+flake in this file turned out to be a real bug, so "probably nothing" is not a
+conclusion this project gets to reach by assertion.
+
+**What is known.** One failure in roughly seven full-suite runs; five clean
+suites since. Zero failures in thirty isolated runs of that spec. The wait
+allows **90 seconds**, so slowness is ruled out the same way it was for the
+typewriter — passing runs take five.
+
+**Three hypotheses, each tested and each wrong.** Written down so nobody spends
+the afternoon re-testing them:
+
+1. _The drafted `@` is clobbered by the re-render that `setProjectDirectory`
+   causes._ No: a draft typed before a folder change is still there ten seconds
+   after it, character for character.
+2. _The programmatic value-set leaves the caret at 0 when the window is not
+   focused, so no mention query is found._ No: blurred, `selectionStart` is
+   still 1 and the menu still opens.
+3. _A bare `@` finds an empty cast because the agent has not joined yet, and
+   `menuOpen` is `options.length > 0`._ No: typed the instant a textarea exists,
+   before any agent joins, the menu opens immediately — the cast comes from the
+   session record rather than from the join.
+
+So it is none of the obvious three. The next person should reproduce it
+**in-suite** rather than in isolation, since that is the only place it has ever
+happened, and instrument `options`, `mention` and `participants` at the moment
+of failure rather than reasoning about them.
+
+### The first flake was a real bug, and not where it looked
 
 The unidentified e2e failure from the previous entry turned out to be
 `a message reaches an agent and comes back`, failing about one run in four
