@@ -50,6 +50,8 @@ const api: ChorusApi = {
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   writeConversationLayout: invoke('conversation:layout'),
   refreshLimits: invoke('limits:refresh'),
+  setBadge: invoke('app:setBadge'),
+  focusWindow: invoke('app:focus'),
   renameConversation: invoke('conversation:rename'),
   chooseProjectDirectory: invoke('conversation:chooseCwd'),
   setProjectDirectory: invoke('conversation:setCwd'),

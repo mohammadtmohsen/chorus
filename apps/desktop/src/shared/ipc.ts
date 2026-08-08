@@ -294,6 +294,17 @@ export const IPC_CONTRACT = {
    */
   'limits:refresh': { request: z.void(), response: z.object({ ok: z.literal(true) }) },
 
+  /**
+   * The dock badge, set by the renderer because only it knows how many rooms are
+   * blocked on a person. Main owns the API; the count is not main's to compute.
+   */
+  'app:setBadge': {
+    request: z.object({ count: z.number().int().min(0) }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+  /** Brings Chorus forward — what clicking a notification has to do first. */
+  'app:focus': { request: z.void(), response: z.object({ ok: z.literal(true) }) },
+
   'conversation:layout': {
     request: z.object({ order: z.array(z.string()), workspace: WorkspaceSnapshot }),
     response: z.object({ ok: z.literal(true) }),
@@ -582,6 +593,8 @@ export interface ChorusApi {
   readonly getAppInfo: () => Promise<AppInfo>
   /** Asks; the answer arrives on `onLimits`. */
   readonly refreshLimits: () => Promise<{ ok: true }>
+  readonly setBadge: (request: { count: number }) => Promise<{ ok: true }>
+  readonly focusWindow: () => Promise<{ ok: true }>
   readonly probeAgents: () => Promise<AgentProbeResult[]>
   readonly startConversation: (
     request: IpcRequest<'conversation:start'>
