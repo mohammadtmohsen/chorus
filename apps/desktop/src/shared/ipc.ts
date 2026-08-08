@@ -312,6 +312,18 @@ export const IPC_CONTRACT = {
   },
 
   /**
+   * Files in the conversation's project, for the composer's `@` menu.
+   *
+   * The renderer has no filesystem access and the SDK gives no way to reach the
+   * CLI's own matcher, so the search happens here. Asked per keystroke, which
+   * is why it is a query rather than a list handed over once.
+   */
+  'files:complete': {
+    request: z.object({ conversationId: z.string(), query: z.string() }),
+    response: z.object({ files: z.array(z.string()) }),
+  },
+
+  /**
    * The slash commands this conversation's agents accept.
    *
    * A query rather than a push: the menu asks when it opens, and the answer is
@@ -716,6 +728,9 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly markSeen: (request: IpcRequest<'conversation:markSeen'>) => Promise<{ ok: true }>
+  readonly completeFiles: (
+    request: IpcRequest<'files:complete'>
+  ) => Promise<IpcResponse<'files:complete'>>
   readonly listCommands: (
     request: IpcRequest<'conversation:commands'>
   ) => Promise<IpcResponse<'conversation:commands'>>

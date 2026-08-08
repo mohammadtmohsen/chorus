@@ -25,6 +25,7 @@ import {
   resolveVsix,
 } from './ide-extension.js'
 import { probeAgents } from './agent-probe.js'
+import { completeFiles } from './files.js'
 import type { ChorusRuntime } from './runtime.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
@@ -185,6 +186,10 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
           })),
         })),
       }),
+
+    'files:complete': async (request: { conversationId: string; query: string }) => ({
+      files: await completeFiles(runtime.projectDirectory(request.conversationId), request.query),
+    }),
 
     'conversation:commands': async (request: { conversationId: string }) => ({
       commands: await runtime.listCommands(request.conversationId),
