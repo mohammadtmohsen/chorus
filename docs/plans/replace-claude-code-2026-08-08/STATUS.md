@@ -538,7 +538,35 @@ commands to a line — and the same move fits here: one row per tool call carryi
 how many hooks spoke, opening to the individual lines. That keeps the failure
 visible, keeps the output reachable, and costs one row instead of N.
 
-Not built yet. Recorded with the number so the shape is chosen from evidence.
+### Built: the fold
+
+One row per run of talkative hooks, opening to every line behind it. The
+transcript now reads
+
+```
+CLAUDE   > $ echo one
+CLAUDE   HOOK: 6 hooks spoke   ▶ Details
+CLAUDE   Output: one
+```
+
+**Consecutive, not per turn.** The run _is_ the tool call — the hooks for one
+call arrive together and the next thing logged is the command they gated — so
+anything at all in between breaks the group. That is also what stops a hook
+folding into one that fired before something else happened.
+
+**Only `info` folds.** A hook that failed or was cancelled arrives as `warn`,
+keeps its own row, and is never counted away. The whole reason the transcript
+carries hooks is the one that blocked something, and a design that hides it to
+save a line would have inverted the feature.
+
+Reduced, not re-rendered: the fold happens in `reduceEvents`, so it is a pure
+function with tests rather than a component that hides rows. Six of them, one per
+way it could be wrong — including that a lone notice stays a sentence rather than
+becoming a group of one, and that two agents in one room never fold into each
+other.
+
+Verified against real hooks: a session started **in** the hook repo, seven
+firings on disk, one row on screen.
 
 ### A trap worth recording, met while measuring this
 
