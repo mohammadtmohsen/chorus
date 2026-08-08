@@ -306,6 +306,7 @@ export const specs = [
           Array.from(document.querySelectorAll('.usage-tip .limit')).map((l) => ({
             percent: parseInt(l.querySelector('.limit-percent').textContent, 10),
             reset: l.querySelector('.limit-reset')?.textContent ?? null,
+            resetsAt: Number(l.querySelector('.limit-reset')?.dataset.resetsAt ?? 0) || null,
           })))()`)
 
         if (windows.length === 0) {
@@ -316,9 +317,23 @@ export const specs = [
           windows.every((w) => Number.isNaN(w.percent) || (w.percent >= 0 && w.percent <= 100)),
           `every percentage in range: ${JSON.stringify(windows)}`
         )
+        /*
+         * Checked as a moment, not as a phrase.
+         *
+         * This read `!reset.includes('now')`, and "now" is what `untilReset`
+         * says for anything already past — so it fired on a five-hour window
+         * whose boundary had simply gone, while the seven-day one beside it
+         * formatted perfectly. That is the opposite of the bug being hunted: a
+         * seconds-for-milliseconds mistake lands every window in 1970 together,
+         * because they come through one mapping.
+         *
+         * A day's grace, which no clock skew or stale push reaches and 1970
+         * misses by fifty-five years.
+         */
+        const floor = Date.now() - 24 * 60 * 60 * 1000
         assert(
-          windows.every((w) => w.reset === null || !w.reset.includes('now')),
-          'no window resetting "now", which is what seconds read as milliseconds looks like'
+          windows.every((w) => w.resetsAt === null || w.resetsAt > floor),
+          `no reset in the distant past, which is what seconds read as milliseconds looks like: ${JSON.stringify(windows.map((w) => w.resetsAt))}`
         )
       } finally {
         await app.quit()
