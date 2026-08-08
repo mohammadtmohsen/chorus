@@ -43,6 +43,11 @@ export interface PermissionProfile {
  * These are not "dangerous" in the abstract — they are the ones whose damage
  * cannot be undone from inside Chorus. A bad edit is recoverable from git; a
  * force-push over someone else's work is not.
+ *
+ * The test for belonging here is that the *action* is irreversible, not that
+ * the subject looks sensitive. Anything decided by pattern-matching a filename
+ * belongs in `UNIVERSAL_ASKS` below, because a wall the user cannot open is
+ * only correct when no answer they could give would make the action safe.
  */
 export const UNIVERSAL_DENIES: readonly Rule[] = [
   {
@@ -69,8 +74,27 @@ export const UNIVERSAL_DENIES: readonly Rule[] = [
     },
     effect: 'deny',
   },
+]
+
+/**
+ * Rules that always reach a person, in every profile.
+ *
+ * These are *heuristics about a name*, not proven danger, and that difference
+ * is why they are not denies. A deny is absolute — `evaluate` step 2 puts it
+ * ahead of profiles, session grants and everything else — so a heuristic
+ * expressed as a deny is a wall with no door: the agent stops, the card never
+ * appears, and switching to Trusted cannot help because these apply there too.
+ *
+ * That is not "human controlled". It is the opposite: the one person who can
+ * tell a secret from a filename is the one who never gets asked.
+ *
+ * Expressed as an `ask` the rule keeps its teeth. `evaluate` checks asks before
+ * the profile's own allowances, so this still outranks Trusted's `allow-commands`
+ * — it simply gives the decision back.
+ */
+export const UNIVERSAL_ASKS: readonly Rule[] = [
   {
-    id: 'deny-credential-files',
+    id: 'ask-credential-files',
     describe: 'Credential files',
     match: {
       kind: ['fileChange', 'command'],
@@ -88,9 +112,13 @@ export const UNIVERSAL_DENIES: readonly Rule[] = [
       // exactly what this rule exists to stop. `\b` ends the token wherever it
       // ends, so a directory named bare and a path mid-pipeline both match,
       // while `env.ts`, `envelope.ts` and `environment.md` still do not.
+      // Deliberately broad, which is the other half of why this asks rather
+      // than denies: `\.env\b` matches `.env.e2e` as readily as `.env`, and a
+      // test fixture is not a secret. Over-matching is the right failure for a
+      // question and the wrong one for a wall.
       pathPattern: String.raw`(\.env\b|\.ssh\b|\.aws\b|id_rsa|\.netrc\b|credentials\.json)`,
     },
-    effect: 'deny',
+    effect: 'ask',
   },
 ]
 
@@ -111,7 +139,7 @@ export const PROFILES: readonly PermissionProfile[] = [
     id: 'read-only',
     name: 'Read only',
     summary: 'Agents may look. Anything that changes the machine needs a decision.',
-    rules: [...UNIVERSAL_DENIES, SAFE_READS],
+    rules: [...UNIVERSAL_DENIES, ...UNIVERSAL_ASKS, SAFE_READS],
   },
   {
     id: 'workspace-write',
@@ -119,6 +147,7 @@ export const PROFILES: readonly PermissionProfile[] = [
     summary: 'Edits and ordinary git are automatic. Commands and anything reaching out still ask.',
     rules: [
       ...UNIVERSAL_DENIES,
+      ...UNIVERSAL_ASKS,
       SAFE_READS,
       {
         id: 'allow-file-edits',
@@ -151,6 +180,7 @@ export const PROFILES: readonly PermissionProfile[] = [
     summary: 'Commands and edits run without asking. Reaching outside this machine still asks.',
     rules: [
       ...UNIVERSAL_DENIES,
+      ...UNIVERSAL_ASKS,
       {
         id: 'allow-commands',
         describe: 'Any command',
