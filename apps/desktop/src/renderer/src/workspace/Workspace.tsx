@@ -638,6 +638,18 @@ function PaneTabStrip(
 /** How far a row must move before it is a reorder rather than a click. */
 const ROW_DRAG_PX = 5
 
+/**
+ * Below this, the context figure is not worth the pixels.
+ *
+ * A number that reads 4% for an hour is one you stop seeing, and this one has to
+ * still register at 80. Half the window is the point where "how much is left"
+ * becomes a question someone is actually asking.
+ */
+const CONTEXT_NOTEWORTHY = 50
+
+/** Where it stops being information and becomes a warning. */
+const CONTEXT_NEAR_FULL = 80
+
 /** The card floats this far off the window edge; `--step * 2` in the stylesheet. */
 /**
  * The activity bar's width, read from the stylesheet that decides it.
@@ -986,6 +998,15 @@ function SidebarSession(props: {
   const waiting = (pulse?.approvalIds.length ?? 0) + (pulse?.questionIds.length ?? 0)
   const working = (pulse?.working.length ?? 0) > 0
   const tokens = pulse?.tokens ?? 0
+  /*
+   * The fullest participant, not an average.
+   *
+   * Two agents in one conversation keep separate contexts, and averaging them
+   * would hide the one that is about to compact behind the one that just
+   * joined. Null until some agent has finished a turn and said.
+   */
+  const contextValues = Object.values(pulse?.contextByActor ?? {})
+  const contextPercent = contextValues.length === 0 ? null : Math.max(...contextValues)
   const state = props.active ? 'active' : paneId === null ? 'offscreen' : 'open'
   /* Reset whenever the session stops working, so a warning cannot lie in wait. */
   const [armedEnd, setArmedEnd] = useState(false)
@@ -1407,6 +1428,22 @@ function SidebarSession(props: {
               {pulse?.costUsd != null && (
                 <span className="spend-cost">{` · ${money(pulse.costUsd)}`}</span>
               )}
+            </span>
+          )}
+          {/*
+           * The fullest agent's context, because the question the number answers
+           * is "is this conversation about to lose its memory" — and it is, as
+           * soon as any one participant is. Shown only past a threshold: a
+           * percentage that reads 4% all day is a number you learn to ignore,
+           * and this one has to still mean something at 80.
+           */}
+          {contextPercent !== null && contextPercent >= CONTEXT_NOTEWORTHY && (
+            <span
+              className="workspace-session-context"
+              data-near-full={contextPercent >= CONTEXT_NEAR_FULL ? 'true' : undefined}
+              title={t('context.title', { percent: contextPercent })}
+            >
+              {t('context.short', { percent: contextPercent })}
             </span>
           )}
         </span>

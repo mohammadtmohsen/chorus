@@ -51,6 +51,7 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     setSidebarHidden,
     setSidebarWidth,
     ingestEvents,
+    ingestContextUsage,
   } = state
   return {
     hydrate,
@@ -69,6 +70,7 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     setSidebarHidden,
     setSidebarWidth,
     ingestEvents,
+    ingestContextUsage,
   }
 }
 

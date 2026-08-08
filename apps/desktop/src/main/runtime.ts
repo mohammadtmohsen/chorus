@@ -28,6 +28,7 @@ import {
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
+import type { ContextUsagePush } from '../shared/ipc.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { findExecutable } from './which.js'
@@ -132,6 +133,7 @@ export class ChorusRuntime {
   /** The latest windows each provider reported, for a window opened later. */
   private readonly limits = new Map<AgentId, readonly UsageWindow[]>()
   private onLimits: ((push: { agentId: AgentId; windows: UsageWindow[] }) => void) | undefined
+  private onContextUsage: ((push: ContextUsagePush) => void) | undefined
 
   private constructor(
     private readonly db: SqliteHandle,
@@ -168,6 +170,18 @@ export class ChorusRuntime {
   /** Told whenever a provider reports its account limits. */
   onLimitsReported(listener: (push: { agentId: AgentId; windows: UsageWindow[] }) => void): void {
     this.onLimits = listener
+  }
+
+  /**
+   * Told how full a conversation's agent has filled its context window.
+   *
+   * Scoped by conversation, unlike limits: a plan window belongs to the account
+   * and reads the same wherever it is asked from, while this belongs to one
+   * agent in one conversation. Not remembered across restarts — a figure from
+   * before a restart describes a context that no longer exists.
+   */
+  onContextUsageReported(listener: (push: ContextUsagePush) => void): void {
+    this.onContextUsage = listener
   }
 
   /** What each provider last reported, so a new window is not born blank. */
@@ -1069,6 +1083,10 @@ export class ChorusRuntime {
       onLimits: (windows) => {
         this.limits.set(agentId, windows)
         this.onLimits?.({ agentId, windows: [...windows] })
+      },
+      // Conversation state, not account state: it goes to the pane that asked.
+      onContextUsage: (usage) => {
+        this.onContextUsage?.({ conversationId, agentId, ...usage })
       },
     })
     await service.attach(session, sessionOpts, health, reopening)

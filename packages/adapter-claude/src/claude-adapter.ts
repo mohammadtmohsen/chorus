@@ -27,6 +27,7 @@ import {
   type UserInputId,
 } from '@chorus/shared'
 import {
+  mapContextUsage,
   mapPlanUsage,
   mapSdkMessage,
   mapToolPermission,
@@ -275,6 +276,9 @@ export class ClaudeSession implements AgentSession {
         // Both moments the plan windows are worth re-reading: when a session
         // opens, and when a turn has just spent something.
         if (kind === 'system' || kind === 'result') void this.readPlanUsage()
+        // Only at the end of a turn: the window cannot have moved until the
+        // agent has actually said something.
+        if (kind === 'result') void this.readContextUsage()
 
         for (const event of mapSdkMessage(message as never, {
           seq: this.seq + 1,
@@ -381,6 +385,35 @@ export class ClaudeSession implements AgentSession {
       // Experimental, and answered only while the query is open. Neither is
       // worth a word in the transcript.
       return false
+    }
+  }
+
+  /**
+   * How full the context window is, read at the end of a turn.
+   *
+   * Turn boundaries rather than a timer: the figure only moves when the agent
+   * has said something, and a timer would poll a number that cannot have
+   * changed. It is also the moment the answer is actionable — deciding whether
+   * to start a fresh conversation is a between-turns decision.
+   *
+   * Defensive in the same way as `readPlanUsage`: a method the installed CLI is
+   * too old to have is a quieter panel, not an error.
+   */
+  private async readContextUsage(): Promise<void> {
+    const ask = (this.q as unknown as { getContextUsage?: () => Promise<unknown> }).getContextUsage
+    if (typeof ask !== 'function') return
+
+    try {
+      const usage = await ask.call(this.q)
+      for (const event of mapContextUsage(usage, {
+        agentId: 'claude',
+        seq: this.seq + 1,
+        at: this.now(),
+      })) {
+        this.emit(event)
+      }
+    } catch {
+      // Answered only while the query is open, so a close mid-flight lands here.
     }
   }
 

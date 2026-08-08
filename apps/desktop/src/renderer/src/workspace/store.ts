@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
-import type { TranscriptEvent } from '../../../shared/ipc.js'
+import type { ContextUsagePush, TranscriptEvent } from '../../../shared/ipc.js'
 import type { WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
 import {
   activateTab,
@@ -41,6 +41,19 @@ export interface SessionPulse {
   >
   readonly tokens: number
   readonly costUsd: number | null
+  /*
+   * How full each agent has filled its context window, 0-100.
+   *
+   * Not reduced from events like everything else above: this is state the agent
+   * reports about itself, pushed on its own channel and never written to the
+   * log, so there is nothing to replay. Per actor because two agents in one
+   * conversation keep separate contexts — that is the product's premise, and a
+   * single number would flatten it.
+   *
+   * Empty until a turn finishes. Absent is the honest answer before then, and
+   * different from zero, which would claim an empty context.
+   */
+  readonly contextByActor: Readonly<Record<string, number>>
 }
 
 /** Drops one key without `delete`, which the lint rules forbid on a computed key. */
@@ -60,6 +73,7 @@ const EMPTY_PULSE: SessionPulse = {
   usageByActor: {},
   tokens: 0,
   costUsd: null,
+  contextByActor: {},
 }
 
 /**
@@ -91,6 +105,8 @@ export interface WorkspaceActions {
   /** Committed on drop, not on every pointer move; see `useSidebarResize`. */
   setSidebarWidth: (width: number) => void
   ingestEvents: (events: readonly TranscriptEvent[]) => void
+  /** Pushed state, not a logged event — see the action for why it is separate. */
+  ingestContextUsage: (usage: ContextUsagePush) => void
 }
 
 export type WorkspaceStore = WorkspaceSnapshot & WorkspaceRuntime & WorkspaceActions
@@ -110,7 +126,12 @@ function pulseKey(event: TranscriptEvent, field: string): string {
   return typeof value === 'string' && value !== '' ? value : event.id
 }
 
-function reducePulse(pulse: SessionPulse, event: TranscriptEvent, visible: boolean): SessionPulse {
+/** Exported for tests, like the transcript's reducer, because it is pure. */
+export function reducePulse(
+  pulse: SessionPulse,
+  event: TranscriptEvent,
+  visible: boolean
+): SessionPulse {
   if (event.seq <= pulse.lastSeq) return pulse
   let working = [...pulse.working]
   let approvalIds = [...pulse.approvalIds]
@@ -175,6 +196,9 @@ function reducePulse(pulse: SessionPulse, event: TranscriptEvent, visible: boole
     usageByActor,
     tokens,
     costUsd,
+    // Carried through untouched: no event reports it, so folding the log must
+    // not be able to erase what the context channel pushed.
+    contextByActor: pulse.contextByActor,
   }
 }
 
@@ -283,6 +307,37 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             }
           }
           return changed ? { pulses } : state
+        })
+      },
+      /*
+       * Its own action rather than a case in `reducePulse`.
+       *
+       * That reducer folds the event log, and this never enters the log — it
+       * arrives on a separate push because it is the agent's current state, not
+       * conversation history. Routing it through the same function would mean
+       * inventing a synthetic event and a `seq` that nothing ordered.
+       *
+       * A report for a conversation the store has never seen is dropped: the
+       * sidebar draws sessions it knows about, and a pulse conjured here would
+       * be one with no card to sit on.
+       */
+      ingestContextUsage: (usage) => {
+        set((state) => {
+          const current = state.pulses[usage.conversationId]
+          if (current === undefined) return state
+          if (current.contextByActor[usage.agentId] === usage.percentUsed) return state
+          return {
+            pulses: {
+              ...state.pulses,
+              [usage.conversationId]: {
+                ...current,
+                contextByActor: {
+                  ...current.contextByActor,
+                  [usage.agentId]: usage.percentUsed,
+                },
+              },
+            },
+          }
         })
       },
     }

@@ -267,5 +267,9 @@
     "running": "Running",
     "ok": "Done",
     "error": "Failed"
+  },
+  "context": {
+    "short": "{{percent}}% ctx",
+    "title": "Context window {{percent}}% full — the agent compacts when it fills"
   }
 }
