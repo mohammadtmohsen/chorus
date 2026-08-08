@@ -124,3 +124,57 @@ describe('setEffort', () => {
     await expect(session.setEffort?.('high')).resolves.toBeUndefined()
   })
 })
+
+/**
+ * MCP health, and why it is worth surfacing at all.
+ *
+ * `settingSources` is omitted so agents inherit the user's own servers — and
+ * their failures. None is loud: a server needing authentication is not an error
+ * and nothing retries it, so the only symptom is an agent quietly lacking a
+ * capability you believe it has.
+ */
+describe('mcpServerStatus', () => {
+  it('reports a server that needs authenticating, which is the silent one', async () => {
+    const session = await adapterWith({
+      mcpServerStatus: () => Promise.resolve([{ name: 'slack', status: 'needs-auth' }]),
+    }).start(OPTS)
+
+    expect(await session.mcpServerStatus?.()).toEqual([{ name: 'slack', status: 'needs-auth' }])
+  })
+
+  it('carries the reason a server failed, and how much a working one contributes', async () => {
+    const session = await adapterWith({
+      mcpServerStatus: () =>
+        Promise.resolve([
+          { name: 'broken', status: 'failed', error: 'spawn ENOENT' },
+          { name: 'github', status: 'connected', tools: [{ name: 'a' }, { name: 'b' }] },
+        ]),
+    }).start(OPTS)
+
+    expect(await session.mcpServerStatus?.()).toEqual([
+      { name: 'broken', status: 'failed', error: 'spawn ENOENT' },
+      { name: 'github', status: 'connected', tools: 2 },
+    ])
+  })
+
+  it('reads an unfamiliar status as pending, which claims least', async () => {
+    const session = await adapterWith({
+      mcpServerStatus: () => Promise.resolve([{ name: 'odd', status: 'reticulating' }]),
+    }).start(OPTS)
+
+    expect(await session.mcpServerStatus?.()).toEqual([{ name: 'odd', status: 'pending' }])
+  })
+
+  it('drops a server with no name, which nothing could display', async () => {
+    const session = await adapterWith({
+      mcpServerStatus: () => Promise.resolve([{ status: 'connected' }]),
+    }).start(OPTS)
+
+    expect(await session.mcpServerStatus?.()).toEqual([])
+  })
+
+  it('offers nothing on a CLI that cannot be asked', async () => {
+    const session = await adapterWith({}).start(OPTS)
+    expect(await session.mcpServerStatus?.()).toEqual([])
+  })
+})

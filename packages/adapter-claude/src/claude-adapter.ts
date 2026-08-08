@@ -11,6 +11,7 @@ import type {
   AgentAdapter,
   ModelChoice,
   ProviderPermissionMode,
+  McpServerHealth,
   SlashCommandInfo,
   AgentCapabilities,
   AgentEvent,
@@ -111,6 +112,9 @@ export interface ClaudeAdapterOptions {
  * is a structural any at every call site.
  */
 type CanUseToolOptions = Parameters<NonNullable<Options['canUseTool']>>[2]
+
+/** An unknown status reads as pending, which is the one that claims least. */
+const KNOWN_STATUS = new Set(['connected', 'failed', 'needs-auth', 'pending', 'disabled'])
 
 interface PendingApproval {
   resolve: (result: PermissionResult) => void
@@ -284,6 +288,45 @@ export class ClaudeSession implements AgentSession {
             name: row.name,
             description: typeof row.description === 'string' ? row.description : '',
             argumentHint: typeof row.argumentHint === 'string' ? row.argumentHint : '',
+          },
+        ]
+      })
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * How the inherited MCP servers are doing.
+   *
+   * `settingSources` is deliberately omitted so agents get the user's full
+   * config, which means the servers are theirs and their failures are theirs
+   * too — and none of those failures is loud. Feature-detected like the rest.
+   */
+  async mcpServerStatus(): Promise<readonly McpServerHealth[]> {
+    const ask = (this.q as unknown as { mcpServerStatus?: () => Promise<unknown> }).mcpServerStatus
+    if (typeof ask !== 'function') return []
+
+    try {
+      const servers = await ask.call(this.q)
+      if (!Array.isArray(servers)) return []
+      return servers.flatMap((entry): McpServerHealth[] => {
+        const row = entry as {
+          name?: unknown
+          status?: unknown
+          error?: unknown
+          tools?: unknown
+        }
+        if (typeof row.name !== 'string' || row.name === '') return []
+        const status = KNOWN_STATUS.has(row.status as string)
+          ? (row.status as McpServerHealth['status'])
+          : 'pending'
+        return [
+          {
+            name: row.name,
+            status,
+            ...(typeof row.error === 'string' && row.error !== '' ? { error: row.error } : {}),
+            ...(Array.isArray(row.tools) ? { tools: row.tools.length } : {}),
           },
         ]
       })
