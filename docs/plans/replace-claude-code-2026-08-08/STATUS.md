@@ -162,14 +162,121 @@ accumulated from turn zero, so a client attaching mid-session cannot recover it.
 
 ## Phase 4 — the unused SDK surface
 
+### The flake was a real bug, and not where it looked
+
+The unidentified e2e failure from the previous entry turned out to be
+`a message reaches an agent and comes back`, failing about one run in four
+with `never became true: an agent answered`. Chased rather than retried,
+because a dropped turn would contradict the one rule this project is built on.
+
+It was not a dropped turn. Keeping the userData directory of a failing run and
+reading the log out of SQLite showed **everything correct**: the deltas, and
+`agent.message.completed` carrying `"PONG"`. Relaunching the app on that same
+directory rendered the answer. So the log was right, the reducer was right, and
+the transcript still showed an empty bubble.
+
+Instrumenting the renderer ruled out the next two suspects in turn: every event
+reached `reduceEvents` in order, with correct payloads and correct `lastSeq`
+dedupe. The message was in the view. What the DOM actually held was
+`<div class="said"></div>` — not a clamp, not empty markdown, nothing.
+
+`useTypewriter` was the answer. `shown` starts at zero and only advances inside
+`requestAnimationFrame`, so a window the compositor has stopped asking to paint
+leaves the visible prefix at **zero characters** for as long as that lasts.
+Minimised, on another Space, occluded — the reply is durable, projected, reduced
+and in the component's own props, and the transcript draws nothing.
+
+Fixed with a watchdog rather than a `document.hidden` check, because occlusion
+starves the frame callback without ever marking the document hidden. A second
+without a frame means nobody is watching the animation, so the animation's point
+is gone and only its cost remains: show the whole thing.
+
+Verified the way the harness comment says to — these are "bugs that unit tests
+do not find: a blank window". Twenty-four consecutive reproducer runs passed,
+against roughly six failures in forty attempts before. There is no React test
+environment in this repo and adding one for this would be a decision, not a
+convenience; the e2e spec that caught it is the regression test, and it is
+deterministic now.
+
+**The general shape, worth keeping:** the flake was blamed on the network, then
+on a dropped turn, then on the reducer. It was in the last place anyone looks —
+the code that draws the thing everyone had already confirmed was there.
+
 ### Started: MCP server health
 
 `mcpServerStatus()` is read and shown in Settings, so a server stuck in
 `needs-auth` says so instead of silently handing its agent no tools. On this
 machine that is `slack`, which had been failing quietly.
 
-**Still to do:** `supportedAgents()`, `accountInfo()`, and the rest of the
-`getContextUsage()` payload, of which one number is currently shown.
+### Done: which account each agent is signed in as
+
+`accountInfo()`, probed first as the MCP work was. This machine answers an
+email, an organisation, `Claude Max`, and `firstParty`. Off the first-party API
+none of that exists — a Bedrock session authenticates with AWS credentials and
+has no plan — so every field is optional and a row shows what it has.
+
+Per agent rather than first-answer-wins, unlike the servers: those come from one
+config file and every session inherits the same ones, but `claude` and `codex`
+are separate logins and may be different people. That is the whole reason to
+ask. The question it answers is one a room running several projects at once
+eventually has: the usage window on the rail belongs to an account, and until
+now nothing in Chorus could say which.
+
+The retry that the MCP panel needed is now shared, because both questions go
+through to a live session and both are asked by someone who has just opened the
+app. One subtle thing, asked once, in one place.
+
+### Not done: `supportedAgents()`
+
+It answers — five subagents on this machine, `Explore`, `Plan`,
+`general-purpose` and the rest, with descriptions and sometimes a model. There
+is nowhere honest to put them.
+
+They are the CLI's own dispatch targets, not participants: Chorus cannot address
+one, cannot route to one, and cannot tell when one is running. The obvious
+surface is the `@` menu, and that is exactly where it would do harm — `@` in
+this app means _who answers_, and there are two of those. Listing five things
+that cannot answer under the same character would make the menu's one meaning
+into two.
+
+Recorded as answered-and-declined rather than left looking unexplored.
+
+**Still to do:** the rest of the `getContextUsage()` payload — see below.
+
+### What `getContextUsage()` actually returns
+
+The plan said "one number is currently shown", implying the rest was more of the
+same. It is not, and one thing in it corrects a claim Chorus currently makes.
+
+The payload carries a full breakdown. On this machine:
+
+```
+System prompt                253
+System tools              12,725
+MCP tools (deferred)      45,930   deferred
+System tools (deferred)   13,608   deferred
+Memory files               4,289
+Skills                     2,110
+Messages                   4,787
+```
+
+**`totalTokens` excludes the deferred categories.** 253 + 12,725 + 4,289 +
+2,110 + 4,787 = 24,164, which is `totalTokens` exactly, while the two deferred
+rows add another 59,538 that is not counted until something loads them. So the
+number Chorus already shows is the right one, and a breakdown that presented
+"MCP tools: 45,930" as consumed would be wrong by more than twice the total.
+
+**`autoCompactThreshold` is 967,000 against a `maxTokens` of 1,000,000.**
+Compaction fires at 96.7%, so a bar drawn against the maximum never fills before
+it resets. Also in the payload and not yet used: `memoryFiles` with a path and a
+token count each, `skills` (15 here, 2,110 tokens), `slashCommands` (15, 917),
+and a `messageBreakdown` splitting the conversation into tool calls, results and
+attachments.
+
+Not built yet. The interesting surface is "what is filling this window" and it
+needs the deferred distinction drawn correctly or it lies; that is a design
+question, not a plumbing one, and it should not be started as an afterthought
+to a plumbing commit.
 
 ### Four things only a screenshot could have found
 
