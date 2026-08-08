@@ -4,6 +4,7 @@ import {
   type AgentEvent,
   type AgentSession,
   type ApprovalDecision,
+  type BackgroundTask,
   type HealthStatus,
   type SessionOpts,
   type UsageWindow,
@@ -51,6 +52,8 @@ export interface ConversationServiceOptions {
   readonly onLimits?: (windows: readonly UsageWindow[]) => void
   /** Told how full the agent's context window is. Not persisted, for the same reason. */
   readonly onContextUsage?: (usage: ContextWindow) => void
+  /** Told what the agent has left running. Not persisted, for the same reason. */
+  readonly onTasks?: (tasks: readonly BackgroundTask[]) => void
   /** Told when an approved plan returned the session to ordinary permissions. */
   readonly onPlanExited?: () => void
 }
@@ -73,6 +76,7 @@ export class ConversationService {
   private readonly queue: ApprovalQueue
   private readonly onLimits: ((windows: readonly UsageWindow[]) => void) | undefined
   private readonly onContextUsage: ((usage: ContextWindow) => void) | undefined
+  private readonly onTasks: ((tasks: readonly BackgroundTask[]) => void) | undefined
   private readonly onPlanExited: (() => void) | undefined
   /**
    * Question sets waiting on the user, kept so an answer can be checked against
@@ -102,6 +106,7 @@ export class ConversationService {
     this.grants = options.grants ?? new SessionGrants()
     this.onLimits = options.onLimits
     this.onContextUsage = options.onContextUsage
+    this.onTasks = options.onTasks
     this.onPlanExited = options.onPlanExited
     this.scheduler = options.scheduler ?? realScheduler
     this.queue = new ApprovalQueue({
@@ -578,6 +583,18 @@ export class ConversationService {
           maxTokens: event.maxTokens,
           percentUsed: event.percentUsed,
         })
+        return
+
+      /*
+       * Pushed like the two above, and for the same reason: a list of processes
+       * that stop existing when the session does is state, not history.
+       *
+       * Passed on whole every time, including when it is empty. The provider's
+       * payload replaces rather than merges, so an empty list is not "no news" —
+       * it is the only way anyone learns the last task finished.
+       */
+      case 'tasks.changed':
+        this.onTasks?.(event.tasks)
         return
 
       case 'usage.updated':

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
-import type { ContextUsagePush, TranscriptEvent } from '../../../shared/ipc.js'
+import type { ContextUsagePush, TasksPush, TranscriptEvent } from '../../../shared/ipc.js'
 import { countsAsUnread } from '../../../shared/unread.js'
 import type { WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
 import {
@@ -55,6 +55,22 @@ export interface SessionPulse {
    * different from zero, which would claim an empty context.
    */
   readonly contextByActor: Readonly<Record<string, number>>
+  /**
+   * What each agent has left running, as last pushed.
+   *
+   * Same category as `contextByActor` and carried the same way: no event
+   * reports it, so folding the log must not be able to erase it. Replaced
+   * wholesale per actor, including with an empty list — under the provider's
+   * replace semantics that is the only thing that says the last task finished.
+   */
+  readonly tasksByActor: Readonly<Record<string, readonly BackgroundTaskView[]>>
+}
+
+/** One background task, as a card needs to draw it. */
+export interface BackgroundTaskView {
+  readonly id: string
+  readonly kind: string
+  readonly description: string
 }
 
 /** Drops one key without `delete`, which the lint rules forbid on a computed key. */
@@ -75,6 +91,7 @@ const EMPTY_PULSE: SessionPulse = {
   tokens: 0,
   costUsd: null,
   contextByActor: {},
+  tasksByActor: {},
 }
 
 /**
@@ -113,6 +130,7 @@ export interface WorkspaceActions {
   ingestEvents: (events: readonly TranscriptEvent[]) => void
   /** Pushed state, not a logged event — see the action for why it is separate. */
   ingestContextUsage: (usage: ContextUsagePush) => void
+  ingestTasks: (push: TasksPush) => void
 }
 
 export type WorkspaceStore = WorkspaceSnapshot & WorkspaceRuntime & WorkspaceActions
@@ -202,6 +220,7 @@ export function reducePulse(
     // Carried through untouched: no event reports it, so folding the log must
     // not be able to erase what the context channel pushed.
     contextByActor: pulse.contextByActor,
+    tasksByActor: pulse.tasksByActor,
   }
 }
 
@@ -337,6 +356,25 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
        * sidebar draws sessions it knows about, and a pulse conjured here would
        * be one with no card to sit on.
        */
+      /*
+       * Replaced rather than merged, and never skipped when empty — an empty
+       * list is how the last task's ending arrives.
+       */
+      ingestTasks: (push) => {
+        set((state) => {
+          const current = state.pulses[push.conversationId]
+          if (current === undefined) return state
+          return {
+            pulses: {
+              ...state.pulses,
+              [push.conversationId]: {
+                ...current,
+                tasksByActor: { ...current.tasksByActor, [push.agentId]: push.tasks },
+              },
+            },
+          }
+        })
+      },
       ingestContextUsage: (usage) => {
         set((state) => {
           const current = state.pulses[usage.conversationId]

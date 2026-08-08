@@ -755,6 +755,32 @@ export const ContextUsagePush = z.object({
 })
 export type ContextUsagePush = z.infer<typeof ContextUsagePush>
 
+/**
+ * What an agent has left running, for one conversation.
+ *
+ * A push and never a log row, for the reason on `TasksChanged`: it is a
+ * snapshot of live processes, and they stop existing when the session does.
+ * Scoped like the context window rather than like limits — tasks belong to one
+ * conversation's agent, not to the account.
+ *
+ * The list replaces whatever came before, including when it is empty. An empty
+ * push is the only thing that can say the last task finished.
+ */
+export const TASKS_PUSH_CHANNEL = 'agents:tasks'
+
+export const TasksPush = z.object({
+  conversationId: z.string(),
+  agentId: z.enum(['codex', 'claude']),
+  tasks: z.array(
+    z.object({
+      id: z.string(),
+      kind: z.string(),
+      description: z.string(),
+    })
+  ),
+})
+export type TasksPush = z.infer<typeof TasksPush>
+
 export const EventsPush = z.array(TranscriptEvent)
 export type EventsPush = z.infer<typeof EventsPush>
 
@@ -836,6 +862,7 @@ export interface ChorusApi {
   readonly onScale: (listener: (scale: number) => void) => () => void
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
+  readonly onTasks: (listener: (tasks: TasksPush) => void) => () => void
   readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
   readonly mcpServers: () => Promise<IpcResponse<'agents:mcp'>>
   readonly accounts: () => Promise<IpcResponse<'agents:account'>>

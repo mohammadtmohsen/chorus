@@ -5,6 +5,8 @@ import {
   IdeContextPush,
   CONTEXT_PUSH_CHANNEL,
   ContextUsagePush,
+  TasksPush,
+  TASKS_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   LimitsPush,
   SCALE_PUSH_CHANNEL,
@@ -124,6 +126,16 @@ const api: ChorusApi = {
     ipcRenderer.on(CONTEXT_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(CONTEXT_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onTasks: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = TasksPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(TASKS_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(TASKS_PUSH_CHANNEL, wrapped)
     }
   },
   onScale: (listener) => {

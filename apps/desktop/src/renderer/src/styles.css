@@ -1343,6 +1343,16 @@ body {
   cursor: pointer;
 }
 
+/* Reads beside the plan chip, not as another button: nothing here is clickable. */
+.workspace-session-tasks {
+  justify-self: start;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid transparent;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 .workspace-session-plan:hover:not(:disabled) {
   color: var(--bone);
 }

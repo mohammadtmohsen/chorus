@@ -321,5 +321,9 @@
     "heading": "Signed in as",
     "signedIn": "signed in",
     "note": "Each agent signs in on its own. The usage windows on the rail belong to these accounts."
+  },
+  "tasks": {
+    "running_one": "{{count}} running",
+    "running_other": "{{count}} running"
   }
 }

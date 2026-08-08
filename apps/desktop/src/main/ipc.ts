@@ -7,6 +7,7 @@ import {
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
   CONTEXT_PUSH_CHANNEL,
+  TASKS_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   IPC_CONTRACT,
   type IdeContextPush,
@@ -566,6 +567,15 @@ export function forwardContextUsageToRenderer(runtime: ChorusRuntime): void {
   runtime.onContextUsageReported((push) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(CONTEXT_PUSH_CHANNEL, push)
+    }
+  })
+}
+
+/** Sends what each conversation's agents have left running, as it changes. */
+export function forwardTasksToRenderer(runtime: ChorusRuntime): void {
+  runtime.onTasksReported((push) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(TASKS_PUSH_CHANNEL, push)
     }
   })
 }

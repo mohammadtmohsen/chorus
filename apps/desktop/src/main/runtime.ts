@@ -39,7 +39,7 @@ import {
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
-import type { ContextUsagePush } from '../shared/ipc.js'
+import type { ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
 import { readSettings } from './settings.js'
@@ -155,6 +155,7 @@ export class ChorusRuntime {
   private readonly limits = new Map<AgentId, readonly UsageWindow[]>()
   private onLimits: ((push: { agentId: AgentId; windows: UsageWindow[] }) => void) | undefined
   private onContextUsage: ((push: ContextUsagePush) => void) | undefined
+  private onTasks: ((push: TasksPush) => void) | undefined
   /**
    * The last model list each agent reported, for the settings sheet.
    *
@@ -212,6 +213,17 @@ export class ChorusRuntime {
    */
   onContextUsageReported(listener: (push: ContextUsagePush) => void): void {
     this.onContextUsage = listener
+  }
+
+  /**
+   * Told what each conversation's agents have left running.
+   *
+   * Not remembered across restarts, and deliberately not seeded on reopen: the
+   * processes belonged to a session that has ended. The next change repopulates
+   * it, and until then nothing running is the truthful answer.
+   */
+  onTasksReported(listener: (push: TasksPush) => void): void {
+    this.onTasks = listener
   }
 
   /** What each provider last reported, so a new window is not born blank. */
@@ -1420,6 +1432,17 @@ export class ChorusRuntime {
       // Conversation state, not account state: it goes to the pane that asked.
       onContextUsage: (usage) => {
         this.onContextUsage?.({ conversationId, agentId, ...usage })
+      },
+      /*
+       * Live processes, not history — pushed to the pane like the context
+       * window, and never logged.
+       *
+       * Passed on even when empty. The provider replaces rather than merges, so
+       * an empty list is the only way anyone learns the last task finished; a
+       * falsy guard here would leave the indicator stuck on forever.
+       */
+      onTasks: (tasks) => {
+        this.onTasks?.({ conversationId, agentId, tasks: tasks.map((task) => ({ ...task })) })
       },
       // An approved plan ends the mode for the room, not just for the agent
       // whose plan it was.

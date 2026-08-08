@@ -383,20 +383,48 @@ describe('system notices', () => {
     expect(sys({ type: 'system', subtype: 'compact_boundary' })).toEqual([])
   })
 
-  it('keeps the running-tasks snapshot out of the log entirely', () => {
+  it('turns the running-tasks snapshot into state rather than a notice', () => {
     /*
-     * State, not history — the payload is documented as "every live background
-     * task after the change. REPLACE semantics", so it describes the agent right
-     * now rather than anything that happened. The default arm used to turn it
-     * into a durable notice reading, in full, `background_tasks_changed`.
+     * The default arm used to make this a durable notice reading, in full,
+     * `background_tasks_changed`. It is state — "every live background task
+     * after the change. REPLACE semantics" — so it becomes an event the
+     * conversation service pushes and never appends.
      */
+    const [event] = sys({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [
+        { task_id: 't1', task_type: 'shell', description: 'sleep 60' },
+        { task_id: 't2', task_type: 'subagent', description: 'Explore' },
+      ],
+    })
+    expect(event).toMatchObject({
+      type: 'tasks.changed',
+      tasks: [
+        { id: 't1', kind: 'shell', description: 'sleep 60' },
+        { id: 't2', kind: 'subagent', description: 'Explore' },
+      ],
+    })
+  })
+
+  it('reports an emptied list, because that is what clears the indicator', () => {
+    // Under replace semantics an empty payload is the only way to learn that
+    // the last task finished. Dropping it would leave the count stuck forever.
+    expect(sys({ type: 'system', subtype: 'background_tasks_changed', tasks: [] })).toMatchObject([
+      { type: 'tasks.changed', tasks: [] },
+    ])
+  })
+
+  it('drops a task with no id rather than showing one nothing can stop', () => {
     expect(
       sys({
         type: 'system',
         subtype: 'background_tasks_changed',
-        tasks: [{ task_id: 't1', task_type: 'shell', description: 'sleep 60' }],
+        tasks: [{ task_type: 'shell', description: 'no id' }, { task_id: 'ok' }],
       })
-    ).toEqual([])
+    ).toMatchObject([
+      { type: 'tasks.changed', tasks: [{ id: 'ok', kind: 'task', description: '' }] },
+    ])
   })
 
   it('degrades an unmapped top-level type to a notice', () => {

@@ -2,6 +2,7 @@ import {
   toEpochMs,
   type AgentEvent,
   type ApprovalRequest,
+  type BackgroundTask,
   type NoticeSource,
   type UsageWindow,
   type UserInputRequest,
@@ -189,6 +190,8 @@ interface SystemFields {
   status?: string
   usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
   skip_transcript?: boolean
+  /** `background_tasks_changed` only: the whole live set, replacing the last. */
+  tasks?: { task_id?: string; task_type?: string; description?: string }[]
 }
 
 /**
@@ -223,25 +226,6 @@ const QUIET_SUBTYPES: ReadonlySet<string> = new Set([
    */
   'hook_started',
   'hook_progress',
-  /*
-   * The one entry here that is quiet for a reason of principle rather than
-   * volume.
-   *
-   * `background_tasks_changed` carries "every live background task after the
-   * change. REPLACE semantics" — so it is a snapshot of what is running *right
-   * now*, which is the same category as `limits` and `context.usage`: state,
-   * not history. Applying this file's own test to it, reading it back a week
-   * later is worse than having none, because it describes processes that
-   * stopped existing when the session did.
-   *
-   * Until it travels on a push channel of its own, the default arm was turning
-   * each one into a durable notice whose entire text was the string
-   * `background_tasks_changed` — a protocol identifier shown to a person, and a
-   * row in an append-only log that nothing can act on or rebuild from. Silence
-   * is the smaller wrong of the two, and the honest one until the channel
-   * exists.
-   */
-  'background_tasks_changed',
 ])
 
 function notice(
@@ -402,6 +386,38 @@ function mapSystem(
         },
       ]
     }
+
+    /*
+     * A snapshot of what is still running, taken straight to the push channel.
+     *
+     * Never a log row: the payload is documented as "every live background task
+     * after the change. REPLACE semantics", which makes it state in the same
+     * family as `limits` and `context.usage`. Before this it fell to the default
+     * arm and became a durable notice whose entire text was the string
+     * `background_tasks_changed`.
+     *
+     * An empty list is emitted rather than dropped, because "nothing is running
+     * any more" is exactly the update that clears the indicator — and under
+     * replace semantics it is the only thing that can.
+     */
+    case 'background_tasks_changed':
+      return [
+        {
+          ...base,
+          type: 'tasks.changed',
+          tasks: (Array.isArray(s.tasks) ? s.tasks : []).flatMap((entry): BackgroundTask[] => {
+            const row = entry as { task_id?: unknown; task_type?: unknown; description?: unknown }
+            if (typeof row.task_id !== 'string' || row.task_id === '') return []
+            return [
+              {
+                id: row.task_id,
+                kind: typeof row.task_type === 'string' ? row.task_type : 'task',
+                description: typeof row.description === 'string' ? row.description : '',
+              },
+            ]
+          }),
+        },
+      ]
 
     case 'task_notification': {
       if (s.skip_transcript === true) return []

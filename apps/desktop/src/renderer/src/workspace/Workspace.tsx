@@ -1072,6 +1072,15 @@ function SidebarSession(props: {
    */
   const contextValues = Object.values(pulse?.contextByActor ?? {})
   const contextPercent = contextValues.length === 0 ? null : Math.max(...contextValues)
+  /*
+   * Everything both agents left running, flattened.
+   *
+   * The count is the answer — "something of yours is still going" — and the
+   * descriptions go in the title, because a card is not the place to read a
+   * command line. Nothing running is the ordinary state, so the chip is absent
+   * rather than showing a zero.
+   */
+  const running = Object.values(pulse?.tasksByActor ?? {}).flat()
   const state = props.active ? 'active' : paneId === null ? 'offscreen' : 'open'
   /* Reset whenever the session stops working, so a warning cannot lie in wait. */
   const [armedEnd, setArmedEnd] = useState(false)
@@ -1467,6 +1476,14 @@ function SidebarSession(props: {
           session on the way — wanting a session's diff is a reason to be in it.
         */}
         <PlanToggle conversationId={props.session.conversationId} />
+        {running.length > 0 && (
+          <span
+            className="workspace-session-tasks"
+            title={running.map((task) => `${task.kind}: ${task.description}`).join('\n')}
+          >
+            {t('tasks.running', { count: running.length })}
+          </span>
+        )}
         <span className="workspace-session-output">
           <button
             type="button"
