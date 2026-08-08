@@ -293,5 +293,9 @@
     "hours": "{{count}}h ago",
     "days": "{{count}}d ago",
     "note": "Reopening starts its agents again. They read the transcript before answering, and permissions return to Read only."
+  },
+  "model": {
+    "label": "Model for {{agent}}",
+    "default": "{{agent}}: default"
   }
 }

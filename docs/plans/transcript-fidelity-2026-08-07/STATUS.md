@@ -208,10 +208,51 @@ prettier, **850 tests**. Seven new tests. `reducePulse` is now exported, as
 **Not verified in the running app.** Needs a conversation past half its context
 window, so it will not show on a fresh session.
 
-## Phase 4b — Model selection
+## Phase 4b done: Model selection
 
-Not started. `SessionOpts.model` is still never set at either construction site
-(`runtime.ts`), `ClaudeSession.setModel` still has no caller, and
-`modelSwitchMidSession` stays `false` until it does. `Query.supportedModels()`
-exists and returns `{ value, resolvedModel?, displayName, description }`, so the
-picker can be populated rather than hardcoded.
+You can now choose which model an agent answers as, mid-conversation. Before
+this there was no way to pick a model anywhere in Chorus: `setModel` existed with
+no caller, and `SessionOpts.model` was never set at either construction site.
+
+**Changed**
+
+- `packages/agent-protocol/src/adapter.ts` — `ModelChoice`, and
+  `AgentSession.supportedModels?()`.
+- `packages/adapter-claude/src/claude-adapter.ts` — `supportedModels()`;
+  `modelSwitchMidSession` back to `true`.
+- `packages/orchestrator/src/supervisor.ts` — forwards both, and **remembers the
+  choice**.
+- `apps/desktop/src/main/runtime.ts` — `listModels` (cached per participant) and
+  `setModel`.
+- `shared/ipc.ts`, `main/ipc.ts`, `preload/index.ts` — `conversation:models`,
+  `conversation:setModel`.
+- `renderer/src/workspace/Workspace.tsx`, `styles.css`, `en.json` —
+  `ModelPicker` on the sidebar card.
+
+**The correctness point: the supervisor remembers.** A supervised session is
+replaced under the caller after a crash, and a model set before that would
+silently revert — the control would still show the choice while the agent
+answered as something else. `chosenModel` is held in `SupervisedSession` and
+re-applied to whatever session comes back.
+
+**Three smaller calls**
+
+1. The list is **asked of the running CLI**, never hardcoded. The installed
+   `claude` self-updates, so a list compiled into Chorus would be wrong the week
+   after it shipped. A CLI too old to answer returns empty.
+2. Empty means **the picker does not render**. An empty dropdown implies a
+   choice that does not exist.
+3. Cached per participant. Every sidebar card wants the list and asking is a
+   control request to a live CLI; the list cannot change while a session runs.
+
+A native `<select>`, not the portal listbox the profile chip uses — the options
+come from the provider and there is nothing to draw beyond them, so the platform
+control is smaller and better with a keyboard.
+
+**Verification** — full `pnpm run check` green: 18 typecheck tasks, eslint,
+prettier, **876 tests**.
+
+**Not verified in the running app,** and this one is the least certain of the
+recent phases: whether `supportedModels()` answers at all depends on the
+installed CLI, and the whole control hides itself when it does not. If no picker
+appears on a card, that is the thing to check first.
