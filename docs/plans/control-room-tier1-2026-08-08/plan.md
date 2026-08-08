@@ -70,8 +70,25 @@ log. Add `unread` per session, written where `rememberOpen` already writes.
 
 - `conversation:list` — id, title, cwd, last activity, agents, whether ended.
   A projection query, not a log scan.
-- A picker in the sidebar. Reopening an ended conversation resumes nothing: it
-  shows the transcript, and joining an agent is a separate, explicit act.
+- A picker in the sidebar.
+
+**Corrected while building: reopening restarts the agents.** The plan said it
+should resume nothing and show only the transcript, with joining an agent as a
+separate act. Two things argued against that once it was in front of me.
+
+The first is that a read-only transcript is a new mode `Session` does not have —
+it assumes participants, a composer, an approval dock — and inventing one is a
+larger change than the feature is worth. The second is more important: the reason
+to go looking for an ended conversation is to pick it back up. Landing on
+something you cannot reply to is a dead end that then needs a second action, and
+"reopen, then also add an agent" is two steps for one intention.
+
+So `reopenConversation` reuses the existing `reopen` path. Agents are **started,
+not resumed** — the provider threads died with the session, and resuming a
+forgotten id is the one call that hangs without failing — and they read the
+transcript as catch-up on the first thing asked, exactly as an agent joining
+mid-conversation does. Permissions deliberately return to the default rather than
+to whatever the conversation last ran under.
 
 ### Phase 4 — Make "project" real
 

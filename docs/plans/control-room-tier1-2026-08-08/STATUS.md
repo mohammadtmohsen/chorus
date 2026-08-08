@@ -104,7 +104,63 @@ so rather than being loosened.
 **Not verified in the running app.** Needs a turn to finish in a background tab,
 then a relaunch — the card should come back with a count on it.
 
-## Phase 3 — Reopen an ended conversation
+## Phase 3 done: Reopen an ended conversation
+
+Ending a conversation no longer loses it. Its transcript always stayed in SQLite;
+what was missing was anything that could name it.
+
+**Changed**
+
+- `packages/event-store/src/store.ts` — `listConversations`,
+  `ConversationSummary`.
+- `apps/desktop/src/main/runtime.ts` — `listConversations` (marking the open
+  ones) and `reopenConversation`.
+- `shared/ipc.ts`, `main/ipc.ts`, `preload/index.ts` — `conversation:list`,
+  `conversation:reopen`.
+- `renderer/src/HistoryPanel.tsx` (new) — the sheet.
+- `renderer/src/App.tsx` — `openFromHistory`.
+- `renderer/src/workspace/Workspace.tsx`, `styles.css`, `en.json` — the button
+  beside the sidebar search.
+
+**Corrected while building: reopening restarts the agents.** The plan said show
+only the transcript and treat joining an agent as a separate act. A read-only
+transcript is a mode `Session` does not have — it assumes participants, a
+composer, an approval dock — and more to the point, the reason to go looking for
+an ended conversation is to pick it back up. Landing somewhere you cannot reply
+is a dead end that needs a second action.
+
+So it reuses the existing `reopen` path: agents **started, not resumed** (the
+provider threads died with the session, and resuming a forgotten id is the one
+call that hangs without failing), reading the transcript as catch-up on the first
+thing asked. Permissions return to the default rather than to whatever the
+conversation last ran under — restoring week-old permissions silently is not a
+thing to do on a click.
+
+**Four smaller calls**
+
+1. The list is a projection query. `conversations.updated_at` is already touched
+   by every append, so "what was I working on" is one indexed read.
+2. `cwd` comes from the most recent `agent_sessions` row, falling back to
+   `project_id` — a `project.changed` event can move a conversation, and a room
+   nobody ever started an agent in still knows where it was created.
+3. Rows are already-open aware. Choosing one that is on screen focuses it rather
+   than asking the runtime to start a second set of agents.
+4. Relative times are fixed when the sheet opens, so rows do not re-time
+   themselves while being read.
+
+**Verification** — full `pnpm run check` green: 18 typecheck tasks, eslint,
+prettier, **876 tests**. Five new, against the store query.
+
+One trap worth recording: `openFromHistory` was first written above
+`updateSessions`, and a `useCallback` dependency array is evaluated during render
+— so it would have thrown a TDZ `ReferenceError` on first paint. Typecheck did
+not catch it; reading the order did.
+
+**Not verified in the running app.** Needs a conversation ended and then reopened
+from the sheet, with a message sent afterwards to confirm the agent actually read
+the transcript it came back to.
+
+## Phase 4 — Make "project" real
 
 Not started.
 

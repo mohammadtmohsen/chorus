@@ -165,6 +165,15 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'conversation:restore': () => runtime.restoreOpenConversations(),
 
+    'conversation:list': () =>
+      Promise.resolve({
+        // Copied out of the readonly domain type; the IPC boundary is plain JSON.
+        conversations: runtime.listConversations().map((c) => ({ ...c, agents: [...c.agents] })),
+      }),
+
+    'conversation:reopen': (request: { conversationId: string }) =>
+      runtime.reopenConversation(request.conversationId),
+
     'conversation:markSeen': (request: { conversationId: string; seq: number }) => {
       runtime.markSeen(request.conversationId, request.seq)
       return Promise.resolve(OK)

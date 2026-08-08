@@ -19,6 +19,34 @@ export interface ReadOptions {
 }
 
 /**
+ * Enough to name a past conversation in a list and decide whether to reopen it.
+ *
+ * Not the transcript. This answers "which one was that" — the folder, when it
+ * was last touched, how much was said in it — and the transcript is fetched by
+ * id once one is chosen.
+ */
+export interface ConversationSummary {
+  readonly conversationId: string
+  readonly title: string
+  readonly cwd: string
+  /** Every agent that ever had a session in it, not only the last ones. */
+  readonly agents: readonly string[]
+  readonly updatedAt: number
+  readonly messages: number
+}
+
+/** The raw shape of a `listConversations` row, before the nulls are resolved. */
+interface ConversationRow {
+  id: string
+  title: string
+  projectId: string
+  updatedAt: number
+  messages: number
+  agents: string | null
+  cwd: string | null
+}
+
+/**
  * The append-only log plus its projections.
  *
  * The invariant that everything else leans on: an append and the projection
@@ -167,6 +195,50 @@ export class EventStore {
   lastSeq(): number {
     const row = this.db.prepare('SELECT MAX(seq) AS m FROM events').get()
     return (row as { m: number | null }).m ?? 0
+  }
+
+  /**
+   * Every conversation the log has ever held, most recently active first.
+   *
+   * A projection query rather than a log scan: `conversations.updated_at` is
+   * already touched by every append, so "what was I working on" is one indexed
+   * read instead of a walk over the whole history.
+   *
+   * This is what makes an ended conversation findable again. Before it, the
+   * transcript stayed in SQLite forever and nothing could name it — the only
+   * list was the file recording which windows were open, and ending one removed
+   * it from that.
+   */
+  listConversations(limit = 200): ConversationSummary[] {
+    const rows = this.db
+      .prepare(
+        `SELECT c.id                AS id,
+                c.title             AS title,
+                c.project_id        AS projectId,
+                c.updated_at        AS updatedAt,
+                (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS messages,
+                (SELECT GROUP_CONCAT(DISTINCT s.agent_id) FROM agent_sessions s
+                  WHERE s.conversation_id = c.id) AS agents,
+                -- The directory it was last worked in, which can differ from the
+                -- one it started in: a project.changed event moves it mid-run.
+                (SELECT s2.cwd FROM agent_sessions s2 WHERE s2.conversation_id = c.id
+                  ORDER BY s2.started_at DESC LIMIT 1) AS cwd
+           FROM conversations c
+          ORDER BY c.updated_at DESC
+          LIMIT @limit`
+      )
+      .all({ limit })
+
+    return (rows as ConversationRow[]).map((row) => ({
+      conversationId: row.id,
+      title: row.title,
+      // `project_id` holds the directory a conversation was created in, so it is
+      // the honest fallback when no agent ever started and recorded its own.
+      cwd: row.cwd ?? row.projectId,
+      agents: row.agents === null || row.agents === '' ? [] : row.agents.split(','),
+      updatedAt: row.updatedAt,
+      messages: row.messages,
+    }))
   }
 
   /**
