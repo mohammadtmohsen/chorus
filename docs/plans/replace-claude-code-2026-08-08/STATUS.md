@@ -228,7 +228,30 @@ reads a command line. Absent rather than zero when nothing is running.
 `sleep 100` with `run_in_background`, and the card read `1 running` with a title
 of `local_bash: Sleep for 100 seconds`.
 
-**Still to build:** `stopTask()`, so the chip can also end one.
+### Done: and the chip can end one
+
+`stopTask(taskId)`, routed by agent rather than broadcast — a task id comes from
+one provider's snapshot and means nothing to the other, so asking both would be
+asking a stranger to stop something it never started.
+
+Nothing anywhere reports success. The adapter swallows the error, the runtime
+returns no confirmation, and the button disables itself and is never re-enabled
+by the code that disabled it. All three are the same decision: the id came from
+a snapshot only as fresh as the last push, so stopping something that has
+already finished is an ordinary race rather than an error worth showing — and
+the provider's next snapshot is the only thing that actually knows. Saying "done"
+from the click handler would be saying it without knowing.
+
+The list is below the card body rather than in it, because the body is a
+two-column grid and a description is a sentence rather than a cell, and it only
+appears when the count is clicked. A card that permanently listed every
+backgrounded command would be a log, and there is already one of those.
+
+**Verified end to end against a real agent:** `sleep 300` backgrounded, card
+reads `1 running`, the row reads `local_bash · Sleep for 300 seconds · Stop`,
+and pressing Stop clears the chip. That last step is also the empty-list path
+proving itself — the chip can only disappear because a snapshot arrived empty
+and was passed on rather than discarded as "no news".
 
 ## Phase 4 — the unused SDK surface
 
