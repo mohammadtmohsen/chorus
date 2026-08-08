@@ -1,4 +1,5 @@
 import type {
+  AccountSummary,
   ModelChoice,
   McpServerHealth,
   SlashCommandInfo,
@@ -154,6 +155,10 @@ export class SupervisedSession implements AgentSession {
 
   mcpServerStatus(): Promise<readonly McpServerHealth[]> {
     return this.current.mcpServerStatus?.() ?? Promise.resolve([])
+  }
+
+  accountInfo(): Promise<AccountSummary | null> {
+    return this.current.accountInfo?.() ?? Promise.resolve(null)
   }
 
   /**

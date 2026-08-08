@@ -13,6 +13,60 @@ export interface Defaults {
 }
 
 /**
+ * Something only a live session can answer, asked until one can.
+ *
+ * Both callers ask the main process a question that goes through to a running
+ * CLI, and both were opened by a person who has just started the app. The first
+ * answer is usually empty for a reason that is not an error: the session is
+ * still coming up. A single fetch on mount therefore kept the empty answer
+ * forever, and the MCP panel — whose whole purpose is to end a silence — sat
+ * there producing one. A screenshot of the running app is what caught it.
+ *
+ * Three tries over about eight seconds, stopping at the first that answers. A
+ * machine with nothing to report never answers, and that is an ordinary outcome
+ * rather than something to retry at forever.
+ *
+ * `ask` is deliberately not a dependency. It is a fresh closure every render,
+ * and this is a question asked when the sheet opens, not on every paint.
+ */
+function useFromLiveSession<T>(ask: () => Promise<T[]>, empty: T[]): T[] {
+  const [value, setValue] = useState<T[]>(empty)
+
+  useEffect(() => {
+    let live = true
+    let attempt = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const run = (): void => {
+      ask()
+        .then((answer) => {
+          if (!live) return
+          if (answer.length > 0) {
+            setValue(answer)
+            return
+          }
+          attempt += 1
+          if (attempt < 3) timer = setTimeout(run, attempt * 3_000)
+        })
+        .catch(() => {
+          // No session to ask, or a CLI too old. Either way there is nothing to
+          // report, which the caller renders as nothing at all.
+        })
+    }
+    run()
+
+    return () => {
+      live = false
+      // A closed sheet asks nothing more; without this the last retry still
+      // fires, one IPC call after nobody is listening.
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [])
+
+  return value
+}
+
+/**
  * Whether the MCP servers this machine gives its agents are any use.
  *
  * `settingSources` is deliberately omitted so agents inherit the user's full
@@ -27,50 +81,10 @@ export interface Defaults {
  */
 function McpServers(): React.JSX.Element | null {
   const { t } = useTranslation()
-  const [servers, setServers] = useState<IpcResponse<'agents:mcp'>['servers']>([])
-
-  useEffect(() => {
-    /*
-     * Asked more than once, because the first answer is usually empty.
-     *
-     * MCP servers connect after a session opens, and this sheet is often opened
-     * a moment later — so a single fetch on mount returned nothing and the panel
-     * rendered nothing, permanently. Which is precisely the silence the panel
-     * exists to end, arriving from the panel itself. A screenshot of the running
-     * app is what caught it.
-     *
-     * Three tries over about eight seconds, stopping at the first that answers.
-     * A machine with no servers configured never answers, and that is a normal
-     * outcome rather than something to retry forever.
-     */
-    let live = true
-    let attempt = 0
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const ask = (): void => {
-      window.chorus
-        .mcpServers()
-        .then((result) => {
-          if (!live) return
-          if (result.servers.length > 0) {
-            setServers(result.servers)
-            return
-          }
-          attempt += 1
-          if (attempt < 3) timer = setTimeout(ask, attempt * 3_000)
-        })
-        .catch(() => {
-          // No session to ask, or a CLI too old. Nothing to report, which this
-          // renders as nothing at all.
-        })
-    }
-    ask()
-    return () => {
-      live = false
-      // A closed sheet asks nothing more; without this the last retry still
-      // fires, one IPC call after nobody is listening.
-      if (timer !== undefined) clearTimeout(timer)
-    }
-  }, [])
+  const servers = useFromLiveSession(
+    () => window.chorus.mcpServers().then((result) => result.servers),
+    []
+  )
 
   if (servers.length === 0) return null
 
@@ -96,6 +110,51 @@ function McpServers(): React.JSX.Element | null {
         ))}
       </ul>
       <p className="footnote">{t('mcp.note')}</p>
+    </fieldset>
+  )
+}
+
+/**
+ * Which account each agent is signed in as.
+ *
+ * The question a room running several projects at once eventually asks. The
+ * plan window that fills up belongs to an account, and until now nothing in
+ * Chorus could say which — the rail shows a percentage with no name on it.
+ * `claude` and `codex` are separate logins and may well be different people.
+ *
+ * Only what the provider volunteers. Off the first-party API there is no plan
+ * and no email — a Bedrock session authenticates with AWS credentials — so a
+ * row shows what it has and the panel disappears entirely when nothing does.
+ */
+function Accounts(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const accounts = useFromLiveSession(
+    () => window.chorus.accounts().then((result) => result.accounts),
+    []
+  )
+
+  if (accounts.length === 0) return null
+
+  return (
+    <fieldset className="settings-accounts">
+      <legend>{t('account.heading')}</legend>
+      <ul>
+        {accounts.map((account) => (
+          <li key={account.agentId}>
+            <span className={`settings-account-agent voice--${account.agentId}`}>
+              <span className="voice-dot" aria-hidden="true" />
+              {account.agentId}
+            </span>
+            <span className="settings-account-who">
+              {account.email ?? account.organization ?? t('account.signedIn')}
+            </span>
+            {account.plan !== undefined && (
+              <span className="settings-account-plan">{account.plan}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="footnote">{t('account.note')}</p>
     </fieldset>
   )
 }
@@ -331,6 +390,8 @@ export function Settings(props: {
               )
             })}
           </fieldset>
+
+          <Accounts />
 
           <McpServers />
 

@@ -316,5 +316,10 @@
     "tools_one": "{{count}} tool",
     "tools_other": "{{count}} tools",
     "note": "These come from your own Claude configuration. A server that needs authenticating gives its agent no tools, and says nothing about it."
+  },
+  "account": {
+    "heading": "Signed in as",
+    "signedIn": "signed in",
+    "note": "Each agent signs in on its own. The usage windows on the rail belong to these accounts."
   }
 }

@@ -269,6 +269,29 @@ export const IPC_CONTRACT = {
   },
 
   /**
+   * Which account each agent is signed in as.
+   *
+   * Asked live for the same reason as the servers: signing in somewhere else
+   * changes the answer while the app is running. Every field is optional
+   * because off the first-party API most of them do not exist — a Bedrock
+   * session has credentials, not a plan.
+   */
+  'agents:account': {
+    request: z.object({}),
+    response: z.object({
+      accounts: z.array(
+        z.object({
+          agentId: z.string(),
+          email: z.string().optional(),
+          organization: z.string().optional(),
+          plan: z.string().optional(),
+          provider: z.string().optional(),
+        })
+      ),
+    }),
+  },
+
+  /**
    * The model lists last reported by each agent, for the settings sheet.
    *
    * A cache rather than a live ask: `supportedModels()` is a control request to
@@ -815,6 +838,7 @@ export interface ChorusApi {
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
   readonly mcpServers: () => Promise<IpcResponse<'agents:mcp'>>
+  readonly accounts: () => Promise<IpcResponse<'agents:account'>>
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

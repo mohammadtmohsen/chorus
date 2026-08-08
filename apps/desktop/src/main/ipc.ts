@@ -184,6 +184,16 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       })),
     }),
 
+    'agents:account': async () => ({
+      accounts: (await runtime.accounts()).map(({ agentId, account }) => ({
+        agentId,
+        ...(account.email === undefined ? {} : { email: account.email }),
+        ...(account.organization === undefined ? {} : { organization: account.organization }),
+        ...(account.plan === undefined ? {} : { plan: account.plan }),
+        ...(account.provider === undefined ? {} : { provider: account.provider }),
+      })),
+    }),
+
     'agents:models': () =>
       Promise.resolve({
         agents: runtime.knownModels().map((agent) => ({

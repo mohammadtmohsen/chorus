@@ -4,6 +4,7 @@ import { basename, join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
+  AccountSummary,
   AgentAdapter,
   ApprovalDecision,
   McpServerHealth,
@@ -1014,6 +1015,30 @@ export class ChorusRuntime {
       }
     }
     return []
+  }
+
+  /**
+   * Which account each agent is signed in as.
+   *
+   * Per agent rather than first-answer-wins, unlike the MCP servers: those come
+   * from one config file and every session inherits the same ones, but claude
+   * and codex are separate logins and the whole point of asking is that they
+   * can differ. Asked live, because signing in elsewhere changes the answer
+   * under a running app.
+   *
+   * One conversation per agent is enough — a second session for the same agent
+   * is the same login — so this stops at the first that answers for each.
+   */
+  async accounts(): Promise<{ agentId: AgentId; account: AccountSummary }[]> {
+    const found = new Map<AgentId, AccountSummary>()
+    for (const conversation of this.active.values()) {
+      for (const [agentId, participant] of conversation.participants) {
+        if (found.has(agentId)) continue
+        const account = await participant.session.accountInfo()
+        if (account !== null) found.set(agentId, account)
+      }
+    }
+    return [...found].map(([agentId, account]) => ({ agentId, account }))
   }
 
   /** What the settings sheet offers, from whichever session last answered. */

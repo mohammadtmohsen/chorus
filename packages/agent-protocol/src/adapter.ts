@@ -71,6 +71,24 @@ export interface McpServerHealth {
   readonly tools?: number
 }
 
+/**
+ * Which account the provider is actually signed in as.
+ *
+ * Every field is optional because most of them do not exist off the first-party
+ * API: a Bedrock or Vertex session authenticates against the cloud provider's
+ * own credentials, so there is no email and no plan to report. Absent is a
+ * normal answer here, not a degraded one.
+ */
+export interface AccountSummary {
+  /** Who is signed in. */
+  readonly email?: string
+  readonly organization?: string
+  /** The plan, in the provider's words — "Claude Max" and the like. */
+  readonly plan?: string
+  /** Which backend the CLI is talking to: `firstParty`, `bedrock`, `vertex`… */
+  readonly provider?: string
+}
+
 /** One entry in a model picker: what to send, and what to show. */
 export interface ModelChoice {
   readonly value: string
@@ -143,6 +161,14 @@ export interface AgentSession {
    * with no tools does not complain, it just cannot do the thing.
    */
   mcpServerStatus?(): Promise<readonly McpServerHealth[]>
+  /**
+   * Which account this session is signed in as.
+   *
+   * Worth asking in a room that runs several projects at once: the plan window
+   * that fills up belongs to an account, and "which one is this?" is otherwise
+   * unanswerable from inside Chorus. Returns null when the provider cannot say.
+   */
+  accountInfo?(): Promise<AccountSummary | null>
   /**
    * How hard the model should think, for providers that expose the control.
    *

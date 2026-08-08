@@ -1205,11 +1205,50 @@ body {
   color: var(--muted);
 }
 
-.settings-mcp {
+.settings-mcp,
+.settings-accounts {
   margin: 0.8rem 0 0;
   padding: 0.6rem 0.8rem;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.settings-accounts ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-accounts li {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  padding: 0.15rem 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.settings-account-agent {
+  display: flex;
+  flex: none;
+  gap: 0.6ch;
+  align-items: baseline;
+  color: var(--bone);
+}
+
+/* The account, which is the answer, gets the space; the plan trails it. */
+.settings-account-who {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-account-plan {
+  flex: none;
+  color: var(--faint);
 }
 
 .settings-mcp ul {

@@ -51,6 +51,7 @@ const api: ChorusApi = {
   listConversations: () => invoke('conversation:list')({}),
   knownModels: () => invoke('agents:models')({}),
   mcpServers: () => invoke('agents:mcp')({}),
+  accounts: () => invoke('agents:account')({}),
   reopenConversation: invoke('conversation:reopen'),
   restartConversation: invoke('conversation:restart'),
   previewFile: invoke('files:preview'),
