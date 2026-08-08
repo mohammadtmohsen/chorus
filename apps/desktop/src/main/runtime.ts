@@ -963,8 +963,26 @@ export class ChorusRuntime {
     const conversation = this.require(conversationId)
     const perAgent = await Promise.all(
       [...conversation.participants.values()].map(async (participant) => {
-        participant.commands ??= await participant.session.supportedCommands()
-        return participant.commands
+        /*
+         * Remembered only once there is something to remember.
+         *
+         * `??=` looked like the cache this wants and is not: an empty array is
+         * not nullish, so the first answer is kept even when it is empty — and
+         * it is empty exactly while the session is still starting, which is
+         * when a freshly opened pane asks. That would leave the menu
+         * permanently empty for a participant whose CLI had fifty commands to
+         * offer a second later.
+         *
+         * Latent rather than observed: found while chasing a flaky spec that
+         * turned out to be the test's own doing, and kept because an empty
+         * answer means "could not ask yet" rather than "there are none", and
+         * caching the two as the same thing is wrong however rarely it bites.
+         */
+        const known = participant.commands
+        if (known !== undefined && known.length > 0) return known
+        const asked = await participant.session.supportedCommands()
+        if (asked.length > 0) participant.commands = asked
+        return asked
       })
     )
 
