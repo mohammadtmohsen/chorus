@@ -1,6 +1,7 @@
 import type { ApprovalId, UserInputId } from '@chorus/shared'
 import { describe, expect, it } from 'vitest'
 import {
+  mapContextUsage,
   mapPlanUsage,
   mapSdkMessage,
   mapToolPermission,
@@ -712,6 +713,47 @@ describe('tool results', () => {
     const ids = trackBashTools(bashCall('t1', 'true') as never, new Set())
     const events = mapSdkMessage(toolResult('t1', '') as never, { ...CTX, bashToolIds: ids })
     expect(events.map((e) => e.type)).toEqual(['command.completed'])
+  })
+})
+
+describe('context usage', () => {
+  const BASE = { agentId: 'claude' as const, seq: 1, at: 1_000 }
+
+  it('reports how full the window is', () => {
+    expect(mapContextUsage({ totalTokens: 90_000, maxTokens: 200_000 }, BASE)).toMatchObject([
+      { type: 'context.usage', usedTokens: 90_000, maxTokens: 200_000, percentUsed: 45 },
+    ])
+  })
+
+  it('derives the percentage rather than trusting the reported one', () => {
+    /*
+     * The response carries `percentage` and the types do not say whether it is a
+     * fraction or a percentage. The rate-limit shapes in this file already cost
+     * a release to that exact ambiguity, so it is ignored: a wrong unit here
+     * would read as a full window at 0.45.
+     */
+    expect(
+      mapContextUsage({ totalTokens: 90_000, maxTokens: 200_000, percentage: 0.45 }, BASE)
+    ).toMatchObject([{ percentUsed: 45 }])
+  })
+
+  it('never reports more than full', () => {
+    expect(mapContextUsage({ totalTokens: 250_000, maxTokens: 200_000 }, BASE)).toMatchObject([
+      { percentUsed: 100 },
+    ])
+  })
+
+  it('says nothing when the numbers are missing or unusable', () => {
+    for (const usage of [
+      undefined,
+      {},
+      { totalTokens: 10 },
+      { maxTokens: 200_000 },
+      { totalTokens: 10, maxTokens: 0 },
+      { totalTokens: -1, maxTokens: 200_000 },
+    ]) {
+      expect(mapContextUsage(usage, BASE)).toEqual([])
+    }
   })
 })
 

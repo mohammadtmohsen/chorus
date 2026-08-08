@@ -6,6 +6,7 @@ import {
   attachIdeBridge,
   forwardEventsToRenderer,
   forwardIdeContextToRenderer,
+  forwardContextUsageToRenderer,
   forwardLimitsToRenderer,
   registerIpcHandlers,
 } from './ipc.js'
@@ -98,6 +99,7 @@ void app.whenReady().then(async () => {
   runtime = ChorusRuntime.open(app.getPath('userData'), log)
   registerIpcHandlers(runtime)
   forwardLimitsToRenderer(runtime)
+  forwardContextUsageToRenderer(runtime)
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
   installMenu()
   forwardEventsToRenderer(runtime)

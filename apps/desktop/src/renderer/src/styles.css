@@ -3635,6 +3635,31 @@ input::placeholder {
 }
 
 /*
+ * Sits beside spend, and only appears past half full.
+ *
+ * `margin-left: auto` is on the spend above, so this must not claim it too or
+ * the two would push apart instead of reading as one group.
+ */
+.workspace-session-context {
+  color: var(--faint);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.workspace-session-spend + .workspace-session-context {
+  margin-left: 0.75ch;
+}
+
+/* No spend yet, so this is the first thing on the right. */
+.workspace-session-context:first-child {
+  margin-left: auto;
+}
+
+.workspace-session-context[data-near-full='true'] {
+  color: var(--alert);
+}
+
+/*
  * Always there, drawn quietly.
  *
  * Revealing them on hover hid half the card's controls from anyone not holding

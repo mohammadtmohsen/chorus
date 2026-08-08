@@ -226,6 +226,27 @@ export interface LimitsUpdated extends AgentEventBase {
   readonly windows: readonly UsageWindow[]
 }
 
+/**
+ * How full the agent's context window is right now.
+ *
+ * State, not history — the same category as `LimitsUpdated`, and never written
+ * to the event log for the same reason. It is a measurement of the agent, not
+ * something that happened in the conversation, and compaction resets it: a
+ * stored series would read as a history of a number that repeatedly went
+ * backwards for reasons the log does not explain.
+ *
+ * Worth surfacing because it is the one figure that says a compaction is
+ * coming, and compaction is the moment the transcript and the agent's memory of
+ * it stop agreeing (see `ContextCompacted`).
+ */
+export interface ContextUsage extends AgentEventBase {
+  readonly type: 'context.usage'
+  readonly usedTokens: number
+  readonly maxTokens: number
+  /** 0-100, derived here so no reader has to guess the provider's units. */
+  readonly percentUsed: number
+}
+
 export type AgentEvent =
   /*
    * Account-wide usage limits, not conversation history.
@@ -236,6 +257,10 @@ export type AgentEvent =
    * worse than none.
    */
   | LimitsUpdated
+  /*
+   * Also state rather than history, and also never logged. See `ContextUsage`.
+   */
+  | ContextUsage
   | TurnStarted
   | ContextCompacted
   | MessageDelta

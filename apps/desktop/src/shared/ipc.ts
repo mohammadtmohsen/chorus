@@ -537,6 +537,27 @@ export const LimitsPush = z.object({
   windows: z.array(UsageWindowShape),
 })
 export type LimitsPush = z.infer<typeof LimitsPush>
+
+/**
+ * How full each agent's context window is, pushed at the end of a turn.
+ *
+ * A push for the same reason limits are, and a separate channel from them
+ * because the scope differs: a plan window belongs to the account and reads the
+ * same from anywhere, while this belongs to one conversation's agent. Folding
+ * them together would mean a number that is only true for the pane you happen
+ * to be looking at arriving on a channel that is not about panes.
+ */
+export const CONTEXT_PUSH_CHANNEL = 'agents:context'
+
+export const ContextUsagePush = z.object({
+  conversationId: z.string(),
+  agentId: z.enum(['codex', 'claude']),
+  usedTokens: z.number().int(),
+  maxTokens: z.number().int(),
+  percentUsed: z.number(),
+})
+export type ContextUsagePush = z.infer<typeof ContextUsagePush>
+
 export const EventsPush = z.array(TranscriptEvent)
 export type EventsPush = z.infer<typeof EventsPush>
 
@@ -600,6 +621,7 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:setCwd'>>
   readonly onScale: (listener: (scale: number) => void) => () => void
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
+  readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

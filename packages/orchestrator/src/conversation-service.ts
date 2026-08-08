@@ -49,6 +49,16 @@ export interface ConversationServiceOptions {
   readonly grants?: SessionGrants
   /** Told when the provider reports its account limits. Not persisted. */
   readonly onLimits?: (windows: readonly UsageWindow[]) => void
+  /** Told how full the agent's context window is. Not persisted, for the same reason. */
+  readonly onContextUsage?: (usage: ContextWindow) => void
+}
+
+/** How full an agent's context window is, as last measured. */
+export interface ContextWindow {
+  readonly usedTokens: number
+  readonly maxTokens: number
+  /** 0-100. */
+  readonly percentUsed: number
 }
 
 export class ConversationService {
@@ -60,6 +70,7 @@ export class ConversationService {
   private readonly grants: SessionGrants
   private readonly queue: ApprovalQueue
   private readonly onLimits: ((windows: readonly UsageWindow[]) => void) | undefined
+  private readonly onContextUsage: ((usage: ContextWindow) => void) | undefined
   /**
    * Question sets waiting on the user, kept so an answer can be checked against
    * the questions that produced it — which is what redaction needs to know
@@ -87,6 +98,7 @@ export class ConversationService {
     this.profile = options.profile ?? profileById(DEFAULT_PROFILE_ID)
     this.grants = options.grants ?? new SessionGrants()
     this.onLimits = options.onLimits
+    this.onContextUsage = options.onContextUsage
     this.scheduler = options.scheduler ?? realScheduler
     this.queue = new ApprovalQueue({
       ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
@@ -506,6 +518,19 @@ export class ConversationService {
        */
       case 'limits':
         this.onLimits?.(event.windows)
+        return
+
+      /*
+       * Pushed, not appended — the same treatment as `limits`, and for the
+       * reason given on the event: it is the agent's current state rather than
+       * something that happened in the conversation, and compaction resets it.
+       */
+      case 'context.usage':
+        this.onContextUsage?.({
+          usedTokens: event.usedTokens,
+          maxTokens: event.maxTokens,
+          percentUsed: event.percentUsed,
+        })
         return
 
       case 'usage.updated':

@@ -676,6 +676,28 @@ export function mapPlanUsage(usage: unknown, base: Omit<AgentEvent, 'type'>): Ag
   return windows.length === 0 ? [] : [{ ...base, type: 'limits', windows }]
 }
 
+/**
+ * `getContextUsage()` → how full the window is.
+ *
+ * `percentage` is on the response and is deliberately ignored: the types do not
+ * say whether it is a fraction or a percentage, and the rate-limit shapes in
+ * this file already proved that guessing costs a release. `totalTokens` over
+ * `maxTokens` is unambiguous, and computing it here means nothing downstream has
+ * to know.
+ *
+ * `maxTokens` rather than `rawMaxTokens`: the former is the ceiling the agent
+ * actually compacts against, which is the question being asked.
+ */
+export function mapContextUsage(usage: unknown, base: Omit<AgentEvent, 'type'>): AgentEvent[] {
+  const info = usage as { totalTokens?: unknown; maxTokens?: unknown } | undefined
+  const used = typeof info?.totalTokens === 'number' ? info.totalTokens : null
+  const max = typeof info?.maxTokens === 'number' ? info.maxTokens : null
+  if (used === null || max === null || max <= 0 || used < 0) return []
+
+  const percentUsed = Math.min(100, Math.round((used / max) * 100))
+  return [{ ...base, type: 'context.usage', usedTokens: used, maxTokens: max, percentUsed }]
+}
+
 type RateLimitRecord = Record<
   string,
   { utilization?: number | null; resets_at?: string | number | null } | null | undefined

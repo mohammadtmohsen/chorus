@@ -154,6 +154,64 @@ workspace snapshot.
 **Not verified in the running app.** A turn that greps and reads is the trigger;
 a subagent needs a `Task` call.
 
-## Phase 4 — Context and model
+## Phase 4a done: Context window
 
-Not started.
+Split from model selection, which is untouched — the two share a phase in the
+plan but nothing in the code, and context fill is the half that warns you before
+a compaction.
+
+**Changed**
+
+- `packages/agent-protocol/src/events.ts` — `ContextUsage`.
+- `packages/adapter-claude/src/mapping.ts` — `mapContextUsage`.
+- `packages/adapter-claude/src/claude-adapter.ts` — `readContextUsage`, called on
+  `result`.
+- `packages/orchestrator/src/conversation-service.ts` — `onContextUsage` option
+  and `ContextWindow`.
+- `apps/desktop/src/main/runtime.ts`, `ipc.ts`, `shared/ipc.ts`,
+  `preload/index.ts` — a `agents:context` push channel beside `agents:limits`.
+- `apps/desktop/src/renderer/src/App.tsx`, `workspace/store.ts`,
+  `workspace/hooks.ts`, `workspace/Workspace.tsx`, `styles.css`, `en.json` —
+  `contextByActor` on the pulse, shown on the sidebar card.
+
+**The load-bearing decision: this is state, not history.**
+
+It is never written to the event log, which puts it in the same category as
+`LimitsUpdated` and for the same stated reason. Compaction resets it, so a stored
+series would read as a history of a number that repeatedly went backwards for
+reasons the log does not explain. That is why it needs its own push channel
+rather than a `ChorusEventPayload`, and why `reducePulse` copies it forward
+untouched — a reducer that rebuilds the pulse from an event must not be able to
+erase something no event reports. That hazard is the one thing this phase has a
+regression test for.
+
+**Four smaller calls**
+
+1. Read at turn boundaries, not on a timer. The figure cannot move until the
+   agent has said something, and "should I start a fresh conversation" is a
+   between-turns question anyway.
+2. `percentage` is on the response and is ignored — the types do not say whether
+   it is a fraction or a percentage, and the rate-limit shapes in this same file
+   already cost a release to exactly that ambiguity. `totalTokens / maxTokens` is
+   unambiguous.
+3. `maxTokens`, not `rawMaxTokens`: the former is the ceiling the agent actually
+   compacts against.
+4. Per actor, and the card shows the **fullest** participant. Two agents in one
+   conversation keep separate contexts; an average would hide the one about to
+   compact behind the one that just joined. Hidden below 50% — a figure that
+   reads 4% all day is one you stop seeing.
+
+**Verification** — full `pnpm run check` green: 18 typecheck tasks, eslint,
+prettier, **850 tests**. Seven new tests. `reducePulse` is now exported, as
+`transcript.ts`'s reducer already was, so the erase hazard is covered.
+
+**Not verified in the running app.** Needs a conversation past half its context
+window, so it will not show on a fresh session.
+
+## Phase 4b — Model selection
+
+Not started. `SessionOpts.model` is still never set at either construction site
+(`runtime.ts`), `ClaudeSession.setModel` still has no caller, and
+`modelSwitchMidSession` stays `false` until it does. `Query.supportedModels()`
+exists and returns `{ value, resolvedModel?, displayName, description }`, so the
+picker can be populated rather than hardcoded.

@@ -55,6 +55,21 @@ export function App(): React.JSX.Element {
     []
   )
 
+  /*
+   * Context fill, on its own channel because it is not a logged event.
+   *
+   * Subscribed here beside the event listener for the same reason: it has to
+   * reach cards whose `Session` is not mounted, and this is the one place that
+   * is always listening.
+   */
+  useEffect(
+    () =>
+      window.chorus.onContextUsage((usage) => {
+        useWorkspaceStore.getState().ingestContextUsage(usage)
+      }),
+    []
+  )
+
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
     /*

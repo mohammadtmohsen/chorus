@@ -6,6 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } fr
 import {
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
+  CONTEXT_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   IPC_CONTRACT,
   type IdeContextPush,
@@ -475,6 +476,15 @@ export function forwardLimitsToRenderer(runtime: ChorusRuntime): void {
   runtime.onLimitsReported((push) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(LIMITS_PUSH_CHANNEL, push)
+    }
+  })
+}
+
+/** Sends each conversation's context-window fill as its agents finish a turn. */
+export function forwardContextUsageToRenderer(runtime: ChorusRuntime): void {
+  runtime.onContextUsageReported((push) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(CONTEXT_PUSH_CHANNEL, push)
     }
   })
 }
