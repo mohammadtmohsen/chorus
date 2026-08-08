@@ -206,6 +206,51 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     message: z.string(),
     recoverable: z.boolean(),
   }),
+
+  /**
+   * Something the harness said about itself — a hook that ran, a tool a rule
+   * denied, an API retry, the output of a local slash command.
+   *
+   * Durable like the rest of the log rather than shown and forgotten: "a hook
+   * blocked it" is the answer to why a turn did nothing, and that question is
+   * usually asked the next day. `detail` is nullable rather than optional for
+   * the same reason `userinput.answered.answers` is — "there was no detail" and
+   * "we did not record one" are different facts.
+   */
+  /**
+   * A tool call that is not a shell command — a read, a search, a subagent.
+   *
+   * `command.*` above keeps Bash, which is the only tool with real stdout and a
+   * real exit code. `parentRef` is what makes a subagent's work legible: the
+   * calls it made are the ones pointing at its id.
+   */
+  z.object({
+    type: z.literal('tool.started'),
+    itemRef,
+    name: z.string(),
+    parentRef: z.string().nullable(),
+    detail: z.string().nullable(),
+  }),
+  z.object({
+    type: z.literal('tool.progress'),
+    itemRef,
+    note: z.string().nullable(),
+    elapsedMs: z.number().int().nullable(),
+  }),
+  z.object({
+    type: z.literal('tool.completed'),
+    itemRef,
+    status: z.enum(['ok', 'error']),
+    summary: z.string().nullable(),
+  }),
+
+  z.object({
+    type: z.literal('notice.raised'),
+    level: z.enum(['info', 'warn', 'error']),
+    source: z.enum(['hook', 'command', 'retry', 'denial', 'system']),
+    text: z.string(),
+    detail: z.string().nullable(),
+  }),
 ])
 
 export type ChorusEventPayload = z.infer<typeof ChorusEventPayload>

@@ -208,6 +208,12 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
     case 'policy.changed':
     case 'context.compacted':
     case 'error.raised':
+    case 'notice.raised':
+    case 'tool.started':
+    case 'tool.progress':
+    case 'tool.completed':
+      // A notice is read back off the log with the rest of the transcript; no
+      // query asks "which notices", so a table would be write cost for nothing.
       break
   }
 

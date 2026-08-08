@@ -537,6 +537,44 @@ export class ConversationService {
           recoverable: event.recoverable,
         })
         return
+
+      case 'tool.started':
+        this.lifecycle({
+          type: 'tool.started',
+          itemRef: event.itemRef,
+          name: event.name,
+          parentRef: event.parentRef ?? null,
+          detail: event.detail ?? null,
+        })
+        return
+
+      case 'tool.progress':
+        this.lifecycle({
+          type: 'tool.progress',
+          itemRef: event.itemRef,
+          note: event.note ?? null,
+          elapsedMs: event.elapsedMs ?? null,
+        })
+        return
+
+      case 'tool.completed':
+        this.lifecycle({
+          type: 'tool.completed',
+          itemRef: event.itemRef,
+          status: event.status,
+          summary: event.summary ?? null,
+        })
+        return
+
+      case 'notice':
+        this.lifecycle({
+          type: 'notice.raised',
+          level: event.level,
+          source: event.source,
+          text: event.text,
+          detail: event.detail ?? null,
+        })
+        return
     }
   }
 

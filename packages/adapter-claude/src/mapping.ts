@@ -2,6 +2,7 @@ import {
   toEpochMs,
   type AgentEvent,
   type ApprovalRequest,
+  type NoticeSource,
   type UsageWindow,
   type UserInputRequest,
   type UserInputResponse,
@@ -106,11 +107,7 @@ export function mapSdkMessage(msg: SdkMessageLike, ctx: MapContext): AgentEvent[
 
   switch (msg.type) {
     case 'system':
-      // `init` is the start of a turn's work and carries the CLI version we
-      // record on session.started (plan §2.5).
-      return msg.subtype === 'init'
-        ? [{ ...at(0), type: 'turn.started', turnRef: msg.uuid ?? msg.session_id ?? '' }]
-        : []
+      return mapSystem(msg, at(0))
 
     case 'stream_event':
       return mapStreamEvent(msg, at(0), ctx.streamMessageRef ?? null)
@@ -131,9 +128,270 @@ export function mapSdkMessage(msg: SdkMessageLike, ctx: MapContext): AgentEvent[
       return mapResult(msg, ctx)
 
     default:
-      // Hooks, task progress, retries, rate-limit notices and the rest are not
-      // rendered. Silence here is a decision, not a gap.
-      return []
+      /*
+       * Anything the SDK grows that we have not mapped becomes a notice rather
+       * than nothing.
+       *
+       * This used to `return []` with a comment calling the silence a decision.
+       * It was, while Chorus only had to show a finished diff — but a window
+       * that is the *only* view of an agent cannot answer "what is it doing"
+       * with a shrug, and every unmapped type is something the CLI would have
+       * printed.
+       */
+      return [notice(at(0), { level: 'info', source: 'system', text: msg.type })]
+  }
+}
+
+/**
+ * Fields the `system` subtypes carry, read out of `sdk.d.ts@0.3.220`.
+ *
+ * Separate from `SdkMessageLike` and reached through a cast because
+ * `permission_denied.message` is a string while `assistant.message` is an
+ * object — one name, two shapes, and only one of them can be declared per
+ * interface.
+ */
+interface SystemFields {
+  subtype?: string
+  hook_name?: string
+  hook_event?: string
+  output?: string
+  stdout?: string
+  stderr?: string
+  outcome?: string
+  content?: string
+  level?: string
+  tool_name?: string
+  decision_reason?: string
+  message?: unknown
+  attempt?: number
+  max_retries?: number
+  error_status?: number | null
+  prevent_continuation?: boolean
+  task_id?: string
+  tool_use_id?: string
+  description?: string
+  subagent_type?: string
+  workflow_name?: string
+  last_tool_name?: string
+  summary?: string
+  status?: string
+  usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
+  skip_transcript?: boolean
+}
+
+/**
+ * Subtypes that arrive on a timer rather than when something happens.
+ *
+ * The catch-all below writes a durable event for anything it does not
+ * recognise, and `status` is the spinner's heartbeat — left in, it would append
+ * to SQLite for as long as a turn runs. Telemetry is the one thing silence is
+ * still right for, so the exemption is an explicit short list rather than a
+ * default. `compact_boundary` is here because the `PostCompact` hook already
+ * turns it into `context.compacted`; mapping it twice would double the row.
+ */
+const QUIET_SUBTYPES: ReadonlySet<string> = new Set([
+  'status',
+  'thinking_tokens',
+  'control_request_progress',
+  'session_state_changed',
+  'compact_boundary',
+  /*
+   * `task_updated` is a patch keyed on `task_id` alone — it carries no
+   * `tool_use_id`, so there is nothing to correlate it with when the task began
+   * life as a `Task` tool call. `task_notification` reports the same ending and
+   * does carry one, so nothing is lost by staying quiet here rather than
+   * risking a row attached to the wrong id.
+   */
+  'task_updated',
+])
+
+function notice(
+  base: Omit<AgentEvent, 'type'> & { seq: number },
+  fields: { level: 'info' | 'warn' | 'error'; source: NoticeSource; text: string; detail?: string }
+): AgentEvent {
+  return {
+    ...base,
+    type: 'notice',
+    level: fields.level,
+    source: fields.source,
+    text: fields.text,
+    ...(fields.detail === undefined || fields.detail === '' ? {} : { detail: fields.detail }),
+  }
+}
+
+function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  }
+  return undefined
+}
+
+function mapSystem(
+  msg: SdkMessageLike,
+  base: Omit<AgentEvent, 'type'> & { seq: number }
+): AgentEvent[] {
+  const subtype = msg.subtype ?? ''
+
+  // `init` is the start of a turn's work and carries the CLI version we record
+  // on session.started (plan §2.5).
+  if (subtype === 'init') {
+    return [{ ...base, type: 'turn.started', turnRef: msg.uuid ?? msg.session_id ?? '' }]
+  }
+  if (QUIET_SUBTYPES.has(subtype)) return []
+
+  const s = msg as unknown as SystemFields
+
+  switch (subtype) {
+    case 'hook_response': {
+      /*
+       * Only when it has something to say.
+       *
+       * A hook fires per matching tool call, and a repo with a dozen of them
+       * would otherwise put a dozen rows between a command and its output for
+       * every command. A hook that succeeded silently did not affect the turn;
+       * one that failed, was cancelled, or printed something did.
+       */
+      const detail = firstNonEmpty(s.output, s.stderr, s.stdout)
+      const failed = s.outcome === 'error' || s.outcome === 'cancelled'
+      if (!failed && detail === undefined) return []
+      const name = firstNonEmpty(s.hook_name) ?? ''
+      const event = firstNonEmpty(s.hook_event)
+      return [
+        notice(base, {
+          level: failed ? 'warn' : 'info',
+          source: 'hook',
+          text: event === undefined ? name : `${name} · ${event}`,
+          ...(detail === undefined ? {} : { detail }),
+        }),
+      ]
+    }
+
+    case 'permission_denied': {
+      const why = firstNonEmpty(
+        s.decision_reason,
+        typeof s.message === 'string' ? s.message : undefined
+      )
+      return [
+        notice(base, {
+          level: 'warn',
+          source: 'denial',
+          text: firstNonEmpty(s.tool_name) ?? '',
+          ...(why === undefined ? {} : { detail: why }),
+        }),
+      ]
+    }
+
+    case 'api_retry':
+      /*
+       * A retry storm and a hung process look identical from outside, and the
+       * second is the one worth acting on. Counting the attempt is what tells
+       * them apart, so the text is `2/5` and never a sentence — the renderer
+       * owns the word in front of it.
+       */
+      return [
+        notice(base, {
+          level: 'warn',
+          source: 'retry',
+          text: `${String(s.attempt ?? 0)}/${String(s.max_retries ?? 0)}`,
+          ...(typeof s.error_status === 'number'
+            ? { detail: `HTTP ${String(s.error_status)}` }
+            : {}),
+        }),
+      ]
+
+    case 'local_command_output': {
+      // Output from a slash command. The SDK says to render it as assistant
+      // text; a notice is where it goes until there is a better home for it.
+      const content = firstNonEmpty(s.content)
+      return content === undefined
+        ? []
+        : [notice(base, { level: 'info', source: 'command', text: content })]
+    }
+
+    case 'informational': {
+      const content = firstNonEmpty(s.content)
+      if (content === undefined) return []
+      // `prevent_continuation` means the loop stops here — a Stop hook denying
+      // continuation is the case that matters, and it is not merely a banner.
+      const level =
+        s.prevent_continuation === true ? 'error' : s.level === 'warning' ? 'warn' : 'info'
+      return [notice(base, { level, source: 'system', text: content })]
+    }
+
+    /*
+     * A subagent, reported against the tool call that spawned it.
+     *
+     * `tool_use_id` is what ties this to the `Task` row `mapAssistant` already
+     * produced, so the reducer merges rather than doubling. Workflow tasks
+     * arrive with no `tool_use_id` and fall back to `task_id`, which gives them
+     * a row of their own — correct, since no tool call preceded them.
+     *
+     * `skip_transcript` is the SDK asking us not to show housekeeping tasks
+     * inline, and it is honoured: ignoring it is how a transcript fills with
+     * work nobody asked about.
+     */
+    case 'task_started': {
+      if (s.skip_transcript === true) return []
+      const ref = firstNonEmpty(s.tool_use_id, s.task_id)
+      if (ref === undefined) return []
+      const detail = firstNonEmpty(s.description)
+      return [
+        {
+          ...base,
+          type: 'tool.started',
+          itemRef: ref,
+          name: firstNonEmpty(s.subagent_type, s.workflow_name) ?? 'Task',
+          ...(detail === undefined ? {} : { detail }),
+        },
+      ]
+    }
+
+    case 'task_progress': {
+      const ref = firstNonEmpty(s.tool_use_id, s.task_id)
+      if (ref === undefined) return []
+      // `last_tool_name` is the most useful thing a running subagent can say:
+      // it is the difference between "working" and "working on what".
+      const note = firstNonEmpty(s.last_tool_name, s.summary, s.description)
+      const elapsed = s.usage?.duration_ms
+      return [
+        {
+          ...base,
+          type: 'tool.progress',
+          itemRef: ref,
+          ...(note === undefined ? {} : { note }),
+          ...(typeof elapsed === 'number' ? { elapsedMs: elapsed } : {}),
+        },
+      ]
+    }
+
+    case 'task_notification': {
+      if (s.skip_transcript === true) return []
+      const ref = firstNonEmpty(s.tool_use_id, s.task_id)
+      if (ref === undefined) return []
+      const summary = firstNonEmpty(s.summary)
+      return [
+        {
+          ...base,
+          type: 'tool.completed',
+          itemRef: ref,
+          status: s.status === 'completed' ? 'ok' : 'error',
+          ...(summary === undefined ? {} : { summary }),
+        },
+      ]
+    }
+
+    case 'model_refusal_fallback':
+    case 'model_refusal_no_fallback':
+      return [
+        notice(base, {
+          level: subtype === 'model_refusal_no_fallback' ? 'error' : 'warn',
+          source: 'system',
+          text: subtype,
+        }),
+      ]
+
+    default:
+      return [notice(base, { level: 'info', source: 'system', text: subtype })]
   }
 }
 
@@ -200,7 +458,9 @@ function mapAssistant(
   }
 
   for (const block of blocks) {
-    if (block.type === 'tool_use' && block.name === 'Bash') {
+    if (block.type !== 'tool_use') continue
+
+    if (block.name === 'Bash') {
       const command = block.input?.['command']
       events.push({
         ...base,
@@ -210,17 +470,77 @@ function mapAssistant(
         command: typeof command === 'string' ? [command] : [],
         cwd: '',
       })
+      continue
     }
+
+    /*
+     * Every other tool, which used to produce nothing at all.
+     *
+     * A turn that read six files and ran two searches showed as a pause, and
+     * the only honest answer to "what is it doing" was that we had thrown the
+     * answer away one line earlier.
+     *
+     * `AskUserQuestion` is the exception: it already has a surface of its own,
+     * and a second row for it would put a tool call next to the question it
+     * *is*. The id guard is for the store, which requires a non-empty itemRef.
+     */
+    if (block.name === undefined || block.name === USER_INPUT_TOOL) continue
+    if (block.id === undefined || block.id === '') continue
+
+    const detail = describeToolInput(block.input ?? {})
+    events.push({
+      ...base,
+      seq: ctx.seq + events.length,
+      type: 'tool.started',
+      itemRef: block.id,
+      name: block.name,
+      ...(typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== ''
+        ? { parentRef: msg.parent_tool_use_id }
+        : {}),
+      ...(detail === undefined ? {} : { detail }),
+    })
   }
 
   return events
 }
 
+/** How long a one-line subject may be before it stops being one. */
+const MAX_TOOL_DETAIL = 120
+
 /**
- * `tool_result` blocks → `command.output` and `command.completed`.
+ * The one field of a tool's input worth putting next to its name.
  *
- * Only for tool calls we already reported as commands; every other tool's result
- * is the agent's own working, and the agent narrates what it found.
+ * Ordered by how much it identifies the call: a subagent's brief beats the file
+ * it happens to name, and a pattern beats a path for a search. Anything not
+ * listed shows as the bare tool name, which is still infinitely more than the
+ * nothing this replaced.
+ */
+function describeToolInput(input: Record<string, unknown>): string | undefined {
+  for (const key of [
+    'description',
+    'pattern',
+    'file_path',
+    'notebook_path',
+    'path',
+    'query',
+    'url',
+    'prompt',
+  ]) {
+    const value = input[key]
+    if (typeof value !== 'string' || value.trim() === '') continue
+    const text = value.trim().replace(/\s+/g, ' ')
+    return text.length > MAX_TOOL_DETAIL ? `${text.slice(0, MAX_TOOL_DETAIL - 1)}…` : text
+  }
+  return undefined
+}
+
+/**
+ * `tool_result` blocks → `command.*` for Bash, `tool.completed` for the rest.
+ *
+ * Bash keeps the richer treatment because its output is the point. Every other
+ * tool's result is the agent's own working — the agent narrates what it found —
+ * so what the transcript needs is that the call ended and whether it failed,
+ * which is what stops a row spinning forever.
  *
  * Claude reports success or failure, never an exit code, so `is_error` becomes 1
  * and anything else 0. The number is not real, but "did it fail" is, and that is
@@ -231,15 +551,35 @@ function mapToolResults(
   base: { agentId: AgentId; at: number; raw: unknown },
   ctx: MapContext
 ): AgentEvent[] {
-  const known = ctx.bashToolIds
-  if (known === undefined || known.size === 0) return []
-
+  const known = ctx.bashToolIds ?? new Set<string>()
   const events: AgentEvent[] = []
+
   for (const block of (msg.message?.content ?? []) as ContentBlock[]) {
     const ref = block.tool_use_id
-    if (block.type !== 'tool_result' || ref === undefined || !known.has(ref)) continue
+    if (block.type !== 'tool_result' || ref === undefined || ref === '') continue
 
     const text = readResultText(block.content)
+
+    if (!known.has(ref)) {
+      const summary = firstNonEmpty(text.split('\n')[0])
+      events.push({
+        ...base,
+        seq: ctx.seq + events.length,
+        type: 'tool.completed',
+        itemRef: ref,
+        status: block.is_error === true ? 'error' : 'ok',
+        ...(summary === undefined
+          ? {}
+          : {
+              summary:
+                summary.length > MAX_TOOL_DETAIL
+                  ? `${summary.slice(0, MAX_TOOL_DETAIL - 1)}…`
+                  : summary,
+            }),
+      })
+      continue
+    }
+
     if (text !== '') {
       events.push({
         ...base,
@@ -610,16 +950,22 @@ export function mapToolPermission(
     }
   }
 
-  // Anything else — WebFetch, a plugin tool, a tool added by a future release.
-  // Modelled as a permission grant so it still surfaces a card rather than
-  // silently falling through.
+  // Anything else — Task, TodoWrite, ExitPlanMode, WebFetch, a plugin tool, a
+  // tool added by a future release. Modelled as a permission grant so it still
+  // surfaces a card rather than silently falling through.
+  //
+  // `toolName` and `input` are carried because without them the card renders
+  // the kind and nothing else, which is indistinguishable between a subagent
+  // being spawned and a todo list being written.
   return {
     id,
     agentId: AGENT,
     kind: 'permissionGrant',
     expiresAt,
+    toolName,
     cwd: typeof input['cwd'] === 'string' ? input['cwd'] : '',
     requested: { network: toolName === 'WebFetch' || toolName === 'WebSearch' },
+    input,
   }
 }
 

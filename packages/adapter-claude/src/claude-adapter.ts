@@ -52,15 +52,29 @@ const run = promisify(execFile)
  *    `mcpToolCall` is a first-class approval kind.
  */
 
+/*
+ * Three of these described the SDK's abilities rather than the adapter's, which
+ * made them claims Chorus could not honour:
+ *
+ *  - `fork`: `AgentSession` has no fork method and no IPC channel reaches one.
+ *    `conversation:restart` makes a *new* conversation, which is not a fork.
+ *  - `planStream`: `plan.updated` is emitted only by the Codex adapter. Nothing
+ *    in this package produces one.
+ *  - `modelSwitchMidSession`: `setModel` exists below and has no caller, because
+ *    `SessionOpts.model` is never set at either construction site.
+ *
+ * Each flips back to true in the phase that gives it an implementation, not
+ * before. A capability is a promise to the orchestrator, not a wish.
+ */
 export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   interrupt: true,
   steer: true,
-  fork: true,
+  fork: false,
   reasoningStream: true,
-  planStream: true,
+  planStream: false,
   // Claude has no aggregate turn diff; the workspace service derives one (§4.2).
   aggregateDiff: false,
-  modelSwitchMidSession: true,
+  modelSwitchMidSession: false,
   sandboxPolicy: 'emulated',
 }
 

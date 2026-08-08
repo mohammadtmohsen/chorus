@@ -96,6 +96,113 @@ describe('append', () => {
   })
 })
 
+describe('notices', () => {
+  it('round-trips through the log with its detail intact', () => {
+    store.append({
+      conversationId: CONV,
+      actor: 'claude',
+      payload: {
+        type: 'notice.raised',
+        level: 'warn',
+        source: 'hook',
+        text: 'lint · PreToolUse',
+        detail: 'no semicolons please',
+      },
+    })
+    const [read] = store.read(CONV, { types: ['notice.raised'] })
+    expect(read?.payload).toMatchObject({
+      type: 'notice.raised',
+      level: 'warn',
+      source: 'hook',
+      detail: 'no semicolons please',
+    })
+  })
+
+  it('accepts a notice with no detail, because most have none', () => {
+    expect(() =>
+      store.append({
+        conversationId: CONV,
+        actor: 'claude',
+        payload: {
+          type: 'notice.raised',
+          level: 'info',
+          source: 'system',
+          text: 'something',
+          detail: null,
+        },
+      })
+    ).not.toThrow()
+  })
+
+  it('rejects a source the renderer has no label for', () => {
+    // The renderer maps `source` onto a translated label; an unknown one would
+    // render as a raw key, so the schema is where it should fail.
+    expect(() =>
+      store.append({
+        conversationId: CONV,
+        actor: 'claude',
+        payload: {
+          type: 'notice.raised',
+          level: 'info',
+          source: 'gossip',
+          text: 'x',
+          detail: null,
+        } as never,
+      })
+    ).toThrow()
+  })
+})
+
+describe('tool calls', () => {
+  it('round-trips a nested call with its parent intact', () => {
+    store.append({
+      conversationId: CONV,
+      actor: 'claude',
+      payload: {
+        type: 'tool.started',
+        itemRef: 't1',
+        name: 'Grep',
+        parentRef: 'p1',
+        detail: 'TODO',
+      },
+    })
+    const [read] = store.read(CONV, { types: ['tool.started'] })
+    expect(read?.payload).toMatchObject({ name: 'Grep', parentRef: 'p1', detail: 'TODO' })
+  })
+
+  it('rejects a call with no ref, which nothing downstream could attach to', () => {
+    expect(() =>
+      store.append({
+        conversationId: CONV,
+        actor: 'claude',
+        payload: { type: 'tool.started', itemRef: '', name: 'Grep', parentRef: null, detail: null },
+      })
+    ).toThrow()
+  })
+
+  it('accepts an outcome and rejects an invented one', () => {
+    expect(() =>
+      store.append({
+        conversationId: CONV,
+        actor: 'claude',
+        payload: { type: 'tool.completed', itemRef: 't1', status: 'ok', summary: null },
+      })
+    ).not.toThrow()
+    expect(() =>
+      store.append({
+        conversationId: CONV,
+        actor: 'claude',
+        payload: {
+          type: 'tool.completed',
+          itemRef: 't1',
+          status: 'probably',
+          summary: null,
+        } as never,
+      })
+    ).toThrow()
+  })
+})
+
 describe('message projection', () => {
   it('stitches a run of deltas into a single message row', () => {
     for (const text of ['Hel', 'lo ', 'world']) {

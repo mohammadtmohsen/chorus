@@ -217,6 +217,19 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
        * diff, already covered one change at a time. The rest is Chorus's own
        * bookkeeping, or — for a handoff — context the recipient was handed in
        * full at the time.
+       *
+       * `notice.raised` is Chorus telling the *user* what the harness did — a
+       * hook that ran, a retry, a rule that denied a tool. The other agent runs
+       * under its own harness, so replaying ours would spend a strictly
+       * budgeted catch-up on something it cannot act on. What a denial *caused*
+       * still reaches it: the command that never ran is simply absent, and a
+       * turn that gave up says so through `error.raised`.
+       *
+       * `tool.*` is left out for the reason the adapter gives for not reporting
+       * non-Bash results in full: every other tool's result is the agent's own
+       * working, and the agent narrates what it found. Twenty file reads would
+       * spend the budget on the search rather than on what it turned up.
+       * Commands stay in because a shell command changes the machine.
        */
       case 'conversation.created':
       case 'session.started':
@@ -232,6 +245,10 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
       case 'userinput.answered':
       case 'handoff.created':
       case 'usage.updated':
+      case 'notice.raised':
+      case 'tool.started':
+      case 'tool.progress':
+      case 'tool.completed':
       case 'context.compacted':
         /*
          * `context.compacted` is here for a related reason: it records that an
