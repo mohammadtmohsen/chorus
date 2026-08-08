@@ -24,6 +24,17 @@ export const Settings = z.object({
   /** Empty means "start at home", the same as leaving the field blank. */
   cwd: z.string(),
   profileId: z.string(),
+  /**
+   * What a new session's agents start as. Empty means the provider's own
+   * choice, which is not the same as a named model and must stay expressible.
+   *
+   * A default, like everything else here — a conversation's own picker
+   * overrides it, and the sheet's controls say "new sessions" for exactly that
+   * reason. `.default('')` so a file written before this still parses.
+   */
+  model: z.string().default(''),
+  /** Likewise reasoning effort. Empty means whatever the model does unasked. */
+  effortLevel: z.string().default(''),
 })
 export type Settings = z.infer<typeof Settings>
 
@@ -44,6 +55,10 @@ export const DEFAULT_SETTINGS: Settings = {
   cwd: '',
   // Permissive defaults ship by accident, not on purpose (plan §4.4).
   profileId: 'read-only',
+  // Nothing chosen: the provider decides, which is the right default for a
+  // machine whose CLI we have not asked yet.
+  model: '',
+  effortLevel: '',
 }
 
 function settingsPath(userDataPath: string): string {

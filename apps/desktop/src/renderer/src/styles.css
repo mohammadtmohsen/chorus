@@ -1253,6 +1253,34 @@ body {
   color: var(--bone);
 }
 
+.settings-models {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.8rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.settings-models label {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.settings-models select {
+  min-width: 22ch;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--bone);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 /* ------------------------------------------------------- past conversations */
 
 .workspace-sidebar-head {

@@ -89,7 +89,12 @@
     "subhead": "About this machine",
     "installed": "Agents found",
     "paneNote": "Agents, folder and permissions belong to each session — change them in its own bar. A new session starts where the last one was.",
-    "done": "Done"
+    "done": "Done",
+    "newSessions": "New sessions start with",
+    "model": "Model",
+    "effort": "Reasoning effort",
+    "providerDefault": "The provider's default",
+    "newSessionsNote": "A default only. Each conversation can change its own from its card in the sidebar."
   },
   "activity": {
     "label": "Agents and settings",

@@ -39,6 +39,7 @@ import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/work
 import type { ContextUsagePush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
+import { readSettings } from './settings.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { findExecutable } from './which.js'
 
@@ -154,6 +155,15 @@ export class ChorusRuntime {
   private readonly limits = new Map<AgentId, readonly UsageWindow[]>()
   private onLimits: ((push: { agentId: AgentId; windows: UsageWindow[] }) => void) | undefined
   private onContextUsage: ((push: ContextUsagePush) => void) | undefined
+  /**
+   * The last model list each agent reported, for the settings sheet.
+   *
+   * The sheet can be opened with nothing running, and `supportedModels()` is a
+   * control request to a live CLI. An installed CLI's list does not change, so
+   * remembering what a session already answered is both cheaper and available
+   * when no session is.
+   */
+  private readonly knownModelsByAgent = new Map<AgentId, readonly ModelChoice[]>()
 
   private constructor(
     private readonly db: SqliteHandle,
@@ -911,6 +921,9 @@ export class ChorusRuntime {
     return Promise.all(
       [...conversation.participants.values()].map(async (participant) => {
         participant.models ??= await participant.session.supportedModels()
+        if (participant.models.length > 0) {
+          this.knownModelsByAgent.set(participant.agentId, participant.models)
+        }
         return { agentId: participant.agentId, models: [...participant.models] }
       })
     )
@@ -929,6 +942,14 @@ export class ChorusRuntime {
     const participant = conversation.participants.get(agentId)
     if (participant === undefined) throw new Error(`${agentId} is not in this conversation.`)
     await participant.session.setModel(model)
+  }
+
+  /** What the settings sheet offers, from whichever session last answered. */
+  knownModels(): { agentId: AgentId; models: ModelChoice[] }[] {
+    return [...this.knownModelsByAgent].map(([agentId, models]) => ({
+      agentId,
+      models: [...models],
+    }))
   }
 
   /** How hard the model should think. Not logged, for the reason `setModel` is not. */
@@ -999,8 +1020,12 @@ export class ChorusRuntime {
 
   /** The provider sandbox mirrors the profile, so it is rebuilt when either moves. */
   private sessionOptsFor(conversation: ActiveConversation): SessionOpts {
+    // A default, read at start rather than held: changing it in the sheet
+    // should affect the next session without the app having to be restarted.
+    const preferred = readSettings(this.userDataPath).model
     return {
       cwd: conversation.cwd,
+      ...(preferred === '' ? {} : { model: preferred }),
       sandbox:
         conversation.profile.id === 'read-only'
           ? { mode: 'readOnly', writableRoots: [], networkAccess: false }
@@ -1256,6 +1281,24 @@ export class ChorusRuntime {
       : SupervisedSession.resume(adapter, resumeFrom, sessionOpts).catch(() =>
           SupervisedSession.start(adapter, sessionOpts)
         ))
+    /*
+     * The preferred effort, applied once the session exists.
+     *
+     * Unlike the model it is not a `SessionOpts` field — the CLI takes it as a
+     * settings override after the query is open — so it is a call rather than a
+     * construction argument. Failing to apply a preference must not cost the
+     * session, so it is awaited but not allowed to throw.
+     */
+    const effort = readSettings(this.userDataPath).effortLevel
+    if (effort !== '') {
+      await session.setEffort(effort).catch((error: unknown) => {
+        this.log.warn('could not apply the preferred effort level', {
+          agentId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      })
+    }
+
     const service = new ConversationService({
       store: this.store,
       conversationId,

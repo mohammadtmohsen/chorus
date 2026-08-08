@@ -13,6 +13,98 @@ export interface Defaults {
 }
 
 /**
+ * What a *new* session's agents start as.
+ *
+ * The one place this sheet still keeps a default, and it is labelled as one.
+ * The comment above explains why the cast, directory and profile left: two
+ * controls with the same name doing different things is worse than one. This is
+ * not that — a conversation's own picker changes the conversation you are
+ * looking at, and this changes the next one you open. The wording has to carry
+ * that distinction or it becomes the thing this sheet got rid of.
+ *
+ * The list is whatever a running session last reported. `supportedModels()` is a
+ * control request to a live CLI and this sheet can be opened with nothing
+ * running, so nothing is asked here — a machine that has not started a session
+ * yet simply has no list, and the control says so rather than pretending.
+ */
+function DefaultModel(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const [models, setModels] = useState<{ value: string; label: string; effortLevels: string[] }[]>(
+    []
+  )
+  const [model, setModel] = useState('')
+  const [effort, setEffort] = useState('')
+
+  useEffect(() => {
+    let live = true
+    Promise.all([window.chorus.knownModels(), window.chorus.readSettings()])
+      .then(([known, settings]) => {
+        if (!live) return
+        // Claude's, when there is one: it is the agent with an effort control,
+        // and a single pair of selects cannot honestly speak for two providers.
+        setModels(known.agents.find((agent) => agent.agentId === 'claude')?.models ?? [])
+        setModel(settings.model)
+        setEffort(settings.effortLevel)
+      })
+      .catch(() => {
+        // Nothing to offer is a state this renders, not an error it reports.
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (models.length === 0) return null
+
+  const levels = models.find((entry) => entry.value === model)?.effortLevels ?? []
+
+  return (
+    <fieldset className="settings-models">
+      <legend>{t('settings.newSessions')}</legend>
+      <label>
+        <span>{t('settings.model')}</span>
+        <select
+          value={model}
+          onChange={(event) => {
+            const next = event.target.value
+            setModel(next)
+            void window.chorus.writeSettings({ model: next })
+          }}
+        >
+          <option value="">{t('settings.providerDefault')}</option>
+          {models.map((entry) => (
+            <option key={entry.value} value={entry.value}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {levels.length > 0 && (
+        <label>
+          <span>{t('settings.effort')}</span>
+          <select
+            value={effort}
+            onChange={(event) => {
+              const next = event.target.value
+              setEffort(next)
+              void window.chorus.writeSettings({ effortLevel: next })
+            }}
+          >
+            <option value="">{t('settings.providerDefault')}</option>
+            {levels.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <p className="footnote">{t('settings.newSessionsNote')}</p>
+    </fieldset>
+  )
+}
+
+/**
  * What only this sheet can tell you.
  *
  * It used to hold the cast, the directory and the permission profile — all three
@@ -22,7 +114,11 @@ export interface Defaults {
  * duplicates are gone and a new session simply starts where the last one was.
  *
  * What is left is what a session cannot answer: which agents this machine has
- * and at what version, and the way into the log.
+ * and at what version, and the way into the log — plus `DefaultModel` above,
+ * which is the one default that came back. It earns its place by naming itself
+ * one: "new sessions start with", against a card control that changes the
+ * conversation in front of you. If that wording ever slips, it becomes exactly
+ * the duplicate this sheet got rid of.
  */
 export function Settings(props: {
   probes: AgentProbeResult[] | null
@@ -138,6 +234,8 @@ export function Settings(props: {
               )
             })}
           </fieldset>
+
+          <DefaultModel />
 
           <p className="footnote">{t('settings.paneNote')}</p>
         </div>
