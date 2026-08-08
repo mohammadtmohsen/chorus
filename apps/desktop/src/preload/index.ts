@@ -50,6 +50,7 @@ const api: ChorusApi = {
   listCommands: invoke('conversation:commands'),
   listConversations: () => invoke('conversation:list')({}),
   knownModels: () => invoke('agents:models')({}),
+  mcpServers: () => invoke('agents:mcp')({}),
   reopenConversation: invoke('conversation:reopen'),
   restartConversation: invoke('conversation:restart'),
   previewFile: invoke('files:preview'),

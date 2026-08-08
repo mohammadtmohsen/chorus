@@ -6,6 +6,7 @@ import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
   AgentAdapter,
   ApprovalDecision,
+  McpServerHealth,
   ModelChoice,
   SessionOpts,
   SlashCommandInfo,
@@ -992,6 +993,27 @@ export class ChorusRuntime {
   /** Whether this conversation is planning, for a control that has to say so. */
   planning(conversationId: string): boolean {
     return this.active.get(conversationId)?.planning ?? false
+  }
+
+  /**
+   * How the inherited MCP servers are doing, asked of whichever session can say.
+   *
+   * Asked live rather than cached, unlike the model list. A model list does not
+   * change under a running CLI; a server's health is exactly the thing that
+   * does — it can drop, or come back once you authenticate it, and a remembered
+   * answer would be the one state worse than none.
+   *
+   * Any live conversation will do: the servers come from the user's own config,
+   * so every session in the app has the same ones.
+   */
+  async mcpServers(): Promise<McpServerHealth[]> {
+    for (const conversation of this.active.values()) {
+      for (const participant of conversation.participants.values()) {
+        const servers = await participant.session.mcpServerStatus()
+        if (servers.length > 0) return [...servers]
+      }
+    }
+    return []
   }
 
   /** What the settings sheet offers, from whichever session last answered. */

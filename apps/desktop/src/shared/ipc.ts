@@ -248,6 +248,27 @@ export const IPC_CONTRACT = {
   },
 
   /**
+   * How the inherited MCP servers are doing.
+   *
+   * Asked live every time, because a server's health is the thing that changes
+   * — it can drop, or come back once authenticated — and a cached answer would
+   * be worse than none.
+   */
+  'agents:mcp': {
+    request: z.object({}),
+    response: z.object({
+      servers: z.array(
+        z.object({
+          name: z.string(),
+          status: z.enum(['connected', 'failed', 'needs-auth', 'pending', 'disabled']),
+          error: z.string().optional(),
+          tools: z.number().int().optional(),
+        })
+      ),
+    }),
+  },
+
+  /**
    * The model lists last reported by each agent, for the settings sheet.
    *
    * A cache rather than a live ask: `supportedModels()` is a control request to
@@ -793,6 +814,7 @@ export interface ChorusApi {
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
+  readonly mcpServers: () => Promise<IpcResponse<'agents:mcp'>>
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

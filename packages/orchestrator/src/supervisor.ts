@@ -1,5 +1,6 @@
 import type {
   ModelChoice,
+  McpServerHealth,
   SlashCommandInfo,
   ProviderPermissionMode,
   AgentAdapter,
@@ -149,6 +150,10 @@ export class SupervisedSession implements AgentSession {
 
   supportedCommands(): Promise<readonly SlashCommandInfo[]> {
     return this.current.supportedCommands?.() ?? Promise.resolve([])
+  }
+
+  mcpServerStatus(): Promise<readonly McpServerHealth[]> {
+    return this.current.mcpServerStatus?.() ?? Promise.resolve([])
   }
 
   /**

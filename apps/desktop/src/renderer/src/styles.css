@@ -1205,6 +1205,55 @@ body {
   color: var(--muted);
 }
 
+.settings-mcp {
+  margin: 0.8rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.settings-mcp ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-mcp li {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  padding: 0.15rem 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.settings-mcp-name {
+  flex: none;
+  color: var(--bone);
+}
+
+.settings-mcp-status {
+  color: var(--faint);
+}
+
+/*
+ * The two that mean "this agent is missing something you think it has".
+ *
+ * Everything else here is informational; these are the states where a server is
+ * configured, believed in, and contributing nothing.
+ */
+.settings-mcp li[data-status='needs-auth'] .settings-mcp-status,
+.settings-mcp li[data-status='failed'] .settings-mcp-status {
+  color: var(--alert);
+}
+
+.settings-mcp-error {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-models {
   display: flex;
   flex-direction: column;

@@ -303,5 +303,18 @@
     "label": "Plan",
     "enter": "Plan only — read and reason, change nothing until the plan is approved",
     "leave": "Stop planning and return to ordinary permissions"
+  },
+  "mcp": {
+    "heading": "MCP servers",
+    "status": {
+      "connected": "connected",
+      "failed": "failed",
+      "needs-auth": "needs authenticating",
+      "pending": "starting",
+      "disabled": "disabled"
+    },
+    "tools": "{{count}} tool",
+    "tools_plural": "{{count}} tools",
+    "note": "These come from your own Claude configuration. A server that needs authenticating gives its agent no tools, and says nothing about it."
   }
 }

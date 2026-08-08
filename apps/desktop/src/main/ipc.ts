@@ -175,6 +175,15 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
     'conversation:reopen': (request: { conversationId: string }) =>
       runtime.reopenConversation(request.conversationId),
 
+    'agents:mcp': async () => ({
+      servers: (await runtime.mcpServers()).map((server) => ({
+        name: server.name,
+        status: server.status,
+        ...(server.error === undefined ? {} : { error: server.error }),
+        ...(server.tools === undefined ? {} : { tools: server.tools }),
+      })),
+    }),
+
     'agents:models': () =>
       Promise.resolve({
         agents: runtime.knownModels().map((agent) => ({

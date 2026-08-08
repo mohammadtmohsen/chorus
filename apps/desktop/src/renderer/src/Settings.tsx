@@ -13,6 +13,67 @@ export interface Defaults {
 }
 
 /**
+ * Whether the MCP servers this machine gives its agents are any use.
+ *
+ * `settingSources` is deliberately omitted so agents inherit the user's full
+ * config — their servers, and their servers' failures. None of those failures is
+ * loud: a server that needs authenticating is not an error and nothing retries
+ * it, and the only symptom is an agent quietly lacking a capability you believe
+ * it has. That is the entire reason this exists.
+ *
+ * Here rather than on a card, because the servers are the machine's and not the
+ * conversation's. Asked live each time it opens, since health is exactly the
+ * thing that changes.
+ */
+function McpServers(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const [servers, setServers] = useState<IpcResponse<'agents:mcp'>['servers']>([])
+
+  useEffect(() => {
+    let live = true
+    window.chorus
+      .mcpServers()
+      .then((result) => {
+        if (live) setServers(result.servers)
+      })
+      .catch(() => {
+        // No session to ask, or a CLI too old. Either way there is nothing to
+        // report, which this renders as nothing at all.
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (servers.length === 0) return null
+
+  return (
+    <fieldset className="settings-mcp">
+      <legend>{t('mcp.heading')}</legend>
+      <ul>
+        {servers.map((server) => (
+          <li key={server.name} data-status={server.status}>
+            <span className="settings-mcp-name">{server.name}</span>
+            <span className="settings-mcp-status">
+              {t(`mcp.status.${server.status}`)}
+              {server.status === 'connected' && server.tools !== undefined
+                ? ` · ${t('mcp.tools', { count: server.tools })}`
+                : ''}
+            </span>
+            {server.error !== undefined && (
+              <span className="settings-mcp-error" title={server.error}>
+                {server.error}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="footnote">{t('mcp.note')}</p>
+    </fieldset>
+  )
+}
+
+/**
  * What a *new* session's agents start as.
  *
  * The one place this sheet still keeps a default, and it is labelled as one.
@@ -234,6 +295,8 @@ export function Settings(props: {
               )
             })}
           </fieldset>
+
+          <McpServers />
 
           <DefaultModel />
 

@@ -55,6 +55,22 @@ export interface SlashCommandInfo {
   readonly argumentHint: string
 }
 
+/**
+ * One MCP server, and whether it is any use right now.
+ *
+ * `needs-auth` is the one that matters: it is not an error, nothing retries it,
+ * and the only symptom is an agent quietly lacking a capability you believe it
+ * has.
+ */
+export interface McpServerHealth {
+  readonly name: string
+  readonly status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
+  /** Present when it failed, in the provider's words. */
+  readonly error?: string
+  /** How many tools it is contributing, when it is connected. */
+  readonly tools?: number
+}
+
 /** One entry in a model picker: what to send, and what to show. */
 export interface ModelChoice {
   readonly value: string
@@ -119,6 +135,14 @@ export interface AgentSession {
    * two repositories offer different things.
    */
   supportedCommands?(): Promise<readonly SlashCommandInfo[]>
+  /**
+   * How the MCP servers this session inherited are actually doing.
+   *
+   * Worth asking because the failures are silent: a server that needs
+   * authenticating, or that failed to start, simply has no tools — and an agent
+   * with no tools does not complain, it just cannot do the thing.
+   */
+  mcpServerStatus?(): Promise<readonly McpServerHealth[]>
   /**
    * How hard the model should think, for providers that expose the control.
    *
