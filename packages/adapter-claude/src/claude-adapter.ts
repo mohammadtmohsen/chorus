@@ -561,6 +561,35 @@ export class ClaudeAdapter implements AgentAdapter {
       throw new Error(`Working directory does not exist: ${opts.cwd}`)
     }
 
+    /*
+     * Same reasoning, one layer out.
+     *
+     * When the lookup ran and found nothing, `pathToClaudeCodeExecutable` is
+     * omitted and the SDK falls back to hunting for its own bundled binary —
+     * which `pnpm-workspace.yaml` excludes on purpose, all eight platforms of
+     * it, because darwin-arm64 alone unpacks to ~257 MB. What the user is then
+     * told is:
+     *
+     *   Native CLI binary for darwin-arm64 not found. Reinstall
+     *   @anthropic-ai/claude-agent-sdk without --omit=optional…
+     *
+     * Both of which are the wrong thing to do: Chorus drives the installed CLI
+     * by design, and reinstalling would add a quarter of a gigabyte to work
+     * around a missing PATH entry. Saying so here keeps the blame where it
+     * belongs.
+     *
+     * Only when a resolver was supplied and came back empty. An adapter
+     * constructed without one — every test in this package — is asking the SDK
+     * to find its own way, and that is not this error.
+     */
+    if (this.resolveExecutablePath !== undefined && this.executablePath === undefined) {
+      throw new Error(
+        'Could not find the claude CLI. Chorus runs the one you have installed rather ' +
+          'than shipping its own, so `claude` needs to be on your PATH — check with ' +
+          '`which claude`, and install it if it is missing.'
+      )
+    }
+
     // canUseTool has to be captured before the session exists, but the SDK
     // only invokes it once the query is running — by which point it is set.
     const holder: { session?: ClaudeSession } = {}
