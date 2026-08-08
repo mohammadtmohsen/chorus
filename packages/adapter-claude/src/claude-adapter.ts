@@ -9,6 +9,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type {
   AgentAdapter,
+  ModelChoice,
   AgentCapabilities,
   AgentEvent,
   AgentInput,
@@ -61,8 +62,10 @@ const run = promisify(execFile)
  *    `conversation:restart` makes a *new* conversation, which is not a fork.
  *  - `planStream`: `plan.updated` is emitted only by the Codex adapter. Nothing
  *    in this package produces one.
- *  - `modelSwitchMidSession`: `setModel` exists below and has no caller, because
- *    `SessionOpts.model` is never set at either construction site.
+ *  - `modelSwitchMidSession`: was false while `setModel` had no caller. It is
+ *    true again now that one exists, the supervisor re-applies the choice across
+ *    a restart, and `supportedModels` gives the picker a list that came from the
+ *    CLI rather than from a guess.
  *
  * Each flips back to true in the phase that gives it an implementation, not
  * before. A capability is a promise to the orchestrator, not a wish.
@@ -75,7 +78,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   planStream: false,
   // Claude has no aggregate turn diff; the workspace service derives one (§4.2).
   aggregateDiff: false,
-  modelSwitchMidSession: false,
+  modelSwitchMidSession: true,
   sandboxPolicy: 'emulated',
 }
 
@@ -414,6 +417,35 @@ export class ClaudeSession implements AgentSession {
       }
     } catch {
       // Answered only while the query is open, so a close mid-flight lands here.
+    }
+  }
+
+  /**
+   * The models this CLI will accept.
+   *
+   * Asked rather than hardcoded: the list belongs to the installed `claude`,
+   * which self-updates, so a list compiled into Chorus would be wrong the week
+   * after it shipped. Defensive in the same way as the usage reads — an older
+   * CLI that cannot answer offers no choice rather than failing a session.
+   */
+  async supportedModels(): Promise<readonly ModelChoice[]> {
+    const ask = (this.q as unknown as { supportedModels?: () => Promise<unknown> }).supportedModels
+    if (typeof ask !== 'function') return []
+
+    try {
+      const models = await ask.call(this.q)
+      if (!Array.isArray(models)) return []
+      return models.flatMap((entry): ModelChoice[] => {
+        const row = entry as { value?: unknown; displayName?: unknown }
+        if (typeof row.value !== 'string' || row.value === '') return []
+        const label =
+          typeof row.displayName === 'string' && row.displayName !== ''
+            ? row.displayName
+            : row.value
+        return [{ value: row.value, label }]
+      })
+    } catch {
+      return []
     }
   }
 

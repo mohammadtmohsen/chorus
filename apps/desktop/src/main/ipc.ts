@@ -174,6 +174,19 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
     'conversation:reopen': (request: { conversationId: string }) =>
       runtime.reopenConversation(request.conversationId),
 
+    'conversation:models': async (request: { conversationId: string }) => ({
+      agents: await runtime.listModels(request.conversationId),
+    }),
+
+    'conversation:setModel': async (request: {
+      conversationId: string
+      agentId: 'codex' | 'claude'
+      model: string
+    }) => {
+      await runtime.setModel(request.conversationId, request.agentId, request.model)
+      return OK
+    },
+
     'conversation:markSeen': (request: { conversationId: string; seq: number }) => {
       runtime.markSeen(request.conversationId, request.seq)
       return Promise.resolve(OK)

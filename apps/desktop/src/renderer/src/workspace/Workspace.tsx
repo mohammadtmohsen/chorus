@@ -642,6 +642,77 @@ function PaneTabStrip(
 const ROW_DRAG_PX = 5
 
 /**
+ * Which model each agent in a conversation is answering as.
+ *
+ * A plain `<select>` rather than the portal listbox the profile chip uses: the
+ * options come from the provider and there is nothing to draw beyond them, so
+ * the native control is both smaller and better behaved with a keyboard.
+ *
+ * Renders nothing at all when the provider offers no list. An older CLI that
+ * cannot be asked should leave no trace here, not an empty dropdown implying a
+ * choice that does not exist.
+ */
+function ModelPicker(props: { conversationId: string }): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const [agents, setAgents] = useState<
+    { agentId: string; models: { value: string; label: string }[] }[]
+  >([])
+  /** What was picked here, so the control reflects the choice immediately. */
+  const [chosen, setChosen] = useState<Readonly<Record<string, string>>>({})
+
+  useEffect(() => {
+    let live = true
+    window.chorus
+      .listModels({ conversationId: props.conversationId })
+      .then((result) => {
+        if (live) setAgents(result.agents.filter((agent) => agent.models.length > 0))
+      })
+      .catch(() => {
+        // A provider that cannot be asked simply offers no choice. Saying so on
+        // a sidebar card would be noise about a feature the user never invoked.
+      })
+    return () => {
+      live = false
+    }
+  }, [props.conversationId])
+
+  if (agents.length === 0) return null
+
+  return (
+    <span className="workspace-session-models">
+      {agents.map((agent) => (
+        <label key={agent.agentId} className="workspace-session-model">
+          <span className="sr-only">{t('model.label', { agent: agent.agentId })}</span>
+          <select
+            value={chosen[agent.agentId] ?? ''}
+            onChange={(event) => {
+              const model = event.target.value
+              if (model === '') return
+              setChosen((current) => ({ ...current, [agent.agentId]: model }))
+              void window.chorus.setModel({
+                conversationId: props.conversationId,
+                agentId: agent.agentId as AgentId,
+                model,
+              })
+            }}
+          >
+            {/* The provider's own default, which is what is in force until a
+                choice is made. Named rather than blank so the control is not
+                claiming the agent has no model. */}
+            <option value="">{t('model.default', { agent: agent.agentId })}</option>
+            {agent.models.map((model) => (
+              <option key={model.value} value={model.value}>
+                {model.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+    </span>
+  )
+}
+
+/**
  * Below this, the context figure is not worth the pixels.
  *
  * A number that reads 4% for an hour is one you stop seeing, and this one has to
@@ -1421,6 +1492,7 @@ function SidebarSession(props: {
           one. The panels do live in the pane, so these buttons activate the
           session on the way — wanting a session's diff is a reason to be in it.
         */}
+        <ModelPicker conversationId={props.session.conversationId} />
         <span className="workspace-session-output">
           <button
             type="button"

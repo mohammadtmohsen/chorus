@@ -1,4 +1,5 @@
 import type {
+  ModelChoice,
   AgentAdapter,
   AgentEvent,
   AgentInput,
@@ -56,6 +57,8 @@ export class SupervisedSession implements AgentSession {
   private readonly restartTimes: number[] = []
 
   private current: AgentSession
+  /** The model the user picked, so a restart does not quietly undo it. */
+  private chosenModel: string | undefined
   private closing = false
   private givenUp = false
   /** Set when the adapter reported a failure it says retrying cannot fix. */
@@ -134,6 +137,23 @@ export class SupervisedSession implements AgentSession {
     return this.current.respondToUserInput(id, response)
   }
 
+  supportedModels(): Promise<readonly ModelChoice[]> {
+    return this.current.supportedModels?.() ?? Promise.resolve([])
+  }
+
+  /**
+   * Remembered, not merely forwarded.
+   *
+   * A supervised session can be replaced under the caller after a crash, and a
+   * model chosen before that would silently revert — the user would see their
+   * choice still selected while the agent answered as something else. Held here
+   * and re-applied to whatever session comes back.
+   */
+  async setModel(model: string): Promise<void> {
+    this.chosenModel = model
+    await this.current.setModel?.(model)
+  }
+
   async close(): Promise<void> {
     // Set first: this is what distinguishes a clean shutdown from a crash.
     this.closing = true
@@ -195,6 +215,9 @@ export class SupervisedSession implements AgentSession {
     try {
       const resumed = await this.adapter.resume(this.sessionRef, this.opts)
       this.current = resumed
+      // The replacement starts on the provider's default, so a choice made
+      // before the crash has to be made again on its behalf.
+      if (this.chosenModel !== undefined) await resumed.setModel?.(this.chosenModel)
       this.pump = this.consume(resumed)
     } catch (error) {
       // A failed resume is not recoverable by trying harder — the thread may be

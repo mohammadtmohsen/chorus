@@ -6,6 +6,7 @@ import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
   AgentAdapter,
   ApprovalDecision,
+  ModelChoice,
   SessionOpts,
   UsageWindow,
   UserInputResponse,
@@ -86,6 +87,15 @@ interface Participant {
    * ordinary again.
    */
   catchupBudget?: number
+  /**
+   * The provider's model list, asked for once.
+   *
+   * Every card in the sidebar wants it, and asking is a control request to a
+   * live CLI. The list does not change while a session runs, so paying for it
+   * once per participant is the difference between one round-trip and one per
+   * card per render.
+   */
+  models?: readonly ModelChoice[]
 }
 
 interface ActiveConversation {
@@ -887,6 +897,38 @@ export class ChorusRuntime {
       title: conversation.title,
       unread: 0,
     }
+  }
+
+  /**
+   * What each agent in a conversation will accept as a model.
+   *
+   * Asked of the running session rather than compiled in: the list belongs to
+   * the installed CLI, which self-updates. An agent that cannot be asked returns
+   * an empty list, and the UI offers no choice rather than a wrong one.
+   */
+  async listModels(conversationId: string): Promise<{ agentId: AgentId; models: ModelChoice[] }[]> {
+    const conversation = this.require(conversationId)
+    return Promise.all(
+      [...conversation.participants.values()].map(async (participant) => {
+        participant.models ??= await participant.session.supportedModels()
+        return { agentId: participant.agentId, models: [...participant.models] }
+      })
+    )
+  }
+
+  /**
+   * Switches one agent's model mid-conversation.
+   *
+   * Not written to the log. Which model answered is a property of the provider
+   * session rather than of the conversation, and the session already records its
+   * model on `session.started` — a second record that could disagree with it
+   * would be worse than none.
+   */
+  async setModel(conversationId: string, agentId: AgentId, model: string): Promise<void> {
+    const conversation = this.require(conversationId)
+    const participant = conversation.participants.get(agentId)
+    if (participant === undefined) throw new Error(`${agentId} is not in this conversation.`)
+    await participant.session.setModel(model)
   }
 
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {

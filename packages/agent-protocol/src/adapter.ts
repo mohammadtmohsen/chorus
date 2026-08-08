@@ -25,6 +25,12 @@ export interface SandboxPolicy {
   readonly networkAccess: boolean
 }
 
+/** One entry in a model picker: what to send, and what to show. */
+export interface ModelChoice {
+  readonly value: string
+  readonly label: string
+}
+
 export interface SessionOpts {
   readonly cwd: string
   readonly model?: string
@@ -58,6 +64,14 @@ export interface AgentSession {
    */
   respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void>
   setModel?(model: string): Promise<void>
+  /**
+   * The models this provider will accept, for a picker that is not guesswork.
+   *
+   * Optional and allowed to answer empty: the list comes from the running CLI,
+   * so a provider that cannot be asked simply offers no choice rather than
+   * offering a hardcoded one that may be wrong.
+   */
+  supportedModels?(): Promise<readonly ModelChoice[]>
   /**
    * Re-reads the account's usage windows, for providers that can be asked.
    *
