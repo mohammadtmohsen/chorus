@@ -218,4 +218,21 @@ export interface AgentAdapter {
   /** Also reports the underlying CLI version, which is recorded on session.started (plan §2.5). */
   health(): Promise<HealthStatus>
   dispose(): Promise<void>
+  /**
+   * Gives a provider's own record of a session the name the user chose.
+   *
+   * On the adapter rather than the session, deliberately: a conversation can be
+   * renamed long after its agents have stopped, and the thing being retitled is
+   * the provider's stored session rather than a running one.
+   *
+   * Chorus's log stays authoritative for Chorus's own history — this exists so
+   * that a room named here is recognisable if the same session is later resumed
+   * in the provider's own client, rather than sitting under an auto-generated
+   * summary of its first prompt.
+   *
+   * Optional, and best-effort by contract: a provider with no such concept
+   * simply does not implement it, and a session the provider has forgotten is
+   * not an error worth surfacing.
+   */
+  renameSession?(sessionRef: string, title: string, cwd: string): Promise<void>
 }

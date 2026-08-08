@@ -1187,6 +1187,22 @@ export class ChorusRuntime {
     })
     conversation.title = next
     this.rememberOpen()
+    /*
+     * Carried through to each provider's own record of the session.
+     *
+     * Chorus's log stays authoritative for Chorus's history — this is so a room
+     * named here is recognisable if the same session is later resumed in the
+     * provider's own client, instead of appearing under an auto-generated
+     * summary of its first prompt.
+     *
+     * Not awaited, and failures are the adapter's to swallow: a rename is a
+     * local fact that has already happened, and it must not wait on, or be
+     * undone by, another program's bookkeeping.
+     */
+    for (const participant of conversation.participants.values()) {
+      const adapter = this.adapters.get(participant.agentId)
+      void adapter?.renameSession?.(participant.session.sessionRef, next, conversation.cwd)
+    }
     return { title: next }
   }
 

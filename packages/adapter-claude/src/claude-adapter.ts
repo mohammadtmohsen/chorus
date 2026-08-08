@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { promisify } from 'node:util'
 import {
   query,
+  renameSession,
   type Options,
   type PermissionResult,
   type Query,
@@ -847,6 +848,40 @@ export class ClaudeAdapter implements AgentAdapter {
   async dispose(): Promise<void> {
     await Promise.all(this.sessions.map((s) => s.close()))
     this.sessions.length = 0
+  }
+
+  /**
+   * Puts the user's own name on the CLI's record of a session.
+   *
+   * `renameSession` is a module-level function rather than a `Query` method,
+   * which is what makes this possible at all: the session it retitles does not
+   * have to be running, and a conversation is usually renamed long after its
+   * agents have stopped.
+   *
+   * `dir` is passed so the CLI looks in the project the session belongs to
+   * instead of searching every project directory it knows.
+   *
+   * Silent on failure by contract. The commonest cause is a session file the
+   * user has since deleted, and a conversation's rename must not fail because
+   * another program has forgotten about it.
+   */
+  async renameSession(sessionRef: string, title: string, cwd: string): Promise<void> {
+    if (sessionRef === '' || title === '') return
+    try {
+      /*
+       * Resolved first, because the CLI files a project under its real path.
+       *
+       * A session opened in `/tmp/x` is stored under `-private-tmp-hooky` on
+       * macOS, where `/tmp` is a symlink — so passing the path as the user typed
+       * it looks in a project directory that does not exist and renames nothing,
+       * silently. Caught by watching a rename land nowhere; the alternative is
+       * omitting `dir` entirely and having the CLI search every project it knows.
+       */
+      await renameSession(sessionRef, title, { dir: realpathSync(cwd) })
+    } catch {
+      // Gone, or a CLI too old to have the function. Neither is the caller's
+      // problem: Chorus's own log already holds the name.
+    }
   }
 
   private spawn(opts: SessionOpts, resume: string | undefined): ClaudeSession {
