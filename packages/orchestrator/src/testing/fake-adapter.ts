@@ -85,6 +85,14 @@ export class FakeAgentSession implements AgentSession {
     return Promise.resolve()
   }
 
+  /** Recorded rather than acted on, so a test can assert the handover happened. */
+  readonly permissionModes: string[] = []
+
+  setPermissionMode(mode: string): Promise<void> {
+    this.permissionModes.push(mode)
+    return Promise.resolve()
+  }
+
   close(): Promise<void> {
     this.closed = true
     this.end()

@@ -325,6 +325,62 @@ describe('approval decisions', () => {
     expect(service.sessionGrants()).toHaveLength(1)
   })
 
+  it('hands edits to the provider once the user says always, so the next file is not asked', async () => {
+    /*
+     * A grant is keyed on its subject, and for a file change that is the paths
+     * it touched — so on its own "always" answers for this file and asks again
+     * for the next one. For a command the subject *is* the action; for editing,
+     * the next file is the same act.
+     */
+    const s = session()
+    s.emit({
+      type: 'approval.requested',
+      request: {
+        id: 'ap-edit' as never,
+        agentId: 'codex',
+        kind: 'fileChange',
+        files: [{ path: '/repo/src/a.ts', patch: '@@' }],
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
+    })
+    await tick()
+
+    await service.decideApproval('ap-edit', { outcome: 'allow', scope: 'session' })
+    await tick()
+
+    expect(s.permissionModes).toEqual(['acceptEdits'])
+  })
+
+  it('does not hand edits over for a once-only allow', async () => {
+    // "Just this one" is the answer that means the next one still asks.
+    const s = session()
+    s.emit({
+      type: 'approval.requested',
+      request: {
+        id: 'ap-edit-once' as never,
+        agentId: 'codex',
+        kind: 'fileChange',
+        files: [{ path: '/repo/src/a.ts', patch: '@@' }],
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
+    })
+    await tick()
+
+    await service.decideApproval('ap-edit-once', { outcome: 'allow', scope: 'once' })
+    await tick()
+
+    expect(s.permissionModes).toEqual([])
+  })
+
+  it('does not hand edits over because a command was allowed for the session', async () => {
+    // Allowing `npm test` forever says nothing about writing to disk.
+    const s = session()
+    await service.decideApproval('ap3', { outcome: 'allow', scope: 'session' })
+    await tick()
+
+    expect(s.permissionModes).toEqual([])
+  })
+
   it('flushes pending deltas before recording the decision', async () => {
     const s = session()
     s.emit({ type: 'message.delta', itemRef: 'm1', text: 'I need to write a file.' })

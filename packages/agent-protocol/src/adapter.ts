@@ -25,6 +25,16 @@ export interface SandboxPolicy {
   readonly networkAccess: boolean
 }
 
+/**
+ * How the provider decides about file edits, when it can be told.
+ *
+ * `acceptEdits` is a real handover, not a shortcut: the CLI stops calling the
+ * permission callback for edits, so nothing Chorus knows about them applies
+ * until the session ends. It is only ever reached by the user saying "always"
+ * to an edit, never by a default.
+ */
+export type ProviderPermissionMode = 'default' | 'acceptEdits'
+
 /** One entry in a model picker: what to send, and what to show. */
 export interface ModelChoice {
   readonly value: string
@@ -88,6 +98,16 @@ export interface AgentSession {
    * preference about answers, not about which model gives them.
    */
   setEffort?(level: string): Promise<void>
+  /**
+   * Hands the decision for file edits to the provider itself.
+   *
+   * Narrower than the provider's own set of modes on purpose: these are the only
+   * two Chorus has a meaning for. `default` routes every tool through the
+   * permission callback so the policy engine decides; `acceptEdits` lets the CLI
+   * accept edits without asking, which is faster and — the part that must never
+   * be set quietly — puts them beyond every `fileChange` rule.
+   */
+  setPermissionMode?(mode: ProviderPermissionMode): Promise<void>
   /**
    * Re-reads the account's usage windows, for providers that can be asked.
    *

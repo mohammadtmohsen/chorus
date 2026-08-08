@@ -10,6 +10,7 @@ import {
 import type {
   AgentAdapter,
   ModelChoice,
+  ProviderPermissionMode,
   AgentCapabilities,
   AgentEvent,
   AgentInput,
@@ -201,6 +202,19 @@ export class ClaudeSession implements AgentSession {
    * what a per-conversation control should do, so nothing here has to arrange
    * it.
    */
+  /**
+   * Hands edit decisions to the CLI for the rest of the session.
+   *
+   * The counterpart to `permissionMode: 'default'` above: that keeps every tool
+   * flowing through the policy engine, and this is the user opting one category
+   * back out of it. The cost is stated where it is set — an accepted edit is no
+   * longer seen by any rule, including the credential one — which is why it
+   * takes a deliberate "always" and not a setting.
+   */
+  async setPermissionMode(mode: ProviderPermissionMode): Promise<void> {
+    await this.q.setPermissionMode(mode)
+  }
+
   async setEffort(level: string): Promise<void> {
     const apply = (
       this.q as unknown as {
