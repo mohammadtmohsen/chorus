@@ -247,6 +247,32 @@ export interface ContextUsage extends AgentEventBase {
   readonly percentUsed: number
 }
 
+/** One thing the agent left running when it stopped waiting for it. */
+export interface BackgroundTask {
+  readonly id: string
+  /** `shell`, `subagent`, and whatever else the provider grows. */
+  readonly kind: string
+  readonly description: string
+}
+
+/**
+ * Everything the agent has running in the background, after the last change.
+ *
+ * State, not history, and the third member of that family after `LimitsUpdated`
+ * and `ContextUsage`. A list of processes that stopped existing when the session
+ * did is the clearest case of the test: read back a week later it is worse than
+ * having none.
+ *
+ * **Replace, never merge.** The provider documents its payload as "every live
+ * background task after the change", which is what makes this cheap — there is
+ * no accumulation from turn zero and nothing to reconcile, so a client that
+ * attaches halfway through is whole again at the next change.
+ */
+export interface TasksChanged extends AgentEventBase {
+  readonly type: 'tasks.changed'
+  readonly tasks: readonly BackgroundTask[]
+}
+
 export type AgentEvent =
   /*
    * Account-wide usage limits, not conversation history.
@@ -261,6 +287,10 @@ export type AgentEvent =
    * Also state rather than history, and also never logged. See `ContextUsage`.
    */
   | ContextUsage
+  /*
+   * The third of the same kind. Never logged; replaces rather than accumulates.
+   */
+  | TasksChanged
   | TurnStarted
   | ContextCompacted
   | MessageDelta

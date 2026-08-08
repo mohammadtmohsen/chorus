@@ -1072,9 +1072,27 @@ function SidebarSession(props: {
    */
   const contextValues = Object.values(pulse?.contextByActor ?? {})
   const contextPercent = contextValues.length === 0 ? null : Math.max(...contextValues)
+  /*
+   * Everything both agents left running, each still knowing whose it is.
+   *
+   * The count is the answer at rest — "something of yours is still going" — and
+   * the list only appears when asked for. Nothing running is the ordinary state,
+   * so there is no chip at all rather than a zero.
+   *
+   * The agent id is carried rather than flattened away because stopping one is
+   * routed by it: a task id belongs to the provider that issued it and means
+   * nothing to the other.
+   */
+  const running = Object.entries(pulse?.tasksByActor ?? {}).flatMap(([agentId, tasks]) =>
+    tasks.map((task) => ({ ...task, agentId }))
+  )
   const state = props.active ? 'active' : paneId === null ? 'offscreen' : 'open'
   /* Reset whenever the session stops working, so a warning cannot lie in wait. */
   const [armedEnd, setArmedEnd] = useState(false)
+  /** Whether the running tasks are listed, or just counted. */
+  const [showTasks, setShowTasks] = useState(false)
+  /** Ids already asked to stop, so the button cannot be pressed twice. */
+  const [stopping, setStopping] = useState<string[]>([])
   /** Which agent is mid-flight, so the pair disables rather than double-fires. */
   const [moving, setMoving] = useState<string | null>(null)
   /** Where the menu sits, and whether that has been checked against the window. */
@@ -1467,6 +1485,19 @@ function SidebarSession(props: {
           session on the way — wanting a session's diff is a reason to be in it.
         */}
         <PlanToggle conversationId={props.session.conversationId} />
+        {running.length > 0 && (
+          <button
+            type="button"
+            className="workspace-session-tasks"
+            aria-expanded={showTasks}
+            title={running.map((task) => `${task.kind}: ${task.description}`).join('\n')}
+            onClick={() => {
+              setShowTasks(!showTasks)
+            }}
+          >
+            {t('tasks.running', { count: running.length })}
+          </button>
+        )}
         <span className="workspace-session-output">
           <button
             type="button"
@@ -1543,6 +1574,50 @@ function SidebarSession(props: {
           </button>
         </span>
       </div>
+      {/*
+        Below the body rather than inside it, because the body is a two-column
+        grid and a task's description is a sentence rather than a cell.
+
+        Only when asked for. A card that permanently listed every backgrounded
+        command would be a log, and there is already one of those.
+      */}
+      {showTasks && running.length > 0 && (
+        <ul className="workspace-session-task-list">
+          {running.map((task) => (
+            <li key={`${task.agentId}:${task.id}`}>
+              <span className={`workspace-session-task-kind voice--${task.agentId}`}>
+                {task.kind}
+              </span>
+              <span className="workspace-session-task-what" title={task.description}>
+                {task.description}
+              </span>
+              <button
+                type="button"
+                className="workspace-session-task-stop"
+                disabled={stopping.includes(task.id)}
+                title={t('tasks.stop')}
+                aria-label={t('tasks.stop')}
+                onClick={() => {
+                  /*
+                   * Disabled on click and never re-enabled here. What re-renders
+                   * this row is the provider's next snapshot, which is also the
+                   * only thing that knows whether the task actually stopped —
+                   * clearing the flag ourselves would say so without knowing.
+                   */
+                  setStopping([...stopping, task.id])
+                  void window.chorus.stopTask({
+                    conversationId: props.session.conversationId,
+                    agentId: task.agentId === 'codex' ? 'codex' : 'claude',
+                    taskId: task.id,
+                  })
+                }}
+              >
+                {t('tasks.stopShort')}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

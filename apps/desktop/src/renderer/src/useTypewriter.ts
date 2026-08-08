@@ -11,6 +11,15 @@ import { nextShown, paceFor } from './typewriter.js'
  * replayed at launch, a transcript restored into a reopened pane. Typing those
  * out would be a performance of something that already happened.
  */
+/**
+ * How long without a frame counts as nobody watching.
+ *
+ * Comfortably longer than a dropped frame or two on a busy machine, and short
+ * enough that revealing the window shows the answer rather than the tail of an
+ * animation for something that finished while it was hidden.
+ */
+const STALL_MS = 1_000
+
 export function useTypewriter(text: string, startWhole: boolean): string {
   const [shown, setShown] = useState(startWhole ? text.length : 0)
   const position = useRef(shown)
@@ -35,6 +44,12 @@ export function useTypewriter(text: string, startWhole: boolean): string {
     let frame = 0
     let last = performance.now()
 
+    /** Everything, at once, because there is no longer any point pacing it. */
+    const finish = (): void => {
+      position.current = text.length
+      setShown(text.length)
+    }
+
     const tick = (now: number): void => {
       const next = nextShown(position.current, text.length, now - last, perSecond.current)
       last = now
@@ -52,8 +67,36 @@ export function useTypewriter(text: string, startWhole: boolean): string {
     }
 
     frame = requestAnimationFrame(tick)
+
+    /*
+     * The frames stopping is not the same as the message being empty.
+     *
+     * `shown` starts at zero and only ever advances inside `requestAnimationFrame`,
+     * so a window the compositor has stopped asking to paint — minimised, on
+     * another Space, occluded by something else — leaves the visible prefix at
+     * zero characters. The reply is in the log, in the view and in the DOM's own
+     * data, and the transcript renders an empty bubble anyway.
+     *
+     * Found from an e2e test that failed about one run in four: the event log
+     * held `agent.message.completed` with the full text, every event reached the
+     * reducer in order, and `.said` was still empty. Relaunching the app showed
+     * the answer, because replayed history starts whole.
+     *
+     * A watchdog rather than a check of `document.hidden`, because occlusion
+     * starves the frame callback without ever marking the document hidden. If no
+     * frame has run for a second, nobody is watching the animation, so the point
+     * of the animation is gone and only its cost remains.
+     */
+    const watchdog = setInterval(() => {
+      if (performance.now() - last < STALL_MS) return
+      clearInterval(watchdog)
+      cancelAnimationFrame(frame)
+      finish()
+    }, STALL_MS / 2)
+
     return () => {
       cancelAnimationFrame(frame)
+      clearInterval(watchdog)
     }
   }, [text])
 

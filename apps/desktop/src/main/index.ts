@@ -7,6 +7,7 @@ import {
   forwardEventsToRenderer,
   forwardIdeContextToRenderer,
   forwardContextUsageToRenderer,
+  forwardTasksToRenderer,
   forwardLimitsToRenderer,
   registerIpcHandlers,
 } from './ipc.js'
@@ -100,6 +101,7 @@ void app.whenReady().then(async () => {
   registerIpcHandlers(runtime)
   forwardLimitsToRenderer(runtime)
   forwardContextUsageToRenderer(runtime)
+  forwardTasksToRenderer(runtime)
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
   installMenu()
   forwardEventsToRenderer(runtime)

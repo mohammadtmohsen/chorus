@@ -221,6 +221,15 @@ export function App(): React.JSX.Element {
     []
   )
 
+  /* What each agent left running, on its own channel and for the same reason. */
+  useEffect(
+    () =>
+      window.chorus.onTasks((push) => {
+        useWorkspaceStore.getState().ingestTasks(push)
+      }),
+    []
+  )
+
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
     /*

@@ -8,6 +8,7 @@ import {
   type Query,
 } from '@anthropic-ai/claude-agent-sdk'
 import type {
+  AccountSummary,
   AgentAdapter,
   ModelChoice,
   ProviderPermissionMode,
@@ -293,6 +294,65 @@ export class ClaudeSession implements AgentSession {
       })
     } catch {
       return []
+    }
+  }
+
+  /**
+   * Ends one background task.
+   *
+   * Feature-detected like the rest, and deliberately silent on failure: the id
+   * comes from a snapshot that is only as fresh as the last push, so asking to
+   * stop something that has already finished is an ordinary race rather than an
+   * error worth showing. The next `background_tasks_changed` is what says
+   * whether it is gone, and it is the only thing that can.
+   */
+  async stopTask(taskId: string): Promise<void> {
+    const ask = (this.q as unknown as { stopTask?: (id: string) => Promise<void> }).stopTask
+    if (typeof ask !== 'function') return
+
+    try {
+      await ask.call(this.q, taskId)
+    } catch {
+      // Already gone, or the query closed under us. Both are the same to a
+      // caller who wanted it stopped.
+    }
+  }
+
+  /**
+   * Which account this CLI is signed in as.
+   *
+   * The probe against this machine answered `Claude Max` on `firstParty`, with
+   * an email and an organisation. Off the first-party API none of that exists —
+   * a Bedrock session authenticates with AWS credentials and has no plan — so
+   * every field is optional and an empty answer is reported as no answer at
+   * all, rather than as a row of blanks.
+   */
+  async accountInfo(): Promise<AccountSummary | null> {
+    const ask = (this.q as unknown as { accountInfo?: () => Promise<unknown> }).accountInfo
+    if (typeof ask !== 'function') return null
+
+    try {
+      const info = (await ask.call(this.q)) as {
+        email?: unknown
+        organization?: unknown
+        subscriptionType?: unknown
+        apiProvider?: unknown
+      } | null
+      if (info === null || typeof info !== 'object') return null
+
+      const said = (value: unknown): value is string => typeof value === 'string' && value !== ''
+      const summary: AccountSummary = {
+        ...(said(info.email) ? { email: info.email } : {}),
+        ...(said(info.organization) ? { organization: info.organization } : {}),
+        ...(said(info.subscriptionType) ? { plan: info.subscriptionType } : {}),
+        ...(said(info.apiProvider) ? { provider: info.apiProvider } : {}),
+      }
+      // Nothing to say is said once, as null, so the caller has one empty case
+      // rather than two.
+      return Object.keys(summary).length === 0 ? null : summary
+    } catch {
+      // Answered only while the query is open, so a close mid-flight lands here.
+      return null
     }
   }
 

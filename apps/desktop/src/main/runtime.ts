@@ -4,6 +4,7 @@ import { basename, join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
+  AccountSummary,
   AgentAdapter,
   ApprovalDecision,
   McpServerHealth,
@@ -38,7 +39,7 @@ import {
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
-import type { ContextUsagePush } from '../shared/ipc.js'
+import type { ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
 import { readSettings } from './settings.js'
@@ -154,6 +155,7 @@ export class ChorusRuntime {
   private readonly limits = new Map<AgentId, readonly UsageWindow[]>()
   private onLimits: ((push: { agentId: AgentId; windows: UsageWindow[] }) => void) | undefined
   private onContextUsage: ((push: ContextUsagePush) => void) | undefined
+  private onTasks: ((push: TasksPush) => void) | undefined
   /**
    * The last model list each agent reported, for the settings sheet.
    *
@@ -211,6 +213,17 @@ export class ChorusRuntime {
    */
   onContextUsageReported(listener: (push: ContextUsagePush) => void): void {
     this.onContextUsage = listener
+  }
+
+  /**
+   * Told what each conversation's agents have left running.
+   *
+   * Not remembered across restarts, and deliberately not seeded on reopen: the
+   * processes belonged to a session that has ended. The next change repopulates
+   * it, and until then nothing running is the truthful answer.
+   */
+  onTasksReported(listener: (push: TasksPush) => void): void {
+    this.onTasks = listener
   }
 
   /** What each provider last reported, so a new window is not born blank. */
@@ -1016,6 +1029,46 @@ export class ChorusRuntime {
     return []
   }
 
+  /**
+   * Which account each agent is signed in as.
+   *
+   * Per agent rather than first-answer-wins, unlike the MCP servers: those come
+   * from one config file and every session inherits the same ones, but claude
+   * and codex are separate logins and the whole point of asking is that they
+   * can differ. Asked live, because signing in elsewhere changes the answer
+   * under a running app.
+   *
+   * One conversation per agent is enough — a second session for the same agent
+   * is the same login — so this stops at the first that answers for each.
+   */
+  async accounts(): Promise<{ agentId: AgentId; account: AccountSummary }[]> {
+    const found = new Map<AgentId, AccountSummary>()
+    for (const conversation of this.active.values()) {
+      for (const [agentId, participant] of conversation.participants) {
+        if (found.has(agentId)) continue
+        const account = await participant.session.accountInfo()
+        if (account !== null) found.set(agentId, account)
+      }
+    }
+    return [...found].map(([agentId, account]) => ({ agentId, account }))
+  }
+
+  /**
+   * Ends one background task, on the agent that owns it.
+   *
+   * Routed by agent rather than broadcast: task ids come from one provider's
+   * snapshot and mean nothing to the other, so asking both would be asking a
+   * stranger to stop something it never started.
+   *
+   * No confirmation is returned. The provider's next snapshot is what says the
+   * task is gone, and it is the only thing that can — a success here would only
+   * mean the request was delivered.
+   */
+  async stopTask(conversationId: string, agentId: AgentId, taskId: string): Promise<void> {
+    const participant = this.active.get(conversationId)?.participants.get(agentId)
+    await participant?.session.stopTask(taskId)
+  }
+
   /** What the settings sheet offers, from whichever session last answered. */
   knownModels(): { agentId: AgentId; models: ModelChoice[] }[] {
     return [...this.knownModelsByAgent].map(([agentId, models]) => ({
@@ -1395,6 +1448,17 @@ export class ChorusRuntime {
       // Conversation state, not account state: it goes to the pane that asked.
       onContextUsage: (usage) => {
         this.onContextUsage?.({ conversationId, agentId, ...usage })
+      },
+      /*
+       * Live processes, not history — pushed to the pane like the context
+       * window, and never logged.
+       *
+       * Passed on even when empty. The provider replaces rather than merges, so
+       * an empty list is the only way anyone learns the last task finished; a
+       * falsy guard here would leave the indicator stuck on forever.
+       */
+      onTasks: (tasks) => {
+        this.onTasks?.({ conversationId, agentId, tasks: tasks.map((task) => ({ ...task })) })
       },
       // An approved plan ends the mode for the room, not just for the agent
       // whose plan it was.

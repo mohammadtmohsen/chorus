@@ -7,6 +7,7 @@ import {
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
   CONTEXT_PUSH_CHANNEL,
+  TASKS_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   IPC_CONTRACT,
   type IdeContextPush,
@@ -181,6 +182,25 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         status: server.status,
         ...(server.error === undefined ? {} : { error: server.error }),
         ...(server.tools === undefined ? {} : { tools: server.tools }),
+      })),
+    }),
+
+    'tasks:stop': async (request: {
+      conversationId: string
+      agentId: 'codex' | 'claude'
+      taskId: string
+    }) => {
+      await runtime.stopTask(request.conversationId, request.agentId, request.taskId)
+      return OK
+    },
+
+    'agents:account': async () => ({
+      accounts: (await runtime.accounts()).map(({ agentId, account }) => ({
+        agentId,
+        ...(account.email === undefined ? {} : { email: account.email }),
+        ...(account.organization === undefined ? {} : { organization: account.organization }),
+        ...(account.plan === undefined ? {} : { plan: account.plan }),
+        ...(account.provider === undefined ? {} : { provider: account.provider }),
       })),
     }),
 
@@ -556,6 +576,15 @@ export function forwardContextUsageToRenderer(runtime: ChorusRuntime): void {
   runtime.onContextUsageReported((push) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(CONTEXT_PUSH_CHANNEL, push)
+    }
+  })
+}
+
+/** Sends what each conversation's agents have left running, as it changes. */
+export function forwardTasksToRenderer(runtime: ChorusRuntime): void {
+  runtime.onTasksReported((push) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(TASKS_PUSH_CHANNEL, push)
     }
   })
 }

@@ -269,6 +269,45 @@ export const IPC_CONTRACT = {
   },
 
   /**
+   * Which account each agent is signed in as.
+   *
+   * Asked live for the same reason as the servers: signing in somewhere else
+   * changes the answer while the app is running. Every field is optional
+   * because off the first-party API most of them do not exist — a Bedrock
+   * session has credentials, not a plan.
+   */
+  /**
+   * Ends one thing an agent left running.
+   *
+   * Carries the agent because a task id belongs to the provider that issued it.
+   * Answers `ok` once the request is delivered, not once the task is gone — the
+   * next push is what reports that.
+   */
+  'tasks:stop': {
+    request: z.object({
+      conversationId: z.string(),
+      agentId: z.enum(['codex', 'claude']),
+      taskId: z.string(),
+    }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  'agents:account': {
+    request: z.object({}),
+    response: z.object({
+      accounts: z.array(
+        z.object({
+          agentId: z.string(),
+          email: z.string().optional(),
+          organization: z.string().optional(),
+          plan: z.string().optional(),
+          provider: z.string().optional(),
+        })
+      ),
+    }),
+  },
+
+  /**
    * The model lists last reported by each agent, for the settings sheet.
    *
    * A cache rather than a live ask: `supportedModels()` is a control request to
@@ -732,6 +771,32 @@ export const ContextUsagePush = z.object({
 })
 export type ContextUsagePush = z.infer<typeof ContextUsagePush>
 
+/**
+ * What an agent has left running, for one conversation.
+ *
+ * A push and never a log row, for the reason on `TasksChanged`: it is a
+ * snapshot of live processes, and they stop existing when the session does.
+ * Scoped like the context window rather than like limits — tasks belong to one
+ * conversation's agent, not to the account.
+ *
+ * The list replaces whatever came before, including when it is empty. An empty
+ * push is the only thing that can say the last task finished.
+ */
+export const TASKS_PUSH_CHANNEL = 'agents:tasks'
+
+export const TasksPush = z.object({
+  conversationId: z.string(),
+  agentId: z.enum(['codex', 'claude']),
+  tasks: z.array(
+    z.object({
+      id: z.string(),
+      kind: z.string(),
+      description: z.string(),
+    })
+  ),
+})
+export type TasksPush = z.infer<typeof TasksPush>
+
 export const EventsPush = z.array(TranscriptEvent)
 export type EventsPush = z.infer<typeof EventsPush>
 
@@ -813,8 +878,11 @@ export interface ChorusApi {
   readonly onScale: (listener: (scale: number) => void) => () => void
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
+  readonly onTasks: (listener: (tasks: TasksPush) => void) => () => void
   readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
   readonly mcpServers: () => Promise<IpcResponse<'agents:mcp'>>
+  readonly accounts: () => Promise<IpcResponse<'agents:account'>>
+  readonly stopTask: (request: IpcRequest<'tasks:stop'>) => Promise<IpcResponse<'tasks:stop'>>
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>

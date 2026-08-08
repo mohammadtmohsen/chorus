@@ -288,8 +288,8 @@
     "close": "Close",
     "loading": "Reading the log…",
     "empty": "Nothing here yet. Conversations appear once something is said in them.",
-    "messages": "{{count}} message",
-    "messages_plural": "{{count}} messages",
+    "messages_one": "{{count}} message",
+    "messages_other": "{{count}} messages",
     "noAgents": "no agents",
     "alreadyOpen": "already open",
     "opening": "opening…",
@@ -313,8 +313,19 @@
       "pending": "starting",
       "disabled": "disabled"
     },
-    "tools": "{{count}} tool",
-    "tools_plural": "{{count}} tools",
+    "tools_one": "{{count}} tool",
+    "tools_other": "{{count}} tools",
     "note": "These come from your own Claude configuration. A server that needs authenticating gives its agent no tools, and says nothing about it."
+  },
+  "account": {
+    "heading": "Signed in as",
+    "signedIn": "signed in",
+    "note": "Each agent signs in on its own. The usage windows on the rail belong to these accounts."
+  },
+  "tasks": {
+    "running_one": "{{count}} running",
+    "running_other": "{{count}} running",
+    "stop": "Stop this task",
+    "stopShort": "Stop"
   }
 }

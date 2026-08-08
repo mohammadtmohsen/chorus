@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -201,8 +201,56 @@ function makeSession(socket) {
 
 export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * The build these tests are about to drive, actually being the current one.
+ *
+ * This used to assert only that `out/` existed, which is a different and much
+ * weaker claim. `pnpm e2e` composes the build in ahead of the run so the suite
+ * was never wrong — but anything calling this directly got a silent pass on a
+ * stale bundle, and once did: a verification script reported two fixes still
+ * broken while driving a build compiled before either existed, which nearly
+ * sent someone debugging working code. A test that quietly exercises
+ * yesterday's source is worse than no test, because it is believed.
+ *
+ * So the check is now about freshness, and it repairs rather than complains.
+ * Rebuilding costs a few seconds and only happens when something actually
+ * changed; being told to go and run a command is the same wait plus a
+ * round trip.
+ */
 export function ensureBuilt() {
-  if (!existsSync(join(APP, 'out/main/index.js'))) {
-    throw new Error('build first: pnpm --filter @chorus/desktop run build')
+  const built = newest([join(APP, 'out')])
+  const source = newest([join(APP, 'src'), join(APP, '../../packages')], BUILT)
+
+  if (built !== undefined && source !== undefined && built >= source) return
+
+  execFileSync('pnpm', ['--filter', '@chorus/desktop', 'run', 'build'], {
+    cwd: APP,
+    stdio: 'inherit',
+  })
+}
+
+/**
+ * Directories under a source root that hold output rather than source.
+ *
+ * A package's own `dist` is newer than the desktop bundle every time something
+ * is compiled, so counting it would call the build stale on every run.
+ */
+const BUILT = new Set(['node_modules', 'dist', 'out', '.turbo'])
+
+/** The most recent mtime under any of `roots`, or undefined if none exist. */
+function newest(roots, skip = new Set()) {
+  let latest
+  for (const root of roots) {
+    if (!existsSync(root)) continue
+    for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
+      if (entry.isDirectory()) continue
+      // Relative to the root, so a skip name cannot match part of the path
+      // leading *to* the root — `out` is a source of truth when it is the root.
+      const inside = entry.parentPath.slice(root.length).split('/')
+      if (inside.some((part) => skip.has(part))) continue
+      const { mtimeMs } = statSync(join(entry.parentPath, entry.name))
+      if (latest === undefined || mtimeMs > latest) latest = mtimeMs
+    }
   }
+  return latest
 }
