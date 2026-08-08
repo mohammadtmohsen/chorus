@@ -312,6 +312,25 @@ export const IPC_CONTRACT = {
   },
 
   /**
+   * The slash commands this conversation's agents accept.
+   *
+   * A query rather than a push: the menu asks when it opens, and the answer is
+   * cached in the runtime for the life of each session.
+   */
+  'conversation:commands': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({
+      commands: z.array(
+        z.object({
+          name: z.string(),
+          description: z.string(),
+          argumentHint: z.string(),
+        })
+      ),
+    }),
+  },
+
+  /**
    * Records how far a conversation's card has been read.
    *
    * Renderer-driven because only it knows which tab is in front, and "read"
@@ -697,6 +716,9 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly markSeen: (request: IpcRequest<'conversation:markSeen'>) => Promise<{ ok: true }>
+  readonly listCommands: (
+    request: IpcRequest<'conversation:commands'>
+  ) => Promise<IpcResponse<'conversation:commands'>>
   readonly listConversations: () => Promise<IpcResponse<'conversation:list'>>
   readonly reopenConversation: (
     request: IpcRequest<'conversation:reopen'>

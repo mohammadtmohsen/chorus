@@ -13,9 +13,11 @@ type AgentId = 'codex' | 'claude'
  */
 
 export interface MentionQuery {
-  /** Index of the `@`, so the replacement knows what to overwrite. */
+  /** Which menu is open. Carried so the replacement writes the right character. */
+  readonly trigger: '@' | '/'
+  /** Index of the trigger, so the replacement knows what to overwrite. */
   readonly start: number
-  /** What has been typed after it, lowercased. Empty right after `@`. */
+  /** What has been typed after it, lowercased. Empty right after the trigger. */
   readonly query: string
 }
 
@@ -24,7 +26,12 @@ export interface MentionOption {
   readonly insert: string
   readonly label: string
   readonly detail: string
-  /** Agents this option addresses, for the coloured dots. */
+  /**
+   * Agents this option addresses, for the coloured dots.
+   *
+   * Empty for a command, which addresses nobody in particular — the dots are
+   * about which voice a message reaches, and a command is not a message.
+   */
   readonly agents: readonly AgentId[]
 }
 
@@ -48,7 +55,59 @@ export function findMentionQuery(text: string, caret: number): MentionQuery | nu
   // Anything else means the word ended and this is no longer a mention.
   if (!/^[a-z0-9-]*$/i.test(query)) return null
 
-  return { start: at, query: query.toLowerCase() }
+  return { trigger: '@', start: at, query: query.toLowerCase() }
+}
+
+/**
+ * Finds the slash command being typed, or `null`.
+ *
+ * Deliberately not the same rule as `@`, which fires at any word start. A slash
+ * is a path separator far more often than it is a command, so at word-start
+ * every `src/foo` and every `and/or` would open a menu. A command has to lead
+ * the message — nothing but whitespace before it — which is also where the CLI
+ * expects one.
+ *
+ * The name charset is wider than a mention's because command names really are:
+ * a plugin's command arrives as `frontend-design:frontend-design`.
+ */
+export function findCommandQuery(text: string, caret: number): MentionQuery | null {
+  const before = text.slice(0, caret)
+  const at = before.indexOf('/')
+  if (at === -1) return null
+  // Only whitespace may precede it: a stray leading space is still someone
+  // starting a command, and `src/foo` is not.
+  if (before.slice(0, at).trim() !== '') return null
+
+  const query = before.slice(at + 1)
+  if (!/^[a-z0-9:_-]*$/i.test(query)) return null
+
+  return { trigger: '/', start: at, query: query.toLowerCase() }
+}
+
+/** One command the provider says this session accepts. */
+export interface CommandInfo {
+  readonly name: string
+  readonly description: string
+  readonly argumentHint: string
+}
+
+/**
+ * The commands a query offers.
+ *
+ * Matched on a substring rather than a prefix, unlike agents: there are fifty of
+ * these where there are two of those, and half their names are compound —
+ * finding `code-review` by typing `review` is the difference between a menu and
+ * a list you scroll.
+ */
+export function commandOptions(commands: readonly CommandInfo[], query: string): MentionOption[] {
+  return commands
+    .filter((command) => command.name.toLowerCase().includes(query))
+    .map((command) => ({
+      insert: command.name,
+      label: command.name,
+      detail: command.argumentHint === '' ? command.description : command.argumentHint,
+      agents: [],
+    }))
 }
 
 /**
@@ -87,7 +146,7 @@ export function applyMention(
 ): { text: string; caret: number } {
   // A trailing space, because the next thing typed is always the message and
   // nobody wants to press space after choosing from a menu.
-  const inserted = `@${option.insert} `
+  const inserted = `${mention.trigger}${option.insert} `
   return {
     text: text.slice(0, mention.start) + inserted + text.slice(caret),
     caret: mention.start + inserted.length,

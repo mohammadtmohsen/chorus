@@ -11,6 +11,7 @@ import type {
   AgentAdapter,
   ModelChoice,
   ProviderPermissionMode,
+  SlashCommandInfo,
   AgentCapabilities,
   AgentEvent,
   AgentInput,
@@ -254,6 +255,41 @@ export class ClaudeSession implements AgentSession {
 
   setModel(model: string): Promise<void> {
     return this.q.setModel(model)
+  }
+
+  /**
+   * The commands this session accepts.
+   *
+   * Asked rather than compiled in, and for a sharper reason than the model
+   * list: these come from the project's own `.claude/commands`, its skills and
+   * its plugins, so the answer is different in every repository and changes
+   * while the app is running.
+   *
+   * Feature-detected like the rest, so an older CLI offers no menu rather than
+   * failing a session.
+   */
+  async supportedCommands(): Promise<readonly SlashCommandInfo[]> {
+    const ask = (this.q as unknown as { supportedCommands?: () => Promise<unknown> })
+      .supportedCommands
+    if (typeof ask !== 'function') return []
+
+    try {
+      const commands = await ask.call(this.q)
+      if (!Array.isArray(commands)) return []
+      return commands.flatMap((entry): SlashCommandInfo[] => {
+        const row = entry as { name?: unknown; description?: unknown; argumentHint?: unknown }
+        if (typeof row.name !== 'string' || row.name === '') return []
+        return [
+          {
+            name: row.name,
+            description: typeof row.description === 'string' ? row.description : '',
+            argumentHint: typeof row.argumentHint === 'string' ? row.argumentHint : '',
+          },
+        ]
+      })
+    } catch {
+      return []
+    }
   }
 
   /**

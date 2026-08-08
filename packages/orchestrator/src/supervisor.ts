@@ -1,5 +1,6 @@
 import type {
   ModelChoice,
+  SlashCommandInfo,
   ProviderPermissionMode,
   AgentAdapter,
   AgentEvent,
@@ -144,6 +145,10 @@ export class SupervisedSession implements AgentSession {
 
   supportedModels(): Promise<readonly ModelChoice[]> {
     return this.current.supportedModels?.() ?? Promise.resolve([])
+  }
+
+  supportedCommands(): Promise<readonly SlashCommandInfo[]> {
+    return this.current.supportedCommands?.() ?? Promise.resolve([])
   }
 
   /**
