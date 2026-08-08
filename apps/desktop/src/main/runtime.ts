@@ -107,6 +107,8 @@ interface ActiveConversation {
   lastSeenSeq: number
   /** A message typed and not sent, so quitting does not lose it. */
   draft: string
+  /** Reading and reasoning, executing nothing, until a plan is approved. */
+  planning: boolean
 }
 
 /**
@@ -311,6 +313,7 @@ export class ChorusRuntime {
       // means — seeding 0 would count the whole database as news.
       lastSeenSeq: this.store.lastSeq(),
       draft: '',
+      planning: false,
     }
     const failures: string[] = []
 
@@ -561,6 +564,7 @@ export class ChorusRuntime {
       title: string
       unread: number
       draft: string
+      planning: boolean
     }[]
     workspace: WorkspaceSnapshot | null
   }> {
@@ -575,6 +579,7 @@ export class ChorusRuntime {
       title: string
       unread: number
       draft: string
+      planning: boolean
     }[] = []
 
     for (const entry of saved) {
@@ -590,6 +595,7 @@ export class ChorusRuntime {
           title: open.title,
           unread: this.unreadSince(entry.conversationId, open.lastSeenSeq),
           draft: open.draft,
+          planning: open.planning,
         })
         continue
       }
@@ -610,6 +616,9 @@ export class ChorusRuntime {
         title: conversation.title,
         unread: this.unreadSince(entry.conversationId, entry.lastSeenSeq),
         draft: entry.draft,
+        // Never restored: a mode is a property of a running session, and a
+        // relaunch is a new one.
+        planning: false,
       })
     }
 
@@ -631,6 +640,7 @@ export class ChorusRuntime {
       lastAddressed: undefined,
       lastSeenSeq: entry.lastSeenSeq,
       draft: entry.draft,
+      planning: false,
     }
     const sessionOpts = this.sessionOptsFor(conversation)
 
@@ -957,6 +967,31 @@ export class ChorusRuntime {
       if (!byName.has(command.name)) byName.set(command.name, command)
     }
     return [...byName.values()]
+  }
+
+  /**
+   * Puts a conversation's agents into plan mode, or takes them out.
+   *
+   * Per conversation rather than per message, which is how Chorus already
+   * models what a room may do: the permission profile lives here too, and a
+   * mode that reset itself every turn would be a checkbox nobody could rely on.
+   *
+   * Every participant together. A room where one agent plans and the other
+   * edits is not a mode, it is a disagreement.
+   */
+  async setPlanMode(conversationId: string, on: boolean): Promise<void> {
+    const conversation = this.require(conversationId)
+    conversation.planning = on
+    await Promise.all(
+      [...conversation.participants.values()].map((participant) =>
+        participant.session.setPermissionMode(on ? 'plan' : 'default')
+      )
+    )
+  }
+
+  /** Whether this conversation is planning, for a control that has to say so. */
+  planning(conversationId: string): boolean {
+    return this.active.get(conversationId)?.planning ?? false
   }
 
   /** What the settings sheet offers, from whichever session last answered. */
@@ -1338,6 +1373,12 @@ export class ChorusRuntime {
       // Conversation state, not account state: it goes to the pane that asked.
       onContextUsage: (usage) => {
         this.onContextUsage?.({ conversationId, agentId, ...usage })
+      },
+      // An approved plan ends the mode for the room, not just for the agent
+      // whose plan it was.
+      onPlanExited: () => {
+        const conversation = this.active.get(conversationId)
+        if (conversation !== undefined) conversation.planning = false
       },
     })
     await service.attach(session, sessionOpts, health, reopening)

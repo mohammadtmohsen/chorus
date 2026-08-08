@@ -1233,6 +1233,34 @@ body {
   font-size: 12px;
 }
 
+/*
+ * On when it is on, and quiet otherwise.
+ *
+ * A mode that changes what an agent may do has to be visible without being
+ * loud: pressed is tinted, unpressed reads like the other chips on the card.
+ */
+.workspace-session-plan {
+  flex: none;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workspace-session-plan:hover:not(:disabled) {
+  color: var(--bone);
+}
+
+.workspace-session-plan[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--voice, var(--muted)) 60%, transparent);
+  background: color-mix(in srgb, var(--voice, var(--muted)) 14%, transparent);
+  color: var(--bone);
+}
+
 /* ------------------------------------------------------- past conversations */
 
 .workspace-sidebar-head {

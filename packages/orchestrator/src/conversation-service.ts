@@ -51,6 +51,8 @@ export interface ConversationServiceOptions {
   readonly onLimits?: (windows: readonly UsageWindow[]) => void
   /** Told how full the agent's context window is. Not persisted, for the same reason. */
   readonly onContextUsage?: (usage: ContextWindow) => void
+  /** Told when an approved plan returned the session to ordinary permissions. */
+  readonly onPlanExited?: () => void
 }
 
 /** How full an agent's context window is, as last measured. */
@@ -71,6 +73,7 @@ export class ConversationService {
   private readonly queue: ApprovalQueue
   private readonly onLimits: ((windows: readonly UsageWindow[]) => void) | undefined
   private readonly onContextUsage: ((usage: ContextWindow) => void) | undefined
+  private readonly onPlanExited: (() => void) | undefined
   /**
    * Question sets waiting on the user, kept so an answer can be checked against
    * the questions that produced it — which is what redaction needs to know
@@ -99,6 +102,7 @@ export class ConversationService {
     this.grants = options.grants ?? new SessionGrants()
     this.onLimits = options.onLimits
     this.onContextUsage = options.onContextUsage
+    this.onPlanExited = options.onPlanExited
     this.scheduler = options.scheduler ?? realScheduler
     this.queue = new ApprovalQueue({
       ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
@@ -255,6 +259,26 @@ export class ConversationService {
       if (entry.request.kind === 'fileChange') {
         void this.acceptEditsFromNowOn()
       }
+    }
+
+    /*
+     * Approving a plan is what ends plan mode.
+     *
+     * `ExitPlanMode` is the agent saying it has finished reasoning and would
+     * like to act, and it arrives as an ordinary permission request. Answering
+     * yes to the plan and separately having to leave the mode would be two
+     * decisions for one intention — and the second one is easy to forget, which
+     * leaves an approved plan that never runs.
+     *
+     * Only on allow. A rejected plan means keep planning.
+     */
+    if (
+      entry !== undefined &&
+      decision.outcome === 'allow' &&
+      entry.request.kind === 'permissionGrant' &&
+      entry.request.toolName === 'ExitPlanMode'
+    ) {
+      void this.leavePlanMode()
     }
 
     const handled = await this.queue.resolve(approvalId, decision, decidedBy)
@@ -634,6 +658,23 @@ export class ConversationService {
    * user just made because a preference could not be forwarded would be the
    * wrong trade.
    */
+  /**
+   * Returns the session to ordinary permissions once a plan is approved.
+   *
+   * Told upward as well as forwarded down, because the mode belongs to the
+   * conversation and something has to keep the control that turned it on
+   * honest.
+   */
+  private async leavePlanMode(): Promise<void> {
+    try {
+      await this.session?.setPermissionMode?.('default')
+      this.onPlanExited?.()
+    } catch {
+      // The turn is already approved; a mode that failed to change is a worse
+      // experience than a failed decision, not a broken one.
+    }
+  }
+
   private async acceptEditsFromNowOn(): Promise<void> {
     try {
       await this.session?.setPermissionMode?.('acceptEdits')

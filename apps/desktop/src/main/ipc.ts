@@ -195,6 +195,11 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       commands: await runtime.listCommands(request.conversationId),
     }),
 
+    'conversation:planMode': async (request: { conversationId: string; on: boolean }) => {
+      await runtime.setPlanMode(request.conversationId, request.on)
+      return { planning: runtime.planning(request.conversationId) }
+    },
+
     'conversation:draft': (request: { conversationId: string; draft: string }) => {
       runtime.rememberDraft(request.conversationId, request.draft)
       return Promise.resolve(OK)

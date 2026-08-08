@@ -45,6 +45,7 @@ const api: ChorusApi = {
   restoreConversations: () => invoke('conversation:restore')({}),
   markSeen: invoke('conversation:markSeen'),
   rememberDraft: invoke('conversation:draft'),
+  setPlanMode: invoke('conversation:planMode'),
   completeFiles: invoke('files:complete'),
   listCommands: invoke('conversation:commands'),
   listConversations: () => invoke('conversation:list')({}),

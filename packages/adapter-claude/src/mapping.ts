@@ -537,6 +537,9 @@ const MAX_TOOL_DETAIL = 120
  */
 function describeToolInput(input: Record<string, unknown>): string | undefined {
   for (const key of [
+    // First, because when a tool has one it *is* the request: `ExitPlanMode`
+    // carries the whole plan here and nothing else worth showing.
+    'plan',
     'description',
     'pattern',
     'file_path',

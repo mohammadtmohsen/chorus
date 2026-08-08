@@ -351,6 +351,70 @@ describe('approval decisions', () => {
     expect(s.permissionModes).toEqual(['acceptEdits'])
   })
 
+  it('leaves plan mode when the plan is approved', async () => {
+    /*
+     * `ExitPlanMode` is the agent saying it has finished reasoning and would
+     * like to act. Approving the plan and separately having to leave the mode
+     * would be two decisions for one intention, and the second is the kind that
+     * gets forgotten — leaving an approved plan that never runs.
+     */
+    const s = session()
+    let exited = false
+    service = new ConversationService({
+      store,
+      conversationId: CONV,
+      adapter,
+      scheduler,
+      onPlanExited: () => {
+        exited = true
+      },
+    })
+    await service.attach(s, OPTS, { state: 'ready', version: '1' })
+
+    s.emit({
+      type: 'approval.requested',
+      request: {
+        id: 'ap-plan' as never,
+        agentId: 'codex',
+        kind: 'permissionGrant',
+        toolName: 'ExitPlanMode',
+        cwd: '/tmp/project',
+        requested: {},
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
+    })
+    await tick()
+
+    await service.decideApproval('ap-plan', { outcome: 'allow', scope: 'once' })
+    await tick()
+
+    expect(s.permissionModes).toEqual(['default'])
+    expect(exited).toBe(true)
+  })
+
+  it('keeps planning when the plan is rejected', async () => {
+    // A rejected plan means keep planning, not start doing.
+    const s = session()
+    s.emit({
+      type: 'approval.requested',
+      request: {
+        id: 'ap-plan-no' as never,
+        agentId: 'codex',
+        kind: 'permissionGrant',
+        toolName: 'ExitPlanMode',
+        cwd: '/tmp/project',
+        requested: {},
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
+    })
+    await tick()
+
+    await service.decideApproval('ap-plan-no', { outcome: 'deny', message: 'not yet' })
+    await tick()
+
+    expect(s.permissionModes).toEqual([])
+  })
+
   it('does not hand edits over for a once-only allow', async () => {
     // "Just this one" is the answer that means the next one still asks.
     const s = session()

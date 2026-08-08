@@ -298,5 +298,10 @@
     "hours": "{{count}}h ago",
     "days": "{{count}}d ago",
     "note": "Reopening starts its agents again. They read the transcript before answering, and permissions return to Read only."
+  },
+  "plan": {
+    "label": "Plan",
+    "enter": "Plan only — read and reason, change nothing until the plan is approved",
+    "leave": "Stop planning and return to ordinary permissions"
   }
 }
