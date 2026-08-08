@@ -201,9 +201,34 @@ the string `background_tasks_changed`** — a protocol identifier shown to a
 person, and an append-only row nothing can act on or rebuild from. Now quiet,
 with the reason recorded at the exemption rather than in the commit alone.
 
-**Still to build:** the push channel and somewhere to show it, plus `stopTask()`
-to end one. That is now a small piece of plumbing and a UI decision, not the
-accumulate-from-turn-zero problem this entry invented.
+### Done: the push channel and a chip that says something is still going
+
+Built on the `limits` / `context.usage` seam rather than the event seam, which
+is the whole payoff of classifying it correctly first. Adding a _logged_ event
+is the documented five-file change with three deliberately exhaustive switches;
+state is an event the conversation service pushes instead of appending, so
+`projections.ts` and `catchup.ts` are untouched **and the linter agreed** — no
+exhaustiveness error appeared, because nothing new reaches those switches.
+
+Passed on whole every time, including when the list is empty. Under replace
+semantics an empty push is not "no news", it is the only way anyone learns the
+last task finished; a falsy guard anywhere on the path would leave the chip on
+forever. There is a guard against that at each hop and a test that states it.
+
+Carried on the pulse beside `contextByActor`, with the same hazard and the same
+answer: no event reports it, so `reducePulse` must copy it forward or every
+message the agent sends would erase it. That is a test too, written by copying
+the one that already existed for context fill.
+
+The card shows a count and puts the descriptions in the title — "something of
+yours is still going" is the answer, and a sidebar card is not where anyone
+reads a command line. Absent rather than zero when nothing is running.
+
+**Verified against a real agent**, not a fixture: asked Claude to run
+`sleep 100` with `run_in_background`, and the card read `1 running` with a title
+of `local_bash: Sleep for 100 seconds`.
+
+**Still to build:** `stopTask()`, so the chip can also end one.
 
 ## Phase 4 — the unused SDK surface
 
