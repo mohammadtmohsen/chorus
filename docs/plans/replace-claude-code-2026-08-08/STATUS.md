@@ -115,19 +115,55 @@ is deliberately unscoped so that an agent can open a file the way a person would
 Worth revisiting only if a provider appears that cannot read a path. Recorded
 here rather than left as an unexplained gap.
 
-## Phase 2 — Permissions, properly
+## Phase 2 done: Permissions, properly
 
-Mostly unlocked by #35: the prompt text is through and "always" writes a real
-rule. What remains is **plan mode**, and it needs a decision before it needs
-code: `permissionMode` is pinned to `'default'` and `ProviderPermissionMode`
-admits only `'default' | 'acceptEdits'`, so entering plan mode is a protocol
-change — and where the toggle lives (per conversation, like the profile, or per
-message, like the CLI treats it) is a product question rather than a technical
-one.
+The prompt text and the always-allow rules came with #35. Plan mode is #41, and
+the open question is answered: **per conversation**. Chorus already models what a
+room may do at that level — the permission profile sits on the same card — and a
+mode scoped to one message resets every turn, which makes it a checkbox nobody
+can rely on. All participants together, because a room where one agent plans and
+another edits is not a mode but a disagreement.
 
-## Phases 3-5
+Approving the plan is what ends the mode. `ExitPlanMode` arrives as an ordinary
+permission request, so answering yes to the plan and separately leaving the mode
+would be two decisions for one intention — and the second is the kind that gets
+forgotten, leaving an approved plan that never runs. Rejecting it keeps planning.
 
-Not started. Phase 3 is checkpoints, background tasks and manual compaction —
-the first blocked at the root by `enableFileCheckpointing`, which is one option.
-Phase 4 is the unused SDK surface that is cheap to reach. Phase 5 should not
-start before Phase 2.
+Never restored on relaunch: a mode belongs to a running session.
+
+**Still not done:** dialogs, carried over from Phase 0. `onUserDialog` unset
+means the CLI applies its own defaults silently. It needs `supportedDialogKinds`
+and a blocking dialog surface, and the only documented kind is
+`refusal_fallback_prompt`.
+
+## Phase 3 — Session control
+
+**Manual compaction is already done**, by Phase 1b rather than by this phase.
+`/compact` carries `thinClientDispatch:"post-text"`, which means it is invoked by
+sending the literal text — so it works through the slash menu, and there was
+never anything else to build.
+
+**Checkpoints are blocked on something the plan did not see.**
+`enableFileCheckpointing` is indeed one option, but the option is not the
+prerequisite. `rewindFiles(userMessageId)` wants **the CLI's own uuid for a user
+message**, and Chorus has never recorded one: it logs its own `user.message`
+event with its own id, and `mapping.ts` reads `uuid` only from `system/init` and
+from assistant messages. Live `SDKUserMessage`s do carry one, so the path exists
+— capture it, correlate it with our event, and only then can a "rewind to here"
+affordance point at anything.
+
+Enabling checkpointing before that would buy disk snapshots nobody can reach,
+which is the dead-code shape this project keeps deciding against.
+
+**Background tasks** remain: `backgroundTasks()` and `stopTask()` unused, and
+`background_tasks_changed` still renders as a notice reading literally
+"background_tasks_changed". Note there is no enumeration query — state has to be
+accumulated from turn zero, so a client attaching mid-session cannot recover it.
+
+## Phases 4-5
+
+Not started. Phase 4 is the unused SDK surface that is cheap to reach —
+`mcpServerStatus()` so a server stuck in `needs-auth` is visible,
+`supportedAgents()`, `accountInfo()`, and the rest of the `getContextUsage()`
+payload of which one number is currently shown. Phase 5 should not start before
+its own prerequisites.
