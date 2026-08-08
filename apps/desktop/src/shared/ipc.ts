@@ -239,6 +239,8 @@ export const IPC_CONTRACT = {
           unread: z.number().int().min(0),
           /** A message typed and not sent when the app last closed. */
           draft: z.string().default(''),
+          /** Reading and reasoning, executing nothing. Never survives a restart. */
+          planning: z.boolean().default(false),
         })
       ),
       workspace: WorkspaceSnapshot.nullable(),
@@ -342,6 +344,17 @@ export const IPC_CONTRACT = {
         })
       ),
     }),
+  },
+
+  /**
+   * Puts a conversation's agents into plan mode, or takes them out.
+   *
+   * Returns what the mode actually is afterwards, so a control cannot show a
+   * state the session did not reach.
+   */
+  'conversation:planMode': {
+    request: z.object({ conversationId: z.string(), on: z.boolean() }),
+    response: z.object({ planning: z.boolean() }),
   },
 
   /**
@@ -742,6 +755,9 @@ export interface ChorusApi {
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly markSeen: (request: IpcRequest<'conversation:markSeen'>) => Promise<{ ok: true }>
   readonly rememberDraft: (request: IpcRequest<'conversation:draft'>) => Promise<{ ok: true }>
+  readonly setPlanMode: (
+    request: IpcRequest<'conversation:planMode'>
+  ) => Promise<IpcResponse<'conversation:planMode'>>
   readonly completeFiles: (
     request: IpcRequest<'files:complete'>
   ) => Promise<IpcResponse<'files:complete'>>

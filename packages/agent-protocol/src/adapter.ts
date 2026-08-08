@@ -32,8 +32,14 @@ export interface SandboxPolicy {
  * permission callback for edits, so nothing Chorus knows about them applies
  * until the session ends. It is only ever reached by the user saying "always"
  * to an edit, never by a default.
+ *
+ * `plan` is the opposite kind of thing — a narrowing. The agent reads and
+ * reasons and executes nothing, and says it is finished by calling
+ * `ExitPlanMode`, which arrives as an ordinary permission request. Approving
+ * that is what returns the session to `default`, so the plan and the licence to
+ * carry it out are one decision rather than two.
  */
-export type ProviderPermissionMode = 'default' | 'acceptEdits'
+export type ProviderPermissionMode = 'default' | 'acceptEdits' | 'plan'
 
 /**
  * One command a session accepts.

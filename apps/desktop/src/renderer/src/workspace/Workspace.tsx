@@ -642,6 +642,51 @@ function PaneTabStrip(
 const ROW_DRAG_PX = 5
 
 /**
+ * Reading and reasoning, executing nothing.
+ *
+ * Per conversation rather than per message, which is how this app already
+ * models what a room may do — the permission profile sits on this same card.
+ * A mode that reset itself every turn would be a checkbox nobody could rely on.
+ *
+ * Not restored on relaunch: a mode belongs to a running session and a relaunch
+ * is a new one. Showing it as still on would be a promise the CLI never heard.
+ */
+function PlanToggle(props: { conversationId: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [planning, setPlanning] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  return (
+    <button
+      type="button"
+      className="workspace-session-plan"
+      aria-pressed={planning}
+      disabled={busy}
+      title={planning ? t('plan.leave') : t('plan.enter')}
+      onClick={() => {
+        setBusy(true)
+        window.chorus
+          .setPlanMode({ conversationId: props.conversationId, on: !planning })
+          // The session's answer, not the click's intent: a mode that failed to
+          // change must not leave a control claiming it did.
+          .then((result) => {
+            setPlanning(result.planning)
+          })
+          .catch(() => {
+            // The card says what it knows. A failure here leaves the previous
+            // state, which is the truthful one.
+          })
+          .finally(() => {
+            setBusy(false)
+          })
+      }}
+    >
+      {t('plan.label')}
+    </button>
+  )
+}
+
+/**
  * Below this, the context figure is not worth the pixels.
  *
  * A number that reads 4% for an hour is one you stop seeing, and this one has to
@@ -1421,6 +1466,7 @@ function SidebarSession(props: {
           one. The panels do live in the pane, so these buttons activate the
           session on the way — wanting a session's diff is a reason to be in it.
         */}
+        <PlanToggle conversationId={props.session.conversationId} />
         <span className="workspace-session-output">
           <button
             type="button"
