@@ -321,7 +321,7 @@ export class CodexAdapter implements AgentAdapter {
   /** Mutable: replaced by an absolute path the first time one is found. */
   private command: string
   private readonly resolveCommand: (() => Promise<string | null>) | undefined
-  private resolved = false
+  private resolving: Promise<void> | null = null
   private readonly approvalTtlMs: number
   private readonly createTransport: () => Transport
   private readonly now: () => number
@@ -388,12 +388,26 @@ export class CodexAdapter implements AgentAdapter {
     this.sessions.length = 0
   }
 
-  /** Asked once, and only if nobody supplied an explicit command. */
-  private async resolveCommandOnce(): Promise<void> {
-    if (this.resolved || this.resolveCommand === undefined) return
-    this.resolved = true
-    const found = await this.resolveCommand()
-    if (found !== null) this.command = found
+  /**
+   * Asked once, and only if nobody supplied an explicit command.
+   *
+   * Memoised as a promise, not a boolean. Set before the await, a boolean lets a
+   * second caller arriving mid-lookup see "already resolved" and spawn `codex`
+   * by bare name — which under a Finder launch is the ENOENT this lookup exists
+   * to prevent. The claude adapter had the same bug in the same shape.
+   */
+  private resolveCommandOnce(): Promise<void> {
+    const lookup = this.resolveCommand
+    if (lookup === undefined) return Promise.resolve()
+    this.resolving ??= lookup()
+      .then((found) => {
+        if (found !== null) this.command = found
+      })
+      .catch(() => {
+        // Let a later start try again rather than caching the failure forever.
+        this.resolving = null
+      })
+    return this.resolving
   }
 
   private async handshake(): Promise<JsonRpcClient> {

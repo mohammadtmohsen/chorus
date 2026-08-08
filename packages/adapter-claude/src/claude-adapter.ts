@@ -471,7 +471,7 @@ export class ClaudeAdapter implements AgentAdapter {
   private readonly command: string
   private executablePath: string | undefined
   private readonly resolveExecutablePath: (() => Promise<string | null>) | undefined
-  private resolved = false
+  private resolving: Promise<void> | null = null
   private readonly approvalTtlMs: number
   private readonly now: () => number
   private readonly createQuery:
@@ -488,11 +488,32 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   /** Asked once, and only when the usual locations came up empty. */
-  private async resolveOnce(): Promise<void> {
-    if (this.resolved || this.resolveExecutablePath === undefined) return
-    this.resolved = true
-    const found = await this.resolveExecutablePath()
-    if (found !== null) this.executablePath = found
+  /**
+   * The lookup, memoised as a **promise** rather than as a boolean.
+   *
+   * It was a boolean, set before the await, which meant a second caller arriving
+   * while the first was still looking saw "already resolved" and carried on with
+   * no path. `spawn` then omitted `pathToClaudeCodeExecutable`, the SDK looked
+   * for its own bundled binary — deliberately excluded in `pnpm-workspace.yaml`
+   * — and reported "Native CLI binary for darwin-arm64 not found", which blames
+   * the install for a race.
+   *
+   * The window is wide: the lookup asks the user's shell twice with a ten-second
+   * timeout each. `health()` calls this too, so probing agents at launch overlaps
+   * with restoring conversations almost exactly.
+   */
+  private resolveOnce(): Promise<void> {
+    const lookup = this.resolveExecutablePath
+    if (lookup === undefined) return Promise.resolve()
+    this.resolving ??= lookup()
+      .then((found) => {
+        if (found !== null) this.executablePath = found
+      })
+      .catch(() => {
+        // Let a later start try again rather than caching the failure forever.
+        this.resolving = null
+      })
+    return this.resolving
   }
 
   async health(): Promise<HealthStatus> {
