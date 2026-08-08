@@ -22,14 +22,16 @@ instead of flooding.
 | Context breakdown        | `totalTokens` excludes deferred categories, so the obvious panel overstates usage by more than twice the total. Needs design, not plumbing.                                                                                                        |
 | Images as content blocks | Would break the text log, catch-up, and provider parity to save one `Read`.                                                                                                                                                                        |
 
+**Decided.** The history sheet is backed by Chorus's log, unconditionally;
+`listSessions()` is a different unit and not a competing source for the same
+list. Reasoning and evidence in [`DONE.md`](./DONE.md).
+
 **Open.**
 
 1. **Two menu failures.** A residual slash failure after its fix, and the `@`
    sibling that has never reproduced in isolation. Eight hypotheses are dead
    between them and written down; that list is the head start.
-2. **Open question 2** — whether Chorus's log or the CLI's `listSessions()` is
-   authoritative for the history sheet. The last unanswered question in the plan.
-3. **Phase 5 remainder** — the todo panel (unbuildable blind: this machine's
+2. **Phase 5 remainder** — the todo panel (unbuildable blind: this machine's
    config replaces `TodoWrite` with `TaskCreate`/`TaskUpdate`), a plugin browser,
    and the settings-only group.
 
@@ -188,13 +190,7 @@ measurement liked. A residual failure remains and is not explained.
 **Still unexplained, and probably the same family:** the `@` sibling, which has
 never reproduced in isolation at all.
 
-### 2. Open question 2 — which log is authoritative
-
-The history sheet reads Chorus's log; `listSessions()` reads the CLI's. Which
-wins when a conversation exists in both? The last unanswered question in the
-plan, and a design decision rather than a measurement.
-
-### 3. Phase 5 remainder
+### 2. Phase 5 remainder
 
 - **The todo panel.** The detail line shipped; the panel did not. It cannot be
   built honestly on this machine — the user's own config replaces `TodoWrite`
