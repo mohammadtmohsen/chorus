@@ -160,10 +160,53 @@ which is the dead-code shape this project keeps deciding against.
 "background_tasks_changed". Note there is no enumeration query — state has to be
 accumulated from turn zero, so a client attaching mid-session cannot recover it.
 
-## Phases 4-5
+## Phase 4 — the unused SDK surface
 
-Not started. Phase 4 is the unused SDK surface that is cheap to reach —
-`mcpServerStatus()` so a server stuck in `needs-auth` is visible,
-`supportedAgents()`, `accountInfo()`, and the rest of the `getContextUsage()`
-payload of which one number is currently shown. Phase 5 should not start before
-its own prerequisites.
+### Started: MCP server health
+
+`mcpServerStatus()` is read and shown in Settings, so a server stuck in
+`needs-auth` says so instead of silently handing its agent no tools. On this
+machine that is `slack`, which had been failing quietly.
+
+**Still to do:** `supportedAgents()`, `accountInfo()`, and the rest of the
+`getContextUsage()` payload, of which one number is currently shown.
+
+### Four things only a screenshot could have found
+
+The panel above shipped green — every gate passed, 934 unit tests — and four of
+its surfaces were visibly wrong in the running app. Driving the built app over
+CDP and _looking_ at it is what found them:
+
+1. **The slash menu was unusable.** Forty-nine commands, each description
+   allowed to wrap, one entry three lines tall and the list overflowing off the
+   top of the window. Now bounded (`min(40vh, 22rem)`, scrolling) with each
+   description on one ellipsised line: tallest row 172px → 28px.
+2. **The MCP panel rendered nothing.** Servers connect _after_ a session opens;
+   the panel asked once on mount and kept the empty answer forever. Now asked up
+   to three times over eight seconds. The panel meant to end a silence was
+   producing one.
+3. **The effort picker never appeared.** `models.find(m => m.value === model)`
+   found no row while `model` was `''`, which is the ordinary
+   nothing-chosen-yet state, so the control looked absent rather than defaulted.
+   Falls back to the first row — the provider's own default.
+4. **The plan toggle spanned the whole card.** `align-self: flex-start` on a
+   **grid** item, where the horizontal axis is `justify-self`. 321px → 43px.
+
+**And one the screenshot found by accident:** the MCP panel read "16 tool".
+`tools_plural` is the i18next **v3** suffix; this project is on v26, which wants
+`_one`/`_other`. i18next does not warn — it misses the key and renders the
+singular for every count. `messages_plural` was wrong the same way. Nothing
+checked the catalogue, so `en.test.ts` now does: no v3 suffixes, every plural
+paired, every plural interpolating its count, and both forms resolved through
+the configured instance. All four assertions fail on the old catalogue.
+
+**The process lesson, which cost a full cycle.** The first verification run
+reported two fixes still broken — and was testing a stale bundle. `ensureBuilt()`
+only _checks_ that a build exists; it never rebuilds. `pnpm e2e` composes the
+build in ahead of it, so the real suite was never at risk; the throwaway script
+that called the harness directly was. A test that silently exercises yesterday's
+code is worse than no test, because it is believed.
+
+## Phase 5
+
+Not started. Should not start before its own prerequisites.
