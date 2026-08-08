@@ -357,6 +357,18 @@ describe('system notices', () => {
     ])
   })
 
+  it('says nothing for a hook starting or still running', () => {
+    /*
+     * These only began arriving when `includeHookEvents` was turned on, and
+     * neither carries an outcome: a start is not news and progress is a hook
+     * still going. A repo with a dozen hooks would otherwise put two rows
+     * around every tool call.
+     */
+    for (const subtype of ['hook_started', 'hook_progress']) {
+      expect(sys({ type: 'system', subtype, hook_name: 'lint' })).toEqual([])
+    }
+  })
+
   it('says nothing for the heartbeat subtypes', () => {
     /*
      * `status` ticks for as long as a turn runs, and every notice is a durable
@@ -451,6 +463,24 @@ describe('tool calls', () => {
       CTX_T
     )
     expect(events).toMatchObject([{ type: 'tool.completed', status: 'error' }])
+  })
+
+  it('ignores a replayed tool result, which the log already holds', () => {
+    /*
+     * Resuming a session re-sends its history, and a replay is byte-identical
+     * to a live user message apart from this flag. Mapped, a reopened
+     * conversation appends a second copy of every command and tool call it
+     * already contains.
+     */
+    const events = mapSdkMessage(
+      {
+        type: 'user',
+        isReplay: true,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'b1', content: 'out' }] },
+      },
+      { ...CTX_T, bashToolIds: new Set(['b1']) }
+    )
+    expect(events).toEqual([])
   })
 
   it('still routes a known Bash id to command output', () => {

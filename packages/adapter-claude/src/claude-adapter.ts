@@ -169,7 +169,29 @@ export class ClaudeSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     this.interruptRequested = true
-    await this.q.interrupt()
+    const receipt = await this.q.interrupt()
+
+    /*
+     * What the stop did not stop.
+     *
+     * Queued async messages outlive an interrupt by design, and the receipt is
+     * the only place that says so. Discarding it left a user who pressed Stop
+     * watching the agent start again on something they no longer wanted, with
+     * nothing anywhere explaining why. Older CLIs resolve to `undefined`, which
+     * is not a failure — it is a CLI that cannot tell us.
+     */
+    const queued = (receipt as { still_queued?: unknown } | undefined)?.still_queued
+    if (Array.isArray(queued) && queued.length > 0) {
+      this.emit({
+        agentId: 'claude',
+        seq: ++this.seq,
+        at: this.now(),
+        type: 'notice',
+        level: 'warn',
+        source: 'system',
+        text: `${String(queued.length)} queued`,
+      })
+    }
   }
 
   respondToApproval(id: ApprovalId, decision: ApprovalDecision): Promise<void> {
@@ -654,6 +676,20 @@ export class ClaudeAdapter implements AgentAdapter {
     const options: Options = {
       cwd: opts.cwd,
       includePartialMessages: true,
+      /*
+       * Hook activity, which was mapped and never arrived.
+       *
+       * `mapping.ts` has treated `hook_response` since the transcript-fidelity
+       * work, and the events are gated on this option — so a `PreToolUse` hook
+       * that blocked a tool produced exactly the silence the mapping existed to
+       * end. Reading the message union told us the shape and not that nothing
+       * would send it; only `Options` says that.
+       *
+       * Affordable because the mapping is already selective: a hook that
+       * succeeded with nothing to say emits nothing, and `hook_started` and
+       * `hook_progress` are quiet. What is left is a hook that failed or spoke.
+       */
+      includeHookEvents: true,
       /*
        * Ask for thinking to be surfaced, or none arrives.
        *
