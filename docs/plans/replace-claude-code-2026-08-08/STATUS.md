@@ -467,6 +467,39 @@ build in ahead of it, so the real suite was never at risk; the throwaway script
 that called the harness directly was. A test that silently exercises yesterday's
 code is worse than no test, because it is believed.
 
-## Phase 5
+## Phase 5 — Rebuild or decline
 
-Not started. Should not start before its own prerequisites.
+### Started: the todo row says what the agent is doing
+
+Not the panel, the line. `describeToolInput` looks for a string field and a todo
+write carries one array named `todos`, so it matched nothing and the row rendered
+as the bare word `TodoWrite` — the least useful line in a window that is the only
+view of an agent. It now reads `Fixing the parser · 1/3`.
+
+**The schema came out of the CLI binary, not out of memory.** Its own tool
+description says:
+
+> Each todo has `content`, `status` ("pending" | "in_progress" | "completed"),
+> and `activeForm` (present-tense label shown while in progress).
+> Send the full list each call; it replaces the previous one.
+> Keep one item `in_progress` at a time.
+
+Which settles three things at once: the field names, `activeForm` being the one
+written to be read while it happens, and "one `in_progress` at a time" — so
+showing that item is not a heuristic, it is the tool's own invariant.
+
+This is still the private-schema commitment the plan warned about, and the reason
+it is acceptable here and was not for checkpoints is the blast radius. Being
+wrong costs one line of detail and falls back to the bare name the row already
+showed. Being wrong about a rewind costs the working tree.
+
+**Not verified against a live agent, and here is why.** Asked to write todos, the
+agent on this machine answered: "there's no TodoWrite tool in this session — the
+todo list here is exposed as TaskCreate/TaskUpdate/TaskList". The user's own
+config replaces the built-in, which is exactly the config inheritance
+`settingSources` is omitted to preserve. Those rows already read well, because
+`description` is one of the string keys. So the change is unit-tested against the
+documented shape and unobservable on this machine — stated rather than implied.
+
+**Still to do in this phase:** the panel itself, the plugin browser, and the
+settings-only items.

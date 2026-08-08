@@ -198,6 +198,55 @@ describe('message mapping', () => {
     expect(events[1]).toMatchObject({ command: ['git status'], itemRef: 't1' })
   })
 
+  describe('a todo write', () => {
+    const todo = (todos: unknown) =>
+      mapSdkMessage(
+        {
+          type: 'assistant',
+          uuid: 'u-todo',
+          message: {
+            content: [{ type: 'tool_use', id: 'tt', name: 'TodoWrite', input: { todos } }],
+          },
+        },
+        CTX
+      )[0] as { detail?: string }
+
+    /*
+     * Every other key `describeToolInput` looks for is a string, and a todo
+     * write carries one array — so this row used to render as the bare word
+     * `TodoWrite`, which is the least useful line the CLI has.
+     */
+    it('says what the agent is doing now, and how far along it is', () => {
+      expect(
+        todo([
+          { content: 'Read the types', activeForm: 'Reading the types', status: 'completed' },
+          { content: 'Fix the parser', activeForm: 'Fixing the parser', status: 'in_progress' },
+          { content: 'Write a test', activeForm: 'Writing a test', status: 'pending' },
+        ]).detail
+      ).toBe('Fixing the parser · 1/3')
+    })
+
+    it('falls back to the first outstanding item when nothing is in progress', () => {
+      expect(
+        todo([
+          { content: 'Read the types', status: 'completed' },
+          { content: 'Fix the parser', status: 'pending' },
+        ]).detail
+      ).toBe('Fix the parser · 1/2')
+    })
+
+    /*
+     * The schema is the tool's own and undocumented. Being wrong about it has
+     * to cost the detail line and nothing else — the row still renders, named.
+     */
+    it('says nothing rather than guessing when the shape is not what we expect', () => {
+      expect(todo([]).detail).toBeUndefined()
+      expect(todo('not a list').detail).toBeUndefined()
+      expect(todo([{ nothing: 'useful' }]).detail).toBeUndefined()
+      expect(todo([{ content: 'all done', status: 'completed' }]).detail).toBeUndefined()
+    })
+  })
+
   it('treats system init as the start of a turn', () => {
     const events = mapSdkMessage({ type: 'system', subtype: 'init', uuid: 'u3' }, CTX)
     expect(events[0]).toMatchObject({ type: 'turn.started' })
