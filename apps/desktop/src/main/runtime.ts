@@ -105,6 +105,8 @@ interface ActiveConversation {
   lastAddressed: AgentId | undefined
   /** How far this conversation's card had been read. See `OpenSession`. */
   lastSeenSeq: number
+  /** A message typed and not sent, so quitting does not lose it. */
+  draft: string
 }
 
 /**
@@ -308,6 +310,7 @@ export class ChorusRuntime {
       // A new room has nothing unread in it, and the log's end is what "nothing"
       // means — seeding 0 would count the whole database as news.
       lastSeenSeq: this.store.lastSeq(),
+      draft: '',
     }
     const failures: string[] = []
 
@@ -557,6 +560,7 @@ export class ChorusRuntime {
       cwd: string
       title: string
       unread: number
+      draft: string
     }[]
     workspace: WorkspaceSnapshot | null
   }> {
@@ -570,6 +574,7 @@ export class ChorusRuntime {
       cwd: string
       title: string
       unread: number
+      draft: string
     }[] = []
 
     for (const entry of saved) {
@@ -584,6 +589,7 @@ export class ChorusRuntime {
           cwd: open.cwd,
           title: open.title,
           unread: this.unreadSince(entry.conversationId, open.lastSeenSeq),
+          draft: open.draft,
         })
         continue
       }
@@ -603,6 +609,7 @@ export class ChorusRuntime {
         cwd: conversation.cwd,
         title: conversation.title,
         unread: this.unreadSince(entry.conversationId, entry.lastSeenSeq),
+        draft: entry.draft,
       })
     }
 
@@ -623,6 +630,7 @@ export class ChorusRuntime {
       title: entry.title,
       lastAddressed: undefined,
       lastSeenSeq: entry.lastSeenSeq,
+      draft: entry.draft,
     }
     const sessionOpts = this.sessionOptsFor(conversation)
 
@@ -703,6 +711,7 @@ export class ChorusRuntime {
         profileId: c.profile.id,
         title: c.title,
         lastSeenSeq: c.lastSeenSeq,
+        draft: c.draft,
         // Only real ones: an agent that has not spoken yet has no thread to
         // resume, and writing an empty string down makes it look like it does.
         sessionRefs: Object.fromEntries(
@@ -812,6 +821,20 @@ export class ChorusRuntime {
    * has. Backwards moves are ignored — pushes and history replays interleave, so
    * a late report of an older position is expected rather than exceptional.
    */
+  /**
+   * Remembers a message typed and not sent.
+   *
+   * Debounced by the renderer, which owns the keystrokes; this only writes what
+   * it is told. Silent for a conversation that is no longer open — a draft
+   * arriving for a room that just ended is a race, not an error.
+   */
+  rememberDraft(conversationId: string, draft: string): void {
+    const conversation = this.active.get(conversationId)
+    if (conversation === undefined || conversation.draft === draft) return
+    conversation.draft = draft
+    this.rememberOpen()
+  }
+
   markSeen(conversationId: string, seq: number): void {
     const conversation = this.active.get(conversationId)
     if (conversation === undefined) return
@@ -886,6 +909,7 @@ export class ChorusRuntime {
       title: summary.title,
       // Nothing to resume: those threads ended with their sessions.
       sessionRefs: {},
+      draft: '',
       // Opened in order to be read, so it starts caught up rather than shouting
       // about every message it already contains.
       lastSeenSeq: this.store.lastSeq(),

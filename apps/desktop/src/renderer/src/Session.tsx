@@ -284,6 +284,16 @@ export function Session(props: {
    * messages rather than stored, so a conversation restored from the log finds
    * its current turn the same way a live one does, with nothing extra persisted.
    */
+  /**
+   * What the user said before, oldest first, for the composer's recall.
+   *
+   * Derived from the same reduced transcript the pane draws, so it needs no
+   * storage of its own and cannot disagree with what is on screen.
+   */
+  const spoken = view.messages
+    .filter((m) => m.actor === 'user' && m.kind === 'message')
+    .map((m) => m.text)
+
   const turnAt = view.messages.findLastIndex((m) => m.actor === 'user' && m.kind === 'message')
   const currentTurn = turnAt === -1 ? undefined : view.messages[turnAt]
   const turnKey = currentTurn?.key ?? null
@@ -886,6 +896,7 @@ export function Session(props: {
           working={view.working}
           ide={ide}
           report={box}
+          history={spoken}
           {...(props.carry === undefined
             ? {}
             : {

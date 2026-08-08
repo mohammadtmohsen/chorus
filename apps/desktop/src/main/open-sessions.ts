@@ -46,6 +46,17 @@ export const OpenSession = z.object({
    * upgrade — the same reason the version-2 envelope kept reading version 1.
    */
   lastSeenSeq: z.number().int().min(0).default(0),
+  /**
+   * A message typed and not sent.
+   *
+   * The one thing here that is the user's own writing rather than a note about
+   * where they were, which is why it is worth persisting at all: everything else
+   * in this file is recoverable by clicking, and a half-written question is not.
+   *
+   * `.default` for the same reason as above — a file written before this must
+   * still parse.
+   */
+  draft: z.string().default(''),
 })
 export type OpenSession = z.infer<typeof OpenSession>
 

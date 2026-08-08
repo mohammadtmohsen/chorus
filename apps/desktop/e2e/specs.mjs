@@ -55,6 +55,24 @@ const draft = (page, text) =>
     return true
   })()`)
 
+/**
+ * A key as the *composer* sees it.
+ *
+ * `press` dispatches on `document`, which is where the app's global shortcuts
+ * listen — a keydown sent there never reaches the textarea's own handler, since
+ * React delegates from the root and the target would be the document. Recall
+ * lives on the box, so the event has to start there.
+ */
+const pressIn = (page, key) =>
+  page.evaluate(`(() => {
+    const ta = document.querySelector('.composer textarea')
+    ta.focus()
+    ta.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ${JSON.stringify(key)}, bubbles: true, cancelable: true,
+    }))
+    return true
+  })()`)
+
 const tabIds = (page) =>
   page.evaluate(`Array.from(document.querySelectorAll('${TAB}')).map(t => t.dataset.workspaceTab)`)
 
@@ -2047,6 +2065,96 @@ export const specs = [
         assert(
           found.some((name) => name.includes('mention-menu')),
           `and the file it names, got ${JSON.stringify(found.slice(0, 3))}`
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'a half-typed message survives quitting the app',
+    /*
+     * Drafts lived in an in-memory carry map and died with the process. A
+     * backgrounded tab kept one — that was already asserted — but quitting lost
+     * it, which is the case that actually costs you something: everything else
+     * in the note about what was open is recoverable by clicking, and a
+     * half-written question is not.
+     *
+     * Written a second after typing stops, so this waits for that rather than
+     * quitting into the debounce.
+     */
+    async run(assert) {
+      const first = await launch({ keepData: true })
+      const dataPath = first.dataPath
+      try {
+        await started(first)
+        await first.until(`document.querySelector('.composer textarea') !== null`)
+        await draft(first, 'half a question about the')
+        // Past the write debounce; quitting inside it is a different test.
+        await wait(2_000)
+      } finally {
+        await first.stop()
+      }
+
+      const again = await launch({ userData: dataPath })
+      try {
+        await started(again)
+        await again.until(`document.querySelector('.composer textarea') !== null`)
+        await again.settle()
+        const restored = await again.evaluate(`document.querySelector('.composer textarea').value`)
+        assert(
+          restored === 'half a question about the',
+          `the draft came back, got ${JSON.stringify(restored)}`
+        )
+      } finally {
+        await again.quit()
+      }
+    },
+  },
+
+  {
+    name: 'the box brings back what was said before',
+    /*
+     * Up-arrow recall, and the rule that makes it safe: it only engages from an
+     * empty box. In a draft being written the arrows have to keep moving the
+     * caret — a field that jumps to last week's message because the caret
+     * reached line one is worse than having no recall.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        await say(app, 'the first thing')
+        await app.until(
+          `Array.from(document.querySelectorAll('.entry--user')).some(e => e.innerText.includes('the first thing'))`,
+          { timeout: 120_000, label: 'the first message is in the transcript' }
+        )
+
+        await pressIn(app, 'ArrowUp')
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelector('.composer textarea').value`)) ===
+            'the first thing',
+          'up from an empty box brings back what was said'
+        )
+
+        await pressIn(app, 'ArrowDown')
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelector('.composer textarea').value`)) === '',
+          'and down walks back to the empty box'
+        )
+
+        // The rule that keeps it out of the way: with something typed, the
+        // arrows belong to the caret.
+        await draft(app, 'something new')
+        await pressIn(app, 'ArrowUp')
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelector('.composer textarea').value`)) ===
+            'something new',
+          'and a draft being written is left alone'
         )
       } finally {
         await app.quit()

@@ -6,6 +6,7 @@ import { ChorusLogo } from './ChorusLogo.js'
 import { LogViewer } from './LogViewer.js'
 import { fail, Session, type AgentId, type SessionCarry, type SessionInfo } from './Session.js'
 import { trimCarry } from './carry.js'
+import { EMPTY_VIEW } from './transcript.js'
 import { noticesFrom, roomsWaiting, shouldRaise, trackPending, type Notice } from './notify.js'
 import { HistoryPanel } from './HistoryPanel.js'
 import { Settings, type Defaults } from './Settings.js'
@@ -317,6 +318,26 @@ export function App(): React.JSX.Element {
             ),
             ...current,
           ]
+          /*
+           * A draft typed before the last quit.
+           *
+           * Seeded into the carry rather than passed to the pane directly,
+           * because the carry is already the one path a draft travels — the
+           * composer reads it there whether it came from a backgrounded tab or
+           * from disk.
+           */
+          for (const session of reopened) {
+            if (session.draft === '') continue
+            const held = carries.current.get(session.conversationId)
+            carries.current.set(session.conversationId, {
+              view: held?.view ?? EMPTY_VIEW,
+              draft: session.draft,
+              attached: held?.attached ?? [],
+              following: held?.following ?? true,
+              scrollTop: held?.scrollTop ?? 0,
+              ideIncluded: held?.ideIncluded ?? true,
+            })
+          }
           useWorkspaceStore.getState().hydrate(
             workspace,
             merged.map((session) => session.conversationId),
