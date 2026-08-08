@@ -47,6 +47,7 @@ const api: ChorusApi = {
   listConversations: () => invoke('conversation:list')({}),
   listModels: invoke('conversation:models'),
   setModel: invoke('conversation:setModel'),
+  setEffort: invoke('conversation:setEffort'),
   reopenConversation: invoke('conversation:reopen'),
   restartConversation: invoke('conversation:restart'),
   previewFile: invoke('files:preview'),

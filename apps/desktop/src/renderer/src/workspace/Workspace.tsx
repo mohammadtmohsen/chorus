@@ -652,13 +652,27 @@ const ROW_DRAG_PX = 5
  * cannot be asked should leave no trace here, not an empty dropdown implying a
  * choice that does not exist.
  */
+interface AgentModels {
+  agentId: string
+  models: { value: string; label: string; effortLevels: string[] }[]
+}
+
 function ModelPicker(props: { conversationId: string }): React.JSX.Element | null {
   const { t } = useTranslation()
-  const [agents, setAgents] = useState<
-    { agentId: string; models: { value: string; label: string }[] }[]
-  >([])
+  const [agents, setAgents] = useState<AgentModels[]>([])
   /** What was picked here, so the control reflects the choice immediately. */
   const [chosen, setChosen] = useState<Readonly<Record<string, string>>>({})
+  const [effort, setEffort] = useState<Readonly<Record<string, string>>>({})
+  /**
+   * Why there is no picker, when there should be one.
+   *
+   * This used to be swallowed, which made "your dev build predates the feature"
+   * and "the provider has no list" and "it is broken" all render identically as
+   * nothing at all — the same silent-by-design failure that made a missing CLI
+   * look like a bad install. An empty list is still silence, because that is a
+   * real answer; a failure is not.
+   */
+  const [problem, setProblem] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
@@ -667,47 +681,91 @@ function ModelPicker(props: { conversationId: string }): React.JSX.Element | nul
       .then((result) => {
         if (live) setAgents(result.agents.filter((agent) => agent.models.length > 0))
       })
-      .catch(() => {
-        // A provider that cannot be asked simply offers no choice. Saying so on
-        // a sidebar card would be noise about a feature the user never invoked.
+      .catch((error: unknown) => {
+        if (live) setProblem(error instanceof Error ? error.message : String(error))
       })
     return () => {
       live = false
     }
   }, [props.conversationId])
 
+  if (problem !== null) {
+    return (
+      <span className="workspace-session-model-problem" title={t('model.problem', { problem })}>
+        {t('model.problemShort')}
+      </span>
+    )
+  }
   if (agents.length === 0) return null
 
   return (
     <span className="workspace-session-models">
-      {agents.map((agent) => (
-        <label key={agent.agentId} className="workspace-session-model">
-          <span className="sr-only">{t('model.label', { agent: agent.agentId })}</span>
-          <select
-            value={chosen[agent.agentId] ?? ''}
-            onChange={(event) => {
-              const model = event.target.value
-              if (model === '') return
-              setChosen((current) => ({ ...current, [agent.agentId]: model }))
-              void window.chorus.setModel({
-                conversationId: props.conversationId,
-                agentId: agent.agentId as AgentId,
-                model,
-              })
-            }}
-          >
-            {/* The provider's own default, which is what is in force until a
-                choice is made. Named rather than blank so the control is not
-                claiming the agent has no model. */}
-            <option value="">{t('model.default', { agent: agent.agentId })}</option>
-            {agent.models.map((model) => (
-              <option key={model.value} value={model.value}>
-                {model.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      ))}
+      {agents.map((agent) => {
+        const current = chosen[agent.agentId] ?? ''
+        /*
+         * The levels belong to the selected model, not to the agent. Before a
+         * choice is made the provider's default is in force, and the first row
+         * is what the CLI lists that as — so its levels are the honest ones to
+         * offer.
+         */
+        const active = agent.models.find((model) => model.value === current) ?? agent.models[0]
+        const levels = active?.effortLevels ?? []
+        return (
+          <span key={agent.agentId} className="workspace-session-model">
+            <label>
+              <span className="sr-only">{t('model.label', { agent: agent.agentId })}</span>
+              <select
+                value={current}
+                onChange={(event) => {
+                  const model = event.target.value
+                  if (model === '') return
+                  setChosen((held) => ({ ...held, [agent.agentId]: model }))
+                  void window.chorus.setModel({
+                    conversationId: props.conversationId,
+                    agentId: agent.agentId as AgentId,
+                    model,
+                  })
+                }}
+              >
+                {/* The provider's own default, which is what is in force until a
+                    choice is made. Named rather than blank so the control is not
+                    claiming the agent has no model. */}
+                <option value="">{t('model.default', { agent: agent.agentId })}</option>
+                {agent.models.map((model) => (
+                  <option key={model.value} value={model.value}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {levels.length > 0 && (
+              <label>
+                <span className="sr-only">{t('model.effortLabel', { agent: agent.agentId })}</span>
+                <select
+                  value={effort[agent.agentId] ?? ''}
+                  onChange={(event) => {
+                    const level = event.target.value
+                    if (level === '') return
+                    setEffort((held) => ({ ...held, [agent.agentId]: level }))
+                    void window.chorus.setEffort({
+                      conversationId: props.conversationId,
+                      agentId: agent.agentId as AgentId,
+                      level,
+                    })
+                  }}
+                >
+                  <option value="">{t('model.effortDefault')}</option>
+                  {levels.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </span>
+        )
+      })}
     </span>
   )
 }

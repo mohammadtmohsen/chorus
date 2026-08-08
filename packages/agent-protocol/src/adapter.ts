@@ -29,6 +29,15 @@ export interface SandboxPolicy {
 export interface ModelChoice {
   readonly value: string
   readonly label: string
+  /**
+   * Reasoning-effort levels this model accepts, in the provider's own order.
+   *
+   * Empty for a model with no such control. Per model rather than global
+   * because the provider reports it that way — the levels a model supports are
+   * a property of the model, and a fixed list would offer `max` on something
+   * that silently downgrades it.
+   */
+  readonly effortLevels?: readonly string[]
 }
 
 export interface SessionOpts {
@@ -72,6 +81,13 @@ export interface AgentSession {
    * offering a hardcoded one that may be wrong.
    */
   supportedModels?(): Promise<readonly ModelChoice[]>
+  /**
+   * How hard the model should think, for providers that expose the control.
+   *
+   * Separate from `setModel` because it outlives a model change: the level is a
+   * preference about answers, not about which model gives them.
+   */
+  setEffort?(level: string): Promise<void>
   /**
    * Re-reads the account's usage windows, for providers that can be asked.
    *

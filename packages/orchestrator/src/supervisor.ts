@@ -59,6 +59,8 @@ export class SupervisedSession implements AgentSession {
   private current: AgentSession
   /** The model the user picked, so a restart does not quietly undo it. */
   private chosenModel: string | undefined
+  /** Likewise the effort level — same hazard, same fix. */
+  private chosenEffort: string | undefined
   private closing = false
   private givenUp = false
   /** Set when the adapter reported a failure it says retrying cannot fix. */
@@ -154,6 +156,12 @@ export class SupervisedSession implements AgentSession {
     await this.current.setModel?.(model)
   }
 
+  /** Remembered for the same reason the model is: a restart would undo it. */
+  async setEffort(level: string): Promise<void> {
+    this.chosenEffort = level
+    await this.current.setEffort?.(level)
+  }
+
   async close(): Promise<void> {
     // Set first: this is what distinguishes a clean shutdown from a crash.
     this.closing = true
@@ -218,6 +226,7 @@ export class SupervisedSession implements AgentSession {
       // The replacement starts on the provider's default, so a choice made
       // before the crash has to be made again on its behalf.
       if (this.chosenModel !== undefined) await resumed.setModel?.(this.chosenModel)
+      if (this.chosenEffort !== undefined) await resumed.setEffort?.(this.chosenEffort)
       this.pump = this.consume(resumed)
     } catch (error) {
       // A failed resume is not recoverable by trying harder — the thread may be
