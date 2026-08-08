@@ -74,6 +74,14 @@ export interface ComposerProps {
    * Assigning during render is the same thing the pane does for its own carry,
    * and it is what keeps a keystroke from re-rendering a conversation.
    */
+  /**
+   * What was said before, oldest first.
+   *
+   * Taken from the transcript rather than kept separately: the messages are
+   * already reduced from the log, so recall survives a restart and a reopened
+   * conversation for free — and there is no second list to fall out of step.
+   */
+  readonly history: readonly string[]
   readonly report: { current: ComposerState }
   readonly onError: (error: unknown) => void
   /** A message is on its way: follow the transcript and say we are waiting. */
@@ -108,6 +116,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * worth spawning `git ls-files` for on its own.
      */
     const [files, setFiles] = useState<string[]>([])
+    /**
+     * How far back through what was said we are, counting from the end.
+     *
+     * Zero is the live draft. Entered only from an empty box and left the moment
+     * anything is typed, which is what keeps arrow keys meaning "move the caret"
+     * in a message being written — the alternative is a draft that jumps away
+     * mid-sentence.
+     */
+    const recalled = useRef(0)
     const [highlighted, setHighlighted] = useState(0)
     const input = useRef<HTMLTextAreaElement | null>(null)
 
@@ -170,6 +187,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         clearTimeout(timer)
       }
     }, [conversationId, mention])
+
+    useEffect(() => {
+      /*
+       * Written down a second after you stop typing.
+       *
+       * Not on every keystroke: `open-sessions.json` is rewritten whole, and a
+       * sentence would rewrite it forty times. A second of lag costs the last
+       * second of typing in a crash, which is the right trade against making the
+       * file the bottleneck for the box.
+       */
+      const timer = setTimeout(() => {
+        void window.chorus.rememberDraft({ conversationId, draft })
+      }, 1_000)
+      return () => {
+        clearTimeout(timer)
+      }
+    }, [conversationId, draft])
 
     /** Identifies one mention being typed, so a refresh can tell it from the next. */
     const queryKey = useRef<string | null>(null)
@@ -502,6 +536,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                   return
                 }
               }
+              /*
+               * Up brings back what was said, but only from an empty box.
+               *
+               * In a draft being written the arrows have to keep moving the caret;
+               * a field that jumps to last week's message because the caret
+               * reached line one is worse than no recall at all. Down walks back
+               * towards the empty box and stops there.
+               */
+              if (
+                (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+                props.history.length > 0 &&
+                (draft === '' || recalled.current > 0)
+              ) {
+                const step = e.key === 'ArrowUp' ? 1 : -1
+                const next = Math.min(Math.max(recalled.current + step, 0), props.history.length)
+                if (next === recalled.current) return
+                e.preventDefault()
+                recalled.current = next
+                setDraft(next === 0 ? '' : (props.history[props.history.length - next] ?? ''))
+                return
+              }
+
               if (e.key !== 'Enter') return
               // Mid-composition Enter commits the candidate — for Japanese,
               // Chinese or Korean input that keypress belongs to the IME, not

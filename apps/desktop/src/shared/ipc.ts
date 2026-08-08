@@ -237,6 +237,8 @@ export const IPC_CONTRACT = {
           title: z.string(),
           /** Counted out of the log against the saved watermark, not remembered. */
           unread: z.number().int().min(0),
+          /** A message typed and not sent when the app last closed. */
+          draft: z.string().default(''),
         })
       ),
       workspace: WorkspaceSnapshot.nullable(),
@@ -340,6 +342,17 @@ export const IPC_CONTRACT = {
         })
       ),
     }),
+  },
+
+  /**
+   * Remembers a message typed and not sent.
+   *
+   * Renderer-driven and debounced there, because it owns the keystrokes. Losing
+   * one costs the last second of typing, which is why it is fire-and-forget.
+   */
+  'conversation:draft': {
+    request: z.object({ conversationId: z.string(), draft: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
   },
 
   /**
@@ -728,6 +741,7 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly markSeen: (request: IpcRequest<'conversation:markSeen'>) => Promise<{ ok: true }>
+  readonly rememberDraft: (request: IpcRequest<'conversation:draft'>) => Promise<{ ok: true }>
   readonly completeFiles: (
     request: IpcRequest<'files:complete'>
   ) => Promise<IpcResponse<'files:complete'>>

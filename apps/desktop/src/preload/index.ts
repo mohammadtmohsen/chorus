@@ -44,6 +44,7 @@ const api: ChorusApi = {
   removeAgent: invoke('conversation:removeAgent'),
   restoreConversations: () => invoke('conversation:restore')({}),
   markSeen: invoke('conversation:markSeen'),
+  rememberDraft: invoke('conversation:draft'),
   completeFiles: invoke('files:complete'),
   listCommands: invoke('conversation:commands'),
   listConversations: () => invoke('conversation:list')({}),

@@ -17,7 +17,7 @@ describe('open session persistence', () => {
     // before unread was persisted still opens — at zero unread rather than
     // refusing to parse and losing the whole list.
     expect(parseOpenSessions([session])).toEqual({
-      sessions: [{ ...session, lastSeenSeq: 0 }],
+      sessions: [{ ...session, lastSeenSeq: 0, draft: '' }],
       workspace: null,
     })
   })
@@ -36,12 +36,23 @@ describe('open session persistence', () => {
       sidebarHidden: true,
     }
     expect(parseOpenSessions({ version: 2, sessions: [session], workspace })).toEqual({
-      sessions: [{ ...session, lastSeenSeq: 0 }],
+      sessions: [{ ...session, lastSeenSeq: 0, draft: '' }],
       // The width is defaulted in, not required: this envelope was written
       // before the sidebar could be resized, and it must still open — at the
       // width it always had rather than at zero.
       workspace: { ...workspace, sidebarWidth: SIDEBAR_WIDTH.default },
     })
+  })
+
+  it('keeps a draft that was never sent', () => {
+    // The one thing in this file that is the user's own writing rather than a
+    // note about where they were, and the only part not recoverable by clicking.
+    const parsed = parseOpenSessions({
+      version: 2,
+      sessions: [{ ...session, draft: 'half a question about the' }],
+      workspace: null,
+    })
+    expect(parsed.sessions[0]?.draft).toBe('half a question about the')
   })
 
   it('keeps a read watermark that was written down', () => {
