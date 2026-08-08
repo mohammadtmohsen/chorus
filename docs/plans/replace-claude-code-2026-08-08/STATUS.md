@@ -503,3 +503,53 @@ documented shape and unobservable on this machine — stated rather than implied
 
 **Still to do in this phase:** the panel itself, the plugin browser, and the
 settings-only items.
+
+## Open question 4, answered: hook noise is real, and the filter is half of one
+
+The plan asked whether `includeHookEvents` — turned on in Phase 0, where it was
+one of the three correctness bugs — would flood a transcript on a repo with a
+dozen hooks, and whether notices needed a per-source filter before it shipped.
+It shipped without one and nobody measured it. Measured now.
+
+**The setup.** A throwaway repo with seven `Bash` hooks: three `PreToolUse` and
+three `PostToolUse` that each print a line, plus one that succeeds silently.
+Conservative against the plan's "a dozen".
+
+**The measurement.** Real events from the installed CLI, pushed through the real
+`mapSdkMessage`, for **one** Bash call:
+
+```
+14 hook events  { hook_started: 7, hook_response: 7 }
+ 6 transcript rows
+```
+
+So the existing filter does exactly what its comment claims — the silent hook
+produces nothing, and `hook_started` is quiet — and it is still **one durable row
+per printing hook per tool call**. A turn with five commands on that repo is
+thirty notices, interleaved between each command and its output, in an
+append-only log.
+
+**The answer to the question as asked is yes**, and the answer to its second half
+is that a per-source filter is the wrong shape. Muting a source loses the hook
+that blocks a commit along with the one that prints "formatted 3 files"; the
+problem is not which hook spoke but that the same hook speaks on every call. The
+idiom this codebase already has is folding — `CommandEntry` folds a turn's
+commands to a line — and the same move fits here: one row per tool call carrying
+how many hooks spoke, opening to the individual lines. That keeps the failure
+visible, keeps the output reachable, and costs one row instead of N.
+
+Not built yet. Recorded with the number so the shape is chosen from evidence.
+
+### A trap worth recording, met while measuring this
+
+The first two attempts measured nothing and looked like a clean result: zero hook
+notices, and zero hooks firing on disk. The cause is documented behaviour, in a
+comment on the method itself — `setProjectDirectory` "does not move an agent's
+shell: those were started with a working directory and keep it". The session had
+been started at home and pointed at the hook repo afterwards, so the agent never
+ran there and the repo's hooks were never its hooks.
+
+The reason it is worth writing down is that it produced a **plausible** wrong
+answer rather than an error: "no hook noise" is exactly what someone hoping to
+close this question would want to read. Hooks were only proved to work at all by
+running the raw SDK against the same directory and watching a file on disk grow.
