@@ -22,8 +22,16 @@ export interface MentionQuery {
 }
 
 export interface MentionOption {
-  /** What is inserted, without the leading `@`. */
+  /** What is inserted, without the leading trigger. */
   readonly insert: string
+  /**
+   * Inserted without the trigger character.
+   *
+   * A file is not a mention. It goes in as a plain path, the same way a dropped
+   * file does, because that is what an agent reads — and because the router
+   * would have to learn to ignore `@src/foo.ts` otherwise.
+   */
+  readonly bare?: boolean
   readonly label: string
   readonly detail: string
   /**
@@ -52,8 +60,14 @@ export function findMentionQuery(text: string, caret: number): MentionQuery | nu
   if (preceding !== '' && !/\s/.test(preceding)) return null
 
   const query = before.slice(at + 1)
-  // Anything else means the word ended and this is no longer a mention.
-  if (!/^[a-z0-9-]*$/i.test(query)) return null
+  /*
+   * Wide enough for a path, because `@` now offers files as well as agents.
+   *
+   * Whitespace is still the terminator, which is what keeps "closes once the
+   * word ends" true — and the word-start rule above is what keeps an email
+   * address from opening a menu.
+   */
+  if (!/^[a-z0-9./_-]*$/i.test(query)) return null
 
   return { trigger: '@', start: at, query: query.toLowerCase() }
 }
@@ -137,6 +151,23 @@ export function mentionOptions(participants: readonly AgentId[], query: string):
   return options.filter((option) => option.label.startsWith(query))
 }
 
+/**
+ * Files as menu options.
+ *
+ * Quoted on the way in rather than on the way out: a path with a space in it is
+ * ordinary on a Mac, and the agent receives the draft as text. Left unquoted it
+ * would arrive as two arguments and read as two files.
+ */
+export function fileOptions(paths: readonly string[]): MentionOption[] {
+  return paths.map((path) => ({
+    insert: /[\s"'\\]/.test(path) ? JSON.stringify(path) : path,
+    label: path,
+    detail: 'file',
+    agents: [],
+    bare: true,
+  }))
+}
+
 /** The draft and caret after picking an option. */
 export function applyMention(
   text: string,
@@ -146,7 +177,7 @@ export function applyMention(
 ): { text: string; caret: number } {
   // A trailing space, because the next thing typed is always the message and
   // nobody wants to press space after choosing from a menu.
-  const inserted = `${mention.trigger}${option.insert} `
+  const inserted = `${option.bare === true ? '' : mention.trigger}${option.insert} `
   return {
     text: text.slice(0, mention.start) + inserted + text.slice(caret),
     caret: mention.start + inserted.length,

@@ -7,6 +7,7 @@ import { formatContextBlock, withEditorContext } from './editor-context.js'
 import {
   applyMention,
   commandOptions,
+  fileOptions,
   findCommandQuery,
   findMentionQuery,
   mentionOptions,
@@ -98,6 +99,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * when the menu opens, so the first `/` shows a list instead of a pause.
      */
     const [commands, setCommands] = useState<CommandInfo[]>([])
+    /**
+     * Files matching the mention being typed.
+     *
+     * Asked of the main process per keystroke rather than held: the renderer has
+     * no filesystem access, and a project's file list is both large and liable
+     * to change under you. Debounced, because a keystroke is not a question
+     * worth spawning `git ls-files` for on its own.
+     */
+    const [files, setFiles] = useState<string[]>([])
     const [highlighted, setHighlighted] = useState(0)
     const input = useRef<HTMLTextAreaElement | null>(null)
 
@@ -133,6 +143,33 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         live = false
       }
     }, [conversationId])
+
+    useEffect(() => {
+      // Nothing to search for until there is an `@` with something after it: a
+      // bare `@` means the cast, and offering the whole repository beside two
+      // agent names is not a menu.
+      if (mention?.trigger !== '@' || mention.query === '') {
+        setFiles([])
+        return
+      }
+      let live = true
+      const timer = setTimeout(() => {
+        window.chorus
+          .completeFiles({ conversationId, query: mention.query })
+          .then((result) => {
+            if (live) setFiles(result.files)
+          })
+          .catch(() => {
+            // A directory that is not a repository offers no completion. Saying
+            // so in the menu would be noise about a feature nobody invoked.
+            if (live) setFiles([])
+          })
+      }, 90)
+      return () => {
+        live = false
+        clearTimeout(timer)
+      }
+    }, [conversationId, mention])
 
     /** Identifies one mention being typed, so a refresh can tell it from the next. */
     const queryKey = useRef<string | null>(null)
@@ -176,12 +213,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       setMention(found)
     }, [])
 
+    /*
+     * Agents first, then files.
+     *
+     * There are two agents and thousands of files, so ordering by count would
+     * bury the thing `@` originally meant. Agents also match on a prefix and
+     * files on a substring, which means a bare `@` shows the cast and typing
+     * anything past a name starts finding files.
+     */
     const options =
       mention === null
         ? []
         : mention.trigger === '/'
           ? commandOptions(commands, mention.query)
-          : mentionOptions(participants as never, mention.query)
+          : [...mentionOptions(participants as never, mention.query), ...fileOptions(files)]
     const menuOpen = options.length > 0
 
     const choose = useCallback(
@@ -376,7 +421,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                     ))}
                   </span>
                   <span className="mention-name">
-                    {mention?.trigger ?? '@'}
+                    {/* A bare option inserts no trigger, so it must not show
+                        one: a file row reading "@src/a.ts" would promise a
+                        mention it does not write. */}
+                    {option.bare === true ? '' : (mention?.trigger ?? '@')}
                     {option.label}
                   </span>
                   <span className="mention-detail">{option.detail}</span>

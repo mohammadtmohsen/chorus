@@ -1988,6 +1988,73 @@ export const specs = [
   },
 
   {
+    name: 'an @ offers the cast, then the project’s files',
+    /*
+     * `@` meant agents. It now means both, and the ordering is the whole design:
+     * two agents against thousands of files, so counting would bury what `@`
+     * originally did. A bare `@` shows the cast; typing past a name starts
+     * finding files.
+     *
+     * The search is git's, so this asserts against whatever the repository
+     * actually contains rather than a fixture — which is also the only way to
+     * catch the search being wired to nothing.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        await app.until(`document.querySelector('.composer textarea') !== null`)
+
+        /*
+         * Point it at a repository first.
+         *
+         * A fresh session opens with no project directory, which resolves to
+         * home — and file completion is asked of `git ls-files`, so outside a
+         * repository there is correctly nothing to offer. The first draft of
+         * this spec asserted against that and read as a broken search.
+         */
+        const id = (await tabIds(app))[0]
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify('__ID__')}, cwd: ${JSON.stringify(process.cwd())} }).then(() => true)`.replace(
+            '__ID__',
+            id
+          )
+        )
+        await app.settle()
+
+        await draft(app, '@')
+        await app.until(`document.querySelector('.mention-menu') !== null`, {
+          label: 'a bare @ opened the menu',
+        })
+        const cast = await app.evaluate(
+          `Array.from(document.querySelectorAll('.mention-menu .mention-detail')).map(n => n.textContent)`
+        )
+        assert(
+          cast.length > 0 && cast.every((detail) => detail !== 'file'),
+          `a bare @ offers the cast and no files, got ${JSON.stringify(cast)}`
+        )
+
+        // `mention-menu` is the app's own source file, so the repository is
+        // guaranteed to contain it — no fixture, and it must come from git.
+        await draft(app, '@mention-menu')
+        await app.until(
+          `Array.from(document.querySelectorAll('.mention-menu .mention-detail')).some(n => n.textContent === 'file')`,
+          { timeout: 30_000, label: 'typing a name found files' }
+        )
+        const found = await app.evaluate(
+          `Array.from(document.querySelectorAll('.mention-menu .mention-name')).map(n => n.textContent)`
+        )
+        assert(
+          found.some((name) => name.includes('mention-menu')),
+          `and the file it names, got ${JSON.stringify(found.slice(0, 3))}`
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
     name: 'a card still says what it missed after a relaunch',
     /*
      * Unread lived only in memory, so every launch claimed nothing had happened
