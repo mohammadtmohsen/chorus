@@ -217,7 +217,19 @@ export function ActivityBar(props: {
                             <i style={{ width: `${String(window.percent)}%` }} />
                           </span>
                           <span className="limit-percent">{window.percent}%</span>
-                          <span className="limit-reset">
+                          <span
+                            className="limit-reset"
+                            /*
+                             * The moment itself, beside the phrase for it.
+                             *
+                             * `untilReset` says "now" for anything already past,
+                             * which is right for a boundary that has just gone
+                             * and indistinguishable from a timestamp in 1970 —
+                             * the shape a seconds-for-milliseconds mistake takes.
+                             * The reading cannot tell them apart; the number can.
+                             */
+                            data-resets-at={window.resetsAt ?? undefined}
+                          >
                             {t('limits.resets', { time: window.full })}
                           </span>
                         </li>
@@ -294,6 +306,8 @@ function useUsage(): {
     reset: string
     remaining: string
     full: string
+    /** The raw moment, so a reading can be checked rather than parsed back. */
+    resetsAt: number | null
   }[]
 }[] {
   const [pushes, setPushes] = useState<LimitsPush[]>([])
@@ -337,6 +351,7 @@ function useUsage(): {
           reset: window.resetsAt === null ? '—' : untilReset(window.resetsAt, now),
           remaining: compactRemaining(window.resetsAt, now),
           full: fullRemaining(window.resetsAt, now),
+          resetsAt: window.resetsAt,
         })),
     }))
     .filter((account) => account.windows.length > 0)
