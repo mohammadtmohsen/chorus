@@ -1,5 +1,49 @@
 # Status
 
+## Where this stands
+
+The entries below are a record, in the order things were learned, and several of
+them correct an earlier one. This section is the summary they do not otherwise
+have. Anything not listed as done is not done.
+
+**Shipped.** Phases 0-3 complete. Phase 4 is the SDK surface worth reaching:
+MCP server health, `accountInfo()`, background tasks with `stopTask()`. Phase 5
+has begun with the todo detail line. The composer answers `/` and `@`, drafts and
+history survive a quit, plan mode is per conversation, and hook output folds
+instead of flooding.
+
+**Declined, each with its reasoning in place rather than as a silent gap:**
+
+|                          | why                                                                                                                                                                                                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dialogs                  | The CLI fails _closed_ on an undeclared kind, so today's behaviour is a defined degradation. Declaring it promises Chorus can render an undocumented payload triggered by a refusal nobody can produce on demand — and being wrong parks the turn. |
+| Checkpoints              | `rewindFiles()` needs a uuid the CLI never emits. It exists only in the CLI's private transcript, and reading that to revert files on disk risks the working tree on a format change.                                                              |
+| `supportedAgents()`      | `@` means _who answers_. Those five cannot.                                                                                                                                                                                                        |
+| Context breakdown        | `totalTokens` excludes deferred categories, so the obvious panel overstates usage by more than twice the total. Needs design, not plumbing.                                                                                                        |
+| Images as content blocks | Would break the text log, catch-up, and provider parity to save one `Read`.                                                                                                                                                                        |
+
+**Open.**
+
+1. **Two menu failures.** A residual slash failure after its fix, and the `@`
+   sibling that has never reproduced in isolation. Eight hypotheses are dead
+   between them and written down; that list is the head start.
+2. **Open question 2** — whether Chorus's log or the CLI's `listSessions()` is
+   authoritative for the history sheet. The last unanswered question in the plan.
+3. **Phase 5 remainder** — the todo panel (unbuildable blind: this machine's
+   config replaces `TodoWrite` with `TaskCreate`/`TaskUpdate`), a plugin browser,
+   and the settings-only group.
+
+**How this is verified.** `pnpm check` is 947 tests; the e2e suite is 26 specs
+driving the built app over CDP. **CI cannot run the e2e suite** — it has no
+credentials for real CLIs — so a green PR is not evidence about the renderer, and
+the suite has to be run locally before believing a UI change. Two of this
+project's worst bugs were invisible to every gate and visible in a screenshot.
+
+**The habit that found most of them.** Drive the built app and look at it; probe
+the real CLI instead of trusting prose; and when a measurement produces a clean
+result, check the mechanism before believing it. Twice a plausible clean result
+was wrong and would have closed a real bug.
+
 ## Phase 0 done: Things that were already wrong
 
 Shipped as two PRs, because the fourth item is much larger than the other three.
