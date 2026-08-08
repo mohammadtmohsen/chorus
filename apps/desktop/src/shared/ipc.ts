@@ -292,6 +292,28 @@ export const IPC_CONTRACT = {
     response: z.object({ ok: z.literal(true) }),
   },
 
+  /**
+   * The user's installed plugins, and whether they are switched on.
+   *
+   * Read from the CLI each time rather than cached: a plugin can be enabled or
+   * removed while Chorus is running, and the sheet is opened precisely when
+   * someone wants to know the current answer.
+   */
+  'agents:plugins': {
+    request: z.object({}),
+    response: z.object({
+      plugins: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          enabled: z.boolean(),
+          scope: z.string(),
+          version: z.string().optional(),
+        })
+      ),
+    }),
+  },
+
   'agents:account': {
     request: z.object({}),
     response: z.object({
@@ -882,6 +904,7 @@ export interface ChorusApi {
   readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
   readonly mcpServers: () => Promise<IpcResponse<'agents:mcp'>>
   readonly accounts: () => Promise<IpcResponse<'agents:account'>>
+  readonly plugins: () => Promise<IpcResponse<'agents:plugins'>>
   readonly stopTask: (request: IpcRequest<'tasks:stop'>) => Promise<IpcResponse<'tasks:stop'>>
   readonly readSettings: () => Promise<IpcResponse<'settings:read'>>
   readonly writeSettings: (
