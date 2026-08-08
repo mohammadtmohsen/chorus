@@ -186,38 +186,6 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         })),
       }),
 
-    'conversation:models': async (request: { conversationId: string }) => ({
-      // Normalised at the boundary: a model with no effort control carries no
-      // `effortLevels` in the domain type, and the renderer should not have to
-      // tell absent from empty for something it only ever iterates.
-      agents: (await runtime.listModels(request.conversationId)).map((agent) => ({
-        agentId: agent.agentId,
-        models: agent.models.map((model) => ({
-          value: model.value,
-          label: model.label,
-          effortLevels: [...(model.effortLevels ?? [])],
-        })),
-      })),
-    }),
-
-    'conversation:setModel': async (request: {
-      conversationId: string
-      agentId: 'codex' | 'claude'
-      model: string
-    }) => {
-      await runtime.setModel(request.conversationId, request.agentId, request.model)
-      return OK
-    },
-
-    'conversation:setEffort': async (request: {
-      conversationId: string
-      agentId: 'codex' | 'claude'
-      level: string
-    }) => {
-      await runtime.setEffort(request.conversationId, request.agentId, request.level)
-      return OK
-    },
-
     'conversation:markSeen': (request: { conversationId: string; seq: number }) => {
       runtime.markSeen(request.conversationId, request.seq)
       return Promise.resolve(OK)

@@ -1205,54 +1205,6 @@ body {
   color: var(--muted);
 }
 
-/*
- * The model each agent answers as, on the sidebar card.
- *
- * Native select on purpose: the options come from the provider and there is
- * nothing to draw beyond them, so the platform control is smaller and behaves
- * better with a keyboard than the portal listbox the profile chip needs.
- */
-.workspace-session-models {
-  display: flex;
-  gap: 0.5ch;
-  min-width: 0;
-}
-
-.workspace-session-model {
-  display: flex;
-  gap: 0.4ch;
-  min-width: 0;
-}
-
-/*
- * Loud enough to notice, quiet enough not to nag.
- *
- * The list failing is a bug worth seeing — it used to render as nothing, which
- * is indistinguishable from a provider that has no models and from a dev build
- * that predates the feature.
- */
-.workspace-session-model-problem {
-  color: var(--alert);
-  font-family: var(--mono);
-  font-size: 11px;
-  cursor: help;
-}
-
-.workspace-session-model select {
-  max-width: 16ch;
-  padding: 0.1rem 0.2rem;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11px;
-}
-
-.workspace-session-model select:hover {
-  color: var(--bone);
-}
-
 .settings-models {
   display: flex;
   flex-direction: column;
