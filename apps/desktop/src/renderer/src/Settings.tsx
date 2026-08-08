@@ -115,6 +115,64 @@ function McpServers(): React.JSX.Element | null {
 }
 
 /**
+ * The plugins this machine gives its agents.
+ *
+ * A plugin loads into every session and contributes commands, agents, skills and
+ * hooks — capabilities the agent has and Chorus otherwise never mentions. The
+ * disabled ones are the point, for the same reason `needs-auth` is on a server:
+ * configured, believed in, contributing nothing.
+ *
+ * Asked once rather than retried, unlike the panels above it: this comes from
+ * the CLI on disk rather than from a live session, so an empty answer means
+ * "none installed" and is the final answer rather than a race.
+ */
+function Plugins(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const [plugins, setPlugins] = useState<IpcResponse<'agents:plugins'>['plugins']>([])
+
+  useEffect(() => {
+    let live = true
+    window.chorus
+      .plugins()
+      .then((result) => {
+        if (live) setPlugins(result.plugins)
+      })
+      .catch(() => {
+        // A CLI too old for the subcommand, or none installed. Both render as
+        // nothing at all.
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (plugins.length === 0) return null
+
+  return (
+    <fieldset className="settings-plugins">
+      <legend>{t('plugins.heading')}</legend>
+      <ul>
+        {plugins.map((plugin) => (
+          <li key={plugin.id} data-enabled={plugin.enabled}>
+            <span className="settings-plugin-name">{plugin.name}</span>
+            <span className="settings-plugin-scope">
+              {plugin.scope === ''
+                ? ''
+                : t(`plugins.scope.${plugin.scope}`, { defaultValue: plugin.scope })}
+              {plugin.version === undefined ? '' : ` · ${plugin.version}`}
+            </span>
+            {!plugin.enabled && (
+              <span className="settings-plugin-off">{t('plugins.disabled')}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="footnote">{t('plugins.note')}</p>
+    </fieldset>
+  )
+}
+
+/**
  * Which account each agent is signed in as.
  *
  * The question a room running several projects at once eventually asks. The
@@ -394,6 +452,8 @@ export function Settings(props: {
           <Accounts />
 
           <McpServers />
+
+          <Plugins />
 
           <DefaultModel />
 

@@ -329,5 +329,15 @@
     "running_other": "{{count}} running",
     "stop": "Stop this task",
     "stopShort": "Stop"
+  },
+  "plugins": {
+    "heading": "Plugins",
+    "disabled": "disabled",
+    "scope": {
+      "user": "yours",
+      "project": "this project",
+      "local": "local"
+    },
+    "note": "Installed through your own Claude configuration. A disabled plugin keeps its commands and skills out of every session."
   }
 }

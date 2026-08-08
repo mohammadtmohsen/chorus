@@ -1206,11 +1206,51 @@ body {
 }
 
 .settings-mcp,
+.settings-plugins,
 .settings-accounts {
   margin: 0.8rem 0 0;
   padding: 0.6rem 0.8rem;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.settings-plugins ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-plugins li {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  padding: 0.15rem 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.settings-plugin-name {
+  flex: none;
+  color: var(--bone);
+}
+
+.settings-plugin-scope {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The state worth seeing: installed, believed in, contributing nothing. */
+.settings-plugin-off {
+  flex: none;
+  color: var(--alert);
+}
+
+.settings-plugins li[data-enabled='false'] .settings-plugin-name {
+  color: var(--muted);
 }
 
 .settings-accounts ul {

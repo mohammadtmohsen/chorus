@@ -192,10 +192,24 @@ never reproduced in isolation at all.
 
 ### 2. Phase 5 remainder
 
+**Done: the plugin panel.** Settings lists what is installed, its scope, and
+whether it is switched on — the disabled ones being the point, for the same
+reason `needs-auth` is on a server: configured, believed in, contributing
+nothing. Read from `claude plugin list --json`, which the plan judged more
+honest than parsing `~/.claude/plugins/*.json`, and it is: `--json` is a stated
+machine interface and a directory layout is not.
+
+**Declined inside it: the token costs.** `claude plugin details` prints a
+component inventory and a projected cost — and has **no `--json`**. Scraping a
+formatted table to put numbers on screen is the private-format commitment this
+project declined for checkpoints, and here the failure mode is silently wrong
+figures rather than an error. The same numbers are available properly from
+`getContextUsage()`, which is where they belong if they are ever wanted.
+
+**Still to do in this phase:**
+
 - **The todo panel.** The detail line shipped; the panel did not. It cannot be
   built honestly on this machine — the user's own config replaces `TodoWrite`
   with `TaskCreate`/`TaskUpdate`, so there is nothing here to see it with.
-- **A plugin browser**, which the plan judged is better shelled out to
-  `claude plugin` than parsed from `~/.claude/plugins/*.json`.
 - **Status line, output-style picker, live rename** — settings-only, or on the
   wire with no method.

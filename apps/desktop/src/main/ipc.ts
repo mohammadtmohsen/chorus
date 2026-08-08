@@ -27,6 +27,7 @@ import {
 } from './ide-extension.js'
 import { probeAgents } from './agent-probe.js'
 import { completeFiles } from './files.js'
+import { listPlugins } from './plugins.js'
 import type { ChorusRuntime } from './runtime.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
@@ -193,6 +194,8 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       await runtime.stopTask(request.conversationId, request.agentId, request.taskId)
       return OK
     },
+
+    'agents:plugins': async () => ({ plugins: await listPlugins() }),
 
     'agents:account': async () => ({
       accounts: (await runtime.accounts()).map(({ agentId, account }) => ({
