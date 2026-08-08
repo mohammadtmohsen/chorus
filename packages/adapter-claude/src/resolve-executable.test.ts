@@ -94,11 +94,25 @@ describe('resolving the installed claude', () => {
         : Promise.resolve('/usr/local/bin/claude')
     })
 
-    await adapter.start(OPTS)
+    // The first refuses rather than spawning blind — see below for why.
+    await expect(adapter.start(OPTS)).rejects.toThrow(/could not find the claude cli/i)
     await adapter.start(OPTS)
 
     expect(lookups).toBe(2)
-    expect(paths).toEqual([undefined, '/usr/local/bin/claude'])
+    expect(paths).toEqual(['/usr/local/bin/claude'])
+  })
+
+  it('blames the missing CLI rather than letting the SDK blame its own install', () => {
+    /*
+     * Without a path the SDK hunts for its bundled binary — excluded on purpose
+     * in `pnpm-workspace.yaml`, all eight platforms — and reports "Native CLI
+     * binary for darwin-arm64 not found. Reinstall @anthropic-ai/claude-agent-sdk
+     * without --omit=optional". Both suggestions are wrong: Chorus drives the
+     * installed CLI by design, and reinstalling adds ~257 MB to work around a
+     * missing PATH entry.
+     */
+    const { adapter } = harness(() => Promise.resolve(null))
+    return expect(adapter.start(OPTS)).rejects.toThrow(/on your PATH/)
   })
 
   it('spawns without a path when there is no resolver, rather than hanging', async () => {

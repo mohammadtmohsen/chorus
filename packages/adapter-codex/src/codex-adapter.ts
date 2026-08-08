@@ -322,6 +322,10 @@ export class CodexAdapter implements AgentAdapter {
   private command: string
   private readonly resolveCommand: (() => Promise<string | null>) | undefined
   private resolving: Promise<void> | null = null
+  /** True once a lookup ran and came back with nothing. */
+  private lookupFoundNothing = false
+  /** An explicit command is the caller's business; we do not second-guess it. */
+  private readonly commandWasGiven: boolean
   private readonly approvalTtlMs: number
   private readonly createTransport: () => Transport
   private readonly now: () => number
@@ -329,6 +333,7 @@ export class CodexAdapter implements AgentAdapter {
 
   constructor(options: CodexAdapterOptions = {}) {
     this.command = options.command ?? 'codex'
+    this.commandWasGiven = options.command !== undefined
     this.resolveCommand = options.resolveCommand
     this.approvalTtlMs = options.approvalTtlMs ?? 5 * 60_000
     this.now = options.now ?? (() => Date.now())
@@ -402,6 +407,7 @@ export class CodexAdapter implements AgentAdapter {
     this.resolving ??= lookup()
       .then((found) => {
         if (found !== null) this.command = found
+        this.lookupFoundNothing = found === null
       })
       .catch(() => {
         // Let a later start try again rather than caching the failure forever.
@@ -412,6 +418,23 @@ export class CodexAdapter implements AgentAdapter {
 
   private async handshake(): Promise<JsonRpcClient> {
     await this.resolveCommandOnce()
+
+    /*
+     * Say what is wrong before the spawn does it worse.
+     *
+     * With nothing found, `command` is still the bare name `codex`, and under a
+     * Finder launch there is no PATH to find it on — which surfaces as "spawn
+     * codex ENOENT", the failure this lookup exists to prevent and the one that
+     * reads as "not installed" for something the user can run in a terminal.
+     */
+    if (this.resolveCommand !== undefined && !this.commandWasGiven && this.lookupFoundNothing) {
+      throw new Error(
+        'Could not find the codex CLI. Chorus runs the one you have installed rather ' +
+          'than shipping its own, so `codex` needs to be on your PATH — check with ' +
+          '`which codex`, and install it if it is missing.'
+      )
+    }
+
     const rpc = new JsonRpcClient({ transport: this.createTransport() })
     // The server rejects everything sent before this completes.
     await rpc.request('initialize', {
