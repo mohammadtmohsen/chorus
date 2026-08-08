@@ -211,5 +211,31 @@ figures rather than an error. The same numbers are available properly from
 - **The todo panel.** The detail line shipped; the panel did not. It cannot be
   built honestly on this machine — the user's own config replaces `TodoWrite`
   with `TaskCreate`/`TaskUpdate`, so there is nothing here to see it with.
-- **Status line, output-style picker, live rename** — settings-only, or on the
-  wire with no method.
+  **Done: rename follows through.** Renaming a room now also retitles the CLI's own
+  record of the sessions it started, so a session resumed later in the terminal
+  shows the name a person chose instead of an auto-summary of its first prompt.
+  `renameSession` is a module-level function rather than a `Query` method, which is
+  what makes it possible at all — the session does not have to be running, and a
+  conversation is usually renamed long after its agents have stopped.
+
+Chorus's log stays authoritative; this is title parity, not a second source.
+Best-effort by contract: a session the user has since deleted is not a reason for
+a rename to fail.
+
+**The trap in it, found by watching the rename land nowhere.** The CLI files a
+project under its _resolved_ path — a session opened in `/tmp/x` is stored under
+`-private-tmp-x`, because `/tmp` is a symlink on macOS. Passing the path as the
+user typed it looks in a directory that does not exist and renames nothing,
+silently. `realpathSync` first. Two other things learned the same way: a
+conversation with nothing said in it has no CLI transcript to rename yet, and a
+relaunch on kept `userData` resumes rather than starts, which is why a naive
+before/after count reads zero.
+
+**Declined: the status line and the output-style picker.** Both are fields in
+`settings.json` rather than anything on the wire — `statusLine` is a command the
+TUI runs to draw its own chrome, which Chorus does not have and already answers
+with the session card and the rail; `outputStyle` is a bare `string` with **no
+enumeration anywhere in the SDK**, so a picker would have to guess the available
+styles and then write them into the user's own configuration file. Reading a
+user's config to show what it says is one thing; writing it from a settings sheet
+that cannot name the valid values is another.
