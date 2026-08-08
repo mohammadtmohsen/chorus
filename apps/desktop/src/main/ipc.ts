@@ -116,6 +116,23 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       return OK
     },
 
+    'app:setBadge': (request: { count: number }) => {
+      // macOS shows the number; other platforms show a dot or nothing, which is
+      // why a zero has to clear rather than draw.
+      app.setBadgeCount(request.count)
+      return Promise.resolve(OK)
+    },
+
+    'app:focus': () => {
+      const window = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
+      if (window !== undefined) {
+        if (window.isMinimized()) window.restore()
+        window.show()
+        window.focus()
+      }
+      return Promise.resolve(OK)
+    },
+
     'conversation:start': (request: {
       agents: ('codex' | 'claude')[]
       cwd: string

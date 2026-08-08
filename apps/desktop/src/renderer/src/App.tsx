@@ -1,13 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
 import { ChorusLogo } from './ChorusLogo.js'
 import { LogViewer } from './LogViewer.js'
 import { fail, Session, type AgentId, type SessionCarry, type SessionInfo } from './Session.js'
 import { trimCarry } from './carry.js'
+import { noticesFrom, roomsWaiting, shouldRaise, trackPending, type Notice } from './notify.js'
 import { Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
+
+/**
+ * Raises one banner, and makes clicking it land somewhere useful.
+ *
+ * Bringing the window forward is not enough on its own: a notification that
+ * drops you into whichever pane you left open is a second thing to do rather
+ * than the thing done, so it opens the conversation it was about.
+ */
+function raise(notice: Notice, title: string, t: TFunction): void {
+  try {
+    const banner = new Notification(t(`notify.${notice.kind}`, { agent: notice.actor }), {
+      body: title,
+      // One banner per conversation: a room that finishes twice while you are
+      // away should replace its own notice, not stack.
+      tag: notice.conversationId,
+    })
+    banner.onclick = () => {
+      void window.chorus.focusWindow()
+      useWorkspaceStore.getState().openSession(notice.conversationId)
+    }
+  } catch {
+    // Denied at the OS level, or unsupported. Silence is the only sane response
+    // to a failure whose only symptom would be another failure.
+  }
+}
 
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
@@ -26,6 +53,13 @@ export function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const sessionsRef = useRef<SessionInfo[]>([])
   const carries = useRef(new Map<string, SessionCarry>())
+  /**
+   * Unanswered approvals and questions per conversation, for the dock badge.
+   *
+   * A ref rather than state: nothing renders from it, and holding it outside the
+   * subscription means a language change re-subscribing cannot reset the count.
+   */
+  const pending = useRef<Readonly<Record<string, readonly string[]>>>({})
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [showingLogs, setShowingLogs] = useState(false)
@@ -53,6 +87,42 @@ export function App(): React.JSX.Element {
         useWorkspaceStore.getState().ingestEvents(events)
       }),
     []
+  )
+
+  /*
+   * Notifications and the dock badge.
+   *
+   * Beside the other global listeners, and for the same reason: this has to work
+   * for conversations whose `Session` is not mounted, which is most of them once
+   * more than four are open. The judgement about what deserves a banner lives in
+   * `notify.ts` so it can be tested; this is only the plumbing.
+   */
+  useEffect(
+    () =>
+      window.chorus.onEvents((events) => {
+        pending.current = trackPending(pending.current, events)
+        void window.chorus.setBadge({ count: roomsWaiting(pending.current) })
+
+        // Absent in a test renderer, and not worth a failed turn.
+        if (!('Notification' in window)) return
+        const panes = useWorkspaceStore.getState().panes
+        const visibleConversationIds = Object.values(panes)
+          .map((pane) => pane.activeTabId)
+          .filter((id): id is string => id !== null)
+
+        for (const notice of noticesFrom(events)) {
+          if (
+            !shouldRaise(notice, { windowFocused: document.hasFocus(), visibleConversationIds })
+          ) {
+            continue
+          }
+          const session = sessionsRef.current.find(
+            (s) => s.conversationId === notice.conversationId
+          )
+          raise(notice, session?.title ?? '', t)
+        }
+      }),
+    [t]
   )
 
   /*

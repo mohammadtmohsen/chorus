@@ -271,5 +271,10 @@
   "context": {
     "short": "{{percent}}% ctx",
     "title": "Context window {{percent}}% full — the agent compacts when it fills"
+  },
+  "notify": {
+    "waiting": "{{agent}} needs a decision",
+    "done": "{{agent}} finished",
+    "failed": "{{agent}} stopped with an error"
   }
 }
