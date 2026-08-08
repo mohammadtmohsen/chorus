@@ -34,6 +34,18 @@ export const OpenSession = z.object({
    * one failing must not cost the other its context.
    */
   sessionRefs: z.record(z.string(), z.string()),
+  /**
+   * The last event this conversation's card had been caught up to.
+   *
+   * A watermark rather than an unread *count*, so the number is derived and
+   * self-correcting: counting is done against the log, which is the thing that
+   * actually knows what happened. A stored count could disagree with the
+   * transcript underneath it and there would be no way to tell which was wrong.
+   *
+   * `.default` keeps files written before this parse, so nobody's list resets on
+   * upgrade — the same reason the version-2 envelope kept reading version 1.
+   */
+  lastSeenSeq: z.number().int().min(0).default(0),
 })
 export type OpenSession = z.infer<typeof OpenSession>
 

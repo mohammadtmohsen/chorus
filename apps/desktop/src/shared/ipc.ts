@@ -232,10 +232,24 @@ export const IPC_CONTRACT = {
           profileId: z.string(),
           cwd: z.string(),
           title: z.string(),
+          /** Counted out of the log against the saved watermark, not remembered. */
+          unread: z.number().int().min(0),
         })
       ),
       workspace: WorkspaceSnapshot.nullable(),
     }),
+  },
+
+  /**
+   * Records how far a conversation's card has been read.
+   *
+   * Renderer-driven because only it knows which tab is in front, and "read"
+   * means "was on screen". Fire-and-forget: losing one costs a card that says
+   * two unread instead of none after the next launch.
+   */
+  'conversation:markSeen': {
+    request: z.object({ conversationId: z.string(), seq: z.number().int().min(0) }),
+    response: z.object({ ok: z.literal(true) }),
   },
 
   /**
@@ -611,6 +625,7 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:removeAgent'>
   ) => Promise<IpcResponse<'conversation:removeAgent'>>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
+  readonly markSeen: (request: IpcRequest<'conversation:markSeen'>) => Promise<{ ok: true }>
   readonly restartConversation: (
     request: IpcRequest<'conversation:restart'>
   ) => Promise<IpcResponse<'conversation:restart'>>

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type { ContextUsagePush, TranscriptEvent } from '../../../shared/ipc.js'
+import { countsAsUnread } from '../../../shared/unread.js'
 import type { WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
 import {
   activateTab,
@@ -88,7 +89,12 @@ export interface WorkspaceRuntime {
 }
 
 export interface WorkspaceActions {
-  hydrate: (saved: WorkspaceSnapshot | null, conversationIds: readonly string[]) => void
+  hydrate: (
+    saved: WorkspaceSnapshot | null,
+    conversationIds: readonly string[],
+    /** What the log says was missed while the app was closed, per conversation. */
+    unreadByConversation?: Readonly<Record<string, number>>
+  ) => void
   openSession: (conversationId: string, paneId?: string) => void
   activateTab: (paneId: string, conversationId: string) => void
   focusPane: (paneId: string) => void
@@ -179,12 +185,9 @@ export function reducePulse(
     costUsd = priced.length === 0 ? null : priced.reduce((sum, t) => sum + (t.cost ?? 0), 0)
   }
 
-  if (
-    !visible &&
-    (event.type === 'agent.message.completed' ||
-      event.type === 'error.raised' ||
-      event.type === 'handoff.created')
-  ) {
+  // The list is shared with the main process, which counts the same events back
+  // out of the log at launch to restore this number.
+  if (!visible && countsAsUnread(event.type)) {
     unread += 1
   }
   return {
@@ -221,12 +224,25 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       ...EMPTY_WORKSPACE,
       hydrated: false,
       pulses: {},
-      hydrate: (saved, conversationIds) => {
+      hydrate: (saved, conversationIds, unreadByConversation = {}) => {
         const repaired = reconcileWorkspace(saved, conversationIds)
         set({
           ...repaired,
           hydrated: true,
-          pulses: Object.fromEntries(conversationIds.map((id) => [id, EMPTY_PULSE])),
+          /*
+           * Seeded with what happened while the app was closed.
+           *
+           * Every other field starts empty on purpose — they describe a live
+           * agent, and nothing is live yet. Unread is the exception because it
+           * describes the *log*, which outlived the process, and starting it at
+           * zero is what used to make every relaunch claim nothing had happened.
+           */
+          pulses: Object.fromEntries(
+            conversationIds.map((id) => [
+              id,
+              { ...EMPTY_PULSE, unread: unreadByConversation[id] ?? 0 },
+            ])
+          ),
         })
       },
       openSession: (conversationId, paneId) => {
