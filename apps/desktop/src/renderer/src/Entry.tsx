@@ -276,8 +276,32 @@ export const Entry = memo(function Entry({
                 {t(`notice.source.${message.noticeSource}`, { defaultValue: message.noticeSource })}
               </span>
             )}
-            <span className="notice-text">{message.text}</span>
-            {message.detail !== undefined && (
+            <span className="notice-text">
+              {message.folded === undefined
+                ? message.text
+                : t('notice.hooksFolded', { count: message.folded.length })}
+            </span>
+            {message.folded !== undefined && (
+              /*
+               * The count is the row; the lines are behind it.
+               *
+               * Measured on the real CLI, six talkative hooks put six durable
+               * rows between a command and its output. Only `info` reaches here
+               * — a hook that failed keeps its own row and is never counted
+               * away, which is the one case the transcript carries hooks for.
+               */
+              <details className="notice-detail">
+                <summary>{t('notice.detail')}</summary>
+                <pre>
+                  {message.folded
+                    .map((line) =>
+                      line.detail === undefined ? line.text : `${line.text}\n${line.detail}`
+                    )
+                    .join('\n')}
+                </pre>
+              </details>
+            )}
+            {message.folded === undefined && message.detail !== undefined && (
               /*
                * Folded, for the same reason commands are: a hook that prints
                * forty lines of lint output would otherwise push the command it

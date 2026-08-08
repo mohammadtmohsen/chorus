@@ -266,7 +266,9 @@
       "retry": "Retry",
       "denial": "Denied",
       "system": "Note"
-    }
+    },
+    "hooksFolded_one": "{{count}} hook spoke",
+    "hooksFolded_other": "{{count}} hooks spoke"
   },
   "tool": {
     "running": "Running",

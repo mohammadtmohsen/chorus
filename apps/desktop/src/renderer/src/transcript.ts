@@ -49,6 +49,24 @@ export interface TranscriptMessage {
    * sentence.
    */
   readonly noticeSource?: string
+  /**
+   * Notices only: the rest of a run of hook notices this row stands for.
+   *
+   * A hook fires per matching tool call, so a repo with six talkative hooks puts
+   * six durable rows between a command and its output — measured, on one Bash
+   * call, as six. Folding is what `CommandEntry` already does for a turn's
+   * commands, and it costs one row instead of N while keeping every line
+   * reachable.
+   *
+   * Only ever set for `info`. A hook that failed or was cancelled arrives as
+   * `warn`, keeps its own row, and is never folded into a count — the whole
+   * reason the transcript carries hooks at all is the one that blocked
+   * something.
+   *
+   * Absent for a lone notice, so a single hook still reads as a sentence rather
+   * than as a group of one.
+   */
+  readonly folded?: readonly { readonly text: string; readonly detail?: string }[]
 }
 
 export interface PendingApproval {
@@ -525,17 +543,54 @@ function apply(view: Mutable, event: TranscriptEvent): void {
      * gated, which is the one thing a reader needs it next to.
      */
     case 'notice.raised': {
-      const level = str('level')
+      const raw = str('level')
+      const level = raw === 'warn' || raw === 'error' ? raw : 'info'
+      const source = str('source')
       const detail = str('detail')
+      const line = { text: str('text'), ...(detail === '' ? {} : { detail }) }
+
+      /*
+       * A run of talkative hooks becomes one row.
+       *
+       * Consecutive rather than "all of this turn's", because the run *is* the
+       * tool call: the hooks for one call arrive together, and the next thing
+       * logged is the command they gated. Anything at all between them breaks
+       * the group, which is what keeps a hook from folding into one that fired
+       * before something else happened.
+       */
+      const previous = view.messages[view.messages.length - 1]
+      if (
+        source === 'hook' &&
+        level === 'info' &&
+        previous?.kind === 'notice' &&
+        previous.noticeSource === 'hook' &&
+        previous.level === 'info' &&
+        previous.actor === event.actor
+      ) {
+        view.messages[view.messages.length - 1] = {
+          ...previous,
+          folded: [
+            ...(previous.folded ?? [
+              {
+                text: previous.text,
+                ...(previous.detail === undefined ? {} : { detail: previous.detail }),
+              },
+            ]),
+            line,
+          ],
+        }
+        return
+      }
+
       view.messages.push({
         key: event.id,
         eventId: event.id,
         actor: event.actor,
         kind: 'notice',
-        text: str('text'),
+        text: line.text,
         status: 'complete',
-        noticeSource: str('source'),
-        level: level === 'warn' || level === 'error' ? level : 'info',
+        noticeSource: source,
+        level,
         ...(detail === '' ? {} : { detail }),
       })
       return

@@ -247,6 +247,79 @@ describe('reduceEvents', () => {
     })
   })
 
+  describe('a run of talkative hooks', () => {
+    const hook = (text: string, detail: string, level = 'info') =>
+      event('notice.raised', { level, source: 'hook', text, detail }, 'claude')
+
+    /*
+     * Measured on the real CLI: seven Bash hooks and one command produced six
+     * durable rows between the command and its output. Folding costs one.
+     */
+    it('folds consecutive info notices into one row that keeps every line', () => {
+      const view = reduceEvents(EMPTY_VIEW, [
+        hook('pre · PreToolUse', 'noisy-pre-1'),
+        hook('pre · PreToolUse', 'noisy-pre-2'),
+        hook('pre · PreToolUse', 'noisy-pre-3'),
+      ])
+      expect(view.messages).toHaveLength(1)
+      expect(view.messages[0]?.folded).toEqual([
+        { text: 'pre · PreToolUse', detail: 'noisy-pre-1' },
+        { text: 'pre · PreToolUse', detail: 'noisy-pre-2' },
+        { text: 'pre · PreToolUse', detail: 'noisy-pre-3' },
+      ])
+    })
+
+    /*
+     * The whole reason the transcript carries hooks is the one that blocked
+     * something. A failure is `warn` and must never be counted away.
+     */
+    it('never folds a hook that failed', () => {
+      const view = reduceEvents(EMPTY_VIEW, [
+        hook('pre · PreToolUse', 'noisy-pre-1'),
+        hook('lint · PreToolUse', 'no semicolons', 'warn'),
+        hook('pre · PreToolUse', 'noisy-pre-2'),
+      ])
+      expect(view.messages).toHaveLength(3)
+      expect(view.messages.map((m) => m.level)).toEqual(['info', 'warn', 'info'])
+      expect(view.messages.every((m) => m.folded === undefined)).toBe(true)
+    })
+
+    /* A group of one would read as a count where a sentence belongs. */
+    it('leaves a lone notice alone', () => {
+      const view = reduceEvents(EMPTY_VIEW, [hook('pre · PreToolUse', 'noisy-pre-1')])
+      expect(view.messages[0]?.folded).toBeUndefined()
+      expect(view.messages[0]?.text).toBe('pre · PreToolUse')
+    })
+
+    /* Anything between them is the command they gated, and it breaks the run. */
+    it('does not fold across something that happened in between', () => {
+      const view = reduceEvents(EMPTY_VIEW, [
+        hook('pre · PreToolUse', 'noisy-pre-1'),
+        event('command.started', { itemRef: 'c1', command: ['echo one'] }, 'claude'),
+        hook('post · PostToolUse', 'noisy-post-1'),
+      ])
+      expect(view.messages.filter((m) => m.kind === 'notice')).toHaveLength(2)
+    })
+
+    /* Two agents in one room: a run belongs to whoever's turn it happened in. */
+    it("does not fold one agent's hooks into another's", () => {
+      const view = reduceEvents(EMPTY_VIEW, [
+        hook('pre · PreToolUse', 'noisy-pre-1'),
+        event('notice.raised', { level: 'info', source: 'hook', text: 'x', detail: 'y' }, 'codex'),
+      ])
+      expect(view.messages).toHaveLength(2)
+    })
+
+    /* Folding is for hooks; a session notice is not a repetition of anything. */
+    it('does not fold notices from other sources', () => {
+      const view = reduceEvents(EMPTY_VIEW, [
+        event('notice.raised', { level: 'info', source: 'system', text: 'a' }, 'claude'),
+        event('notice.raised', { level: 'info', source: 'system', text: 'b' }, 'claude'),
+      ])
+      expect(view.messages).toHaveLength(2)
+    })
+  })
+
   it('omits an empty detail rather than rendering a blank disclosure', () => {
     const view = reduceEvents(EMPTY_VIEW, [
       event('notice.raised', { level: 'info', source: 'system', text: 'note', detail: '' }),
