@@ -11,11 +11,17 @@ import { matches, subjectOf, type PermissionProfile, type Rule } from './rules.j
  *      override them.
  *   2. Deny rules. A deny is absolute; nothing later can un-deny.
  *   3. Session grants the user made themselves.
- *   4. Allow rules from the profile.
- *   5. Otherwise ask.
+ *   4. Explicit `ask` rules, which outrank a later allow.
+ *   5. Allow rules from the profile.
+ *   6. Otherwise ask.
  *
  * Denies are evaluated before grants on purpose: "allow for session" should
  * widen what the profile permits, never reach past what it forbids.
+ *
+ * Grants sit above `ask` rules rather than below them. A rule outranking an
+ * allow is a profile qualifying its own permissiveness; a rule outranking a
+ * *grant* is the app ignoring an answer the user already gave, which is what
+ * made "allow always" mean "ask me every time".
  */
 
 export type PolicyDecision =
@@ -83,16 +89,31 @@ export function evaluate(
     return { decision: 'deny', ruleId: denial.id, reason: denial.describe }
   }
 
-  // An explicit `ask` rule outranks a later allow — it is how a profile carves
-  // an exception out of its own permissiveness.
+  /*
+   * 3. Something the user already allowed for this session.
+   *
+   * Ahead of `ask` rules, which is a deliberate change from how this read
+   * first. An ask rule outranks a later *allow* — that is how a profile carves
+   * an exception out of its own permissiveness, and it still does. But a grant
+   * is not a rule; it is the user having already answered this exact question
+   * for this exact command. Ranking the rule above the answer made "allow
+   * always" mean "ask me every time", which is not a promise the button can be
+   * allowed to break.
+   *
+   * Still below denies, so the original invariant holds: a grant widens what
+   * the profile permits and never reaches past what it forbids. And
+   * `SessionGrants.add` refuses the kinds that may never be granted ahead of
+   * time, so the step above cannot be bought out from under.
+   */
+  if (grants?.has(request) === true) {
+    return { decision: 'allow', ruleId: 'session-grant', scope: 'session' }
+  }
+
+  // 4. An explicit `ask` rule outranks a later allow — it is how a profile
+  //    carves an exception out of its own permissiveness.
   const asked = firstMatch(profile.rules, request, 'ask')
   if (asked !== undefined) {
     return { decision: 'ask', reason: asked.describe }
-  }
-
-  // 3. Something the user already allowed for this session.
-  if (grants?.has(request) === true) {
-    return { decision: 'allow', ruleId: 'session-grant', scope: 'session' }
   }
 
   // 4. The profile's own allowances.

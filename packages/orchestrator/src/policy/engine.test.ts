@@ -191,6 +191,42 @@ describe('session grants', () => {
     expect(evaluate(fromClaude, READ_ONLY, grants)).toMatchObject({ decision: 'ask' })
   })
 
+  it('answers an ask rule, so "allow always" actually sticks', () => {
+    /*
+     * The reported annoyance: a test loop that sources an env fixture asked on
+     * every single run, because the credential rule outranked the answer the
+     * user had already given. A rule outranking an *allow* is a profile
+     * qualifying itself; a rule outranking a *grant* is the app ignoring a
+     * button it offered.
+     */
+    const grants = new SessionGrants()
+    const request = command('set -a && . ./.env.e2e && set +a && npx playwright test')
+
+    expect(evaluate(request, TRUSTED, grants)).toMatchObject({ decision: 'ask' })
+    grants.add(request)
+    expect(evaluate(request, TRUSTED, grants)).toMatchObject({
+      decision: 'allow',
+      ruleId: 'session-grant',
+    })
+  })
+
+  it('does not let one grant answer a different credential command', () => {
+    const grants = new SessionGrants()
+    grants.add(command('cat .env'))
+    expect(evaluate(command('cat /home/me/.ssh/id_rsa'), TRUSTED, grants)).toMatchObject({
+      decision: 'ask',
+    })
+  })
+
+  it('cannot be granted for an outward-facing action, which is checked first', () => {
+    // Step 1 runs before grants, and `add` refuses these outright — so moving
+    // grants above ask rules cannot buy out the one kind that may never be
+    // auto-decided.
+    const grants = new SessionGrants()
+    grants.add(mcp())
+    expect(evaluate(mcp(), TRUSTED, grants)).toMatchObject({ decision: 'ask' })
+  })
+
   it('never overrides a deny', () => {
     // A grant should widen what the profile permits, never reach past what it
     // forbids — which is why denies are evaluated first.
