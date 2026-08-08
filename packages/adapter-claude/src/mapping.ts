@@ -945,13 +945,40 @@ export function toClaudeUserInputResult(
   }
 }
 
+/**
+ * What the CLI itself says about a permission request.
+ *
+ * Every field is optional and every one is better than what this file can
+ * reconstruct: `title` is the sentence the bridge already rendered, and
+ * `blockedPath` names a path that appears nowhere in the tool's arguments —
+ * a Bash command reaching outside the allowed directories has it only here.
+ */
+export interface PromptDetail {
+  readonly title?: string
+  readonly description?: string
+  readonly blockedPath?: string
+  readonly decisionReason?: string
+}
+
+/** Drops what the provider did not answer, so an absent field stays absent. */
+function stated(prompt: PromptDetail | undefined): PromptDetail {
+  const kept: Record<string, string> = {}
+  for (const key of ['title', 'description', 'blockedPath', 'decisionReason'] as const) {
+    const value = prompt?.[key]
+    if (typeof value === 'string' && value !== '') kept[key] = value
+  }
+  return kept
+}
+
 export function mapToolPermission(
   toolName: string,
   input: Record<string, unknown>,
   ctx: MapContext,
-  id: ApprovalId
+  id: ApprovalId,
+  prompt?: PromptDetail
 ): ApprovalRequest {
   const expiresAt = ctx.now + ctx.approvalTtlMs
+  const said = stated(prompt)
 
   const mcp = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(toolName)
   if (mcp !== null) {
@@ -961,6 +988,7 @@ export function mapToolPermission(
       agentId: AGENT,
       kind: 'mcpToolCall',
       expiresAt,
+      ...said,
       serverName: mcp[1] ?? 'unknown',
       toolName: mcp[2] ?? toolName,
       ...(target === undefined ? {} : { target }),
@@ -975,6 +1003,7 @@ export function mapToolPermission(
       agentId: AGENT,
       kind: 'command',
       expiresAt,
+      ...said,
       command: typeof command === 'string' ? [command] : [],
       cwd: typeof input['cwd'] === 'string' ? input['cwd'] : '',
       withNetwork: false,
@@ -988,6 +1017,7 @@ export function mapToolPermission(
       agentId: AGENT,
       kind: 'fileChange',
       expiresAt,
+      ...said,
       files: typeof path === 'string' ? [{ path, patch: describePatch(input) }] : [],
     }
   }
@@ -1004,6 +1034,7 @@ export function mapToolPermission(
     agentId: AGENT,
     kind: 'permissionGrant',
     expiresAt,
+    ...said,
     toolName,
     cwd: typeof input['cwd'] === 'string' ? input['cwd'] : '',
     requested: { network: toolName === 'WebFetch' || toolName === 'WebSearch' },

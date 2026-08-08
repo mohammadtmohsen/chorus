@@ -102,10 +102,28 @@ export interface ClaudeAdapterOptions {
   readonly createQuery?: (options: Options, prompt: AsyncIterable<unknown>) => Query
 }
 
+/**
+ * The third argument to `canUseTool`, which this adapter used to ignore.
+ *
+ * Typed here rather than imported: the SDK's own type is an inline object
+ * literal on the `CanUseTool` alias with no exported name, and the alternative
+ * is a structural any at every call site.
+ */
+type CanUseToolOptions = Parameters<NonNullable<Options['canUseTool']>>[2]
+
 interface PendingApproval {
   resolve: (result: PermissionResult) => void
   toolName: string
   input: Record<string, unknown>
+  /**
+   * The provider's own "you will not be asked again" rules.
+   *
+   * Held rather than mapped because they are opaque to Chorus: they are the
+   * CLI's rule objects, and the only correct thing to do with them is hand the
+   * whole set back as `updatedPermissions` when the user says always. Reading
+   * or rewriting them would be inventing policy the CLI did not offer.
+   */
+  suggestions?: unknown[]
 }
 
 export class ClaudeSession implements AgentSession {
@@ -199,14 +217,38 @@ export class ClaudeSession implements AgentSession {
     if (pending === undefined) return Promise.resolve()
     this.pendingApprovals.delete(id)
 
-    pending.resolve(
-      decision.outcome === 'allow'
-        ? { behavior: 'allow', updatedInput: decision.updatedInput ?? pending.input }
-        : {
-            behavior: 'deny',
-            message: decision.outcome === 'deny' ? decision.message : 'Cancelled',
-          }
-    )
+    if (decision.outcome === 'allow') {
+      /*
+       * "Always" answered in the provider's own terms.
+       *
+       * `suggestions` is the CLI's set of rules that would stop it asking again,
+       * and handing the whole set back is what the SDK asks for. Chorus keeps
+       * its own session grant either way — the two answer different questions:
+       * the grant is what *Chorus* will stop asking about, and these are what
+       * the *CLI* will. Sending only one of them left half the system still
+       * prompting.
+       *
+       * Only on `session`. "Just this once" must not write a rule, which is the
+       * entire difference between the two buttons.
+       */
+      const always = decision.scope === 'session' ? pending.suggestions : undefined
+      pending.resolve({
+        behavior: 'allow',
+        updatedInput: decision.updatedInput ?? pending.input,
+        ...(always === undefined || always.length === 0
+          ? {}
+          : { updatedPermissions: always as never }),
+        // So the CLI's own record of what happened matches what happened.
+        decisionClassification: decision.scope === 'session' ? 'user_permanent' : 'user_temporary',
+      })
+      return Promise.resolve()
+    }
+
+    pending.resolve({
+      behavior: 'deny',
+      message: decision.outcome === 'deny' ? decision.message : 'Cancelled',
+      decisionClassification: 'user_reject',
+    })
     return Promise.resolve()
   }
 
@@ -291,7 +333,11 @@ export class ClaudeSession implements AgentSession {
    * to reply. The question branch returns early and the approval path below is
    * untouched, which is what keeps this from being a change to every tool.
    */
-  handlePermission(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
+  handlePermission(
+    toolName: string,
+    input: Record<string, unknown>,
+    options?: CanUseToolOptions
+  ): Promise<PermissionResult> {
     const ctx = { seq: this.seq + 1, now: this.now(), approvalTtlMs: this.approvalTtlMs }
 
     const questionId = newUserInputId()
@@ -310,10 +356,45 @@ export class ClaudeSession implements AgentSession {
     }
 
     const id = newApprovalId()
-    const request = mapToolPermission(toolName, input, ctx, id)
+    /*
+     * The provider's own words for what it is about to do.
+     *
+     * `title` is the sentence the bridge already rendered, and `blockedPath`
+     * names a path that appears nowhere in the tool's arguments — a Bash
+     * command reaching outside the allowed directories has it only here. Both
+     * were being dropped along with the rest of the third parameter.
+     */
+    const request = mapToolPermission(toolName, input, ctx, id, {
+      ...(options?.title === undefined ? {} : { title: options.title }),
+      ...(options?.description === undefined ? {} : { description: options.description }),
+      ...(options?.blockedPath === undefined ? {} : { blockedPath: options.blockedPath }),
+      ...(options?.decisionReason === undefined ? {} : { decisionReason: options.decisionReason }),
+    })
 
     return new Promise<PermissionResult>((resolve) => {
-      this.pendingApprovals.set(id, { resolve, toolName, input })
+      const pending: PendingApproval = {
+        resolve,
+        toolName,
+        input,
+        ...(options?.suggestions === undefined ? {} : { suggestions: options.suggestions }),
+      }
+      this.pendingApprovals.set(id, pending)
+
+      /*
+       * The CLI can give up on a request it is still waiting for — a turn
+       * abandoned, a session torn down. Without this the card stayed on screen
+       * asking about work nobody is doing any more, and answering it resolved a
+       * promise the CLI had stopped listening to.
+       */
+      options?.signal.addEventListener(
+        'abort',
+        () => {
+          if (!this.pendingApprovals.delete(id)) return
+          resolve({ behavior: 'deny', message: 'The request was withdrawn.' })
+        },
+        { once: true }
+      )
+
       this.emit({
         agentId: 'claude',
         seq: ++this.seq,
@@ -760,7 +841,7 @@ export class ClaudeAdapter implements AgentAdapter {
         ? {}
         : { pathToClaudeCodeExecutable: this.executablePath }),
       ...(resume === undefined ? {} : { resume }),
-      canUseTool: (toolName, input) => {
+      canUseTool: (toolName, input, options) => {
         const session = holder.session
         if (session === undefined) {
           // Fail closed: a permission we cannot route is a permission we deny.
@@ -769,7 +850,7 @@ export class ClaudeAdapter implements AgentAdapter {
             message: 'Session not ready',
           })
         }
-        return session.handlePermission(toolName, input)
+        return session.handlePermission(toolName, input, options)
       },
     }
 
