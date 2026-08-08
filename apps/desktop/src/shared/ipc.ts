@@ -294,10 +294,27 @@ export const IPC_CONTRACT = {
       agents: z.array(
         z.object({
           agentId: z.enum(['codex', 'claude']),
-          models: z.array(z.object({ value: z.string(), label: z.string() })),
+          models: z.array(
+            z.object({
+              value: z.string(),
+              label: z.string(),
+              /** Empty when the model has no effort control. */
+              effortLevels: z.array(z.string()).default([]),
+            })
+          ),
         })
       ),
     }),
+  },
+
+  /** Sets how hard one agent's model should think, for the rest of the conversation. */
+  'conversation:setEffort': {
+    request: z.object({
+      conversationId: z.string(),
+      agentId: z.enum(['codex', 'claude']),
+      level: z.string().min(1),
+    }),
+    response: z.object({ ok: z.literal(true) }),
   },
 
   /** Switches one agent's model for the rest of the conversation. */
@@ -701,6 +718,7 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:models'>
   ) => Promise<IpcResponse<'conversation:models'>>
   readonly setModel: (request: IpcRequest<'conversation:setModel'>) => Promise<{ ok: true }>
+  readonly setEffort: (request: IpcRequest<'conversation:setEffort'>) => Promise<{ ok: true }>
   readonly reopenConversation: (
     request: IpcRequest<'conversation:reopen'>
   ) => Promise<IpcResponse<'conversation:reopen'>>

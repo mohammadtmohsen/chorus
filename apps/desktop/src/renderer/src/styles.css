@@ -1218,6 +1218,26 @@ body {
   min-width: 0;
 }
 
+.workspace-session-model {
+  display: flex;
+  gap: 0.4ch;
+  min-width: 0;
+}
+
+/*
+ * Loud enough to notice, quiet enough not to nag.
+ *
+ * The list failing is a bug worth seeing — it used to render as nothing, which
+ * is indistinguishable from a provider that has no models and from a dev build
+ * that predates the feature.
+ */
+.workspace-session-model-problem {
+  color: var(--alert);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: help;
+}
+
 .workspace-session-model select {
   max-width: 16ch;
   padding: 0.1rem 0.2rem;

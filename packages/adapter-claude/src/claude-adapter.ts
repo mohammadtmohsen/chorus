@@ -189,6 +189,30 @@ export class ClaudeSession implements AgentSession {
     return this.q.setModel(model)
   }
 
+  /**
+   * Reasoning effort, through the flag-settings layer.
+   *
+   * There is no `setEffort`; the CLI takes it as a setting override, and only in
+   * streaming input mode — which is the mode this adapter already runs in, and
+   * the same reason `setModel` and `interrupt` are available at all.
+   *
+   * `max` is session-scoped by the CLI's own contract: it applies for the rest
+   * of the session and is never written to a settings file. That is exactly
+   * what a per-conversation control should do, so nothing here has to arrange
+   * it.
+   */
+  async setEffort(level: string): Promise<void> {
+    const apply = (
+      this.q as unknown as {
+        applyFlagSettings?: (settings: Record<string, unknown>) => Promise<void>
+      }
+    ).applyFlagSettings
+    // Feature-detected like the usage reads: an older CLI simply has no such
+    // control, and a session must not fail because a preference could not apply.
+    if (typeof apply !== 'function') return
+    await apply.call(this.q, { effortLevel: level })
+  }
+
   close(): Promise<void> {
     if (this.closed) return Promise.resolve()
     this.closed = true
@@ -436,13 +460,30 @@ export class ClaudeSession implements AgentSession {
       const models = await ask.call(this.q)
       if (!Array.isArray(models)) return []
       return models.flatMap((entry): ModelChoice[] => {
-        const row = entry as { value?: unknown; displayName?: unknown }
+        const row = entry as {
+          value?: unknown
+          displayName?: unknown
+          supportsEffort?: unknown
+          supportedEffortLevels?: unknown
+        }
         if (typeof row.value !== 'string' || row.value === '') return []
         const label =
           typeof row.displayName === 'string' && row.displayName !== ''
             ? row.displayName
             : row.value
-        return [{ value: row.value, label }]
+        /*
+         * Taken from the model rather than assumed. Every model this CLI
+         * reports today lists the same five, but the flag and the list are
+         * separate fields for a reason — and offering `max` on a model that
+         * silently downgrades it would be a control that lies.
+         */
+        const effortLevels =
+          row.supportsEffort === true && Array.isArray(row.supportedEffortLevels)
+            ? row.supportedEffortLevels.filter(
+                (level): level is string => typeof level === 'string'
+              )
+            : []
+        return [{ value: row.value, label, ...(effortLevels.length === 0 ? {} : { effortLevels }) }]
       })
     } catch {
       return []

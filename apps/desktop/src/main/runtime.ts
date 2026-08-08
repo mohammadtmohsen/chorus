@@ -931,6 +931,14 @@ export class ChorusRuntime {
     await participant.session.setModel(model)
   }
 
+  /** How hard the model should think. Not logged, for the reason `setModel` is not. */
+  async setEffort(conversationId: string, agentId: AgentId, level: string): Promise<void> {
+    const conversation = this.require(conversationId)
+    const participant = conversation.participants.get(agentId)
+    if (participant === undefined) throw new Error(`${agentId} is not in this conversation.`)
+    await participant.session.setEffort(level)
+  }
+
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {
     return [...this.active.values()].map((c) => ({
       conversationId: c.conversationId,
