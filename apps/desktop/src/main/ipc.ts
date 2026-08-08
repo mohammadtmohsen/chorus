@@ -186,6 +186,10 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         })),
       }),
 
+    'conversation:commands': async (request: { conversationId: string }) => ({
+      commands: await runtime.listCommands(request.conversationId),
+    }),
+
     'conversation:markSeen': (request: { conversationId: string; seq: number }) => {
       runtime.markSeen(request.conversationId, request.seq)
       return Promise.resolve(OK)

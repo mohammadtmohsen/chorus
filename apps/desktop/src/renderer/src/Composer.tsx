@@ -6,8 +6,11 @@ import { Attachments, type Attachment } from './Attachments.js'
 import { formatContextBlock, withEditorContext } from './editor-context.js'
 import {
   applyMention,
+  commandOptions,
+  findCommandQuery,
   findMentionQuery,
   mentionOptions,
+  type CommandInfo,
   type MentionQuery,
 } from './mention-menu.js'
 import { withQuote } from './quote.js'
@@ -87,6 +90,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const [attached, setAttached] = useState<Attachment[]>([...(props.initial?.attached ?? [])])
     const [ideIncluded, setIncluded] = useState(props.initial?.ideIncluded ?? true)
     const [mention, setMention] = useState<MentionQuery | null>(null)
+    /**
+     * What this conversation accepts, asked once and kept.
+     *
+     * Per conversation because the list is the project's: its own
+     * `.claude/commands`, its skills, its plugins. Fetched on mount rather than
+     * when the menu opens, so the first `/` shows a list instead of a pause.
+     */
+    const [commands, setCommands] = useState<CommandInfo[]>([])
     const [highlighted, setHighlighted] = useState(0)
     const input = useRef<HTMLTextAreaElement | null>(null)
 
@@ -107,6 +118,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       el.style.height = `${String(el.scrollHeight)}px`
     }, [draft])
 
+    useEffect(() => {
+      let live = true
+      window.chorus
+        .listCommands({ conversationId })
+        .then((result) => {
+          if (live) setCommands(result.commands)
+        })
+        .catch(() => {
+          // No commands is a state this renders as no menu, not an error. A CLI
+          // too old to be asked simply has none.
+        })
+      return () => {
+        live = false
+      }
+    }, [conversationId])
+
     /** Identifies one mention being typed, so a refresh can tell it from the next. */
     const queryKey = useRef<string | null>(null)
     /** The query Escape dismissed; it stays shut until you type a different one. */
@@ -123,8 +150,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const refreshMention = useCallback(() => {
       const el = input.current
       if (el === null) return
-      const found = findMentionQuery(el.value, el.selectionStart)
-      const key = found === null ? null : `${String(found.start)}:${found.query}`
+      /*
+       * A command first, because its rule is the narrow one.
+       *
+       * `/` only counts leading the message, so at most one of these can match
+       * and the order is really about which question to ask first. A mention
+       * can appear anywhere, including after a command's arguments.
+       */
+      const found =
+        findCommandQuery(el.value, el.selectionStart) ??
+        findMentionQuery(el.value, el.selectionStart)
+      // The trigger is part of the identity: `/x` and `@x` at the same offset
+      // are different menus, and Escape on one must not silence the other.
+      const key = found === null ? null : `${found.trigger}${String(found.start)}:${found.query}`
 
       if (key !== queryKey.current) {
         queryKey.current = key
@@ -138,7 +176,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       setMention(found)
     }, [])
 
-    const options = mention === null ? [] : mentionOptions(participants as never, mention.query)
+    const options =
+      mention === null
+        ? []
+        : mention.trigger === '/'
+          ? commandOptions(commands, mention.query)
+          : mentionOptions(participants as never, mention.query)
     const menuOpen = options.length > 0
 
     const choose = useCallback(
@@ -332,7 +375,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                       <span key={agent} className={`voice-dot voice--${agent}`} />
                     ))}
                   </span>
-                  <span className="mention-name">@{option.label}</span>
+                  <span className="mention-name">
+                    {mention?.trigger ?? '@'}
+                    {option.label}
+                  </span>
                   <span className="mention-detail">{option.detail}</span>
                 </button>
               </li>

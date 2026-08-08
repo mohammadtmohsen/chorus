@@ -1932,6 +1932,62 @@ export const specs = [
   },
 
   {
+    name: 'typing a slash offers the commands this project actually has',
+    /*
+     * The list is the project's, not the app's: its own `.claude/commands`, its
+     * skills, its plugins. So this asserts against whatever the CLI reports for
+     * the directory the session opened in, rather than a name baked in here —
+     * a fixture would pass on a machine where the feature is broken.
+     *
+     * The rule that matters is the one that differs from `@`: a slash is a path
+     * separator far more often than a command, so the menu must stay shut
+     * inside `src/foo` and open only when a command leads the message.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        await app.until(`document.querySelector('.composer textarea') !== null`)
+
+        await draft(app, 'look at src/foo')
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelector('.mention-menu') === null`)) === true,
+          'a path does not open the menu'
+        )
+
+        await draft(app, '/')
+        await app.until(`document.querySelector('.mention-menu') !== null`, {
+          timeout: 60_000,
+          label: 'a leading slash opened the menu',
+        })
+        const offered = await app.evaluate(
+          `Array.from(document.querySelectorAll('.mention-menu .mention-name')).map(n => n.textContent)`
+        )
+        assert(offered.length > 0, `it offered ${String(offered.length)} commands`)
+        assert(
+          offered.every((name) => name.startsWith('/')),
+          `and each is written as a command, e.g. ${String(offered[0])}`
+        )
+
+        // Narrowing has to reach a compound name by its tail, which is how half
+        // of these are actually remembered.
+        await draft(app, '/re')
+        await app.settle()
+        const narrowed = await app.evaluate(
+          `Array.from(document.querySelectorAll('.mention-menu .mention-name')).map(n => n.textContent)`
+        )
+        assert(
+          narrowed.length > 0 && narrowed.length <= offered.length,
+          `typing narrows it, ${String(offered.length)} → ${String(narrowed.length)}`
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
     name: 'a card still says what it missed after a relaunch',
     /*
      * Unread lived only in memory, so every launch claimed nothing had happened

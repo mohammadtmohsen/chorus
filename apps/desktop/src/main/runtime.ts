@@ -8,6 +8,7 @@ import type {
   ApprovalDecision,
   ModelChoice,
   SessionOpts,
+  SlashCommandInfo,
   UsageWindow,
   UserInputResponse,
 } from '@chorus/agent-protocol'
@@ -88,6 +89,8 @@ interface Participant {
    * ordinary again.
    */
   catchupBudget?: number
+  /** The provider's command list, asked for once per session. */
+  commands?: readonly SlashCommandInfo[]
 }
 
 interface ActiveConversation {
@@ -898,6 +901,38 @@ export class ChorusRuntime {
       title: conversation.title,
       unread: 0,
     }
+  }
+
+  /**
+   * The commands a conversation's agents accept.
+   *
+   * Per conversation, unlike models: the list is built from the project's own
+   * `.claude/commands`, its skills and its plugins, so two rooms in two
+   * repositories offer different things. Cached per participant because asking
+   * is a control request and the menu asks every time it opens.
+   */
+  async listCommands(conversationId: string): Promise<SlashCommandInfo[]> {
+    const conversation = this.require(conversationId)
+    const perAgent = await Promise.all(
+      [...conversation.participants.values()].map(async (participant) => {
+        participant.commands ??= await participant.session.supportedCommands()
+        return participant.commands
+      })
+    )
+
+    /*
+     * Merged by name across agents, first one wins.
+     *
+     * Two agents in a room usually report overlapping sets, and a menu that
+     * lists `/compact` twice because two CLIs both have it is a menu that looks
+     * broken. Which agent runs it is decided by the routing that already
+     * governs every other message.
+     */
+    const byName = new Map<string, SlashCommandInfo>()
+    for (const command of perAgent.flat()) {
+      if (!byName.has(command.name)) byName.set(command.name, command)
+    }
+    return [...byName.values()]
   }
 
   /** What the settings sheet offers, from whichever session last answered. */

@@ -35,6 +35,20 @@ export interface SandboxPolicy {
  */
 export type ProviderPermissionMode = 'default' | 'acceptEdits'
 
+/**
+ * One command a session accepts.
+ *
+ * Deliberately not a promise about *how* it runs. The CLI knows which of its
+ * commands a non-terminal client can invoke and does not say so here — but what
+ * `supportedCommands` returns is already the useful set: the project's own
+ * commands, its skills, and the built-ins that take text.
+ */
+export interface SlashCommandInfo {
+  readonly name: string
+  readonly description: string
+  readonly argumentHint: string
+}
+
 /** One entry in a model picker: what to send, and what to show. */
 export interface ModelChoice {
   readonly value: string
@@ -91,6 +105,14 @@ export interface AgentSession {
    * offering a hardcoded one that may be wrong.
    */
   supportedModels?(): Promise<readonly ModelChoice[]>
+  /**
+   * The commands this session accepts, as the provider reports them.
+   *
+   * Per session rather than per machine: the list is built from the project's
+   * own `.claude/commands`, its skills and its plugins, so two conversations in
+   * two repositories offer different things.
+   */
+  supportedCommands?(): Promise<readonly SlashCommandInfo[]>
   /**
    * How hard the model should think, for providers that expose the control.
    *
