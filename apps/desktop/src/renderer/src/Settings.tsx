@@ -30,18 +30,45 @@ function McpServers(): React.JSX.Element | null {
   const [servers, setServers] = useState<IpcResponse<'agents:mcp'>['servers']>([])
 
   useEffect(() => {
+    /*
+     * Asked more than once, because the first answer is usually empty.
+     *
+     * MCP servers connect after a session opens, and this sheet is often opened
+     * a moment later — so a single fetch on mount returned nothing and the panel
+     * rendered nothing, permanently. Which is precisely the silence the panel
+     * exists to end, arriving from the panel itself. A screenshot of the running
+     * app is what caught it.
+     *
+     * Three tries over about eight seconds, stopping at the first that answers.
+     * A machine with no servers configured never answers, and that is a normal
+     * outcome rather than something to retry forever.
+     */
     let live = true
-    window.chorus
-      .mcpServers()
-      .then((result) => {
-        if (live) setServers(result.servers)
-      })
-      .catch(() => {
-        // No session to ask, or a CLI too old. Either way there is nothing to
-        // report, which this renders as nothing at all.
-      })
+    let attempt = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ask = (): void => {
+      window.chorus
+        .mcpServers()
+        .then((result) => {
+          if (!live) return
+          if (result.servers.length > 0) {
+            setServers(result.servers)
+            return
+          }
+          attempt += 1
+          if (attempt < 3) timer = setTimeout(ask, attempt * 3_000)
+        })
+        .catch(() => {
+          // No session to ask, or a CLI too old. Nothing to report, which this
+          // renders as nothing at all.
+        })
+    }
+    ask()
     return () => {
       live = false
+      // A closed sheet asks nothing more; without this the last retry still
+      // fires, one IPC call after nobody is listening.
+      if (timer !== undefined) clearTimeout(timer)
     }
   }, [])
 
@@ -117,7 +144,16 @@ function DefaultModel(): React.JSX.Element | null {
 
   if (models.length === 0) return null
 
-  const levels = models.find((entry) => entry.value === model)?.effortLevels ?? []
+  /*
+   * The chosen model's levels, or the first row's when nothing is chosen.
+   *
+   * Nothing chosen means the provider's default is in force, and the first row
+   * *is* that default — the CLI calls it "Default (recommended)". Matching on
+   * the empty string found no row, so the effort control did not render until a
+   * model had been picked, which made it look absent rather than defaulted.
+   */
+  const levels =
+    (model === '' ? models[0] : models.find((entry) => entry.value === model))?.effortLevels ?? []
 
   return (
     <fieldset className="settings-models">

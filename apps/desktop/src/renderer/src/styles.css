@@ -1289,7 +1289,11 @@ body {
  * loud: pressed is tinted, unpressed reads like the other chips on the card.
  */
 .workspace-session-plan {
-  flex: none;
+  /* A chip beside the other chips, not a button spanning the card. The card
+     body is a grid, so this is `justify-self`: a grid item stretches across its
+     column unless told otherwise, and `align-self` would only move it
+     vertically. */
+  justify-self: start;
   padding: 0.1rem 0.45rem;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -2182,13 +2186,23 @@ body {
   border-radius: var(--radius);
   background: var(--raised);
   box-shadow: 0 12px 32px color-mix(in srgb, var(--sunken) 70%, transparent);
+  /*
+   * Bounded, because it stopped being a list of two.
+   *
+   * This was sized for the cast: two agents and a short label each. Fifty
+   * commands with a paragraph of description apiece grew it past the top of the
+   * pane and off the window — the menu was taller than the transcript it was
+   * covering. A screenshot of the running app is the only thing that showed it.
+   */
+  max-height: min(40vh, 22rem);
+  overflow-y: auto;
   max-height: 40vh;
   overflow-y: auto;
 }
 
 .mention-option {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: calc(var(--step) * 2.5);
   width: 100%;
   padding: calc(var(--step) * 2) calc(var(--step) * 2.5);
@@ -2202,6 +2216,18 @@ body {
   cursor: pointer;
 }
 
+/*
+ * One line each, however much the provider had to say.
+ *
+ * A command name must not wrap — `/frontend-e2e-qa` broke over three lines and read
+ * as three commands — and a description has to be clipped, because these run to
+ * whole paragraphs and a row's height would otherwise be set by its prose.
+ */
+.mention-name {
+  flex: none;
+  white-space: nowrap;
+}
+
 .mention-option[data-on='true'] {
   background: color-mix(in srgb, var(--bone) 8%, transparent);
 }
@@ -2213,9 +2239,15 @@ body {
 }
 
 .mention-detail {
+  flex: 1 1 auto;
+  min-width: 0;
   margin-left: auto;
+  overflow: hidden;
   color: var(--faint);
   font-size: 11px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The one filled control in the app: it is the thing you press. */
