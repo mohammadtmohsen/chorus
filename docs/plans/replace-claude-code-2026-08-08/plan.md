@@ -111,13 +111,13 @@ renderer has no filesystem access. `mentionOptions` becomes one provider among
 several rather than a function hardcoded to agent ids, and `MentionOption.agents`
 stops being required, since a file has none.
 
-**1d. Images as content blocks.** Today a pasted screenshot is stashed to disk
-and its _path_ is appended to the message text; the agent has to `Read` it back.
-`AgentInput.attachments` has existed in the protocol since the beginning and is
-never populated or read. Threading it properly touches six places — protocol,
-IPC schema, `Session.send`, `runtime.send` and its `user.message` payload,
-`ConversationService.deliver`, and both adapters — and `withCatchup` wraps
-messages as strings, so it needs extending too.
+**1d. Images as content blocks — withdrawn.** The intent was to thread
+`AgentInput.attachments` so a pasted screenshot crosses as an image block rather
+than a path. Reading the design it would replace changed the answer: the log
+stays text, `withCatchup` composes a _string_ for the other agent, and both
+providers receive the same message — all three break, against a gain of one
+`Read` call saved for Claude on a filesystem deliberately left unscoped so an
+agent can open a file the way a person would. See STATUS.
 
 **1e. History and drafts.** Up-arrow recall over sent messages, and drafts that
 survive a quit. There is no SDK surface for prompt history — the CLI's
