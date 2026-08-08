@@ -312,51 +312,6 @@ export const IPC_CONTRACT = {
   },
 
   /**
-   * What each agent in a conversation will accept as a model.
-   *
-   * Asked of the running CLI rather than compiled in, so a provider that
-   * self-updates cannot leave Chorus offering a list that no longer exists.
-   */
-  'conversation:models': {
-    request: z.object({ conversationId: z.string() }),
-    response: z.object({
-      agents: z.array(
-        z.object({
-          agentId: z.enum(['codex', 'claude']),
-          models: z.array(
-            z.object({
-              value: z.string(),
-              label: z.string(),
-              /** Empty when the model has no effort control. */
-              effortLevels: z.array(z.string()).default([]),
-            })
-          ),
-        })
-      ),
-    }),
-  },
-
-  /** Sets how hard one agent's model should think, for the rest of the conversation. */
-  'conversation:setEffort': {
-    request: z.object({
-      conversationId: z.string(),
-      agentId: z.enum(['codex', 'claude']),
-      level: z.string().min(1),
-    }),
-    response: z.object({ ok: z.literal(true) }),
-  },
-
-  /** Switches one agent's model for the rest of the conversation. */
-  'conversation:setModel': {
-    request: z.object({
-      conversationId: z.string(),
-      agentId: z.enum(['codex', 'claude']),
-      model: z.string().min(1),
-    }),
-    response: z.object({ ok: z.literal(true) }),
-  },
-
-  /**
    * Records how far a conversation's card has been read.
    *
    * Renderer-driven because only it knows which tab is in front, and "read"
@@ -743,11 +698,6 @@ export interface ChorusApi {
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly markSeen: (request: IpcRequest<'conversation:markSeen'>) => Promise<{ ok: true }>
   readonly listConversations: () => Promise<IpcResponse<'conversation:list'>>
-  readonly listModels: (
-    request: IpcRequest<'conversation:models'>
-  ) => Promise<IpcResponse<'conversation:models'>>
-  readonly setModel: (request: IpcRequest<'conversation:setModel'>) => Promise<{ ok: true }>
-  readonly setEffort: (request: IpcRequest<'conversation:setEffort'>) => Promise<{ ok: true }>
   readonly reopenConversation: (
     request: IpcRequest<'conversation:reopen'>
   ) => Promise<IpcResponse<'conversation:reopen'>>

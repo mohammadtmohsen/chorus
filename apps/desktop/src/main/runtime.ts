@@ -88,15 +88,6 @@ interface Participant {
    * ordinary again.
    */
   catchupBudget?: number
-  /**
-   * The provider's model list, asked for once.
-   *
-   * Every card in the sidebar wants it, and asking is a control request to a
-   * live CLI. The list does not change while a session runs, so paying for it
-   * once per participant is the difference between one round-trip and one per
-   * card per render.
-   */
-  models?: readonly ModelChoice[]
 }
 
 interface ActiveConversation {
@@ -909,55 +900,12 @@ export class ChorusRuntime {
     }
   }
 
-  /**
-   * What each agent in a conversation will accept as a model.
-   *
-   * Asked of the running session rather than compiled in: the list belongs to
-   * the installed CLI, which self-updates. An agent that cannot be asked returns
-   * an empty list, and the UI offers no choice rather than a wrong one.
-   */
-  async listModels(conversationId: string): Promise<{ agentId: AgentId; models: ModelChoice[] }[]> {
-    const conversation = this.require(conversationId)
-    return Promise.all(
-      [...conversation.participants.values()].map(async (participant) => {
-        participant.models ??= await participant.session.supportedModels()
-        if (participant.models.length > 0) {
-          this.knownModelsByAgent.set(participant.agentId, participant.models)
-        }
-        return { agentId: participant.agentId, models: [...participant.models] }
-      })
-    )
-  }
-
-  /**
-   * Switches one agent's model mid-conversation.
-   *
-   * Not written to the log. Which model answered is a property of the provider
-   * session rather than of the conversation, and the session already records its
-   * model on `session.started` — a second record that could disagree with it
-   * would be worse than none.
-   */
-  async setModel(conversationId: string, agentId: AgentId, model: string): Promise<void> {
-    const conversation = this.require(conversationId)
-    const participant = conversation.participants.get(agentId)
-    if (participant === undefined) throw new Error(`${agentId} is not in this conversation.`)
-    await participant.session.setModel(model)
-  }
-
   /** What the settings sheet offers, from whichever session last answered. */
   knownModels(): { agentId: AgentId; models: ModelChoice[] }[] {
     return [...this.knownModelsByAgent].map(([agentId, models]) => ({
       agentId,
       models: [...models],
     }))
-  }
-
-  /** How hard the model should think. Not logged, for the reason `setModel` is not. */
-  async setEffort(conversationId: string, agentId: AgentId, level: string): Promise<void> {
-    const conversation = this.require(conversationId)
-    const participant = conversation.participants.get(agentId)
-    if (participant === undefined) throw new Error(`${agentId} is not in this conversation.`)
-    await participant.session.setEffort(level)
   }
 
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {
@@ -1289,6 +1237,24 @@ export class ChorusRuntime {
      * construction argument. Failing to apply a preference must not cost the
      * session, so it is awaited but not allowed to throw.
      */
+    /*
+     * Asked once, here, rather than when something wants to draw a picker.
+     *
+     * The settings sheet is the only place a model is chosen now, and it can be
+     * opened with nothing running — so the list has to be collected as a side
+     * effect of having a session at all, not of rendering a control. One control
+     * request per participant, and the answer does not change under a running
+     * CLI.
+     */
+    void session
+      .supportedModels()
+      .then((models) => {
+        if (models.length > 0) this.knownModelsByAgent.set(agentId, models)
+      })
+      .catch(() => {
+        // A CLI that cannot be asked simply offers no choice in the sheet.
+      })
+
     const effort = readSettings(this.userDataPath).effortLevel
     if (effort !== '') {
       await session.setEffort(effort).catch((error: unknown) => {

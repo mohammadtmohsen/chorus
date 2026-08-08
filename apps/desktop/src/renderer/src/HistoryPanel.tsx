@@ -99,6 +99,10 @@ export function HistoryPanel(props: {
                 <button
                   type="button"
                   className="history-row"
+                  // Named the way sidebar rows are, so a row can be found by the
+                  // conversation it is for rather than by its position in a list
+                  // whose order is "most recent" and therefore moves.
+                  data-history-conversation={conversation.conversationId}
                   disabled={busy !== null}
                   data-open={conversation.open ? 'true' : undefined}
                   onClick={() => {

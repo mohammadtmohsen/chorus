@@ -1915,4 +1915,126 @@ export const specs = [
       }
     },
   },
+
+  {
+    name: 'a card still says what it missed after a relaunch',
+    /*
+     * Unread lived only in memory, so every launch claimed nothing had happened
+     * while you were away — which makes the whole point of running four agents
+     * at once a lie: you come back and the app has forgotten why you left.
+     *
+     * The number is not stored. What is stored is how far each card had been
+     * read, and the count is asked of the log against that — so this asserts the
+     * watermark round-trips through a real file and a real restart, which is the
+     * only place the two halves meet.
+     */
+    async run(assert) {
+      const first = await launch({ keepData: true })
+      const dataPath = first.dataPath
+      let background
+      try {
+        const ids = await twoSessions(first)
+        // The original, now sitting behind the one just created.
+        background = ids[0]
+
+        /*
+         * Spoken to directly rather than through the composer.
+         *
+         * Its pane is not mounted — that is the state being tested — so there is
+         * no textarea to type into. This is the same call the composer makes.
+         */
+        await first.evaluate(
+          `window.chorus.sendMessage({ conversationId: ${JSON.stringify(background)}, text: 'Reply with exactly: ok' }).then(() => true)`
+        )
+        await first.until(
+          `document.querySelector('[data-sidebar-conversation="${background}"] .workspace-session-badge') !== null`,
+          { timeout: 180_000, label: 'the background card counted an unread' }
+        )
+      } finally {
+        await first.stop()
+      }
+
+      const again = await launch({ userData: dataPath })
+      try {
+        await started(again)
+        await again.settle()
+        const badge = await again.evaluate(`(() => {
+          const el = document.querySelector('[data-sidebar-conversation="${background}"] .workspace-session-badge')
+          return el === null ? null : el.textContent
+        })()`)
+        assert(
+          badge !== null && Number(badge) > 0,
+          `the count came back after a relaunch, got ${String(badge)}`
+        )
+      } finally {
+        await again.quit()
+      }
+    },
+  },
+
+  {
+    name: 'an ended conversation can be found again and reopened',
+    /*
+     * Ending one used to lose it. The transcript stayed in SQLite forever — the
+     * log never deletes — but the only list of conversations was the note of
+     * what was on screen, and ending took it out of that. It survived under an
+     * id nothing displayed.
+     *
+     * Asserted end to end because the interesting part is not the query: it is
+     * that reopening starts agents again and the transcript is still underneath
+     * them.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        const ids = await twoSessions(app)
+        const ended = ids[0]
+
+        // Idle, so End takes one press — it only asks twice while an agent is
+        // working, which is the one moment there is anything to lose.
+        await app.evaluate(`(() => {
+          document.querySelector('[data-sidebar-conversation="${ended}"] .workspace-session-action--end').click()
+          return true
+        })()`)
+        await app.until(`document.querySelectorAll('${TAB}').length === 1`, {
+          label: 'the conversation ended',
+        })
+        assert(
+          (await app.evaluate(
+            `document.querySelector('[data-sidebar-conversation="${ended}"]') === null`
+          )) === true,
+          'and left the sidebar, so nothing on screen still names it'
+        )
+
+        await app.evaluate(`(() => {
+          document.querySelector('.workspace-history').click()
+          return true
+        })()`)
+        await app.until(`document.querySelector('.history-row') !== null`, {
+          label: 'the history sheet listed the log',
+        })
+
+        const row = `[data-history-conversation="${ended}"]`
+        assert(
+          (await app.evaluate(`document.querySelector('${row}') !== null`)) === true,
+          'the ended conversation is in the list'
+        )
+
+        await app.evaluate(`(() => { document.querySelector('${row}').click(); return true })()`)
+        // Reopening starts its agents, which is a real provider launch.
+        await app.until(
+          `document.querySelector('${TAB}[data-workspace-tab="${ended}"]') !== null`,
+          {
+            timeout: 180_000,
+            label: 'it came back as a tab',
+          }
+        )
+
+        const messages = await app.evaluate(`document.querySelectorAll('.entry').length`)
+        assert(messages > 0, `and brought its transcript with it, ${String(messages)} entries`)
+      } finally {
+        await app.quit()
+      }
+    },
+  },
 ]

@@ -63,10 +63,12 @@ const run = promisify(execFile)
  *    `conversation:restart` makes a *new* conversation, which is not a fork.
  *  - `planStream`: `plan.updated` is emitted only by the Codex adapter. Nothing
  *    in this package produces one.
- *  - `modelSwitchMidSession`: was false while `setModel` had no caller. It is
- *    true again now that one exists, the supervisor re-applies the choice across
- *    a restart, and `supportedModels` gives the picker a list that came from the
- *    CLI rather than from a guess.
+ *  - `modelSwitchMidSession`: false again, and this one has been both. It was
+ *    true while a card carried a per-conversation picker; that picker is gone —
+ *    the model is chosen once, in settings, and reaches a session as
+ *    `SessionOpts.model` at construction. `setModel` is still implemented, so a
+ *    future caller costs nothing, but the flag describes what Chorus does rather
+ *    than what the adapter could.
  *
  * Each flips back to true in the phase that gives it an implementation, not
  * before. A capability is a promise to the orchestrator, not a wish.
@@ -79,7 +81,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   planStream: false,
   // Claude has no aggregate turn diff; the workspace service derives one (§4.2).
   aggregateDiff: false,
-  modelSwitchMidSession: true,
+  modelSwitchMidSession: false,
   sandboxPolicy: 'emulated',
 }
 
@@ -191,18 +193,6 @@ export class ClaudeSession implements AgentSession {
   }
 
   /**
-   * Reasoning effort, through the flag-settings layer.
-   *
-   * There is no `setEffort`; the CLI takes it as a setting override, and only in
-   * streaming input mode — which is the mode this adapter already runs in, and
-   * the same reason `setModel` and `interrupt` are available at all.
-   *
-   * `max` is session-scoped by the CLI's own contract: it applies for the rest
-   * of the session and is never written to a settings file. That is exactly
-   * what a per-conversation control should do, so nothing here has to arrange
-   * it.
-   */
-  /**
    * Hands edit decisions to the CLI for the rest of the session.
    *
    * The counterpart to `permissionMode: 'default'` above: that keeps every tool
@@ -215,6 +205,18 @@ export class ClaudeSession implements AgentSession {
     await this.q.setPermissionMode(mode)
   }
 
+  /**
+   * Reasoning effort, through the flag-settings layer.
+   *
+   * There is no `setEffort`; the CLI takes it as a setting override, and only in
+   * streaming input mode — which is the mode this adapter already runs in, and
+   * the same reason `setModel` and `interrupt` are available at all.
+   *
+   * `max` is session-scoped by the CLI's own contract: it applies for the rest
+   * of the session and is never written to a settings file. Chorus's own default
+   * is applied at every session start, so a level chosen once in settings is in
+   * force everywhere without either side having to persist it.
+   */
   async setEffort(level: string): Promise<void> {
     const apply = (
       this.q as unknown as {
