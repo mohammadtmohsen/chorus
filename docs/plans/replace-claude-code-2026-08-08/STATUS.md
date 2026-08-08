@@ -6,11 +6,12 @@ The entries below are a record, in the order things were learned, and several of
 them correct an earlier one. This section is the summary they do not otherwise
 have. Anything not listed as done is not done.
 
-**Shipped.** Phases 0-3 complete. Phase 4 is the SDK surface worth reaching:
-MCP server health, `accountInfo()`, background tasks with `stopTask()`. Phase 5
-has begun with the todo detail line. The composer answers `/` and `@`, drafts and
-history survive a quit, plan mode is per conversation, and hook output folds
-instead of flooding.
+**Shipped.** Phases 0-4 complete, and Phase 5 all but one item. The composer
+answers `/` and `@`, drafts and history survive a quit, plan mode is per
+conversation, and hook output folds instead of flooding. Settings shows which MCP
+servers actually work, which account each agent is signed in as, and which
+plugins are installed and switched on. Background tasks are visible and can be
+stopped. Renaming a room retitles the provider's own record of it.
 
 **Declined, each with its reasoning in place rather than as a silent gap:**
 
@@ -31,11 +32,12 @@ list. Reasoning and evidence in [`DONE.md`](./DONE.md).
 1. **Two menu failures.** A residual slash failure after its fix, and the `@`
    sibling that has never reproduced in isolation. Eight hypotheses are dead
    between them and written down; that list is the head start.
-2. **Phase 5 remainder** — the todo panel (unbuildable blind: this machine's
-   config replaces `TodoWrite` with `TaskCreate`/`TaskUpdate`), a plugin browser,
-   and the settings-only group.
+2. **The todo panel**, and only that. It cannot be built honestly here: this
+   machine's config replaces `TodoWrite` with `TaskCreate`/`TaskUpdate`, so
+   there is nothing to see it with. The detail line shipped; the panel waits for
+   a machine that has the tool.
 
-**How this is verified.** `pnpm check` is 947 tests; the e2e suite is 26 specs
+**How this is verified.** `pnpm check` is 952 tests; the e2e suite is 26 specs
 driving the built app over CDP. **CI cannot run the e2e suite** — it has no
 credentials for real CLIs — so a green PR is not evidence about the renderer, and
 the suite has to be run locally before believing a UI change. Two of this
