@@ -11,13 +11,44 @@ import type { TranscriptEvent } from '../../shared/ipc.js'
 export interface TranscriptMessage {
   readonly key: string
   readonly actor: TranscriptEvent['actor']
-  readonly kind: 'message' | 'reasoning' | 'command' | 'notice' | 'handoff'
+  readonly kind: 'message' | 'reasoning' | 'command' | 'notice' | 'handoff' | 'tool'
   readonly text: string
   readonly status: 'streaming' | 'complete'
   /** The log event this came from — what a handoff selects. */
   readonly eventId: string
   /** Set on a handoff card: who it went to. */
   readonly handoffTo?: TranscriptEvent['actor']
+  /**
+   * The body behind the line — hook output, a denial's reason, the path a tool
+   * was pointed at.
+   *
+   * Kept out of `text` so the row stays one line until asked otherwise. A hook
+   * that prints forty lines of lint output should not push the answer it was
+   * checking off the screen.
+   */
+  readonly detail?: string
+  /**
+   * Tools only: the provider's id for the call, so later events find this row.
+   *
+   * A subagent is reported twice — once as the `Task` tool call, then again by
+   * name once it starts — and matching on this is what merges the two into one
+   * row instead of stacking them.
+   */
+  readonly toolRef?: string
+  /** Tools only: whether the call is still going, and how it ended. */
+  readonly toolStatus?: 'running' | 'ok' | 'error'
+  /** Tools only: the enclosing call, when this happened inside a subagent. */
+  readonly parentRef?: string
+  /** Notices only: severity, so the row can be tinted without reading its text. */
+  readonly level?: 'info' | 'warn' | 'error'
+  /**
+   * Notices only: which part of the harness spoke.
+   *
+   * A key, not a label. The reducer has no translator, so the renderer turns
+   * this into words — which is also why `text` never contains a composed
+   * sentence.
+   */
+  readonly noticeSource?: string
 }
 
 export interface PendingApproval {
@@ -179,6 +210,72 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         status: 'complete',
       })
       return
+
+    /*
+     * Merged by ref rather than appended.
+     *
+     * A subagent announces itself twice — once as the `Task` tool call the
+     * model made, then again by name when the provider starts it — and the
+     * second one knows more. Keyed on the call's id, the later event refines
+     * the row that is already on screen instead of stacking a second one under
+     * it.
+     */
+    case 'tool.started': {
+      const ref = str('itemRef')
+      if (ref === '') return
+      const at = view.messages.findIndex((m) => m.kind === 'tool' && m.toolRef === ref)
+      const prev = at === -1 ? undefined : view.messages[at]
+      const parent = str('parentRef')
+      // An empty detail on the refining event must not erase the subject the
+      // first one carried.
+      const detail = str('detail') === '' ? prev?.detail : str('detail')
+      const message: TranscriptMessage = {
+        key: prev?.key ?? event.id,
+        eventId: prev?.eventId ?? event.id,
+        actor: event.actor,
+        kind: 'tool',
+        text: str('name'),
+        status: 'complete',
+        toolRef: ref,
+        toolStatus: prev?.toolStatus ?? 'running',
+        ...(parent === '' ? {} : { parentRef: parent }),
+        ...(detail === undefined || detail === '' ? {} : { detail }),
+      }
+      if (prev === undefined) view.messages.push(message)
+      else view.messages[at] = message
+      return
+    }
+
+    case 'tool.progress': {
+      const at = view.messages.findIndex((m) => m.kind === 'tool' && m.toolRef === str('itemRef'))
+      const prev = at === -1 ? undefined : view.messages[at]
+      // Progress for a call we never saw start is not worth inventing a row for.
+      if (prev === undefined) return
+      const note = str('note')
+      if (note === '') return
+      view.messages[at] = { ...prev, detail: note }
+      return
+    }
+
+    case 'tool.completed': {
+      const at = view.messages.findIndex((m) => m.kind === 'tool' && m.toolRef === str('itemRef'))
+      const prev = at === -1 ? undefined : view.messages[at]
+      if (prev === undefined) return
+      /*
+       * The summary only fills a subject that is still empty.
+       *
+       * For a subagent it is the whole point; for a `Read` it is the first line
+       * of the file, which says less than the path already shown. Preferring
+       * what is there keeps the row identifying.
+       */
+      const summary = str('summary')
+      view.messages[at] = {
+        ...prev,
+        toolStatus: str('status') === 'error' ? 'error' : 'ok',
+        ...(prev.detail === undefined && summary !== '' ? { detail: summary } : {}),
+      }
+      return
+    }
 
     case 'turn.started':
       // Tracked per agent: in a shared conversation one can be thinking while
@@ -421,6 +518,30 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       return
 
     /*
+     * Attributed to the agent whose turn it happened in, not to 'system'.
+     *
+     * A hook that fired while Claude was working is part of reading what Claude
+     * did; filing it under a neutral actor separates it from the command it
+     * gated, which is the one thing a reader needs it next to.
+     */
+    case 'notice.raised': {
+      const level = str('level')
+      const detail = str('detail')
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: event.actor,
+        kind: 'notice',
+        text: str('text'),
+        status: 'complete',
+        noticeSource: str('source'),
+        level: level === 'warn' || level === 'error' ? level : 'info',
+        ...(detail === '' ? {} : { detail }),
+      })
+      return
+    }
+
+    /*
      * A handoff is shown as its own entry rather than as a user message. It is
      * the moment context crosses between two agents that otherwise cannot see
      * each other, and the transcript should make that visible (plan §4.5).
@@ -595,9 +716,18 @@ function summarize(payload: Record<string, unknown>): string {
       .filter(Boolean)
     return `Edit ${paths.join(', ')}`
   }
-  if (typeof r['toolName'] === 'string') {
+  /*
+   * Kind first, not `toolName` first.
+   *
+   * A permissionGrant now carries `toolName` too, and the MCP branch used to
+   * claim any payload that had one — defaulting the server to "mcp" when it was
+   * absent. Left alone, that made every Task approval read "mcp: Task", which
+   * is a worse lie than the "permissionGrant" it replaced.
+   */
+  if (kind === 'mcpToolCall' && typeof r['toolName'] === 'string') {
     const server = typeof r['serverName'] === 'string' ? r['serverName'] : 'mcp'
     return `${server}: ${r['toolName']}`
   }
+  if (typeof r['toolName'] === 'string' && r['toolName'] !== '') return r['toolName']
   return kind
 }

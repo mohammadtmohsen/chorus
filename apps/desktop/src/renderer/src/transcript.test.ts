@@ -145,6 +145,137 @@ describe('reduceEvents', () => {
     expect(view.approvals[0]?.summary).toBe('Edit src/a.ts, src/b.ts')
   })
 
+  it('summarizes a catch-all approval by its tool name', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.requested', {
+        approvalId: 'a3',
+        kind: 'permissionGrant',
+        expiresAt: 0,
+        request: { toolName: 'Task', input: { subagent_type: 'Explore' } },
+      }),
+    ])
+    expect(view.approvals[0]?.summary).toBe('Task')
+  })
+
+  it('does not pass a named non-MCP tool off as an MCP call', () => {
+    // The MCP branch defaults an absent server to "mcp". Claiming any payload
+    // with a `toolName` would render this as "mcp: Task".
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.requested', {
+        approvalId: 'a4',
+        kind: 'permissionGrant',
+        expiresAt: 0,
+        request: { toolName: 'Task' },
+      }),
+    ])
+    expect(view.approvals[0]?.summary).not.toContain('mcp')
+  })
+
+  it('still summarizes an MCP call as server and tool', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.requested', {
+        approvalId: 'a5',
+        kind: 'mcpToolCall',
+        expiresAt: 0,
+        request: { serverName: 'slack', toolName: 'slack_send_message' },
+      }),
+    ])
+    expect(view.approvals[0]?.summary).toBe('slack: slack_send_message')
+  })
+
+  it('renders a notice against the agent whose turn it happened in', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event(
+        'notice.raised',
+        { level: 'warn', source: 'hook', text: 'lint · PreToolUse', detail: 'no semicolons' },
+        'claude'
+      ),
+    ])
+    expect(view.messages[0]).toMatchObject({
+      kind: 'notice',
+      actor: 'claude',
+      level: 'warn',
+      noticeSource: 'hook',
+      text: 'lint · PreToolUse',
+      detail: 'no semicolons',
+    })
+  })
+
+  it('omits an empty detail rather than rendering a blank disclosure', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('notice.raised', { level: 'info', source: 'system', text: 'note', detail: '' }),
+    ])
+    expect(view.messages[0]?.detail).toBeUndefined()
+  })
+
+  it('falls back to info for a level it does not know', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('notice.raised', { level: 'catastrophic', source: 'system', text: 'x' }),
+    ])
+    expect(view.messages[0]?.level).toBe('info')
+  })
+
+  it('merges a subagent’s two announcements into one row', () => {
+    // The model's `Task` call, then the provider naming it. Stacking both is
+    // what this keying prevents.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't9', name: 'Task', detail: 'map the adapter' }, 'claude'),
+      event('tool.started', { itemRef: 't9', name: 'Explore', detail: '' }, 'claude'),
+    ])
+    const tools = view.messages.filter((m) => m.kind === 'tool')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]).toMatchObject({ text: 'Explore', detail: 'map the adapter' })
+  })
+
+  it('shows what a running tool is doing', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't1', name: 'Task', detail: 'audit' }, 'claude'),
+      event('tool.progress', { itemRef: 't1', note: 'Grep', elapsedMs: 900 }, 'claude'),
+    ])
+    expect(view.messages[0]).toMatchObject({ detail: 'Grep', toolStatus: 'running' })
+  })
+
+  it('stops the row spinning when the call ends', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't1', name: 'Read', detail: '/a.ts' }, 'claude'),
+      event(
+        'tool.completed',
+        { itemRef: 't1', status: 'error', summary: 'no such file' },
+        'claude'
+      ),
+    ])
+    expect(view.messages[0]).toMatchObject({ toolStatus: 'error', detail: '/a.ts' })
+  })
+
+  it('does not let a summary overwrite the subject that identifies the row', () => {
+    // For a Read the summary is the first line of the file, which says less
+    // than the path already shown.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't1', name: 'Read', detail: '/a.ts' }, 'claude'),
+      event(
+        'tool.completed',
+        { itemRef: 't1', status: 'ok', summary: 'import x from y' },
+        'claude'
+      ),
+    ])
+    expect(view.messages[0]?.detail).toBe('/a.ts')
+  })
+
+  it('fills an empty subject from the summary', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't1', name: 'Task', detail: '' }, 'claude'),
+      event('tool.completed', { itemRef: 't1', status: 'ok', summary: 'found three' }, 'claude'),
+    ])
+    expect(view.messages[0]?.detail).toBe('found three')
+  })
+
+  it('invents no row for progress on a call it never saw start', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.progress', { itemRef: 'ghost', note: 'Grep' }, 'claude'),
+    ])
+    expect(view.messages).toHaveLength(0)
+  })
+
   it('ignores event types it does not render', () => {
     const view = reduceEvents(EMPTY_VIEW, [
       event('usage.updated', { inputTokens: 1, outputTokens: 2 }),

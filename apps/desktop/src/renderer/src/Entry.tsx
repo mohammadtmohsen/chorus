@@ -242,8 +242,53 @@ export const Entry = memo(function Entry({
               setShowCommand(!showCommand)
             }}
           />
+        ) : message.kind === 'tool' ? (
+          /*
+           * One dense line per call, indented when it happened inside a
+           * subagent.
+           *
+           * A turn that reads six files and greps twice is six-plus-two facts,
+           * not eight paragraphs — the row has to cost about as much to skip as
+           * it does to read, or the answer underneath it gets buried by its own
+           * working.
+           */
+          <p
+            className="tool-line"
+            data-status={message.toolStatus ?? 'running'}
+            data-nested={message.parentRef === undefined ? undefined : 'true'}
+          >
+            <span className="tool-dot" aria-label={t(`tool.${message.toolStatus ?? 'running'}`)} />
+            <span className="tool-name">{message.text}</span>
+            {message.detail !== undefined && <span className="tool-detail">{message.detail}</span>}
+          </p>
         ) : message.kind === 'notice' ? (
-          <p className="notice-line">{message.text}</p>
+          /*
+           * A label the eye can skip, then the harness's own words.
+           *
+           * `noticeSource` is a key rather than a phrase precisely so it can be
+           * translated here: `transcript.ts` is a pure reducer with no
+           * translator, and composing the sentence there would have written
+           * English into the event log, where it would be replayed forever.
+           */
+          <div className="notice-line" data-level={message.level ?? 'info'}>
+            {message.noticeSource !== undefined && message.noticeSource !== '' && (
+              <span className="notice-source">
+                {t(`notice.source.${message.noticeSource}`, { defaultValue: message.noticeSource })}
+              </span>
+            )}
+            <span className="notice-text">{message.text}</span>
+            {message.detail !== undefined && (
+              /*
+               * Folded, for the same reason commands are: a hook that prints
+               * forty lines of lint output would otherwise push the command it
+               * was gating off the screen.
+               */
+              <details className="notice-detail">
+                <summary>{t('notice.detail')}</summary>
+                <pre>{message.detail}</pre>
+              </details>
+            )}
+          </div>
         ) : message.actor === 'user' ? (
           /*
            * Capped, because what a person pastes has no upper bound.

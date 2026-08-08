@@ -131,6 +131,65 @@ export interface AgentError extends AgentEventBase {
 }
 
 /**
+ * A tool call that is not a shell command.
+ *
+ * `command.*` keeps Bash, because stdout, stderr and an exit code are real
+ * there and nowhere else. Everything else — a file read, a search, a subagent —
+ * has a name, maybe a one-line subject, and an outcome, which is this.
+ *
+ * A subagent needs no family of its own: `Task` *is* a tool call, and the
+ * provider reports its progress against the same id, so nesting is `parentRef`
+ * rather than a second set of events to keep in step with this one.
+ */
+export interface ToolStarted extends AgentEventBase {
+  readonly type: 'tool.started'
+  readonly itemRef: string
+  readonly name: string
+  /** The enclosing tool call, when this one happened inside a subagent. */
+  readonly parentRef?: string
+  /** One line: the path read, the pattern searched, the subagent's brief. */
+  readonly detail?: string
+}
+
+export interface ToolProgress extends AgentEventBase {
+  readonly type: 'tool.progress'
+  readonly itemRef: string
+  readonly note?: string
+  readonly elapsedMs?: number
+}
+
+export interface ToolCompleted extends AgentEventBase {
+  readonly type: 'tool.completed'
+  readonly itemRef: string
+  readonly status: 'ok' | 'error'
+  readonly summary?: string
+}
+
+/** Who is speaking when a notice appears. The renderer labels the row from this. */
+export type NoticeSource = 'hook' | 'command' | 'retry' | 'denial' | 'system'
+
+/**
+ * Something the harness did, as opposed to something the agent said.
+ *
+ * One event rather than one per provider subtype. The renderer's job is
+ * identical for all of them — a muted line, expandable when there is detail —
+ * and providers add subtypes faster than we will add cases, so an unmapped one
+ * degrades to a notice instead of to silence. Inverting that default is the
+ * whole point: a hook that blocks a tool used to leave no trace at all.
+ *
+ * `text` holds the provider's own words and is never composed here, so the
+ * renderer can put a translated label in front of it without stitching two
+ * languages together.
+ */
+export interface Notice extends AgentEventBase {
+  readonly type: 'notice'
+  readonly level: 'info' | 'warn' | 'error'
+  readonly source: NoticeSource
+  readonly text: string
+  readonly detail?: string
+}
+
+/**
  * One of an account's usage windows, as the provider reports it.
  *
  * Both providers publish this and neither calls it the same thing: Codex sends
@@ -193,6 +252,10 @@ export type AgentEvent =
   | UsageUpdated
   | TurnCompleted
   | AgentError
+  | Notice
+  | ToolStarted
+  | ToolProgress
+  | ToolCompleted
 
 export type AgentEventType = AgentEvent['type']
 
@@ -211,6 +274,10 @@ const UNDROPPABLE = new Set<AgentEventType>([
   'command.completed',
   'file.change.proposed',
   'error',
+  // A dropped start leaves a row that never appears; a dropped completion
+  // leaves one spinning forever. `tool.progress` is the only part that repeats.
+  'tool.started',
+  'tool.completed',
 ])
 
 export function isCoalescable(type: AgentEventType): boolean {

@@ -34,6 +34,16 @@ export interface PermissionGrantApproval extends ApprovalRequestBase {
     readonly filesystem?: readonly string[]
     readonly network?: boolean
   }
+  /**
+   * The tool that asked, when the provider names one.
+   *
+   * This is the catch-all kind, so without it the card has nothing to say but
+   * the kind itself — which is how `Task`, `WebFetch` and `TodoWrite` all came
+   * to render as "claude wants approval / permissionGrant".
+   */
+  readonly toolName?: string
+  /** The tool's arguments, so the card can show what was actually asked for. */
+  readonly input?: Readonly<Record<string, unknown>>
 }
 
 /**

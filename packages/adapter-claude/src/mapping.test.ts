@@ -228,10 +228,340 @@ describe('message mapping', () => {
     expect(events.at(-1)).toMatchObject({ type: 'turn.completed', status: 'failed' })
   })
 
-  it('stays silent for message types it does not render', () => {
-    for (const type of ['hook_started', 'task_progress', 'status', 'api_retry']) {
-      expect(mapSdkMessage({ type }, CTX)).toEqual([])
+  it('no longer stays silent for message types it does not render', () => {
+    /*
+     * This asserted `[]` until the transcript-fidelity pass. The silence was
+     * defensible while Chorus only had to show a finished diff; it is not, now
+     * that Chorus is the only window on the agent. See the `system notices`
+     * suite below for the per-subtype behaviour.
+     */
+    for (const type of ['tool_progress', 'auth_status', 'conversation_reset']) {
+      expect(mapSdkMessage({ type }, CTX)).toMatchObject([{ type: 'notice', text: type }])
     }
+  })
+})
+
+describe('system notices', () => {
+  /** The subtypes carry fields `SdkMessageLike` does not declare. */
+  const sys = (fields: Record<string, unknown>) =>
+    mapSdkMessage(fields as unknown as Parameters<typeof mapSdkMessage>[0], {
+      seq: 1,
+      now: 1_000,
+      approvalTtlMs: 1_000,
+    })
+
+  it('still starts a turn on init', () => {
+    expect(sys({ type: 'system', subtype: 'init', uuid: 'u1' })).toMatchObject([
+      { type: 'turn.started', turnRef: 'u1' },
+    ])
+  })
+
+  it('reports a hook that failed', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'hook_response',
+        hook_name: 'lint',
+        hook_event: 'PreToolUse',
+        outcome: 'error',
+        output: 'no semicolons please',
+        stdout: '',
+        stderr: '',
+      })
+    ).toMatchObject([
+      {
+        type: 'notice',
+        level: 'warn',
+        source: 'hook',
+        text: 'lint · PreToolUse',
+        detail: 'no semicolons please',
+      },
+    ])
+  })
+
+  it('stays quiet about a hook that succeeded with nothing to say', () => {
+    /*
+     * A hook fires per matching tool call. A repo with a dozen of them would
+     * put a dozen rows between every command and its output.
+     */
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'hook_response',
+        hook_name: 'noop',
+        outcome: 'success',
+        output: '',
+        stdout: '',
+        stderr: '   ',
+      })
+    ).toEqual([])
+  })
+
+  it('surfaces a tool denied by a rule, which used to leave no trace', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'permission_denied',
+        tool_name: 'Bash',
+        decision_reason: 'blocked by deny rule',
+        message: 'not allowed',
+      })
+    ).toMatchObject([
+      {
+        type: 'notice',
+        level: 'warn',
+        source: 'denial',
+        text: 'Bash',
+        detail: 'blocked by deny rule',
+      },
+    ])
+  })
+
+  it('counts a retry, so a storm is distinguishable from a hang', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'api_retry',
+        attempt: 2,
+        max_retries: 5,
+        error_status: 529,
+      })
+    ).toMatchObject([
+      { type: 'notice', level: 'warn', source: 'retry', text: '2/5', detail: 'HTTP 529' },
+    ])
+  })
+
+  it('shows the output of a local slash command', () => {
+    expect(
+      sys({ type: 'system', subtype: 'local_command_output', content: 'usage: 41%' })
+    ).toMatchObject([{ type: 'notice', source: 'command', text: 'usage: 41%' }])
+  })
+
+  it('raises the level when a hook stops the loop', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'informational',
+        content: 'Stop hook denied continuation',
+        level: 'info',
+        prevent_continuation: true,
+      })
+    ).toMatchObject([{ type: 'notice', level: 'error' }])
+  })
+
+  it('degrades an unmapped subtype to a notice rather than to silence', () => {
+    // The point of the phase: a subtype added by a future SDK is still visible.
+    expect(sys({ type: 'system', subtype: 'some_future_subtype' })).toMatchObject([
+      { type: 'notice', level: 'info', source: 'system', text: 'some_future_subtype' },
+    ])
+  })
+
+  it('says nothing for the heartbeat subtypes', () => {
+    /*
+     * `status` ticks for as long as a turn runs, and every notice is a durable
+     * row. Telemetry is the one thing silence is still right for.
+     */
+    for (const subtype of ['status', 'thinking_tokens', 'session_state_changed']) {
+      expect(sys({ type: 'system', subtype })).toEqual([])
+    }
+  })
+
+  it('leaves compaction to the PostCompact hook rather than double-reporting it', () => {
+    expect(sys({ type: 'system', subtype: 'compact_boundary' })).toEqual([])
+  })
+
+  it('degrades an unmapped top-level type to a notice', () => {
+    expect(sys({ type: 'tool_progress' })).toMatchObject([
+      { type: 'notice', source: 'system', text: 'tool_progress' },
+    ])
+  })
+})
+
+describe('tool calls', () => {
+  const CTX_T = { seq: 1, now: 1_000, approvalTtlMs: 1_000 }
+  const assistant = (blocks: unknown[], parent?: string) =>
+    mapSdkMessage(
+      {
+        type: 'assistant',
+        message: { id: 'm1', content: blocks },
+        ...(parent === undefined ? {} : { parent_tool_use_id: parent }),
+      },
+      CTX_T
+    )
+
+  it('reports a tool that is not Bash, which used to produce nothing', () => {
+    expect(
+      assistant([{ type: 'tool_use', id: 't1', name: 'Grep', input: { pattern: 'TODO' } }])
+    ).toMatchObject([{ type: 'tool.started', itemRef: 't1', name: 'Grep', detail: 'TODO' }])
+  })
+
+  it('leaves Bash on the command path, where output and an exit code are real', () => {
+    const events = assistant([
+      { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'ls' } },
+    ])
+    expect(events).toMatchObject([{ type: 'command.started', itemRef: 'b1' }])
+  })
+
+  it('does not give AskUserQuestion a tool row next to the question it is', () => {
+    expect(assistant([{ type: 'tool_use', id: 'q1', name: USER_INPUT_TOOL, input: {} }])).toEqual(
+      []
+    )
+  })
+
+  it('carries the enclosing call, so a subagent’s work can be nested', () => {
+    expect(
+      assistant([{ type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/a.ts' } }], 'p1')
+    ).toMatchObject([{ type: 'tool.started', parentRef: 'p1', detail: '/a.ts' }])
+  })
+
+  it('prefers the field that identifies the call', () => {
+    // A subagent's brief says more than the file it happens to name.
+    expect(
+      assistant([
+        {
+          type: 'tool_use',
+          id: 't3',
+          name: 'Task',
+          input: { file_path: '/a.ts', description: 'audit the adapter' },
+        },
+      ])
+    ).toMatchObject([{ detail: 'audit the adapter' }])
+  })
+
+  it('closes a non-Bash call so its row stops spinning', () => {
+    const events = mapSdkMessage(
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] },
+      },
+      CTX_T
+    )
+    expect(events).toMatchObject([{ type: 'tool.completed', itemRef: 't1', status: 'ok' }])
+  })
+
+  it('marks a failed tool result as an error', () => {
+    const events = mapSdkMessage(
+      {
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 't1', content: 'boom', is_error: true }],
+        },
+      },
+      CTX_T
+    )
+    expect(events).toMatchObject([{ type: 'tool.completed', status: 'error' }])
+  })
+
+  it('still routes a known Bash id to command output', () => {
+    const events = mapSdkMessage(
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'b1', content: 'out' }] },
+      },
+      { ...CTX_T, bashToolIds: new Set(['b1']) }
+    )
+    expect(events.map((e) => e.type)).toEqual(['command.output', 'command.completed'])
+  })
+})
+
+describe('subagents', () => {
+  const sys = (fields: Record<string, unknown>) =>
+    mapSdkMessage(fields as unknown as Parameters<typeof mapSdkMessage>[0], {
+      seq: 1,
+      now: 1_000,
+      approvalTtlMs: 1_000,
+    })
+
+  it('names a subagent against the call that spawned it', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'k1',
+        tool_use_id: 't9',
+        description: 'map the adapter',
+        subagent_type: 'Explore',
+      })
+    ).toMatchObject([
+      { type: 'tool.started', itemRef: 't9', name: 'Explore', detail: 'map the adapter' },
+    ])
+  })
+
+  it('falls back to the task id when no tool call preceded it', () => {
+    // Workflow tasks arrive with no `tool_use_id` and deserve a row of their own.
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'k2',
+        description: 'run the spec',
+        workflow_name: 'spec',
+      })
+    ).toMatchObject([{ type: 'tool.started', itemRef: 'k2', name: 'spec' }])
+  })
+
+  it('honours skip_transcript rather than filling the log with housekeeping', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'k3',
+        description: 'ambient',
+        skip_transcript: true,
+      })
+    ).toEqual([])
+  })
+
+  it('says what a running subagent is doing, not merely that it is running', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'task_progress',
+        task_id: 'k1',
+        tool_use_id: 't9',
+        description: 'map the adapter',
+        last_tool_name: 'Grep',
+        usage: { total_tokens: 10, tool_uses: 2, duration_ms: 4200 },
+      })
+    ).toMatchObject([{ type: 'tool.progress', itemRef: 't9', note: 'Grep', elapsedMs: 4200 }])
+  })
+
+  it('closes a subagent with its summary', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'k1',
+        tool_use_id: 't9',
+        status: 'completed',
+        output_file: '/tmp/out',
+        summary: 'found three',
+      })
+    ).toMatchObject([
+      { type: 'tool.completed', itemRef: 't9', status: 'ok', summary: 'found three' },
+    ])
+  })
+
+  it('treats a stopped subagent as an error, not a success', () => {
+    expect(
+      sys({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'k1',
+        tool_use_id: 't9',
+        status: 'stopped',
+        output_file: '/tmp/out',
+        summary: 'gave up',
+      })
+    ).toMatchObject([{ status: 'error' }])
+  })
+
+  it('stays quiet for task_updated, which has no id to correlate', () => {
+    // It is keyed on task_id alone; task_notification reports the same ending
+    // and does carry a tool_use_id.
+    expect(
+      sys({ type: 'system', subtype: 'task_updated', task_id: 'k1', patch: { status: 'failed' } })
+    ).toEqual([])
   })
 })
 
@@ -279,6 +609,22 @@ describe('tool permission mapping', () => {
   it('surfaces an unknown tool rather than letting it through silently', () => {
     // A tool added by a future release must still produce a card.
     expect(perm('SomeFutureTool', {})).toMatchObject({ kind: 'permissionGrant' })
+  })
+
+  it('names the tool on the catch-all card', () => {
+    // Without this the card reads "permissionGrant" and nothing else, so
+    // spawning a subagent and writing a todo list look identical.
+    expect(perm('Task', { subagent_type: 'Explore' })).toMatchObject({
+      kind: 'permissionGrant',
+      toolName: 'Task',
+    })
+  })
+
+  it('carries the arguments of an unnamed tool, so the card has a detail', () => {
+    expect(perm('ExitPlanMode', { plan: 'do the thing' })).toMatchObject({
+      kind: 'permissionGrant',
+      input: { plan: 'do the thing' },
+    })
   })
 
   it('flags network intent for web tools', () => {
@@ -349,12 +695,17 @@ describe('tool results', () => {
     expect(events[0]).toMatchObject({ chunk: 'hi' })
   })
 
-  it('ignores results from tools that were not commands', () => {
-    // Another tool's result is the agent's own working, and it narrates that.
+  it('closes a non-command tool without reporting its output as output', () => {
+    /*
+     * This asserted `[]` before the transcript-fidelity pass. Another tool's
+     * result is still the agent's own working — which is why the *content* does
+     * not become `command.output` — but the call ending is a fact the row needs,
+     * or it spins forever.
+     */
     const ids = trackBashTools(bashCall('t1', 'ls') as never, new Set())
     expect(
       mapSdkMessage(toolResult('t9', 'file contents') as never, { ...CTX, bashToolIds: ids })
-    ).toEqual([])
+    ).toMatchObject([{ type: 'tool.completed', itemRef: 't9', status: 'ok' }])
   })
 
   it('emits nothing when the result carries no output', () => {

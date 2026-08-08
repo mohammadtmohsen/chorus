@@ -252,5 +252,20 @@
       "failed": "Install failed ({{reason}}).",
       "unavailable": "This build of Chorus does not ship the extension."
     }
+  },
+  "notice": {
+    "detail": "Details",
+    "source": {
+      "hook": "Hook",
+      "command": "Command",
+      "retry": "Retry",
+      "denial": "Denied",
+      "system": "Note"
+    }
+  },
+  "tool": {
+    "running": "Running",
+    "ok": "Done",
+    "error": "Failed"
   }
 }
