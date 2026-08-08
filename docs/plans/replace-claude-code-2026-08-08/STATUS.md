@@ -131,10 +131,30 @@ forgotten, leaving an approved plan that never runs. Rejecting it keeps planning
 
 Never restored on relaunch: a mode belongs to a running session.
 
-**Still not done:** dialogs, carried over from Phase 0. `onUserDialog` unset
-means the CLI applies its own defaults silently. It needs `supportedDialogKinds`
-and a blocking dialog surface, and the only documented kind is
-`refusal_fallback_prompt`.
+**Dialogs: carried through three phases, now declined with a reason.**
+
+Investigated properly rather than carried a fourth time. `refusal_fallback_prompt`
+really is the only kind — the CLI binary contains exactly one
+`tengu_repl_bridge_dialog_kinds_declared` value and that is it.
+
+The reason not to build it is in the types, and it inverts the intuition that
+wiring the callback is the safe half:
+
+> The CLI treats ABSENCE as 'cannot display' and **fails closed**: without the
+> kind declared here, a dialog-gated flow degrades to its no-dialog behavior
+> (for 'refusal_fallback_prompt', the classic refusal error) **instead of
+> parking a dialog the consumer may mishandle**.
+
+So today's behaviour is a defined degradation, not a silent breakage — the user
+gets the classic refusal error. Declaring the kind is a **promise that Chorus
+can render it**, and breaking that promise parks the turn. Against which:
+`payload` is typed `Record<string, unknown>` and documented as "defined per
+dialogKind", so the shape is genuinely unknown; and the trigger is a model
+refusal, which cannot be produced on demand to test against.
+
+Building an untestable renderer for an undocumented payload, where being wrong
+converts a defined error into a hung turn, is a worse trade than the error. If
+a second dialog kind appears, or the payload is ever documented, this changes.
 
 ## Phase 3 — Session control
 
@@ -155,10 +175,35 @@ affordance point at anything.
 Enabling checkpointing before that would buy disk snapshots nobody can reach,
 which is the dead-code shape this project keeps deciding against.
 
-**Background tasks** remain: `backgroundTasks()` and `stopTask()` unused, and
-`background_tasks_changed` still renders as a notice reading literally
-"background_tasks_changed". Note there is no enumeration query — state has to be
-accumulated from turn zero, so a client attaching mid-session cannot recover it.
+**Background tasks: this entry was wrong twice, and the corrections make the
+work easier rather than harder.**
+
+1. **`backgroundTasks()` is not an enumeration query.** It is an action —
+   "backgrounds all foreground tasks — equivalent to pressing Ctrl+B in the
+   terminal", returning a boolean. The name reads like a getter and was taken as
+   one. Nothing enumerates.
+2. **Which does not matter, because the event carries everything.**
+   `SDKBackgroundTasksChangedMessage.tasks` is documented as "every live
+   background task after the change. REPLACE semantics: swap your set for this
+   payload." So there is no accumulation from turn zero and no unrecoverable
+   client: one event hands over the entire set, and a client attaching
+   mid-session is whole again at the next change.
+
+**And the snapshot is state, not history.** Applying this project's own test —
+would reading it back a week later be worse than having none? — a list of
+processes that stopped existing when the session did is exactly that. So it
+belongs on a push channel beside `limits` and `context.usage`, and must never
+become a `ChorusEventPayload`.
+
+Which makes what was actually shipping a rule violation rather than a gap: the
+default arm was turning each one into a **durable notice whose entire text was
+the string `background_tasks_changed`** — a protocol identifier shown to a
+person, and an append-only row nothing can act on or rebuild from. Now quiet,
+with the reason recorded at the exemption rather than in the commit alone.
+
+**Still to build:** the push channel and somewhere to show it, plus `stopTask()`
+to end one. That is now a small piece of plumbing and a UI decision, not the
+accumulate-from-turn-zero problem this entry invented.
 
 ## Phase 4 — the unused SDK surface
 
