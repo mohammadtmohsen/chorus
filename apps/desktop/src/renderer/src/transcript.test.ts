@@ -145,6 +145,52 @@ describe('reduceEvents', () => {
     expect(view.approvals[0]?.summary).toBe('Edit src/a.ts, src/b.ts')
   })
 
+  it('prefers the sentence the provider already wrote', () => {
+    /*
+     * Everything else here reconstructs a summary from a tool name and an
+     * argument bag, which is guesswork about something the CLI already knows.
+     */
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.requested', {
+        approvalId: 'a10',
+        kind: 'command',
+        expiresAt: 0,
+        request: { command: ['cat', 'foo.txt'], title: 'Claude wants to read foo.txt' },
+      }),
+    ])
+    expect(view.approvals[0]?.summary).toBe('Claude wants to read foo.txt')
+  })
+
+  it('falls back to its own summary when the provider offers none', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.requested', {
+        approvalId: 'a11',
+        kind: 'command',
+        expiresAt: 0,
+        request: { command: ['git', 'status'] },
+      }),
+    ])
+    expect(view.approvals[0]?.summary).toBe('$ git status')
+  })
+
+  it('shows why it is being asked, including a path in no argument', () => {
+    // A Bash command reaching outside the allowed directories names the path
+    // only in the permission request — it appears nowhere in the command.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('approval.requested', {
+        approvalId: 'a12',
+        kind: 'command',
+        expiresAt: 0,
+        request: {
+          command: ['cat', '../secrets'],
+          decisionReason: 'Outside the allowed directories',
+          blockedPath: '/etc/secrets',
+        },
+      }),
+    ])
+    expect(view.approvals[0]?.detail).toBe('Outside the allowed directories\n/etc/secrets')
+  })
+
   it('summarizes a catch-all approval by its tool name', () => {
     const view = reduceEvents(EMPTY_VIEW, [
       event('approval.requested', {

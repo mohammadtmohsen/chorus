@@ -689,6 +689,18 @@ function detailOf(payload: Record<string, unknown>): string | null {
   if (typeof request !== 'object' || request === null) return null
   const r = request as Record<string, unknown>
 
+  /*
+   * Why it is being asked, ahead of what it would do.
+   *
+   * `blockedPath` is the one thing here that cannot be recovered from anywhere
+   * else — a Bash command reaching outside the allowed directories names the
+   * path only in the permission request, never in its own arguments.
+   */
+  const why = [r['description'], r['decisionReason'], r['blockedPath']]
+    .filter((line): line is string => typeof line === 'string' && line !== '')
+    .join('\n')
+  if (why !== '') return why
+
   if (Array.isArray(r['files'])) {
     const patches = r['files']
       .map((f) =>
@@ -706,6 +718,16 @@ function summarize(payload: Record<string, unknown>): string {
   const request = payload['request']
   if (typeof request !== 'object' || request === null) return kind
   const r = request as Record<string, unknown>
+
+  /*
+   * The provider's own sentence, when it rendered one.
+   *
+   * Everything below reconstructs a summary from a tool name and an argument
+   * bag, which is guesswork about something the CLI already knows: it says
+   * "Claude wants to read foo.txt" and we were saying "Read foo.txt" beside it.
+   * Ours stays as the fallback for a provider that offers nothing.
+   */
+  if (typeof r['title'] === 'string' && r['title'] !== '') return r['title']
 
   if (Array.isArray(r['command'])) return `$ ${r['command'].join(' ')}`
   if (Array.isArray(r['files'])) {

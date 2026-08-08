@@ -13,6 +13,23 @@ export interface ApprovalRequestBase {
   readonly reason?: string
   /** Wall-clock deadline. Chorus owns this — neither provider imposes one (plan §2.2). */
   readonly expiresAt: number
+  /**
+   * The provider's own prompt sentence — "Claude wants to read foo.txt".
+   *
+   * Preferred over anything Chorus composes, because the provider knows what it
+   * is about to do and we are inferring it from a tool name and an argument
+   * bag. Optional because not every provider renders one.
+   */
+  readonly title?: string
+  /** A subtitle from the provider, spelling out what the permission covers. */
+  readonly description?: string
+  /**
+   * The path that triggered this, when one did — a Bash command reaching
+   * outside the allowed directories names it here and nowhere else.
+   */
+  readonly blockedPath?: string
+  /** Why this is being asked at all, in the provider's words. */
+  readonly decisionReason?: string
 }
 
 export interface CommandApproval extends ApprovalRequestBase {
