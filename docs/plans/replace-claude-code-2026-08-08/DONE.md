@@ -558,3 +558,50 @@ The reason it is worth writing down is that it produced a **plausible** wrong
 answer rather than an error: "no hook noise" is exactly what someone hoping to
 close this question would want to read. Hooks were only proved to work at all by
 running the raw SDK against the same directory and watching a file on disk grow.
+
+## Open question 2, answered: Chorus's log, unconditionally
+
+**The question was the wrong shape.** It asked which source wins "when a
+conversation exists in both", and the two are not two views of one thing:
+
+- A **Chorus conversation is a room** — one shared transcript, possibly two
+  agents, plus approvals, plan mode, spend, drafts and read watermarks. One room
+  spans several CLI sessions, because every restart and resume makes a new
+  `sessionRef`, which Chorus records on `session.started`.
+- A **CLI session is one process lineage in one directory**, and Claude-only.
+  Codex does not appear in `listSessions()` at all.
+
+So it is not one-to-one in either direction. A room contains many sessions; most
+sessions have no room.
+
+**Asked of the real thing rather than reasoned about.** `listSessions({ dir })`
+for this repository returns 21 sessions:
+
+```
+17886kb  Add Claude code menu hook to file    <- a terminal coding session
+   22kb  Say OK                               <- automation, three of these
+   17kb  Confirm understanding                <- automation
+   20kb  hi                                   <- two of these
+25222kb  Review plan and check status
+10868kb  Implement sticky current turn in Chorus
+```
+
+Eight of the twenty-one are throwaway, five created by this project's own probes
+in a single afternoon. Merging the lists would put `Say OK` into the history
+sheet as a room you could reopen.
+
+**The decision.** Chorus's log is authoritative, unconditionally. For anything
+Chorus ran it is strictly richer — the CLI discards partial assistant output on
+interruption, which is the reason the log exists at all, and it also holds what
+the CLI never sees: who approved what, which agents were present, whether plan
+mode was on. For anything Chorus did not run, the CLI file is a transcript Chorus
+cannot faithfully reopen: no approvals, no profile, no second agent.
+
+`listSessions()` is therefore **not a competing source for the same list**. It
+answers a different question — "I have work in the terminal, bring it in" — and
+if that is ever wanted it belongs in a separate, clearly labelled import
+surface. Merged rows would look reopenable and would not be.
+
+**The cheap middle step, if the correlation is ever wanted:** Chorus already
+records `sessionRef` on `session.started`, so a room can name the CLI session it
+came from without pretending two different units belong in one list.
