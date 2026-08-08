@@ -571,6 +571,24 @@ const MAX_TOOL_DETAIL = 120
  * nothing this replaced.
  */
 function describeToolInput(input: Record<string, unknown>): string | undefined {
+  /*
+   * `TodoWrite` first, because its input has no string field at all.
+   *
+   * Every key below is a string, and a todo write carries one array named
+   * `todos` — so it matched nothing and rendered as a bare tool name. In a
+   * window that is the only view of an agent that is the wrong row to leave
+   * blank: what the agent has decided to do next is the most useful line the
+   * CLI prints, and Chorus was printing "TodoWrite".
+   *
+   * The one in progress, because a checklist has exactly one answer to "what is
+   * it doing"; the first outstanding item when nothing is marked yet. This does
+   * commit to a private tool schema, which is why every step of it is guarded
+   * and the fallback is the bare name it already showed — a schema change costs
+   * a line of detail, not a broken row.
+   */
+  const todo = describeTodos(input['todos'])
+  if (todo !== undefined) return todo
+
   for (const key of [
     // First, because when a tool has one it *is* the request: `ExitPlanMode`
     // carries the whole plan here and nothing else worth showing.
@@ -590,6 +608,40 @@ function describeToolInput(input: Record<string, unknown>): string | undefined {
     return text.length > MAX_TOOL_DETAIL ? `${text.slice(0, MAX_TOOL_DETAIL - 1)}…` : text
   }
   return undefined
+}
+
+/**
+ * What a todo list is currently on, as one line.
+ *
+ * `activeForm` before `content` because the tool carries both and the first is
+ * written to be read while it happens — "Fixing the parser" rather than "Fix
+ * the parser". Counting the rest so the line says how much is left without
+ * becoming the list itself.
+ */
+function describeTodos(value: unknown): string | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+
+  const rows = value.filter(
+    (row): row is Record<string, unknown> => typeof row === 'object' && row !== null
+  )
+  if (rows.length === 0) return undefined
+
+  const text = (row: Record<string, unknown> | undefined): string | undefined => {
+    for (const key of ['activeForm', 'content']) {
+      const found = row?.[key]
+      if (typeof found === 'string' && found.trim() !== '') return found.trim().replace(/\s+/g, ' ')
+    }
+    return undefined
+  }
+
+  const current =
+    text(rows.find((row) => row['status'] === 'in_progress')) ??
+    text(rows.find((row) => row['status'] !== 'completed'))
+  if (current === undefined) return undefined
+
+  const done = rows.filter((row) => row['status'] === 'completed').length
+  const line = `${current} · ${String(done)}/${String(rows.length)}`
+  return line.length > MAX_TOOL_DETAIL ? `${line.slice(0, MAX_TOOL_DETAIL - 1)}…` : line
 }
 
 /**
