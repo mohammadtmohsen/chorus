@@ -56,6 +56,22 @@ export interface ConversationServiceOptions {
   readonly onTasks?: (tasks: readonly BackgroundTask[]) => void
   /** Told when an approved plan returned the session to ordinary permissions. */
   readonly onPlanExited?: () => void
+  /**
+   * Nothing here may stop and wait for a person. Set for asides.
+   *
+   * An aside is a small card anchored to a passage, not a session: it has no
+   * room for an approval card, and a card that can raise one is a modal dialog
+   * wearing a tooltip's clothes. Worse, an aside nobody is watching would sit on
+   * an unanswered approval until its deadline — a fork wedged on a question the
+   * user never saw.
+   *
+   * So an `ask` verdict becomes a deny here rather than a card. What it is
+   * **not** is a blanket refusal: `evaluate` runs first and unchanged, so
+   * anything the profile allows or the user has already granted still goes
+   * through. Consent given in the parent conversation is carried, not forgotten
+   * — only *new* consent is refused, because there is nobody to give it.
+   */
+  readonly neverAsks?: boolean
 }
 
 /** How full an agent's context window is, as last measured. */
@@ -72,6 +88,8 @@ export class ConversationService {
   private readonly adapter: AgentAdapter
   private readonly buffer: DeltaBuffer<DeltaMeta>
   private profile: PermissionProfile
+  /** Asides answer their own approvals — see `ConversationServiceOptions.neverAsks`. */
+  private readonly neverAsks: boolean
   private readonly grants: SessionGrants
   private readonly queue: ApprovalQueue
   private readonly onLimits: ((windows: readonly UsageWindow[]) => void) | undefined
@@ -103,6 +121,7 @@ export class ConversationService {
     this.conversationId = options.conversationId
     this.adapter = options.adapter
     this.profile = options.profile ?? profileById(DEFAULT_PROFILE_ID)
+    this.neverAsks = options.neverAsks ?? false
     this.grants = options.grants ?? new SessionGrants()
     this.onLimits = options.onLimits
     this.onContextUsage = options.onContextUsage
@@ -538,6 +557,29 @@ export class ConversationService {
           return
         }
 
+        /*
+         * An aside has nobody to ask, so it answers for itself.
+         *
+         * Denied rather than allowed, and denied *immediately* rather than left
+         * to the queue's deadline: an unattended fork holding an approval open
+         * is a wedged turn, which is the failure this whole branch exists to
+         * avoid.
+         *
+         * The message goes to the *provider*, not to the log — `approval.decided`
+         * records a verdict, a scope and a rule, and carries no text. So the
+         * agent learns why and can say so in its answer; a card wanting to
+         * explain the refusal has to supply its own words.
+         */
+        if (this.neverAsks) {
+          void this.recordAndAnswer(
+            event.request.id,
+            { outcome: 'deny', message: 'An aside may explain, not act.' },
+            'policy',
+            null
+          )
+          return
+        }
+
         // Nobody but a person can settle this one; the queue owns its deadline.
         this.queue.add(this.conversationId, event.request)
         return
@@ -558,6 +600,18 @@ export class ConversationService {
           request: event.request,
           expiresAt: event.request.expiresAt,
         })
+        /*
+         * Same reasoning as an approval, one step further: an aside cannot host
+         * a question set either, and waiting out its deadline in a card nobody
+         * is looking at is the wedge again. `timeout` rather than a fabricated
+         * choice — the provider is told nothing was chosen, which it can recover
+         * from; an invented answer it cannot.
+         */
+        if (this.neverAsks) {
+          void this.answerUserInput(event.request.id, { outcome: 'timeout' }, 'system')
+          return
+        }
+
         const timer = this.scheduler.setTimeout(
           () => {
             // Never fabricates an answer: `timeout` tells the provider nothing
