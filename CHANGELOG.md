@@ -7,6 +7,41 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.8.0
+
+### Ask about one part of a reply, without derailing the conversation
+
+Select a passage an agent wrote and there are now three things you can do with
+it.
+
+- **Ask about this** opens a small card anchored to the passage. The question and
+  its answer never enter the conversation — not its transcript, not the agent's
+  context window, and not the other agent's catch-up. It is answered by a _fork_
+  of the agent that wrote the passage, so it still knows everything: why it chose
+  that approach, what the file it named does, what was decided three turns ago.
+  Measured, the token cost of asking is two uncached input tokens.
+- **Explain simply** answers in your own language, plainly, for when you did not
+  follow something. Set the language in Settings — write it however you like,
+  "Arabic" or "Lebanese Arabic". It explains rather than translating: identifiers
+  and technical terms stay as they are and get explained where they appear, and
+  Arabic and Hebrew read right-to-left with code left-to-right inside them.
+- **Quote in message** is the old "Ask about this", renamed to what it actually
+  did — put the passage in your composer.
+
+Either card can be dismissed while the answer is still arriving, and what you get
+can be quoted into your message or handed forward as an instruction. Nothing
+leaves the aside unless you send it.
+
+Asked about a reply from an agent that has since been removed and re-added, or a
+reply still being written, the option is not offered — a fork can only see turns
+that have finished.
+
+### Your database gets its first schema change
+
+Chorus takes a snapshot before migrating and keeps it beside the database as
+`chorus.pre-v1.db`. A migration that cannot run now fails loudly with your data
+untouched, rather than being mistaken for a corrupt database.
+
 ## 0.7.0
 
 ### The composer answers `/` and `@`
