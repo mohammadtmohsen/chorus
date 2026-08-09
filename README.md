@@ -75,7 +75,8 @@ Coding agents are most useful when they can specialize, exchange findings, and r
 Working software, used daily on real projects. `0.7.0` runs both CLIs headless,
 holds several conversations at once, and keeps an append-only log that a
 transcript is rebuilt from. See the [changelog](CHANGELOG.md) for what each
-version added.
+version added, and [the board](BOARD.md) for what is open, what is parked, and
+what needs a person.
 
 Not a Claude Code replacement in full, and deliberately so: most of that tool's
 commands exist only inside its terminal UI and have no API. What is reachable
