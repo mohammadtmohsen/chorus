@@ -5,6 +5,7 @@ import type {
   AgentInput,
   AgentSession,
   ApprovalDecision,
+  ForkOpts,
   HealthStatus,
   SessionOpts,
   UserInputResponse,
@@ -160,6 +161,29 @@ export class FakeAdapter implements AgentAdapter {
     this.sessions.push(session)
     return Promise.resolve(session)
   }
+
+  /**
+   * A branch, and the ref proves it.
+   *
+   * `resume` deliberately returns a session on the *same* ref while this returns
+   * a different one, so a test that expected an aside to be isolated and got a
+   * rejoin fails on the ref rather than on something subtler three steps later.
+   *
+   * The double-declaration this method exists to prevent was real: the flag said
+   * `fork: true` here, and in the Codex adapter, with no implementation behind
+   * either.
+   */
+  fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
+    if (sessionRef === '') return Promise.reject(new Error('Cannot fork a session with no id yet'))
+    const session = new FakeAgentSession(`${sessionRef}-fork-${String(++this.counter)}`, this.id)
+    this.forked.push({ from: sessionRef, inherits: opts.inherits, session })
+    this.sessions.push(session)
+    return Promise.resolve(session)
+  }
+
+  /** Every fork taken, so a test can assert what was branched and how. */
+  readonly forked: { from: string; inherits: ForkOpts['inherits']; session: FakeAgentSession }[] =
+    []
 
   health(): Promise<HealthStatus> {
     return Promise.resolve({ state: 'ready', version: this.version })

@@ -93,6 +93,10 @@ describe('conformance: ClaudeAdapter', () => {
     expect(CONFORMANCE_CHECKS.declaresCapabilities(stubTarget().adapter)).toBeNull()
   })
 
+  it('backs every declared capability with a method', () => {
+    expect(CONFORMANCE_CHECKS.backsCapabilitiesWithMethods(stubTarget().adapter)).toBeNull()
+  })
+
   it('exposes a resumable session reference', async () => {
     const target = stubTarget()
     const session = await target.adapter.start(OPTS)

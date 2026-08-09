@@ -46,6 +46,10 @@ describe.each(TARGETS)('conformance: $name', ({ create }) => {
     expect(CONFORMANCE_CHECKS.declaresCapabilities(create().adapter)).toBeNull()
   })
 
+  it('backs every declared capability with a method', () => {
+    expect(CONFORMANCE_CHECKS.backsCapabilitiesWithMethods(create().adapter)).toBeNull()
+  })
+
   it('exposes a resumable session reference', async () => {
     const target = create()
     const session = await target.adapter.start(CONFORMANCE_OPTS)

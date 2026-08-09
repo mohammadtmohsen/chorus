@@ -110,6 +110,42 @@ export interface SessionOpts {
   readonly sandbox: SandboxPolicy
 }
 
+/**
+ * A copy of a session, taken to be asked something and then thrown away.
+ *
+ * A fork is not a resume. Resuming *continues* a session — the provider keeps
+ * writing to the same stored transcript, and whatever is said next is part of it
+ * forever. A fork branches: it starts knowing everything the original knows, and
+ * nothing said in it reaches the original's context or its stored history.
+ *
+ * That difference is the whole reason asides can be cheap. Measured on both CLIs
+ * (see `docs/plans/ask-on-the-fly-2026-08-09/STATUS.md`), forking a session
+ * holding ~26k tokens and asking one question cost **two** uncached input tokens,
+ * because prompt caching absorbs the inherited context.
+ *
+ * **Always ephemeral**, rather than a flag: nothing wants a fork that outlives
+ * its question, and a persisted one would litter the user's own session history
+ * with fragments they never started.
+ *
+ * **One measured constraint.** A fork inherits the session *as persisted*, so a
+ * fork taken while a turn is in flight cannot see that turn — asked about a reply
+ * still streaming, it answers that no such reply exists. Fork about what has
+ * finished, not about what is arriving.
+ */
+export interface ForkOpts extends SessionOpts {
+  /**
+   * What the copy inherits of the user's configuration — hooks, MCP servers,
+   * skills, project instructions.
+   *
+   * An explicit choice at the call site rather than a default buried in an
+   * adapter, because it trades two things against each other and neither answer
+   * is free: `inherit` keeps the fork faithful to the session it copies, while
+   * `none` is faster to first token and makes "this cannot act" a property of
+   * the process rather than a promise about it.
+   */
+  readonly inherits: 'config' | 'nothing'
+}
+
 export interface AgentInput {
   readonly text: string
   readonly attachments?: readonly { readonly path: string }[]
@@ -215,6 +251,15 @@ export interface AgentAdapter {
   readonly capabilities: AgentCapabilities
   start(opts: SessionOpts): Promise<AgentSession>
   resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession>
+  /**
+   * Branches a session rather than continuing it — see `ForkOpts`.
+   *
+   * Optional, and paired with `capabilities.fork`, the way `setModel` is paired
+   * with `modelSwitchMidSession`: the flag is the promise, this is the
+   * implementation, and a provider that cannot branch declares false and omits
+   * the method rather than throwing when called.
+   */
+  fork?(sessionRef: string, opts: ForkOpts): Promise<AgentSession>
   /** Also reports the underlying CLI version, which is recorded on session.started (plan §2.5). */
   health(): Promise<HealthStatus>
   dispose(): Promise<void>

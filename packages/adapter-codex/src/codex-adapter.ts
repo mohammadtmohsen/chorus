@@ -7,6 +7,7 @@ import type {
   AgentInput,
   AgentSession,
   ApprovalDecision,
+  ForkOpts,
   HealthStatus,
   SandboxPolicy,
   SessionOpts,
@@ -38,6 +39,13 @@ const run = promisify(execFile)
 export const CODEX_CAPABILITIES: AgentCapabilities = {
   interrupt: true,
   steer: true,
+  /*
+   * True and now earned. It was true for a long time while this adapter issued
+   * `thread/fork` nowhere and `AgentSession` had no fork at all — a description
+   * of the protocol rather than of what Chorus could do, which is exactly the
+   * "wish, not a promise" the Claude adapter's own capability comment warns
+   * against. `fork()` below is the implementation that makes the claim honest.
+   */
   fork: true,
   reasoningStream: true,
   planStream: true,
@@ -393,6 +401,36 @@ export class CodexAdapter implements AgentAdapter {
     })
     const session = new CodexSession(sessionRef, rpc, this.approvalTtlMs, this.now)
     void session.readLimits()
+    return this.track(session)
+  }
+
+  /**
+   * A branch of a thread, which the original never learns about.
+   *
+   * `thread/fork` rather than `thread/resume`: resuming rejoins the same thread
+   * and everything said goes into it, while forking returns a new thread whose
+   * `forkedFromId` names the original and whose turns never reach it.
+   *
+   * `ephemeral: true` is what keeps a throwaway question from becoming a thread
+   * the user finds later — the server never materialises it on disk.
+   *
+   * No `lastTurnId`: every fork is taken at the thread's head. Forking at an
+   * older turn is possible in the protocol and deliberately unused, because
+   * Chorus's own log does not record turn ids it could point at.
+   */
+  async fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
+    if (sessionRef === '') throw new Error('Cannot fork a thread that has no id yet')
+    const rpc = await this.handshake()
+    const forked = (await rpc.request('thread/fork', {
+      threadId: sessionRef,
+      ephemeral: true,
+      cwd: opts.cwd,
+      approvalPolicy: 'on-request',
+      sandbox: toSandboxMode(opts.sandbox),
+      ...(opts.model === undefined ? {} : { model: opts.model }),
+    })) as { thread: { id: string } }
+
+    const session = new CodexSession(forked.thread.id, rpc, this.approvalTtlMs, this.now)
     return this.track(session)
   }
 

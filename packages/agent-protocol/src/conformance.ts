@@ -117,4 +117,25 @@ export const CONFORMANCE_CHECKS = {
   endsStreamWhenProviderDies(ended: boolean): string | null {
     return ended ? null : 'event stream stayed open after the provider died'
   },
+
+  /**
+   * A declared capability must have something behind it.
+   *
+   * `declaresCapabilities` only checks the flags are booleans, which is how
+   * `CODEX_CAPABILITIES.fork` stayed `true` for months while the adapter issued
+   * `thread/fork` nowhere and `AgentAdapter` had no `fork` at all. Nothing read
+   * the flag, so nothing caught it — a capability is a promise to the
+   * orchestrator, and an unread promise is still a lie.
+   *
+   * Both directions, because both are wrong in the same way: a flag with no
+   * method breaks the first caller that trusts it, and a method with no flag
+   * means the orchestrator will never call something that works.
+   */
+  backsCapabilitiesWithMethods(adapter: AgentAdapter): string | null {
+    const declared = adapter.capabilities.fork
+    const implemented = typeof adapter.fork === 'function'
+    if (declared && !implemented) return 'capabilities.fork is true but there is no fork method'
+    if (!declared && implemented) return 'fork is implemented but capabilities.fork is false'
+    return null
+  },
 } as const
