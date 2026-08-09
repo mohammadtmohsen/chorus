@@ -42,7 +42,7 @@
     "nobodyHere": "Nobody is in this conversation. Add an agent to start again.",
     "restartLabel": "Start this session over, with nothing said in it",
     "endLabel": "End this session",
-    "askAboutThis": "Ask about this",
+    "quoteInMessage": "Quote in message",
     "endConfirm": "An agent is working — press again to end this session",
     "cancel": "Cancel",
     "waiting": "waiting"

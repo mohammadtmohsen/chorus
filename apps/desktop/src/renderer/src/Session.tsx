@@ -4,7 +4,7 @@ import type { Attachment } from './Attachments.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
-import { anchorFor } from './quote.js'
+import { anchorFor, askableSource, type SourceEntry } from './quote.js'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
@@ -29,6 +29,26 @@ import {
  */
 const FOCUS_KEEPS_ITS_OWN =
   'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question'
+
+/**
+ * The transcript entry a DOM node sits inside, in the shape `askableSource`
+ * wants.
+ *
+ * Thin on purpose: the traversal is DOM, the judgement is not. Everything here
+ * comes straight off the attributes `Entry` writes, so the decision stays in a
+ * pure function that can be tested without a document.
+ */
+function sourceEntryAt(node: Node | null): SourceEntry | null {
+  const from = node instanceof Element ? node : (node?.parentElement ?? null)
+  const entry = from?.closest('.entry') ?? null
+  if (entry === null) return null
+  return {
+    eventId: entry.getAttribute('data-event-id') ?? '',
+    actor: entry.getAttribute('data-actor') ?? '',
+    kind: entry.getAttribute('data-kind') ?? '',
+    status: entry.getAttribute('data-status') ?? '',
+  }
+}
 
 export type AgentId = 'codex' | 'claude'
 /** Every agent Chorus knows how to seat, present or not. */
@@ -123,6 +143,16 @@ export function Session(props: {
     left: number
     top: number
     placement: 'above' | 'below'
+    /**
+     * The entry it came out of, when the passage is one an agent could be asked
+     * to expand on — `null` when it can only be quoted.
+     *
+     * Carried now and drawn later: the quick-question card is a later phase, and
+     * shipping a button that cannot answer would be worse than shipping the
+     * rename alone. The classifier is pure and tested, so the phase that adds
+     * the card adds only the card.
+     */
+    source: SourceEntry | null
   } | null>(null)
   /* The cast, the folder, the profile, Restart and End all live on the
      session's card in the sidenav now, along with the state each of them needs
@@ -344,7 +374,18 @@ export function Session(props: {
       return
     }
     const at = anchorFor(range.getBoundingClientRect(), paneEl.getBoundingClientRect())
-    setSelected(at === null ? null : { text, ...at })
+    /*
+     * Both ends, not `commonAncestorContainer`: a range spanning two entries has
+     * the scroller as its common ancestor, which carries none of the attributes
+     * the decision needs and would read as "no source" rather than as the
+     * cross-entry selection it actually is.
+     */
+    const source = askableSource(
+      sourceEntryAt(range.startContainer),
+      sourceEntryAt(range.endContainer),
+      text
+    )
+    setSelected(at === null ? null : { text, source, ...at })
   }, [])
 
   useEffect(() => {
@@ -790,13 +831,19 @@ export function Session(props: {
           type="button"
           className="quote-offer"
           data-placement={selected.placement}
+          /*
+           * Observable now, actionable later. The classifier runs on every
+           * selection from this phase on, so a wrong answer shows up in the
+           * running app and in e2e before anything is built on top of it.
+           */
+          data-askable={selected.source === null ? undefined : 'true'}
           style={{ left: `${String(selected.left)}px`, top: `${String(selected.top)}px` }}
           onMouseDown={(e) => {
             e.preventDefault()
           }}
           onClick={quoteSelection}
         >
-          {t('conversation.askAboutThis')}
+          {t('conversation.quoteInMessage')}
         </button>
       )}
 

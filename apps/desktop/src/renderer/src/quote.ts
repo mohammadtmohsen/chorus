@@ -12,6 +12,67 @@
  * without Chorus inventing a convention to teach it.
  */
 
+/**
+ * The transcript entry a selection came out of, flattened to what the decision
+ * needs.
+ *
+ * Read off the entry's own data attributes rather than passed down from the
+ * reducer, because the selection is made in the DOM and the DOM is the only
+ * place that knows which entry the pointer landed in. Strings rather than the
+ * reducer's unions: these come back from `getAttribute`, and narrowing them here
+ * — in the one function that decides — beats trusting an assertion at the edge.
+ */
+export interface SourceEntry {
+  readonly eventId: string
+  readonly actor: string
+  readonly kind: string
+  readonly status: string
+}
+
+/**
+ * How much text may be carried into an aside.
+ *
+ * A limit rather than a truncation: the excerpt is what the question is *about*,
+ * so half of one asks a different question than the one the user meant. Refusing
+ * is honest; trimming is not.
+ */
+export const MAX_EXCERPT_CHARS = 2_000
+
+/**
+ * Whether a selection can be asked about, and what it would be asked about.
+ *
+ * Quoting works on anything. Asking does not, and the reasons are not cosmetic:
+ *
+ * - **One entry only.** A range crossing two messages has no single author, and
+ *   an aside is routed to the author of the passage.
+ * - **An agent's own words.** User, system, tool, command and reasoning rows are
+ *   either not something an agent said or not something it can be asked to
+ *   expand on.
+ * - **Completed.** This is a provider constraint discovered by measurement, not
+ *   a preference: a fork taken mid-turn inherits the session only as far as the
+ *   last *completed* turn, so a fork asked about a still-streaming reply is
+ *   asked about text it cannot see. It answers that no such reply exists.
+ *
+ * Returns the source when all of that holds, and `null` when it does not — in
+ * which case the caller still offers to quote.
+ */
+export function askableSource(
+  start: SourceEntry | null,
+  end: SourceEntry | null,
+  excerpt: string,
+  limit: number = MAX_EXCERPT_CHARS
+): SourceEntry | null {
+  if (start === null || end === null) return null
+  if (start.eventId === '' || start.eventId !== end.eventId) return null
+  if (start.actor !== 'codex' && start.actor !== 'claude') return null
+  if (start.kind !== 'message') return null
+  if (start.status !== 'complete') return null
+
+  const body = excerpt.trim()
+  if (body === '' || body.length > limit) return null
+  return start
+}
+
 /** The selection, as a blockquote. */
 export function asQuote(selection: string): string {
   const body = selection.replace(/\r\n/g, '\n').trim()
@@ -54,11 +115,18 @@ export function withQuote(draft: string, selection: string): string {
  * hang it from and CSS decides which way it hangs. Getting this wrong is not
  * subtle — anchored by its top edge above the selection, the button sits *on
  * top of* the passage it is offering to quote.
+ *
+ * `width` is only ever used to clamp — CSS centres the button itself with
+ * `translate(-50%)` — so it is an estimate, and it has to be re-derived whenever
+ * the label changes. "Quote in message" is 16 characters of 11px monospace
+ * (~6.6px each) inside `--step * 3` padding either side and a 1px border:
+ * 16 × 6.6 + 18 + 2 ≈ 126, rounded up. The previous 96 was left over from a
+ * shorter label and already let the pill overhang a narrow pane.
  */
 export function anchorFor(
   selection: DOMRect,
   pane: DOMRect,
-  button = { width: 96, gap: 8, room: 34 }
+  button = { width: 128, gap: 8, room: 34 }
 ): { left: number; top: number; placement: 'above' | 'below' } | null {
   if (selection.width === 0 && selection.height === 0) return null
 
