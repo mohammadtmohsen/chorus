@@ -63,8 +63,21 @@ Coding agents are most useful when they can specialize, exchange findings, and r
 - Approval cards for commands and file changes.
 - Per-project working directories and permission profiles.
 - Git diff and review view.
-- Optional terminal drawer for raw sessions and debugging.
+- A slash menu, `@` mentions for agents and files, and drafts that survive a quit.
+- Plan mode: read and reason, change nothing until the plan is approved.
+- What the agents are doing — hooks, tool calls, subagents, background tasks,
+  and how full each context window is.
+- What this machine gives them — MCP server health, plugins, and which account
+  each agent is signed in as.
 
 ## Status
 
-Chorus is currently in the product-design stage.
+Working software, used daily on real projects. `0.7.0` runs both CLIs headless,
+holds several conversations at once, and keeps an append-only log that a
+transcript is rebuilt from. See the [changelog](CHANGELOG.md) for what each
+version added.
+
+Not a Claude Code replacement in full, and deliberately so: most of that tool's
+commands exist only inside its terminal UI and have no API. What is reachable
+through the SDK is reached, and each thing that is not has a written reason in
+`docs/plans/`.
