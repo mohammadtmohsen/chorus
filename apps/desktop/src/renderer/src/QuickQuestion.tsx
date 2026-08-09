@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { asideState, EMPTY_ASIDE, promotion, type AsideState } from './aside.js'
+import { asideState, EMPTY_ASIDE, fitCard, promotion, type AsideState } from './aside.js'
 import { MarkdownView } from './MarkdownView.js'
 import { EMPTY_VIEW, reduceEvents, type TranscriptView } from './transcript.js'
 
@@ -21,6 +21,28 @@ import { EMPTY_VIEW, reduceEvents, type TranscriptView } from './transcript.js'
  * the answer is still in flight. A wait you cannot walk away from would be worse
  * than the turn this exists to avoid.
  */
+/**
+ * The same "working" pip the sidebar uses for a session mid-turn.
+ *
+ * Lifted rather than invented: a breathing dot in the agent's own voice colour
+ * already means "this one is busy" everywhere else in the app, and a card that
+ * said it a different way would read as a different application. The dot
+ * carries the signal, so the word does not have to move.
+ *
+ * The pip and its 1.6s `breathe` are duplicated from `.workspace-session-pip`
+ * on purpose — the card should not reach into the workspace's class names for a
+ * visual idiom, and eight lines of CSS is cheaper than that coupling.
+ */
+function Thinking({ agent }: { agent: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <p className={`quick-thinking voice--${agent}`} role="status">
+      <span className="quick-pip" aria-hidden="true" />
+      {t('aside.thinking')}
+    </p>
+  )
+}
+
 export function QuickQuestion(props: {
   conversationId: string
   sourceEventId: string
@@ -41,10 +63,45 @@ export function QuickQuestion(props: {
   const [asking, setAsking] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
   const card = useRef<HTMLDivElement>(null)
+  /** Where it ends up, once it knows how big it is. */
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null)
 
   useEffect(() => {
     input.current?.focus()
   }, [])
+
+  /*
+   * Measured, not estimated, and re-measured as the answer arrives.
+   *
+   * The card's height is unknown until it renders and changes while it streams,
+   * so a position computed once from a guessed height is wrong twice. A
+   * `ResizeObserver` is the same instrument `Clamped` uses in `Entry` for the
+   * same reason.
+   *
+   * `offsetParent` is the pane, because the card is absolutely positioned inside
+   * it — asking the document for `.pane` would find the wrong one in a split.
+   */
+  useLayoutEffect(() => {
+    const el = card.current
+    if (el === null) return
+    const place = (): void => {
+      const pane = el.offsetParent
+      if (!(pane instanceof HTMLElement)) return
+      setAt(
+        fitCard(
+          { left: props.left, top: props.top, placement: props.placement },
+          { width: pane.clientWidth, height: pane.clientHeight },
+          { width: el.offsetWidth, height: el.offsetHeight }
+        )
+      )
+    }
+    place()
+    const observer = new ResizeObserver(place)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [props.left, props.top, props.placement])
 
   /*
    * Escape closes, and a click anywhere outside does too.
@@ -142,8 +199,16 @@ export function QuickQuestion(props: {
     <div
       ref={card}
       className="quick-question"
-      data-placement={props.placement}
-      style={{ left: `${String(props.left)}px`, top: `${String(props.top)}px` }}
+      /*
+       * Hidden until it has been measured, so the first paint is not the card
+       * in the wrong place followed by a jump. One frame, because
+       * `useLayoutEffect` measures before the browser paints.
+       */
+      style={
+        at === null
+          ? { visibility: 'hidden' }
+          : { left: `${String(at.left)}px`, top: `${String(at.top)}px` }
+      }
       role="dialog"
       aria-label={t('aside.heading', { agent: props.agent })}
     >
@@ -164,11 +229,14 @@ export function QuickQuestion(props: {
           ) : state.answer !== '' ? (
             <MarkdownView source={state.answer} />
           ) : (
-            <p className="muted">{t('aside.thinking')}</p>
+            <Thinking agent={props.agent} />
           )}
-          {state.working && state.answer !== '' && (
-            <span className="quick-working">{t('aside.thinking')}</span>
-          )}
+          {/*
+            While text is already arriving, the dots continue without repeating
+            the expectation — that line is for the wait before anything appears,
+            and after it has appeared it would only be noise.
+          */}
+          {state.working && state.answer !== '' && <Thinking agent={props.agent} />}
         </div>
       )}
 

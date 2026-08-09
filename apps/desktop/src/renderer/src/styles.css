@@ -557,6 +557,13 @@ body {
   position: absolute;
   z-index: 5;
   width: min(420px, calc(100% - 24px));
+  /*
+   * Capped, so a long answer scrolls inside the card instead of growing it past
+   * the top of the pane. Without this the header, the excerpt and the first half
+   * of the answer were clipped off — the card was taller than the thing holding
+   * it and nothing said so.
+   */
+  max-height: min(440px, calc(100% - 16px));
   display: flex;
   flex-direction: column;
   gap: calc(var(--step) * 2);
@@ -567,13 +574,24 @@ body {
   box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
 }
 
-.quick-question[data-placement='above'] {
-  transform: translate(-50%, -100%);
+/*
+ * Everything except the answer keeps its natural size. Only one region scrolls,
+ * because two scrollbars in a card this size is a worse answer than a clipped
+ * excerpt.
+ */
+.quick-head,
+.quick-excerpt,
+.quick-form,
+.quick-actions {
+  flex: 0 0 auto;
 }
 
-.quick-question[data-placement='below'] {
-  transform: translateX(-50%);
-}
+/*
+ * No `transform` here on purpose. `fitCard` returns a top-left corner having
+ * already measured the card and the pane, and a CSS transform on top of that
+ * would be a second opinion about position — which is how the pill's own
+ * off-by-a-card-height bug survived to a screenshot.
+ */
 
 .quick-head {
   display: flex;
@@ -600,20 +618,53 @@ body {
   color: var(--muted);
   font-size: 12px;
   max-height: 4.5em;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
+/*
+ * A fixed height, not a maximum.
+ *
+ * `min-height: 0` is the load-bearing line and the reason this did not scroll at
+ * all: a flex item defaults to `min-height: auto`, which refuses to shrink below
+ * its content, so `overflow-y` never engaged and the answer grew the card
+ * instead of scrolling inside it. Setting it is the standard fix and it is
+ * invisible until you know.
+ *
+ * Fixed rather than `max-height` so the card stops resizing under the pointer
+ * while the answer streams in. A box that grows for eight seconds is hard to
+ * read and impossible to click into.
+ */
 .quick-answer {
-  max-height: 40vh;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 190px;
   overflow-y: auto;
   font-size: 13px;
 }
 
-.quick-working {
-  display: block;
-  margin-top: var(--step);
-  color: var(--muted);
+/*
+ * The sidebar's working row, in a card. `--voice` comes from the `voice--*`
+ * class the component applies, so the pip and the word take the colour of the
+ * agent being asked rather than a generic accent.
+ */
+.quick-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--step) * 1.5);
+  margin: 0;
+  color: var(--voice, var(--bone));
+  font-family: var(--mono);
   font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Same 5px and the same 1.6s as `.workspace-session-pip`, deliberately. */
+.quick-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+  animation: breathe 1.6s ease-in-out infinite;
 }
 
 .quick-input {

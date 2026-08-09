@@ -64,6 +64,49 @@ export function asideState(view: TranscriptView): AsideState {
 }
 
 /**
+ * Where the card actually goes, given how big it turned out to be.
+ *
+ * `anchorFor` cannot do this job. It decides above-or-below by asking whether
+ * there is `room: 34` above the selection — a constant sized for a one-line
+ * pill, which is what it was written for. A card is ten times taller, so it
+ * claims "above" almost always and then extends past the top of the pane and is
+ * clipped: header, excerpt and answer gone, leaving the input and the buttons.
+ * That is not hypothetical; it is what shipped and what a screenshot caught.
+ *
+ * So the card is measured rather than estimated, and clamped rather than hung.
+ * It prefers to sit above the passage, drops below when it does not fit there,
+ * and is pushed inside the pane if it fits in neither — a card that is entirely
+ * visible in the wrong place beats half a card in the right one.
+ *
+ * Returns a top-left corner, which is why the CSS carries no `translate`: two
+ * places deciding position is how the pill's own bug survived this long.
+ */
+export function fitCard(
+  anchor: { readonly left: number; readonly top: number; readonly placement: 'above' | 'below' },
+  pane: { readonly width: number; readonly height: number },
+  card: { readonly width: number; readonly height: number },
+  gap = 8
+): { left: number; top: number } {
+  const margin = 4
+
+  // Centred on the anchor, then kept inside the pane. `Math.max` last so a card
+  // wider than its pane sits at the margin rather than at a negative offset.
+  const centred = anchor.left - card.width / 2
+  const left = Math.max(margin, Math.min(centred, pane.width - card.width - margin))
+
+  const above = anchor.top - card.height - gap
+  const below = anchor.top + gap
+  const fitsAbove = above >= margin
+  const fitsBelow = below + card.height + margin <= pane.height
+
+  const wanted =
+    anchor.placement === 'above' ? (fitsAbove ? above : below) : fitsBelow ? below : above
+
+  const top = Math.max(margin, Math.min(wanted, pane.height - card.height - margin))
+  return { left, top }
+}
+
+/**
  * What "take this and continue" puts in the composer.
  *
  * Three things have to be true of it at once. It must reach the passage's

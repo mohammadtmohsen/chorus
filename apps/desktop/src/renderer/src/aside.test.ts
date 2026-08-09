@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asideState, promotion } from './aside.js'
+import { asideState, fitCard, promotion } from './aside.js'
 import { EMPTY_VIEW, type TranscriptMessage, type TranscriptView } from './transcript.js'
 
 const said = (over: Partial<TranscriptMessage>): TranscriptMessage => ({
@@ -102,5 +102,61 @@ describe('promotion', () => {
   it('quotes a multi-line answer as one block', () => {
     const multi = promotion('codex', 'x', 'one\n\ntwo')
     expect(multi).toContain('> one\n>\n> two')
+  })
+})
+
+describe('fitCard', () => {
+  const pane = { width: 800, height: 600 }
+  const card = { width: 400, height: 350 }
+
+  it('sits above the passage when there is room', () => {
+    const at = fitCard({ left: 400, top: 500, placement: 'above' }, pane, card)
+    expect(at.top).toBe(500 - 350 - 8)
+    expect(at.left).toBe(200)
+  })
+
+  it('drops below when there is not room above', () => {
+    // The bug a screenshot caught: `anchorFor` says "above" whenever 34px are
+    // free, which for a 350px card meant clipped off the top of the pane.
+    const at = fitCard({ left: 400, top: 60, placement: 'above' }, pane, card)
+    expect(at.top).toBe(68)
+  })
+
+  it('never leaves the card clipped off the top', () => {
+    const at = fitCard({ left: 400, top: 20, placement: 'above' }, pane, card)
+    expect(at.top).toBeGreaterThanOrEqual(4)
+  })
+
+  it('never leaves it hanging off the bottom', () => {
+    const at = fitCard({ left: 400, top: 590, placement: 'below' }, pane, card)
+    expect(at.top + card.height).toBeLessThanOrEqual(pane.height)
+  })
+
+  it('clamps to the left edge', () => {
+    const at = fitCard({ left: 10, top: 500, placement: 'above' }, pane, card)
+    expect(at.left).toBe(4)
+  })
+
+  it('clamps to the right edge', () => {
+    const at = fitCard({ left: 790, top: 500, placement: 'above' }, pane, card)
+    expect(at.left).toBe(800 - 400 - 4)
+  })
+
+  it('sits at the margin when the card is wider than the pane', () => {
+    // Clamping must not produce a negative offset, which would push it off the
+    // left edge in the name of keeping it on the right one.
+    const at = fitCard(
+      { left: 100, top: 400, placement: 'above' },
+      { width: 300, height: 600 },
+      card
+    )
+    expect(at.left).toBe(4)
+  })
+
+  it('is fully visible even when it fits neither above nor below', () => {
+    const tight = { width: 800, height: 400 }
+    const at = fitCard({ left: 400, top: 200, placement: 'above' }, tight, card)
+    expect(at.top).toBeGreaterThanOrEqual(4)
+    expect(at.top + card.height).toBeLessThanOrEqual(tight.height)
   })
 })
