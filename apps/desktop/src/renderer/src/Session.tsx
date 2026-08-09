@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
+import { fitCard } from './aside.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import { QuickQuestion } from './QuickQuestion.js'
-import { anchorFor, askableSource, type SourceEntry } from './quote.js'
+import { anchorOf, askableSource, type SelectionAnchor, type SourceEntry } from './quote.js'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
@@ -141,21 +142,20 @@ export function Session(props: {
   /** A passage selected in this pane's transcript, and where to offer to quote it. */
   const [selected, setSelected] = useState<{
     text: string
-    left: number
-    top: number
-    placement: 'above' | 'below'
+    /**
+     * The passage itself, unclamped.
+     *
+     * Raw on purpose. The old anchor arrived already clamped against a guess at
+     * the offer's width, which meant the true geometry was gone before anything
+     * could measure what was actually rendered — so a wider offer could never be
+     * placed correctly however carefully it was measured.
+     */
+    anchor: SelectionAnchor
     /**
      * The entry it came out of, when the passage is one an agent could be asked
      * to expand on — `null` when it can only be quoted.
-     *
-     * Carried now and drawn later: the quick-question card is a later phase, and
-     * shipping a button that cannot answer would be worse than shipping the
-     * rename alone. The classifier is pure and tested, so the phase that adds
-     * the card adds only the card.
      */
     source: SourceEntry | null
-    /** Carried into the card, so it can clear the passage when it drops below. */
-    selectionHeight: number
   } | null>(null)
   /**
    * The open quick-question card, if any.
@@ -167,11 +167,7 @@ export function Session(props: {
    */
   const [askingAbout, setAskingAbout] = useState<{
     text: string
-    left: number
-    top: number
-    placement: 'above' | 'below'
-    /** So a card that cannot fit above clears the passage instead of covering it. */
-    selectionHeight: number
+    anchor: SelectionAnchor
     source: SourceEntry
     purpose: 'question' | 'explanation'
     /** Started by the click, because a mount effect runs twice and can send twice. */
@@ -406,8 +402,7 @@ export function Session(props: {
       setSelected(null)
       return
     }
-    const box = range.getBoundingClientRect()
-    const at = anchorFor(box, paneEl.getBoundingClientRect())
+    const anchor = anchorOf(range.getBoundingClientRect(), paneEl.getBoundingClientRect())
     /*
      * Both ends, not `commonAncestorContainer`: a range spanning two entries has
      * the scroller as its common ancestor, which carries none of the attributes
@@ -427,7 +422,7 @@ export function Session(props: {
         })
         .catch(() => undefined)
     }
-    setSelected(at === null ? null : { text, source, selectionHeight: box.height, ...at })
+    setSelected(anchor === null ? null : { text, source, anchor })
   }, [])
 
   useEffect(() => {
@@ -447,6 +442,43 @@ export function Session(props: {
       document.removeEventListener('selectionchange', onChange)
     }
   }, [])
+
+  /**
+   * Where the offer ends up, once it knows how wide it is.
+   *
+   * Measured rather than estimated. The width depends on how many actions are
+   * shown and what they are labelled — two, or three when a language is set —
+   * and every constant written down for it has been wrong within a phase of
+   * being written.
+   */
+  const offer = useRef<HTMLDivElement | null>(null)
+  const [offerAt, setOfferAt] = useState<{ left: number; top: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const el = offer.current
+    const paneEl = pane.current
+    if (selected === null || el === null || paneEl === null) {
+      setOfferAt(null)
+      return
+    }
+    const place = (): void => {
+      setOfferAt(
+        fitCard(
+          selected.anchor,
+          { width: paneEl.clientWidth, height: paneEl.clientHeight },
+          { width: el.offsetWidth, height: el.offsetHeight }
+        )
+      )
+    }
+    place()
+    // Wrapping to a second line changes its height, which changes where it
+    // should hang from.
+    const observer = new ResizeObserver(place)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [selected])
 
   /**
    * Opens an aside on the selected passage, and starts its fork here.
@@ -901,13 +933,22 @@ export function Session(props: {
       {selected !== null && askingAbout === null && (
         <div
           className="quote-offer"
-          data-placement={selected.placement}
+
           /*
            * The classifier's answer, visible in the DOM as well as in the
            * buttons, so a wrong one is assertable rather than only lookable-at.
            */
           data-askable={selected.source === null ? undefined : 'true'}
-          style={{ left: `${String(selected.left)}px`, top: `${String(selected.top)}px` }}
+          ref={offer}
+          /*
+           * Hidden for the frame before it has been measured, so the first paint
+           * is not the offer in the wrong place followed by a jump.
+           */
+          style={
+            offerAt === null
+              ? { visibility: 'hidden' }
+              : { left: `${String(offerAt.left)}px`, top: `${String(offerAt.top)}px` }
+          }
           onMouseDown={(e) => {
             e.preventDefault()
           }}
@@ -958,10 +999,7 @@ export function Session(props: {
           language={explainLanguage}
           agent={askingAbout.source.actor}
           excerpt={askingAbout.text}
-          left={askingAbout.left}
-          top={askingAbout.top}
-          placement={askingAbout.placement}
-          selectionHeight={askingAbout.selectionHeight}
+          anchor={askingAbout.anchor}
           onClose={() => {
             setAskingAbout(null)
           }}

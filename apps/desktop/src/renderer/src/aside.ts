@@ -1,3 +1,4 @@
+import type { SelectionAnchor } from './quote.js'
 import type { TranscriptView } from './transcript.js'
 
 /**
@@ -64,61 +65,38 @@ export function asideState(view: TranscriptView): AsideState {
 }
 
 /**
- * Where the card actually goes, given how big it turned out to be.
+ * Where something goes, given how big it turned out to be.
  *
- * `anchorFor` cannot do this job. It decides above-or-below by asking whether
- * there is `room: 34` above the selection — a constant sized for a one-line
- * pill, which is what it was written for. A card is ten times taller, so it
- * claims "above" almost always and then extends past the top of the pane and is
- * clipped: header, excerpt and answer gone, leaving the input and the buttons.
- * That is not hypothetical; it is what shipped and what a screenshot caught.
+ * The only positioner. It used to share the job with `anchorFor`, which decided
+ * above-or-below from a guess at the offer's width and returned a *hanging edge*
+ * rather than a corner — so the two disagreed about what `top` meant, and a card
+ * that could not fit above landed squarely on the passage it was quoting.
  *
- * So the card is measured rather than estimated, and clamped rather than hung.
- * It prefers to sit above the passage, drops below when it does not fit there,
- * and is pushed inside the pane if it fits in neither — a card that is entirely
- * visible in the wrong place beats half a card in the right one.
- *
- * Returns a top-left corner, which is why the CSS carries no `translate`: two
- * places deciding position is how the pill's own bug survived this long.
+ * Everything is measured now. Prefers above, drops below when it does not fit
+ * there, and is pushed inside the pane when it fits in neither: entirely visible
+ * in the wrong place beats half visible in the right one. A box wider than its
+ * pane is centred, because that is the only placement symmetric about an
+ * overflow no arithmetic can remove.
  */
 export function fitCard(
-  anchor: { readonly left: number; readonly top: number; readonly placement: 'above' | 'below' },
+  anchor: SelectionAnchor,
   pane: { readonly width: number; readonly height: number },
-  card: { readonly width: number; readonly height: number },
-  /** How tall the selected passage is, so falling past it clears it. */
-  selectionHeight = 0,
+  box: { readonly width: number; readonly height: number },
   gap = 8
 ): { left: number; top: number } {
   const margin = 4
 
-  // Centred on the anchor, then kept inside the pane. `Math.max` last so a card
-  // wider than its pane sits at the margin rather than at a negative offset.
-  const centred = anchor.left - card.width / 2
-  const left = Math.max(margin, Math.min(centred, pane.width - card.width - margin))
+  const centred = anchor.centreX - box.width / 2
+  const left =
+    pane.width < box.width + margin * 2
+      ? (pane.width - box.width) / 2
+      : Math.max(margin, Math.min(centred, pane.width - box.width - margin))
 
-  /*
-   * `anchorFor` returns a *hanging edge*, not a box corner, and which edge
-   * depends on the placement it chose: 'above' is the selection's top less a
-   * gap, 'below' is its bottom plus one. So converting to a card corner is not
-   * one subtraction — it is one for the edge you were given and a different one
-   * for the edge you are falling to.
-   *
-   * Crossing the passage is the part that bit. A card that could not fit above
-   * used to drop to `anchor.top`, which for an 'above' anchor is *the top of the
-   * selection* — landing the card squarely on the words it was quoting. Clearing
-   * it costs the selection's own height plus both gaps.
-   */
-  const crossing = gap * 2 + selectionHeight
-  const above =
-    anchor.placement === 'above' ? anchor.top - card.height : anchor.top - crossing - card.height
-  const below = anchor.placement === 'below' ? anchor.top : anchor.top + crossing
-  const fitsAbove = above >= margin
-  const fitsBelow = below + card.height + margin <= pane.height
+  const above = anchor.top - box.height - gap
+  const below = anchor.top + anchor.height + gap
+  const wanted = above >= margin ? above : below
 
-  const wanted =
-    anchor.placement === 'above' ? (fitsAbove ? above : below) : fitsBelow ? below : above
-
-  const top = Math.max(margin, Math.min(wanted, pane.height - card.height - margin))
+  const top = Math.max(margin, Math.min(wanted, pane.height - box.height - margin))
   return { left, top }
 }
 

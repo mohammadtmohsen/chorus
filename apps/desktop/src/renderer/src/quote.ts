@@ -104,61 +104,39 @@ export function withQuote(draft: string, selection: string): string {
 }
 
 /**
- * Where the button goes, in the pane's own coordinates.
+ * The passage, in the pane's own coordinates, and nothing decided yet.
  *
- * Centred on the selection and clear of it, then clamped so it cannot sit off
- * either edge of a narrow pane. Returns null when the selection has no
- * rectangle — a collapsed range, or one scrolled entirely out of view.
+ * This used to be `anchorFor`, which also chose above-or-below and clamped using
+ * a hand-written guess at how wide the offer was. Two things went wrong with
+ * that. The guess drifted every time a label changed — it was 96 for a
+ * fourteen-character button and had to become 240 for two of them, and a
+ * three-action offer would have needed a third revision nobody would remember to
+ * make. And because the clamped result was what got stored, the real geometry
+ * was gone by the time anything could have measured the truth.
  *
- * `placement` rather than a computed pixel height: the button is one line of
- * text in a font this module cannot measure, so the arithmetic gives an edge to
- * hang it from and CSS decides which way it hangs. Getting this wrong is not
- * subtle — anchored by its top edge above the selection, the button sits *on
- * top of* the passage it is offering to quote.
+ * So this returns the passage and stops. Whoever is being positioned measures
+ * itself and calls `fitCard`, which is now the only thing that decides where
+ * anything goes — the offer and the card included. One positioner cannot
+ * disagree with itself about which edge `top` means, which is what the two of
+ * them used to do.
  *
- * `width` is only ever used to clamp — CSS centres the offer itself with
- * `translate(-50%)` — so it is an estimate, and it has to be re-derived whenever
- * the actions change. The pill now holds two of them: "Quote in message" and
- * "Ask about this", 16 and 14 characters of 11px monospace (~6.6px each), each
- * inside `--step * 3` padding either side, plus a 1px divider and a 1px border:
- * (16 + 14) × 6.6 + 4 × 9 + 2 ≈ 236, rounded up. A single-action estimate left
- * the second button hanging off a narrow pane.
+ * `null` when the selection has no rectangle: a collapsed range, or one scrolled
+ * entirely out of view.
  */
-export function anchorFor(
-  selection: DOMRect,
-  pane: DOMRect,
-  button = { width: 240, gap: 8, room: 34 }
-): { left: number; top: number; placement: 'above' | 'below' } | null {
+export interface SelectionAnchor {
+  /** The horizontal centre of the passage. */
+  readonly centreX: number
+  /** Its top edge. */
+  readonly top: number
+  /** How tall it is, so anything dropping below it can clear it. */
+  readonly height: number
+}
+
+export function anchorOf(selection: DOMRect, pane: DOMRect): SelectionAnchor | null {
   if (selection.width === 0 && selection.height === 0) return null
-
-  const half = button.width / 2
-  const centre = selection.left + selection.width / 2 - pane.left
-
-  /*
-   * A pane narrower than the offer gets it centred, not clamped.
-   *
-   * The clamp keeps the left edge on screen and, when the pill is wider than the
-   * pane, pushes the right edge off it instead — measured at a 200px pane, a
-   * 237px offer ran from 5 to 243. Centring is the only placement that is
-   * symmetric about the overflow, and it pairs with the `max-width` in the CSS
-   * so what actually renders fits. This is what the second action cost: one
-   * button fitted panes where two do not.
-   */
-  const left =
-    pane.width < button.width + 8
-      ? pane.width / 2
-      : Math.min(Math.max(centre, half + 4), pane.width - half - 4)
-
-  /*
-   * Below the selection when there is no room above it.
-   *
-   * The first line of a transcript sits against the top of the pane, so a button
-   * placed above it would be clipped by the scroller — and the one selection you
-   * cannot easily re-make is the one you just made.
-   */
-  const top = selection.top - pane.top
-  if (top < button.room) {
-    return { left, top: selection.bottom - pane.top + button.gap, placement: 'below' }
+  return {
+    centreX: selection.left + selection.width / 2 - pane.left,
+    top: selection.top - pane.top,
+    height: selection.height,
   }
-  return { left, top: top - button.gap, placement: 'above' }
 }

@@ -108,60 +108,59 @@ describe('promotion', () => {
 describe('fitCard', () => {
   const pane = { width: 800, height: 600 }
   const card = { width: 400, height: 350 }
-  // `anchorFor` hands back a hanging edge, not a corner: for 'above' it is the
-  // selection's top less the 8px gap.
-  const above = (top: number) => ({ left: 400, top, placement: 'above' as const })
-  const below = (top: number) => ({ left: 400, top, placement: 'below' as const })
+  /** A passage 22px tall, centred horizontally, with its top at `top`. */
+  const passage = (top: number, centreX = 400) => ({ centreX, top, height: 22 })
 
-  it('hangs its bottom edge from the anchor when it fits above', () => {
-    const at = fitCard(above(500), pane, card)
-    expect(at.top).toBe(150)
+  it('hangs above the passage when there is room', () => {
+    const at = fitCard(passage(500), pane, card)
+    expect(at.top).toBe(500 - 350 - 8)
     expect(at.left).toBe(200)
   })
 
   it('clears the passage when it cannot fit above', () => {
-    // The bug: falling back to the anchor put the card on top of the very words
-    // it was quoting, because an 'above' anchor *is* the top of the selection.
-    const selectionHeight = 22
-    const at = fitCard(above(60), pane, card, selectionHeight)
-    expect(at.top).toBeGreaterThanOrEqual(60 + selectionHeight)
+    // The bug two positioners used to produce between them: dropping to the
+    // anchor put the box on top of the very words it was quoting.
+    const at = fitCard(passage(60), pane, card)
+    expect(at.top).toBeGreaterThanOrEqual(60 + 22)
   })
 
-  it('takes a below anchor at face value', () => {
-    // Already past the selection — adding the crossing again would leave a gap
-    // the size of the passage.
-    const at = fitCard(below(100), pane, card)
-    expect(at.top).toBe(100)
-  })
-
-  it('never leaves the card clipped off the top', () => {
-    expect(fitCard(above(20), pane, card).top).toBeGreaterThanOrEqual(4)
+  it('never leaves it clipped off the top', () => {
+    expect(fitCard(passage(20), pane, card).top).toBeGreaterThanOrEqual(4)
   })
 
   it('never leaves it hanging off the bottom', () => {
-    const at = fitCard(below(590), pane, card)
+    const at = fitCard(passage(590), pane, card)
     expect(at.top + card.height).toBeLessThanOrEqual(pane.height)
   })
 
   it('clamps to the left edge', () => {
-    expect(fitCard({ ...above(500), left: 10 }, pane, card).left).toBe(4)
+    expect(fitCard(passage(500, 10), pane, card).left).toBe(4)
   })
 
   it('clamps to the right edge', () => {
-    expect(fitCard({ ...above(500), left: 790 }, pane, card).left).toBe(800 - 400 - 4)
+    expect(fitCard(passage(500, 790), pane, card).left).toBe(800 - 400 - 4)
   })
 
-  it('sits at the margin when the card is wider than the pane', () => {
-    // Clamping must not produce a negative offset, which would push it off the
-    // left edge in the name of keeping it on the right one.
-    const at = fitCard({ ...above(400), left: 100 }, { width: 300, height: 600 }, card)
-    expect(at.left).toBe(4)
+  it('centres a box wider than its pane', () => {
+    // Measured once at a 200px pane: clamping the left edge on screen pushed a
+    // 237px offer off the right. Centring is the only placement symmetric about
+    // an overflow that cannot be removed.
+    const at = fitCard(passage(400, 100), { width: 300, height: 600 }, card)
+    expect(at.left).toBe((300 - 400) / 2)
   })
 
   it('is fully visible even when it fits neither above nor below', () => {
     const tight = { width: 800, height: 400 }
-    const at = fitCard(above(200), tight, card)
+    const at = fitCard(passage(200), tight, card)
     expect(at.top).toBeGreaterThanOrEqual(4)
     expect(at.top + card.height).toBeLessThanOrEqual(tight.height)
+  })
+
+  it('positions a small box from the same passage', () => {
+    // The offer and the card go through this together now. One positioner cannot
+    // disagree with itself about which edge `top` means.
+    const at = fitCard(passage(500), pane, { width: 240, height: 30 })
+    expect(at.top).toBe(500 - 30 - 8)
+    expect(at.left).toBe(400 - 120)
   })
 })

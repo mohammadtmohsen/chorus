@@ -502,13 +502,12 @@ body {
   cursor: pointer;
 }
 
-.quote-offer[data-placement='above'] {
-  transform: translate(-50%, -100%);
-}
-
-.quote-offer[data-placement='below'] {
-  transform: translateX(-50%);
-}
+/*
+ * No `transform`. `fitCard` measures the offer and returns a top-left corner,
+ * and a CSS transform on top of that would be a second opinion about position —
+ * which is precisely how the offer and the card came to disagree about which
+ * edge `top` meant.
+ */
 
 .quote-offer:hover {
   border-color: color-mix(in srgb, var(--bone) 40%, var(--line));

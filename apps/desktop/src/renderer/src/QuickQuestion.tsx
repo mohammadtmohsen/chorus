@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { asideState, EMPTY_ASIDE, fitCard, promotion, type AsideState } from './aside.js'
+import type { SelectionAnchor } from './quote.js'
 import { MarkdownView } from './MarkdownView.js'
 import { EMPTY_VIEW, reduceEvents, type TranscriptView } from './transcript.js'
 import type { TranscriptEvent } from '../../shared/ipc.js'
@@ -61,10 +62,8 @@ export function QuickQuestion(props: {
   language: string
   agent: string
   excerpt: string
-  left: number
-  top: number
-  placement: 'above' | 'below'
-  selectionHeight: number
+  /** The passage, unclamped — the card measures itself and fits from it. */
+  anchor: SelectionAnchor
   onClose: () => void
   /** Stages text into the composer — quoting, or taking the answer forward. */
   onStage: (text: string) => void
@@ -145,10 +144,9 @@ export function QuickQuestion(props: {
       if (!(pane instanceof HTMLElement)) return
       setAt(
         fitCard(
-          { left: props.left, top: props.top, placement: props.placement },
+          props.anchor,
           { width: pane.clientWidth, height: pane.clientHeight },
-          { width: el.offsetWidth, height: el.offsetHeight },
-          props.selectionHeight
+          { width: el.offsetWidth, height: el.offsetHeight }
         )
       )
     }
@@ -158,7 +156,7 @@ export function QuickQuestion(props: {
     return () => {
       observer.disconnect()
     }
-  }, [props.left, props.top, props.placement, props.selectionHeight])
+  }, [props.anchor])
 
   /*
    * Escape closes, and a click anywhere outside does too.

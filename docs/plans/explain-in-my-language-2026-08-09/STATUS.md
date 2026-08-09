@@ -93,8 +93,24 @@ there is no typing to hide the CLI boot behind, and the answer is long because i
 explains several terms. Whether that is tolerable is the open question this plan
 always said it was, and it is now answerable from the running app.
 
-## What is left
+## Phase 3 done: one positioner, everything measured
 
-Phase 3's remaining piece: the offer measured rather than estimated, using the
-raw selection rectangle. The third action currently uses the same estimate as the
-second, which was measured to fit at 200px but is now carrying one more label.
+`anchorFor` is gone. It decided above-or-below and clamped using a hand-written
+guess at the offer's width — 96 for one action, 240 for two, and a third would
+have needed a revision nobody would have remembered to make. Worse, the clamped
+result was what got stored, so the real geometry was gone before anything could
+measure the truth.
+
+`anchorOf` now reports the passage and stops. Whoever is being positioned
+measures itself and calls `fitCard`, which is the only thing that decides where
+anything goes — the offer and the card alike. Two positioners cannot disagree
+about which edge `top` means when there is one.
+
+The measurements are the argument. At full width the offer is **348×26**; at a
+200px pane it wraps to **192×73** and still hangs exactly above the passage
+(`bottom` 167 against a passage top of 167). No constant tracks a width that
+changes by wrapping.
+
+Verified with three actions at 804, 364 and 200 pixel panes: three actions,
+inside the pane horizontally and vertically, at each. Looked at as well —
+stacked, centred, and hanging off the highlighted passage.

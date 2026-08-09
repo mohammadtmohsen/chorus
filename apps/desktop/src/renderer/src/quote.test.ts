@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  anchorFor,
+  anchorOf,
   asQuote,
   askableSource,
   MAX_EXCERPT_CHARS,
@@ -80,60 +80,28 @@ describe('withQuote', () => {
   })
 })
 
-describe('anchorFor', () => {
+describe('anchorOf', () => {
   const pane = rect(100, 50, 400, 600)
 
-  it('centres the button on the selection, above it', () => {
-    // Selection 200..300 across, so centred at 250 → 150 inside the pane, which
-    // clears the two-action pill's half-width and so is not clamped.
-    const at = anchorFor(rect(200, 300, 100, 20), pane)
-    expect(at).toEqual({ left: 150, top: 242, placement: 'above' })
+  it('reports the passage in the pane’s own coordinates, unclamped', () => {
+    // Deliberately raw. The previous version clamped here against a guess at how
+    // wide the offer was, which threw away the geometry anything measuring the
+    // real width would have needed.
+    const at = anchorOf(rect(200, 300, 100, 20), pane)
+    expect(at).toEqual({ centreX: 150, top: 250, height: 20 })
   })
 
-  it('hangs the button from the selection, never over it', () => {
-    // The bug this exists to stop: anchored by its top edge above the passage,
-    // the button covers the words it is offering to quote. `placement` is what
-    // tells CSS to hang it upward instead.
-    const at = anchorFor(rect(200, 300, 100, 20), pane)
-    expect(at?.placement).toBe('above')
-    // The anchor is the selection's own top edge, less the gap — so nothing is
-    // drawn between it and the text.
-    expect(at?.top).toBe(300 - pane.top - 8)
+  it('keeps a centre outside the pane rather than pulling it in', () => {
+    const at = anchorOf(rect(480, 300, 20, 20), pane)
+    expect(at?.centreX).toBe(390)
   })
 
-  it('drops below the selection when there is no room above', () => {
-    // Near the top of the pane: above would be clipped by the scroller.
-    const at = anchorFor(rect(200, 55, 100, 20), pane)
-    expect(at).toMatchObject({ placement: 'below', top: 33 })
-  })
-
-  it('clamps to the left edge of a narrow pane', () => {
-    // Half the pill (120) plus the 4px margin the clamp keeps.
-    const at = anchorFor(rect(100, 300, 10, 20), pane)
-    expect(at?.left).toBe(124)
-  })
-
-  it('clamps to the right edge', () => {
-    const at = anchorFor(rect(480, 300, 20, 20), pane)
-    expect(at?.left).toBe(276)
-  })
-
-  it('centres the offer in a pane too narrow to hold it', () => {
-    // Measured at a 200px pane: clamping the left edge on screen pushed a 237px
-    // offer from 5 to 243. Centred, the overflow is symmetric and the CSS
-    // `max-width` makes what renders fit.
-    const at = anchorFor(rect(0, 300, 10, 20), rect(0, 0, 200, 600))
-    expect(at?.left).toBe(100)
-  })
-
-  it('survives a pane narrower than the button', () => {
-    const at = anchorFor(rect(0, 300, 10, 20), rect(0, 0, 40, 600))
-    expect(at).not.toBeNull()
-    expect(Number.isFinite(at?.left)).toBe(true)
+  it('carries the passage’s height, so anything below it can clear it', () => {
+    expect(anchorOf(rect(200, 300, 100, 44), pane)?.height).toBe(44)
   })
 
   it('returns nothing for a selection with no rectangle', () => {
-    expect(anchorFor(rect(0, 0, 0, 0), pane)).toBeNull()
+    expect(anchorOf(rect(0, 0, 0, 0), pane)).toBeNull()
   })
 })
 
