@@ -179,6 +179,37 @@ fired; a question the user is demonstrably engaged with cannot expire under them
 input — and a card genuinely about to expire says so while it can still be
 answered, rather than vanishing into a notice.
 
+### C-015 · An agent cannot address another agent
+
+`parseMentions` runs in exactly one place: `runtime.send`, the path the **user's**
+message takes. An agent's own output goes `ConversationService.consume` →
+`handle` → `lifecycle` → `append`, and nothing on that path reads a mention. So
+when one agent writes `@codex` in a reply, it is prose. It reaches the other
+agent only as catch-up — trimmed to 1,500 characters per message inside a 12,000
+character budget, with activity capped at 40% — and never as a turn addressed to
+it.
+
+Noticed by being unable to do it. Asked to have codex review 3,383 lines, the
+only thing I could produce was a brief for the user to copy across by hand, or
+to point at the hand-off button. `sendHandoff` does deliver in full and does
+bypass catch-up, but it is driven from the UI by a person: `Entry`'s `onHandOff`
+is a button, not something an agent can reach.
+
+**Why it matters:** the premise is several agents in one shared conversation, and
+right now every exchange between them is relayed by hand. Review, second
+opinions and hand-backs are exactly the collaboration the product is for, and
+each one currently costs the user a copy and paste.
+
+**Why it is not obviously a bug.** Agents addressing each other directly is a
+real product decision with teeth: two agents that can each start the other's turn
+can loop, and a loop here spends the user's money while they are not looking.
+Whatever ships needs a bound — a depth limit, a visible cost, or the user
+confirming the first hop — and choosing which is the actual work.
+
+**Done when:** either an agent's mention routes like the user's, with that bound
+written down and enforced; or this is closed with "agents talk through the user
+on purpose" recorded as a decision, so it stops being rediscovered as a gap.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
