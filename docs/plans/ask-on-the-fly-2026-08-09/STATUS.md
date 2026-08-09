@@ -285,19 +285,58 @@ permission rule would catch, because reading files is allowed.
 in both directions. It immediately caught a third instance of the bug that
 prompted it: `FakeAdapter` also said `fork: true` with nothing behind it.
 
-### What is left, and why it stops here
+## Phase 4 done: the card, and the whole path driven in a real app
 
-**IPC and the card — Phase 4, together.** The domain is complete and tested;
-nothing in the renderer can reach it yet. Adding the IPC channels alone would be
-dead code, so they belong with the component that calls them.
+`pnpm check` green — 1027 tests. More to the point, the golden path was driven
+end to end against the real Electron app and a real `claude`, and every check
+passed: the two-action toolbar, the card opening non-modally with the passage,
+the fork answering, the parent transcript untouched, and the promotion staged
+into the composer.
 
-That remainder is: `conversation:aside/*` channels and the preload bridge, a
-non-modal `QuickQuestion` card following the `.quote-offer` lineage rather than
-the modal-sheet one, the second toolbar action deferred from Phase 1, the badge
-and view-only reopen, promotion staging `@author` into the composer, i18n, styles
-and `SessionCarry`. It is the half whose value is entirely in how it feels, and
-none of it is verifiable by `pnpm check` — so it wants a running app and an eye,
-not another green suite.
+The evidence that context inheritance genuinely works is the answer itself.
+Asked what it meant by a sentence, the fork replied _"the user asked me to reply
+with that exact sentence verbatim, so it was a literal echo rather than a
+statement of my own"_ — reasoning about a turn from the **parent** conversation,
+which a fresh session handed a summary could not have done. That is draft 1's
+whole argument, tested rather than asserted.
+
+- **`aside.ts`** — a pure projection of `TranscriptView`, not a second reducer.
+  It drops reasoning, tools and commands: a card anchored to a passage has no
+  room to narrate an agent's working, and a footnote that unfolded into a task
+  list would be the derailment this exists to avoid.
+- **`promotion()`** carries the mention that makes routing deterministic, the
+  passage, and the label saying the answer came from an aside. Tested, because
+  the labelling is the part that is easy to drop and impossible to notice
+  missing.
+- **`QuickQuestion`** follows the `.quote-offer` lineage rather than the
+  sheet lineage. Verified in the app: no backdrop, and the composer behind it
+  still usable. Dismissed by Escape or a click away — `mousedown` rather than
+  `click`, so dragging to select the answer and releasing outside is not read as
+  leaving.
+- **`ComposerHandle.insert`** puts text in verbatim. `quote` wraps what it is
+  handed in `>` markers, which would have buried a promoted instruction inside
+  the evidence for it.
+- The toolbar is one pill split by a hairline rather than two floating buttons:
+  one object offering two things reads as a choice about the passage, where two
+  read as unrelated offers competing for the same spot.
+
+**Two driver bugs worth recording, because both would have read as feature bugs.**
+`settle()` raced the render and reported the toolbar missing when it was fine —
+`until` is what the harness itself advises and what fixed it. And the answer
+selector looked for `.markdown`, a class `MarkdownView` does not emit; the aside
+had answered correctly all along. Neither was in the code under test, and both
+looked exactly like it was broken.
+
+### What is left
+
+The badge on a source reply that already has asides, and reopening one
+view-only. `listAsides` and `aside:list` exist and are tested; nothing draws them
+yet. Everything else in the plan is built.
+
+Open question 1 is now answerable and unanswered: the wait is still 4–8 seconds,
+and `inherits: 'config'` was chosen knowing that. Whether the card carries it
+well enough is a judgement someone should make while using it, not while reading
+this.
 
 ### The verification found a harness bug worth more than the verification
 

@@ -4,11 +4,13 @@ Let someone ask a small question about one passage of an agent's response,
 answered with everything that agent knows, without that aside becoming the next
 turn of the main conversation.
 
-Status: **Phases 0–3 done; Phase 4 not started.** The domain is complete and
-tested — fork on the port and both adapters, the store's first migration, hidden
-child conversations, and the runtime lifecycle with its refusals. Nothing in the
-renderer can reach any of it yet: the IPC and the card are Phase 4 and belong
-together, because channels with no caller are dead code.
+Status: **built and driven in a real app.** Fork on the port and both adapters,
+the store's first migration, hidden child conversations, the runtime lifecycle
+with its refusals, the IPC, and the card. The golden path was verified end to end
+against a real `claude`, not only by the suite.
+
+Still undrawn: the badge on a reply that already has asides, and reopening one
+view-only. The queries behind both exist and are tested.
 
 Several things in this plan were corrected by measurement or by review rather
 than by argument. `STATUS.md` is the record of which, and why.
