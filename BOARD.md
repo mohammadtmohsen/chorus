@@ -139,6 +139,46 @@ somewhere — and only then two labelled rows.
 named, and an agent that reports none says so rather than showing an empty
 control.
 
+### C-013 · A question card expires while you are answering it
+
+`mapping.ts:1011` stamps every question set with `expiresAt: ctx.now +
+ctx.approvalTtlMs`, and `approvalTtlMs` defaults to five minutes
+(`claude-adapter.ts:788`). The deadline is wall-clock from the moment the agent
+_raised_ the question, and nothing restarts it. Answering is not an input to it:
+the card can be on screen, focused and half-filled, and it still goes. Approvals
+carry the same stamp (`mapping.ts:1070`–`1126`).
+
+Hit twice in one session. An agent asked a three-part question; both times the
+card vanished mid-answer while the user was typing into it in another pane.
+
+A question that runs out its deadline leaves a notice reading `A question went
+unanswered in time.` (`transcript.ts:359`), and the agent is told nothing was
+chosen and carries on. `transcript.ts:345` argues for that notice existing at
+all, and the argument applies here exactly: _"without this the only trace is a
+reply that quietly assumed something."_
+
+**Not yet confirmed from the log:** `userinput.answered` also carries a
+`dismissed` outcome, so these two instances may have been dismissed rather than
+timed out. The five-minute deadline is verified to exist; that it is what fired
+here is inference.
+
+Why it matters beyond the annoyance: the deadline is hardest on the longest
+answers, which are the ones attached to the questions most worth asking. Up to
+four panes are mounted at once and attention is _expected_ to move between them,
+so "typing in the other pane" is ordinary use rather than idling. And there is no
+warning — the card shows no countdown, so the first sign that a deadline existed
+is the card's absence.
+
+**The TTL is not the bug.** An approval nobody ever answers would wedge a turn
+forever, and the timeout is what stops that. What is wrong is that the clock
+ignores the person it is waiting for.
+
+**Done when:** the log has been read back to confirm which outcome actually
+fired; a question the user is demonstrably engaged with cannot expire under them
+— the deadline held while the card holds focus or a partial answer, or reset on
+input — and a card genuinely about to expire says so while it can still be
+answered, rather than vanishing into a notice.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
