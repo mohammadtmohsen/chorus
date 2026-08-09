@@ -28,14 +28,24 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
   switch (payload.type) {
     case 'conversation.created':
       db.prepare(
-        `INSERT INTO conversations (id, project_id, title, created_at, updated_at)
-         VALUES (@id, @projectId, @title, @at, @at)
+        `INSERT INTO conversations
+           (id, project_id, title, created_at, updated_at, kind, parent_id, source_event_id)
+         VALUES (@id, @projectId, @title, @at, @at, @kind, @parentId, @sourceEventId)
          ON CONFLICT (id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`
       ).run({
         id: base.conversationId,
         projectId: payload.projectId,
         title: payload.title,
         at: base.at,
+        /*
+         * `?? null` rather than omitted: the three columns are nullable and a
+         * missing bind parameter is an error in better-sqlite3, not a null. An
+         * event appended before asides existed carries none of them and must
+         * still project — which is the property `rebuildProjections` leans on.
+         */
+        kind: payload.kind ?? null,
+        parentId: payload.parentId ?? null,
+        sourceEventId: payload.sourceEventId ?? null,
       })
       break
 

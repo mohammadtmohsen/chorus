@@ -26,6 +26,21 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     type: z.literal('conversation.created'),
     projectId: z.string(),
     title: z.string(),
+    /**
+     * An aside: a conversation held in a fork of another conversation's agent,
+     * about one passage of one reply.
+     *
+     * All three optional, so every `conversation.created` ever appended still
+     * parses and still rebuilds as the ordinary conversation it was. Absent
+     * means ordinary — there is no `kind: 'main'`, because inventing one would
+     * make the old rows wrong rather than merely quiet.
+     *
+     * They travel together: an aside without its parent could not be found, and
+     * without its source event could not say what it is about.
+     */
+    kind: z.literal('aside').optional(),
+    parentId: z.string().optional(),
+    sourceEventId: z.string().optional(),
   }),
 
   /**

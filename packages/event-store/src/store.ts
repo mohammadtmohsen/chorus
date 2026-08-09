@@ -35,6 +35,14 @@ export interface ConversationSummary {
   readonly messages: number
 }
 
+/** One aside, as the badge on its source reply needs it. */
+export interface AsideSummary {
+  readonly id: string
+  readonly sourceEventId: string
+  readonly title: string
+  readonly createdAt: number
+}
+
 /** The raw shape of a `listConversations` row, before the nulls are resolved. */
 interface ConversationRow {
   id: string
@@ -224,6 +232,10 @@ export class EventStore {
                 (SELECT s2.cwd FROM agent_sessions s2 WHERE s2.conversation_id = c.id
                   ORDER BY s2.started_at DESC LIMIT 1) AS cwd
            FROM conversations c
+          -- Asides are not sessions. They belong to one passage of one reply and
+          -- are reached from it; listing them here would put "what did you mean
+          -- by that" in the sidebar beside the work it was about.
+          WHERE c.kind IS NULL
           ORDER BY c.updated_at DESC
           LIMIT @limit`
       )
@@ -239,6 +251,33 @@ export class EventStore {
       updatedAt: row.updatedAt,
       messages: row.messages,
     }))
+  }
+
+  /**
+   * The asides taken on one conversation, oldest first.
+   *
+   * By `parent_id` rather than by scanning payloads: `read` filters on
+   * conversation, seq and type only, so "which asides belong to this reply" is
+   * not a question the log can answer directly. That is the whole reason asides
+   * are conversations with a projection row rather than events tagged with a
+   * source id — the projection is what makes them findable.
+   *
+   * `sourceEventId` narrows to one reply, for the badge that offers to reopen
+   * them; omitted, it answers for the whole conversation.
+   */
+  listAsides(parentId: string, sourceEventId?: string): AsideSummary[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, source_event_id AS sourceEventId, title, created_at AS createdAt
+           FROM conversations
+          WHERE kind = 'aside'
+            AND parent_id = @parentId
+            AND (@sourceEventId IS NULL OR source_event_id = @sourceEventId)
+          ORDER BY created_at ASC`
+      )
+      .all({ parentId, sourceEventId: sourceEventId ?? null })
+
+    return rows as AsideSummary[]
   }
 
   /**
