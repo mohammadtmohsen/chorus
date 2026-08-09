@@ -106,8 +106,6 @@ unrelated defect.
 store that opens — no agents), or the answer is written down as "run it locally
 before tagging" and the release checklist says so.
 
----
-
 ### C-013 · A question card expires while you are answering it
 
 `mapping.ts:1011` stamps every question set with `expiresAt: ctx.now +
@@ -178,6 +176,76 @@ confirming the first hop — and choosing which is the actual work.
 **Done when:** either an agent's mention routes like the user's, with that bound
 written down and enforced; or this is closed with "agents talk through the user
 on purpose" recorded as a decision, so it stops being rediscovered as a gap.
+
+### C-016 · A delegation that comes back
+
+Asked for directly: _"claude writes the plan and asks codex to review; after the
+review let codex notify claude, fix the plan from the review, then start
+implementing."_
+
+**This is not C-015, and filing it as one would lose the hard half.** C-015 is the
+outbound hop — a mention in an agent's reply routing like the user's. This is the
+_return_, and the return is what makes it a workflow rather than a message:
+
+- the delegating agent has to still be **waiting** — its turn suspended on an
+  answer from another agent, not ended;
+- the reviewer's reply has to arrive as something it must **act on**, not as
+  catch-up prose it may summarise;
+- and it has to **carry on with the original task** afterwards, which means the
+  continuation is a turn nobody typed.
+
+Every one of those is absent today. C-015 is a prerequisite, not a duplicate.
+
+**Why it matters:** this is the product premise, and this session paid for its
+absence repeatedly — every codex review was relayed by hand, in both directions,
+because there was no other route.
+
+**The teeth are in the failure modes**, and they are worse than C-015's. Two
+agents that can each resume the other can loop; a suspended turn that is never
+answered wedges rather than merely going quiet — the same clock problem C-013
+describes, one level up; and a continuation nobody typed spends money while the
+user is away from the screen.
+
+**Done when:** the round trip above completes without the user relaying anything;
+the delegating agent's resumption is in the log as its own turn, attributable to
+the delegation rather than appearing from nowhere; and a reviewer that never
+answers, or a pair that ping-pongs, is bounded — with the bound written down and
+visible to the user rather than implicit.
+
+### C-017 · An aside that can act
+
+The side chat should be able to edit files and run tools — everything the CLI can
+do — inside the aside, so something noticed mid-reply can be fixed there without
+losing the main thread.
+
+**Today it deliberately cannot**, and that is one decision in three parts
+(`runtime.ts:771`–`789`): the read-only profile, grants that are empty rather
+than inherited, and `neverAsks: true`, which turns every approval into an
+immediate deny carrying the words _"An aside may explain, not act."_
+
+Each part has a reason, and they are the actual work:
+
+- **`neverAsks` exists because there is nowhere to ask.** The card is non-modal
+  and dismissible by design — that was the point of the feature — so an approval
+  raised inside it has no surface and nobody watching.
+- **Grants are empty because a grant outranks an `ask`.** Inheriting the parent's
+  would let a previously allowed `npm publish`, or a granted MCP tool that posts
+  outward, run silently in a fork the user cannot see. Claude's sandbox is
+  emulated, so nothing underneath would have stopped it.
+- **The provider session is ephemeral** (`persistSession: false` / `ephemeral`),
+  while the log is not — the aside is a durable child conversation. So an edit
+  made here would be recorded, which is a point in this request's favour and
+  worth keeping when the rest changes.
+
+So this is not a flag to flip. Granting the power to act without solving the
+first two turns the aside into the one place where a dangerous action is
+auto-approved and invisible.
+
+**Done when:** an aside can change files and run tools with the user seeing and
+deciding — the card hosts its own approval or hands it to the pane that can;
+an aside cannot silently inherit power granted to the main conversation; a
+dismissed or expired card cannot leave an approval pending or a tool half-run;
+and the deny message stops claiming a rule that no longer holds.
 
 ## Parked, with reasons
 
