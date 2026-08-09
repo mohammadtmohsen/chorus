@@ -522,8 +522,22 @@ body {
 .quote-offer {
   display: flex;
   align-items: stretch;
+  /*
+   * Wraps rather than overflows. A pane can be narrower than two actions side by
+   * side — a four-way split gets to about 200px — and the estimate `anchorFor`
+   * clamps with cannot make a 237px pill fit a 200px pane. Stacking is the only
+   * honest answer; the alternative is an "Ask about this" you cannot click.
+   */
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 8px);
   padding: 0;
   overflow: hidden;
+}
+
+/* Once wrapped, the divider belongs above rather than beside. */
+.quote-offer-action + .quote-offer-action {
+  border-left: 1px solid color-mix(in srgb, var(--bone) 18%, var(--line));
 }
 
 .quote-offer-action {

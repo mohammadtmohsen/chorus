@@ -133,7 +133,21 @@ export function anchorFor(
 
   const half = button.width / 2
   const centre = selection.left + selection.width / 2 - pane.left
-  const left = Math.min(Math.max(centre, half + 4), Math.max(pane.width - half - 4, half + 4))
+
+  /*
+   * A pane narrower than the offer gets it centred, not clamped.
+   *
+   * The clamp keeps the left edge on screen and, when the pill is wider than the
+   * pane, pushes the right edge off it instead — measured at a 200px pane, a
+   * 237px offer ran from 5 to 243. Centring is the only placement that is
+   * symmetric about the overflow, and it pairs with the `max-width` in the CSS
+   * so what actually renders fits. This is what the second action cost: one
+   * button fitted panes where two do not.
+   */
+  const left =
+    pane.width < button.width + 8
+      ? pane.width / 2
+      : Math.min(Math.max(centre, half + 4), pane.width - half - 4)
 
   /*
    * Below the selection when there is no room above it.

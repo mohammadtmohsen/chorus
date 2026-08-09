@@ -118,8 +118,15 @@ describe('anchorFor', () => {
     expect(at?.left).toBe(276)
   })
 
+  it('centres the offer in a pane too narrow to hold it', () => {
+    // Measured at a 200px pane: clamping the left edge on screen pushed a 237px
+    // offer from 5 to 243. Centred, the overflow is symmetric and the CSS
+    // `max-width` makes what renders fit.
+    const at = anchorFor(rect(0, 300, 10, 20), rect(0, 0, 200, 600))
+    expect(at?.left).toBe(100)
+  })
+
   it('survives a pane narrower than the button', () => {
-    // Clamping must not produce a left greater than the right bound.
     const at = anchorFor(rect(0, 300, 10, 20), rect(0, 0, 40, 600))
     expect(at).not.toBeNull()
     expect(Number.isFinite(at?.left)).toBe(true)
