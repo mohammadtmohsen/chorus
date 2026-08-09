@@ -401,3 +401,100 @@ describe('opening an explanation', () => {
     expect(aside.purpose).toBe('question')
   })
 })
+
+describe('a reply from a session that has since been replaced', () => {
+  it('refuses, even for Claude whose session ref starts empty', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+
+    // Claude is removed and brought back, which gives it a new session. The old
+    // check compared `sessionRef` and skipped empty ones — and Claude's is empty
+    // when `session.started` is written, so it never fired for the provider it
+    // most needed to fire for.
+    await runtime.removeParticipant(conversationId, 'claude')
+    await runtime.addParticipant(conversationId, 'claude')
+
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'The projection lags',
+      })
+    ).rejects.toThrow(/started a new session/)
+  })
+
+  it('still allows a reply from the session that is running', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    await expect(
+      runtime.openAside({ conversationId, sourceEventId, excerpt: 'The projection lags' })
+    ).resolves.toMatchObject({ asideId: expect.any(String) })
+  })
+})
+
+describe('a failed open leaves nothing behind', () => {
+  it('does not fork at all when there is no language to explain in', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'The projection lags',
+        purpose: 'explanation',
+      })
+    ).rejects.toThrow(/No language is set/)
+    // Checked before anything is spawned: a refusal after the fork leaves a CLI
+    // running that nobody has a handle to.
+    expect(adapter.forked).toHaveLength(0)
+  })
+
+  it('closes the fork when a step after it fails', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+
+    // A provider that dies between forking and the first turn. Standing in for
+    // any of them: the append, the attach, the health check, the send.
+    const realFork = adapter.fork.bind(adapter)
+    adapter.fork = async (ref, opts) => {
+      const session = await realFork(ref, opts)
+      session.send = () => Promise.reject(new Error('the provider went away'))
+      return session
+    }
+
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'The projection lags',
+        question: 'what does that mean?',
+      })
+    ).rejects.toThrow(/provider went away/)
+
+    // Nobody else could: the caller never learned an id, so it cannot close what
+    // it does not know about.
+    expect(adapter.forked.at(-1)?.session.closed).toBe(true)
+  })
+
+  it('does not strand the aside in the live map when the first turn fails', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    const realFork = adapter.fork.bind(adapter)
+    adapter.fork = async (ref, opts) => {
+      const session = await realFork(ref, opts)
+      session.send = () => Promise.reject(new Error('the provider went away'))
+      return session
+    }
+
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'The projection lags',
+        question: 'what?',
+      })
+    ).rejects.toThrow()
+
+    // The send happens after the service is already registered, so failing there
+    // would otherwise leave an entry as well as a process.
+    const listed = runtime.listAsides(conversationId)
+    for (const aside of listed) {
+      await expect(runtime.askAside(aside.id, 'still there?')).rejects.toThrow(/has ended/)
+    }
+  })
+})

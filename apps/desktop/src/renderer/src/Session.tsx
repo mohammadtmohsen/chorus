@@ -172,6 +172,8 @@ export function Session(props: {
     purpose: 'question' | 'explanation'
     /** Started by the click, because a mount effect runs twice and can send twice. */
     opening: Promise<string>
+    /** Whatever main decided, so the card cannot name a stale language. */
+    language: Promise<string>
   } | null>(null)
   /**
    * The language explanations come back in, or empty when there is none.
@@ -494,20 +496,61 @@ export function Session(props: {
       const source = passage?.source ?? null
       if (passage === null || source === null) return
 
-      const opening = window.chorus
-        .openAside({
-          conversationId,
-          sourceEventId: source.eventId,
-          excerpt: passage.text,
-          purpose,
-        })
-        .then((result) => result.asideId)
+      const opened = window.chorus.openAside({
+        conversationId,
+        sourceEventId: source.eventId,
+        excerpt: passage.text,
+        purpose,
+      })
 
-      setAskingAbout({ ...passage, source, purpose, opening })
+      setAskingAbout({
+        ...passage,
+        source,
+        purpose,
+        opening: opened.then((result) => result.asideId),
+        /*
+         * The language main used, not the one this pane happened to be holding.
+         * The local copy is read asynchronously per selection and can be a
+         * moment behind — long enough for the card to say Arabic while the log
+         * says French.
+         */
+        language: opened.then((result) => result.language),
+      })
       setSelected(null)
       window.getSelection()?.removeAllRanges()
     },
     [selected, conversationId]
+  )
+
+  /**
+   * Closes the aside a card was showing. The other half of `openCard`.
+   *
+   * Here rather than in the card's own cleanup, because React runs an effect
+   * setup → cleanup → setup in development and the simulated cleanup would close
+   * the fork the second setup had just adopted. Opening and closing belong to one
+   * owner; this is it.
+   *
+   * Closes what the *promise* resolves to, not what the card managed to render:
+   * dismissing during the two seconds a CLI takes to start would otherwise leave
+   * a fork nobody closes.
+   */
+  const closeCard = useCallback((card: { opening: Promise<string> } | null) => {
+    if (card === null) return
+    void card.opening.then((id) => window.chorus.closeAside({ asideId: id })).catch(() => undefined)
+  }, [])
+
+  /*
+   * A pane can be unmounted with a card open — closing its tab, or another pane
+   * becoming the active one. The fork outlives the component unless something
+   * says otherwise.
+   */
+  const openCardRef = useRef<{ opening: Promise<string> } | null>(null)
+  openCardRef.current = askingAbout
+  useEffect(
+    () => () => {
+      closeCard(openCardRef.current)
+    },
+    [closeCard]
   )
 
   /** Puts the passage in the draft and leaves the caret under it, ready for the question. */
@@ -996,11 +1039,12 @@ export function Session(props: {
         <QuickQuestion
           opening={askingAbout.opening}
           purpose={askingAbout.purpose}
-          language={explainLanguage}
+          language={askingAbout.language}
           agent={askingAbout.source.actor}
           excerpt={askingAbout.text}
           anchor={askingAbout.anchor}
           onClose={() => {
+            closeCard(askingAbout)
             setAskingAbout(null)
           }}
           onStage={(text) => {

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, renameSync, statSync } from 'node:fs'
+import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
@@ -579,7 +579,7 @@ export class ChorusRuntime {
      * thinking. Asking without a question is what lets that happen in parallel.
      */
     question?: string
-  }): Promise<{ asideId: string }> {
+  }): Promise<{ asideId: string; language: string }> {
     const parent = this.active.get(request.conversationId)
     if (parent === undefined) throw new Error('That conversation is not open')
 
@@ -629,7 +629,7 @@ export class ChorusRuntime {
      * The check is the log's own: the last `session.started` for this agent at
      * or before the reply must name the ref the participant is running now.
      */
-    const startedRef = this.store
+    const startedAtSource = this.store
       .read(request.conversationId)
       .filter(
         (e) =>
@@ -637,14 +637,22 @@ export class ChorusRuntime {
           e.payload.type === 'session.started' &&
           e.payload.agentId === agentId
       )
-      .map((e) => (e.payload as unknown as { sessionRef: string }).sessionRef)
       .at(-1)
 
-    if (
-      startedRef !== undefined &&
-      startedRef !== '' &&
-      startedRef !== participant.session.sessionRef
-    ) {
+    /*
+     * Compared by **which `session.started` is current**, not by its
+     * `sessionRef`. Claude's real id arrives with its first message, so
+     * `session.started` is written with an empty string — and an earlier version
+     * of this check skipped empty refs, which meant it never fired for Claude at
+     * all, the provider it most needed to fire for. Event identity does not
+     * depend on a field that is filled in late.
+     */
+    const currentStart = this.store
+      .read(request.conversationId)
+      .filter((e) => e.payload.type === 'session.started' && e.payload.agentId === agentId)
+      .at(-1)
+
+    if (startedAtSource !== undefined && startedAtSource.id !== currentStart?.id) {
       throw new Error(`${agentId} has started a new session since it said that`)
     }
 
@@ -657,6 +665,22 @@ export class ChorusRuntime {
      * append-only, so there was nothing to roll back with; not writing it is the
      * only rollback available.
      */
+    /*
+     * The language is read here, and read **before** anything is spawned.
+     *
+     * Not accepted from the caller: the renderer already has its source event
+     * re-resolved because it renders untrusted agent output, and a language
+     * string is prompt content — the same class of problem wearing a smaller
+     * word. And checked first, because a refusal after the fork leaves a CLI
+     * running that nobody has a handle to.
+     */
+    const purpose = request.purpose ?? 'question'
+    const language =
+      purpose === 'explanation' ? readSettings(this.userDataPath).explainLanguage : ''
+    if (purpose === 'explanation' && language === '') {
+      throw new Error('No language is set to explain in')
+    }
+
     const opts: SessionOpts = {
       cwd: parent.cwd,
       sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
@@ -668,96 +692,84 @@ export class ChorusRuntime {
       inherits: 'config',
     })
 
-    /*
-     * The language is read here, not accepted from the caller.
-     *
-     * The renderer already has its source event re-resolved for this reason —
-     * it renders untrusted agent output and is the least trustworthy thing in
-     * the process tree. A language string is prompt content, which is the same
-     * class of problem wearing a smaller word.
-     */
-    const purpose = request.purpose ?? 'question'
-    const language =
-      purpose === 'explanation' ? readSettings(this.userDataPath).explainLanguage : ''
-    if (purpose === 'explanation' && language === '') {
-      throw new Error('No language is set to explain in')
-    }
-
     const asideId = newConversationId()
-    this.store.append({
-      conversationId: asideId,
-      actor: 'user',
-      payload: {
-        type: 'conversation.created',
-        projectId: parent.cwd,
-        title: excerpt.slice(0, 80),
-        aside: {
-          parentId: request.conversationId,
-          sourceEventId: request.sourceEventId,
-          purpose,
-          // The language as it was, not as it will be. Settings change.
-          ...(language === '' ? {} : { language }),
-        },
-      },
-    })
-
-    const service = new ConversationService({
-      store: this.store,
-      conversationId: asideId,
-      adapter,
-      profile: profileById('read-only'),
-      /*
-       * Its own grants, deliberately empty — **not** the parent's.
-       *
-       * Carrying them was the intent ("a permission I gave should hold in the
-       * side chat") and it was wrong, because a grant outranks an `ask` and an
-       * aside never asks. The combination meant a previously allowed `npm
-       * publish`, or a granted MCP tool that posts to Slack, would run silently
-       * inside a hidden fork nobody is watching — and Claude's sandbox is
-       * emulated, so nothing below us would have stopped it either.
-       *
-       * Little is actually lost. Grants exist to stop the user being re-asked,
-       * and an aside does not ask in the first place; what they would have added
-       * here is the power to *act*, which is the one thing an explanation must
-       * not do. The read-only profile's own `SAFE_READS` still allows `git
-       * status`, `cat`, `grep` and friends, so an aside can still go and look.
-       *
-       * The user's configuration is a separate thing and still inherited in full
-       * — see `ForkOpts.inherits` — so hooks, skills and CLAUDE.md all load.
-       */
-      grants: new SessionGrants(),
-      neverAsks: true,
-    })
-    await service.attach(forked, opts, await adapter.health())
-    /*
-     * Held so `askAside` can quote the same passage on every turn. The fork sees
-     * the excerpt once per question rather than once per aside, because a
-     * follow-up three turns in should still be anchored to the passage rather
-     * than to whatever was said most recently.
-     */
-    this.asides.set(asideId, { service, parentId: request.conversationId, excerpt })
 
     /*
-     * An explanation asks itself. There is nothing for the user to type, so the
-     * first turn belongs to opening — which is also why it lives here and not in
-     * the card: a mount effect runs twice in development, and unlike a leaked
-     * process a sent prompt is already paid for and already in the log before any
-     * cleanup could run.
+     * Everything past the fork is wrapped, because everything past the fork can
+     * fail with a provider process already running.
      *
-     * What is *logged* is the intent in the user's own words; what is delivered
-     * is the instruction. `sendUserMessage` exists for exactly that split, and a
-     * transcript reading "Explain this in Arabic." is what someone reopening this
-     * a week later needs — not four paragraphs of prompt they never wrote.
+     * Appending, attaching, the health check and the first send each have their
+     * own way of going wrong, and any of them leaving a live CLI behind is a
+     * leak nobody has a handle to — the caller never learns an id, so it cannot
+     * close what it does not know about. The send is the sharp one: it happens
+     * after the service is already in `this.asides`, so failing there strands an
+     * entry as well as a process.
      */
-    if (purpose === 'explanation') {
-      await service.sendUserMessage(
-        `Explain this in ${language}.`,
-        explainPrompt(excerpt, language)
-      )
-    } else if (request.question !== undefined && request.question !== '') {
-      await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
+    try {
+      this.store.append({
+        conversationId: asideId,
+        actor: 'user',
+        payload: {
+          type: 'conversation.created',
+          projectId: parent.cwd,
+          title: excerpt.slice(0, 80),
+          aside: {
+            parentId: request.conversationId,
+            sourceEventId: request.sourceEventId,
+            purpose,
+            // The language as it was, not as it will be. Settings change.
+            ...(language === '' ? {} : { language }),
+          },
+        },
+      })
+
+      const service = new ConversationService({
+        store: this.store,
+        conversationId: asideId,
+        adapter,
+        profile: profileById('read-only'),
+        /*
+         * Its own grants, deliberately empty — **not** the parent's.
+         *
+         * A grant outranks an `ask` and an aside never asks, so carrying them
+         * would mean a previously allowed `npm publish`, or a granted MCP tool
+         * that posts outward, running silently inside a fork nobody is watching.
+         * Claude's sandbox is emulated, so nothing below would have stopped it.
+         *
+         * Little is lost. Grants exist to stop the user being re-asked, and an
+         * aside does not ask; what they would add here is the power to act,
+         * which is the one thing an explanation must not have. `SAFE_READS`
+         * still lets it go and look. The user's *configuration* is a separate
+         * thing and still inherited in full — see `ForkOpts.inherits`.
+         */
+        grants: new SessionGrants(),
+        neverAsks: true,
+      })
+      await service.attach(forked, opts, await adapter.health())
+
+      this.asides.set(asideId, { service, parentId: request.conversationId, excerpt })
+
+      try {
+        if (purpose === 'explanation') {
+          await service.sendUserMessage(
+            `Explain this in ${language}.`,
+            explainPrompt(excerpt, language)
+          )
+        } else if (request.question !== undefined && request.question !== '') {
+          await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
+        }
+      } catch (error) {
+        this.asides.delete(asideId)
+        await service.close('closed')
+        throw error
+      }
+
+      return { asideId, language }
+    } catch (error) {
+      // The fork is ours until an id is handed back. Nobody else can close it.
+      await forked.close()
+      throw error
     }
-    return { asideId }
   }
 
   /** A follow-up in an aside that is still alive. */
@@ -1899,41 +1911,52 @@ function openOrRecover(
   path: string,
   userDataPath: string
 ): { db: SqliteHandle; store: EventStore; recovered: string | null } {
-  /*
-   * Actually copies the file, which it did not before.
+  /**
+   * A snapshot, taken by SQLite rather than by the filesystem.
    *
-   * `migrate` records whatever this returns as `backedUpTo`, so returning a
-   * filename without writing one advertises a snapshot that does not exist —
-   * worse than admitting there is none, because the advertised one is what
-   * anybody would reach for after a bad migration. This is the first migration
-   * to run against a database with data in it, so the claim had to become true.
+   * The first version of this copied the main file and then its `-wal` and
+   * `-shm` in turn, which is not a snapshot: the three are copied at three
+   * different moments, and nothing stops another process — Chorus has no
+   * single-instance lock — writing between them. What that produces is a backup
+   * that looks fine and restores to a moment that never existed.
    *
-   * The `-wal` goes too. A copy of the main file alone can be missing committed
-   * frames that have not been checkpointed, which is a backup that restores to
-   * the wrong moment. Synchronous because `migrate` is, and safe here because
-   * nothing else has the database open yet.
+   * `VACUUM INTO` is SQLite's own answer. It writes one consistent file from a
+   * live database, with no sidecars to keep in step, and it is synchronous,
+   * which `migrate` requires.
    */
-  const backupFor = (from: number): string => {
+  const snapshot = (db: SqliteHandle, from: number): string => {
     const destination = join(userDataPath, `chorus.pre-v${String(from)}.db`)
-    copyFileSync(path, destination)
-    for (const suffix of ['-wal', '-shm']) {
-      if (existsSync(`${path}${suffix}`))
-        copyFileSync(`${path}${suffix}`, `${destination}${suffix}`)
-    }
+    // A leftover from an interrupted attempt would make VACUUM INTO fail.
+    if (existsSync(destination)) rmSync(destination)
+    // The path is ours, not a user's, but a quote in it would end the literal
+    // and the rest would be executed.
+    db.exec(`VACUUM INTO '${destination.replace(/'/g, "''")}'`)
     return destination
   }
 
+  /*
+   * Only *opening* may be treated as corruption.
+   *
+   * This catch used to wrap the migration too, and it recovers by renaming the
+   * database aside and starting an empty one. So a disk-full or a permission
+   * error while backing up — or any migration failure at all — presented as "your
+   * database was unreadable", and the user's history was moved out of the way to
+   * make room for nothing. A migration that cannot run has to fail loudly with
+   * the database untouched.
+   */
+  let db: SqliteHandle
+  let recovered: string | null = null
   try {
-    const db = openSqlite({ path })
-    return { db, store: EventStore.open(db, backupFor).store, recovered: null }
+    db = openSqlite({ path })
   } catch (error) {
     if (!existsSync(path)) throw error
-
     const moved = join(userDataPath, `chorus.unreadable-${String(Date.now())}.db`)
     renameSync(path, moved)
-    const db = openSqlite({ path })
-    return { db, store: EventStore.open(db, backupFor).store, recovered: moved }
+    db = openSqlite({ path })
+    recovered = moved
   }
+
+  return { db, store: EventStore.open(db, (from) => snapshot(db, from)).store, recovered }
 }
 
 /** Returns why a directory cannot be used, or null when it is fine. */

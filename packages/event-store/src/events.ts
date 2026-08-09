@@ -42,6 +42,19 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
      * optionals let that through, and `aside:list` then returns a null where the
      * IPC contract promises a string.
      */
+    /*
+     * The shape an earlier build wrote, still read.
+     *
+     * `ask-on-the-fly` shipped these three at the top level before they were
+     * gathered into `aside`. Zod strips what a schema does not name, so dropping
+     * them turned every aside already in a log into an ordinary conversation —
+     * which then appeared in the session list beside the work it was about. The
+     * log is append-only: those rows cannot be rewritten, so the reader is what
+     * has to keep up. Never written any more; see `asideMetaOf`.
+     */
+    kind: z.literal('aside').optional(),
+    parentId: z.string().optional(),
+    sourceEventId: z.string().optional(),
     aside: z
       .object({
         parentId: z.string().min(1),
@@ -292,6 +305,32 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     detail: z.string().nullable(),
   }),
 ])
+
+/** An aside's metadata, however the row that carries it was written. */
+export interface AsideMeta {
+  readonly parentId: string
+  readonly sourceEventId: string
+  readonly purpose: 'question' | 'explanation'
+  readonly language?: string | undefined
+}
+
+/**
+ * The one place that knows an aside can be described two ways.
+ *
+ * Prefers the current shape and falls back to the three top-level fields an
+ * earlier build wrote. Every reader goes through this rather than reaching for
+ * `payload.aside`, because a reader that forgets loses an aside silently — it
+ * does not fail, it just reports an ordinary conversation, and the first symptom
+ * is someone's "what did you mean by that" sitting in their session list.
+ */
+export function asideMetaOf(payload: ChorusEventPayload): AsideMeta | null {
+  if (payload.type !== 'conversation.created') return null
+  if (payload.aside !== undefined) return payload.aside
+  if (payload.kind !== 'aside') return null
+  if (payload.parentId === undefined || payload.sourceEventId === undefined) return null
+  // An aside written before purpose existed was always a question.
+  return { parentId: payload.parentId, sourceEventId: payload.sourceEventId, purpose: 'question' }
+}
 
 export type ChorusEventPayload = z.infer<typeof ChorusEventPayload>
 export type ChorusEventType = ChorusEventPayload['type']

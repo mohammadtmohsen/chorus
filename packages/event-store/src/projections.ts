@@ -1,4 +1,4 @@
-import type { StoredEvent } from './events.js'
+import { asideMetaOf, type StoredEvent } from './events.js'
 import type { Database } from './port.js'
 
 /**
@@ -26,7 +26,8 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
   const base = { conversationId: event.conversationId, seq: event.seq, at: event.createdAt }
 
   switch (payload.type) {
-    case 'conversation.created':
+    case 'conversation.created': {
+      const aside = asideMetaOf(payload)
       db.prepare(
         `INSERT INTO conversations
            (id, project_id, title, created_at, updated_at, kind, parent_id, source_event_id)
@@ -43,11 +44,18 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
          * event appended before asides existed carries none of them and must
          * still project — which is the property `rebuildProjections` leans on.
          */
-        kind: payload.aside === undefined ? null : 'aside',
-        parentId: payload.aside?.parentId ?? null,
-        sourceEventId: payload.aside?.sourceEventId ?? null,
+        /*
+         * Through `asideMetaOf`, not `payload.aside`. A row written by an
+         * earlier build carries the same facts under different names, and a
+         * projection that misses them rebuilds an aside as an ordinary
+         * conversation — silently, and into the session list.
+         */
+        kind: aside === null ? null : 'aside',
+        parentId: aside?.parentId ?? null,
+        sourceEventId: aside?.sourceEventId ?? null,
       })
       break
+    }
 
     case 'session.started':
       db.prepare(

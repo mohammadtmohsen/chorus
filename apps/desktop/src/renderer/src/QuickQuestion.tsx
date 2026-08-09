@@ -58,8 +58,15 @@ export function QuickQuestion(props: {
   opening: Promise<string>
   /** An explanation asks itself; a question waits for one to be typed. */
   purpose: 'question' | 'explanation'
-  /** Named on the card, so where the language came from is legible. */
-  language: string
+  /**
+   * The language main used, resolved once it has opened.
+   *
+   * A promise rather than a string because the renderer's own copy is read per
+   * selection and can lag a settings change — and a card claiming Arabic while
+   * the prompt and the log say French is worse than a card that says nothing for
+   * a moment.
+   */
+  language: Promise<string>
   agent: string
   excerpt: string
   /** The passage, unclamped — the card measures itself and fits from it. */
@@ -72,6 +79,7 @@ export function QuickQuestion(props: {
   const { t } = useTranslation()
   const [question, setQuestion] = useState('')
   const [asideId, setAsideId] = useState<string | null>(null)
+  const [language, setLanguage] = useState('')
   const [state, setState] = useState<AsideState>(EMPTY_ASIDE)
   const [asking, setAsking] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
@@ -91,39 +99,58 @@ export function QuickQuestion(props: {
    * reading an answer, and taking the caret mid-sentence is the same intrusion
    * as a card that resizes while it streams.
    */
+  const focused = useRef(false)
   useEffect(() => {
-    // Waits for `at`, because until the card has been measured it is
-    // `visibility: hidden` — and a hidden element cannot take focus, so this
-    // silently did nothing and left the caret on the document.
-    if (at === null) return
+    /*
+     * Once, and only once the card has been measured.
+     *
+     * The measurement is what it waits for: until then the card is
+     * `visibility: hidden`, and a hidden element cannot take focus — the call
+     * silently did nothing and left the caret on the document.
+     *
+     * The latch is what stops it happening again. `at` is a fresh object on
+     * every re-measure, and the card re-measures as the answer streams, so
+     * without this the caret was pulled back each time — including the moment
+     * the follow-up box appears, which is exactly when someone is reading.
+     */
+    if (at === null || focused.current) return
+    focused.current = true
     if (props.purpose === 'explanation') card.current?.focus()
     else input.current?.focus()
   }, [props.purpose, at])
 
   /*
-   * Adopt the boot the click started. Nothing is opened here.
+   * Adopt the boot the click started. Nothing is opened or closed here.
    *
-   * The cleanup still closes what the promise resolves to rather than what state
-   * holds, because dismissing during the two seconds a CLI takes to start would
-   * otherwise leave a fork nobody closes — `asideId` has not committed yet.
+   * Closing used to live in this effect's cleanup, which was wrong in a way only
+   * development shows: React runs setup → cleanup → setup, so the simulated
+   * cleanup closed the fork the *second* setup had just adopted. Asking then
+   * reported that the aside had ended, and an explanation could be interrupted
+   * after it had already sent and been billed.
+   *
+   * Opening and closing are one pair and belong to one owner. `Session` opens on
+   * the click and closes when the card goes, which no amount of re-running an
+   * effect can confuse.
    */
   useEffect(() => {
+    let adopted = true
     props.opening.then(
       (id) => {
-        setAsideId(id)
+        if (adopted) setAsideId(id)
       },
       (e: unknown) => {
+        if (!adopted) return
         props.onError(e instanceof Error ? e.message : String(e))
         props.onClose()
       }
     )
+    void props.language.then((it) => {
+      if (adopted) setLanguage(it)
+    })
     return () => {
-      void props.opening
-        .then((id) => window.chorus.closeAside({ asideId: id }))
-        .catch(() => undefined)
+      adopted = false
     }
-    // The aside a card is about cannot change once it is open.
-  }, [])
+  }, [props])
 
   /*
    * Measured, not estimated, and re-measured as the answer arrives.
@@ -267,9 +294,18 @@ export function QuickQuestion(props: {
    * — and this is the moment the language actually matters.
    */
   const heading =
-    props.purpose === 'explanation'
-      ? t('aside.explaining', { language: props.language })
-      : t('aside.heading', { agent: props.agent })
+    props.purpose !== 'explanation'
+      ? t('aside.heading', { agent: props.agent })
+      : /*
+         * A whole sentence while the language is still resolving, rather than
+         * "Explaining in " with a hole where the answer goes. Main is
+         * authoritative about which language was used and takes a moment to say
+         * so; naming the renderer's own copy in the meantime would be the exact
+         * staleness this indirection exists to prevent, just briefer.
+         */
+        language === ''
+        ? t('aside.explainingPending')
+        : t('aside.explaining', { language })
 
   const started =
     props.purpose === 'explanation' ||

@@ -356,6 +356,7 @@
     "quote": "Quote in message",
     "takeForward": "Take this forward",
     "reopened": "This aside has ended. Ask again to start a new one.",
-    "explaining": "Explaining in {{language}}"
+    "explaining": "Explaining in {{language}}",
+    "explainingPending": "Explaining this"
   }
 }

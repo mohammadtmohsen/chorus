@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { asideMetaOf } from './events.js'
 import { currentVersion, MIGRATIONS } from './migrations.js'
 import { openSqlite, type SqliteHandle } from './sqlite.js'
 import { EventStore } from './store.js'
@@ -135,5 +136,47 @@ describe('asides', () => {
     aside('conv-aside-1')
     store.rebuildProjections()
     expect(store.listConversations().map((c) => c.conversationId)).not.toContain('conv-aside-1')
+  })
+})
+
+describe('an aside written by an earlier build', () => {
+  /** Exactly the payload `ask-on-the-fly` wrote before the fields were gathered. */
+  const legacy = (id: string): void => {
+    created(id, { kind: 'aside', parentId: PARENT, sourceEventId: REPLY })
+  }
+
+  it('keeps its identity through a parse', () => {
+    // Zod strips what a schema does not name. Dropping these three turned every
+    // aside already in a log into an ordinary conversation.
+    legacy('conv-old')
+    expect(row('conv-old')).toMatchObject({
+      kind: 'aside',
+      parent_id: PARENT,
+      source_event_id: REPLY,
+    })
+  })
+
+  it('stays out of the session list', () => {
+    // The visible symptom of losing it: someone's "what did you mean by that"
+    // appearing in the sidebar beside the work it was about.
+    legacy('conv-old')
+    expect(store.listConversations().map((c) => c.conversationId)).not.toContain('conv-old')
+  })
+
+  it('is still findable from the reply it was asked about', () => {
+    legacy('conv-old')
+    expect(store.listAsides(PARENT, REPLY).map((a) => a.id)).toEqual(['conv-old'])
+  })
+
+  it('survives a rebuild, which is where the loss would have become permanent', () => {
+    legacy('conv-old')
+    store.rebuildProjections()
+    expect(row('conv-old')['kind']).toBe('aside')
+  })
+
+  it('reads as a question, because it predates explanations', () => {
+    legacy('conv-old')
+    const created = store.read('conv-old')[0]
+    expect(asideMetaOf(created!.payload)).toMatchObject({ purpose: 'question' })
   })
 })

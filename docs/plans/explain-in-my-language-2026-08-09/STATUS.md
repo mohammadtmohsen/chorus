@@ -114,3 +114,55 @@ changes by wrapping.
 Verified with three actions at 804, 364 and 200 pixel panes: three actions,
 inside the pane horizontally and vertically, at each. Looked at as well —
 stacked, centred, and hanging off the highlighted passage.
+
+## Review round two: five substantial issues, all confirmed in code
+
+**An aside written by the earlier build lost its identity.** The worst of them,
+and a regression introduced on this branch. `ask-on-the-fly` shipped `kind`,
+`parentId` and `sourceEventId` at the payload's top level; gathering them into
+`aside` meant zod stripped the old names on read. Reproduced before fixing: the
+row came back as an ordinary conversation, projected `kind: null`, and **appeared
+in the session list** — someone's "what did you mean by that" filed beside the
+work it was about. The log is append-only, so the reader is what had to keep up:
+`asideMetaOf` prefers the current shape and falls back to the old one, and every
+reader goes through it rather than reaching for `payload.aside`.
+
+**The migration backup was not a snapshot.** It copied the main file and then its
+`-wal` and `-shm` in turn — three moments, with no single-instance lock to stop
+another process writing between them. `VACUUM INTO` is SQLite's own answer: one
+consistent file from a live database, no sidecars, synchronous. Verified by
+opening the result — `user_version` 1, the pre-migration row present, the new
+columns absent.
+
+Worse than the backup was where its failure landed. The `try` wrapped the
+migration as well as the open, and the recovery renames the database aside and
+starts an empty one — so a disk-full or permission error while backing up
+presented as "your database was unreadable" and moved the user's history out of
+the way. Only opening may be treated as corruption now.
+
+**Strict Mode closed the only fork.** Moving the open into the click handler
+stopped two forks being created, but the card's cleanup still closed the promise
+it had adopted — and React runs setup → cleanup → setup in development, so the
+simulated cleanup closed the fork the second setup was using. Opening and closing
+are one pair; `Session` now owns both.
+
+**`openAside` was not failure-atomic.** The language check ran after the fork, so
+"No language is set" leaked a CLI. Everything past the fork is wrapped now, with
+the first send wrapped again because it happens after the service is registered —
+failing there stranded an entry as well as a process, and the caller never
+learned an id so could not close what it did not know about.
+
+**The historical-session guard never fired for Claude.** It compared
+`sessionRef`, and Claude's is empty when `session.started` is written — the real
+id arrives with the first message. It compares which `session.started` event is
+current now, because event identity does not depend on a field filled in late.
+
+Smaller: the card took its language from the renderer's own copy, which lags a
+settings change, so main echoes back the language it actually used; the aside
+metadata is a union rather than one shape with optional parts, so an explanation
+cannot exist without a language nor a question with one; and the focus effect
+re-ran on every re-measure, pulling the caret back each time the card resized —
+including the moment the follow-up box appears, which is when someone is reading.
+
+Driving it afterwards found one more: the heading read "Explaining in " while the
+language resolved. A whole sentence now stands in until it is known.

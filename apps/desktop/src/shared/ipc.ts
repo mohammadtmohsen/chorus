@@ -668,7 +668,14 @@ export const IPC_CONTRACT = {
        */
       purpose: z.enum(['question', 'explanation']).optional(),
     }),
-    response: z.object({ asideId: z.string() }),
+    /**
+     * The language main actually used, echoed back.
+     *
+     * The renderer keeps its own copy for the button's label, and that copy can
+     * be a moment stale — long enough for a card to say Arabic while the prompt
+     * and the log say French. Main is authoritative, so it says which it was.
+     */
+    response: z.object({ asideId: z.string(), language: z.string() }),
   },
   /** A follow-up, which only works while the fork is still alive. */
   'aside:ask': {
