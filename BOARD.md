@@ -124,21 +124,89 @@ before tagging" and the release checklist says so.
 
 ## Parked, with reasons
 
-Not open questions and not oversights: judgements already made, kept here so they
-are not quietly reopened. The full reasoning is in the plan's `STATUS.md` and
-`DONE.md`.
+Not open questions and not oversights: judgements already made, written as tickets
+so they can be cited and argued with rather than rediscovered as gaps. The third
+line of each is **what would reopen it** — a parked ticket with no such condition
+is not parked, it is forgotten.
 
-- **C-007 · The todo panel.** The detail line shipped. The panel cannot be built honestly
-  on this machine, whose config replaces `TodoWrite` with
-  `TaskCreate`/`TaskUpdate` — there is nothing here to see it with.
-- **C-008 · Dialogs.** The CLI fails _closed_ on an undeclared kind, so today's behaviour
-  is a defined degradation; declaring it promises Chorus can render an
-  undocumented payload, and being wrong parks the turn.
-- **C-009 · Checkpoints.** `rewindFiles()` needs a uuid the CLI never emits. It exists
-  only in the CLI's private transcript, and reading that to revert files on disk
-  risks the working tree on a format change.
-- **C-010 · The context breakdown.** `totalTokens` excludes deferred categories, so the
-  obvious panel overstates usage by more than twice the total.
-- **C-011 · Terminal sessions in the history sheet.** Chorus's log is authoritative; a CLI
-  session is a different unit, and merged rows would look reopenable when they are
-  not. `sessionRef` is already recorded if a correlation is ever wanted.
+Full reasoning, including the probes, is in the plan's `STATUS.md` and `DONE.md`.
+
+### C-007 · The todo panel
+
+The detail line shipped: a `TodoWrite` row reads `Fixing the parser · 1/3` instead
+of the bare tool name, using the field names and the one-in-progress invariant read
+out of the CLI binary's own tool description.
+
+The panel did not. It cannot be built honestly on this machine, whose config
+replaces `TodoWrite` with `TaskCreate`/`TaskUpdate` — asked to write todos, the
+agent said so itself. Building a surface nobody here can see means shipping a
+schema commitment on faith and calling it verified.
+
+**Reopens if:** a machine has `TodoWrite`, so the panel can be driven and looked at
+— or the `Task*` shape is worth handling as a second reduction on its own merits.
+
+### C-008 · Dialogs
+
+Carried unbuilt through three phases before being decided rather than carried a
+fourth time. `refusal_fallback_prompt` is the only kind the CLI declares.
+
+The reason not to build it inverts the intuition that wiring the callback is the
+safe half: the CLI treats an **undeclared** kind as "cannot display" and fails
+_closed_, so today's behaviour is a defined degradation — the classic refusal
+error. Declaring the kind is a promise Chorus can render it, and breaking that
+promise parks the turn instead. Against which `payload` is `Record<string,
+unknown>` defined per kind, and the trigger is a model refusal that cannot be
+produced on demand to test against.
+
+**Reopens if:** a second dialog kind appears, or the payload shape is documented —
+either makes the renderer testable, which is the whole objection.
+
+### C-009 · Checkpoints
+
+`rewindFiles(userMessageId)` wants the CLI's own uuid for a user message. Probing
+every message the SDK yields for one prompt gives `system/init`, `assistant`,
+`rate_limit_event`, `result` — and nothing else. **The CLI never echoes the user's
+message back**, so there is no uuid to capture. Setting
+`enableFileCheckpointing: true` changes nothing, which disposes of the hope that
+the option makes it start announcing them.
+
+The uuid exists in exactly one place: `~/.claude/projects/<slug>/<sessionId>.jsonl`.
+That route is available and wrong — an undocumented private format belonging to a
+self-updating binary, read to drive an operation that **reverts files on disk**,
+where a format change rewinds to the wrong point rather than failing.
+
+**Reopens if:** the SDK exposes the id — an echoed user message, or a `rewindFiles`
+that accepts something a host can legitimately know.
+
+### C-010 · The context breakdown
+
+`getContextUsage()` carries a full inventory — system prompt, tools, memory files,
+skills, messages — and the temptation is a panel showing where the window went.
+
+Measured, the obvious version lies. `totalTokens` **excludes** the deferred
+categories: 253 + 12,725 + 4,289 + 2,110 + 4,787 = 24,164, exactly `totalTokens`,
+while two deferred rows carry another 59,538 that costs nothing until something
+loads them. A panel presenting "MCP tools: 45,930" as consumed would be wrong by
+more than twice the total.
+
+Also unused and more interesting than the breakdown: `autoCompactThreshold` is
+967,000 against a `maxTokens` of 1,000,000, so compaction fires at 96.7% and a bar
+drawn against the maximum never fills before it resets.
+
+**Reopens if:** someone designs it with the deferred distinction drawn honestly.
+The blocker is design, not plumbing.
+
+### C-011 · Terminal sessions in the history sheet
+
+Chorus's log is authoritative, decided in open question 2. A CLI session is a
+different unit: a Chorus conversation is a _room_ spanning several sessions, and
+`listSessions()` is Claude-only, so codex does not appear at all.
+
+Measured on this repository, `listSessions()` returns 21 sessions of which eight
+are throwaway — three `Say OK`, two `hi` — five created by this project's own
+probes in one afternoon. Merged rows would put `Say OK` in the history sheet
+looking reopenable.
+
+**Reopens if:** importing terminal work is wanted, as its own labelled surface
+rather than merged rows. `sessionRef` is already recorded, so a room can name its
+CLI session whenever the correlation is useful.
