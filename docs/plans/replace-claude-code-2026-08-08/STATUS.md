@@ -37,7 +37,16 @@ list. Reasoning and evidence in [`DONE.md`](./DONE.md).
    there is nothing to see it with. The detail line shipped; the panel waits for
    a machine that has the tool.
 
-**How this is verified.** `pnpm check` is 952 tests; the e2e suite is 26 specs
+**How this is verified.** `pnpm verify:package` packages the app and drives the
+bundle a user installs — a separate gate from the specs, because those run
+`electron .` against `out/`, which is the same source and a different program:
+`out/` is a directory tree, while the bundle is an asar with `better-sqlite3` and
+the Claude SDK deliberately outside it. For several releases "all 26 passed" said
+nothing about whether the thing on the DMG could open its own database. Proved to
+catch what it claims by hiding the native prebuild: the run fails, and now names
+`dlopen(...) (no such file)` rather than only "the app never opened a window".
+
+`pnpm check` is 952 tests; the e2e suite is 26 specs
 driving the built app over CDP. **CI cannot run the e2e suite** — it has no
 credentials for real CLIs — so a green PR is not evidence about the renderer, and
 the suite has to be run locally before believing a UI change. Two of this

@@ -24,7 +24,8 @@
     "clean": "turbo run clean && rm -rf node_modules",
     "e2e": "pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e",
     "package": "pnpm --filter chorus-vscode run build && pnpm --filter chorus-vscode run package && pnpm --filter @chorus/desktop run package",
-    "app:install": "pnpm --filter @chorus/desktop run app:install"
+    "app:install": "pnpm --filter @chorus/desktop run app:install",
+    "verify:package": "pnpm package && pnpm --filter @chorus/desktop run verify:package"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
