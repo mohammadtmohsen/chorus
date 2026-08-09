@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { AgentProbeResult, IpcResponse } from '../../shared/ipc.js'
+import {
+  MAX_EXPLAIN_LANGUAGE,
+  normaliseExplainLanguage,
+  type AgentProbeResult,
+  type IpcResponse,
+} from '../../shared/ipc.js'
 import { useDialog } from './useDialog.js'
 
 type AgentId = 'codex' | 'claude'
@@ -232,6 +237,77 @@ function Accounts(): React.JSX.Element | null {
  * running, so nothing is asked here — a machine that has not started a session
  * yet simply has no list, and the control says so rather than pretending.
  */
+/**
+ * The language an explanation comes back in.
+ *
+ * Its own fieldset, deliberately **outside** `DefaultModel`, which returns
+ * `null` whenever no live Claude model list exists. A language field placed in
+ * there would silently vanish on a machine whose CLI has not been asked yet —
+ * and this is the only surface the feature is discoverable from, so vanishing
+ * takes the feature with it.
+ *
+ * A text field rather than a picker: "Lebanese Arabic" and "simple Arabic" are
+ * answers a locale list cannot express, and the person reading is the one who
+ * knows which they want.
+ */
+function ExplainLanguage(): React.JSX.Element {
+  const { t } = useTranslation()
+  const [language, setLanguage] = useState('')
+
+  useEffect(() => {
+    let live = true
+    window.chorus
+      .readSettings()
+      .then((settings) => {
+        if (live) setLanguage(settings.explainLanguage)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [])
+
+  return (
+    <fieldset className="settings-language">
+      <legend>{t('settings.explainHeading')}</legend>
+      <label>
+        <span>{t('settings.explainLanguage')}</span>
+        <input
+          type="text"
+          value={language}
+          maxLength={MAX_EXPLAIN_LANGUAGE}
+          placeholder={t('settings.explainPlaceholder')}
+          /*
+           * Persisted on every change, like the model and effort rows, rather
+           * than on blur. Blur is not guaranteed: closing the sheet with Escape
+           * loses whatever was typed, and a preference that silently fails to
+           * save is worse than one that saves a keystroke early.
+           *
+           * What is *displayed* stays raw until blur, though. Normalising every
+           * keystroke would collapse the space in "Lebanese Arabic" the instant
+           * it was typed, making the second word impossible to start.
+           */
+          onChange={(e) => {
+            setLanguage(e.target.value)
+            void window.chorus.writeSettings({
+              explainLanguage: normaliseExplainLanguage(e.target.value),
+            })
+          }}
+          onBlur={() => {
+            setLanguage(normaliseExplainLanguage(language))
+          }}
+        />
+      </label>
+      {/*
+        Persistent, not a placeholder. What the field accepts is wider than the
+        word "language" suggests, and a hint that vanishes on the first keystroke
+        is one nobody reads twice.
+      */}
+      <p className="footnote">{t('settings.explainNote')}</p>
+    </fieldset>
+  )
+}
+
 function DefaultModel(): React.JSX.Element | null {
   const { t } = useTranslation()
   const [model, setModel] = useState('')
@@ -493,6 +569,8 @@ export function Settings(props: {
           <Plugins />
 
           <DefaultModel />
+
+          <ExplainLanguage />
 
           <p className="footnote">{t('settings.paneNote')}</p>
         </div>

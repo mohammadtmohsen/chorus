@@ -52,6 +52,31 @@ export const TranscriptEvent = z.object({
 export type TranscriptEvent = z.infer<typeof TranscriptEvent>
 
 /** Defaults for a new session. Zoom is not here: it lasts one launch. */
+/**
+ * The longest a language may be.
+ *
+ * Not a guess at how long a language name is — a bound on what a free-text field
+ * can do to everything downstream. The value reaches a prompt and, if the offer
+ * ever names it, a button: unbounded, it makes one enormous and the other wider
+ * than the pane, and no amount of measuring rescues a button that cannot fit.
+ * Forty is comfortably past "Lebanese Arabic" and nowhere near a paragraph.
+ */
+export const MAX_EXPLAIN_LANGUAGE = 40
+
+/**
+ * What the field accepts, applied wherever it is read or written.
+ *
+ * Free text is the point — "Lebanese Arabic" and "simple Arabic" are answers a
+ * locale list cannot express. Free is not unconstrained, though: a pasted
+ * newline would make a one-line control look empty while holding content, and
+ * whitespace alone would produce an action that appears to do nothing. Both
+ * collapse to the same normalisation rather than being rejected, because a paste
+ * should not become an error message.
+ */
+export function normaliseExplainLanguage(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_EXPLAIN_LANGUAGE)
+}
+
 export const SettingsShape = z.object({
   agents: z.array(z.enum(['codex', 'claude'])),
   cwd: z.string(),
@@ -59,6 +84,12 @@ export const SettingsShape = z.object({
   /** Empty means the provider's own choice, which is not a model name. */
   model: z.string().default(''),
   effortLevel: z.string().default(''),
+  /**
+   * The language an explanation comes back in. Empty means the action is not
+   * offered — see the plan: there is no sensible guess at someone's own language,
+   * and the system locale is a fact about the machine rather than the person.
+   */
+  explainLanguage: z.string().default('').transform(normaliseExplainLanguage),
 })
 
 export const ApprovalChoice = z.object({

@@ -1518,6 +1518,41 @@ body {
   white-space: nowrap;
 }
 
+/*
+ * The language field borrows the model fieldset's shape rather than inventing
+ * one — they are two rows of the same kind of preference and should not look
+ * like two different ideas about what a settings row is.
+ */
+.settings-language {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.8rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.settings-language label {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.settings-language input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 22ch;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--bone);
+  font: inherit;
+  font-size: 12px;
+}
+
 .settings-models {
   display: flex;
   flex-direction: column;
