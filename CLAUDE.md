@@ -161,7 +161,14 @@ Work of any size goes through a plan first.
 ```
 docs/plans/{slug}-{YYYY-MM-DD}/plan.md      problem -> shape -> phases -> open questions
 docs/plans/{slug}-{YYYY-MM-DD}/STATUS.md    written after each phase ships
+BOARD.md                                    what sits outside any one plan
 ```
+
+`BOARD.md` is where a task goes when it belongs to no plan: something noticed in
+passing, something that needs a person rather than a commit, something parked with
+a reason. An entry says what it is, why it matters, and what would make it done —
+if it cannot answer the third it is a thought, and belongs in a plan's open
+questions.
 
 Plans are prose that argues, not checklists. Say what the problem is, what the
 shape of the answer is, and **what you are deliberately not doing**.
