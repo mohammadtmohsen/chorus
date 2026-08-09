@@ -4,6 +4,7 @@ import type { Attachment } from './Attachments.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
+import { QuickQuestion } from './QuickQuestion.js'
 import { anchorFor, askableSource, type SourceEntry } from './quote.js'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { ReviewPanel } from './ReviewPanel.js'
@@ -153,6 +154,21 @@ export function Session(props: {
      * the card adds only the card.
      */
     source: SourceEntry | null
+  } | null>(null)
+  /**
+   * The open quick-question card, if any.
+   *
+   * Held apart from `selected` and seeded from it: once a card is open, the
+   * passage it is about must not change. Scrolling drops the offer and a later
+   * selection replaces it, and either would otherwise re-point a question that
+   * has already been asked.
+   */
+  const [askingAbout, setAskingAbout] = useState<{
+    text: string
+    left: number
+    top: number
+    placement: 'above' | 'below'
+    source: SourceEntry
   } | null>(null)
   /* The cast, the folder, the profile, Restart and End all live on the
      session's card in the sidenav now, along with the state each of them needs
@@ -826,25 +842,67 @@ export function Session(props: {
         mousedown on a button clears the selection before the click lands, so by
         the time the handler ran there would be nothing left to quote.
       */}
-      {selected !== null && (
-        <button
-          type="button"
+      {selected !== null && askingAbout === null && (
+        <div
           className="quote-offer"
           data-placement={selected.placement}
           /*
-           * Observable now, actionable later. The classifier runs on every
-           * selection from this phase on, so a wrong answer shows up in the
-           * running app and in e2e before anything is built on top of it.
+           * The classifier's answer, visible in the DOM as well as in the
+           * buttons, so a wrong one is assertable rather than only lookable-at.
            */
           data-askable={selected.source === null ? undefined : 'true'}
           style={{ left: `${String(selected.left)}px`, top: `${String(selected.top)}px` }}
           onMouseDown={(e) => {
             e.preventDefault()
           }}
-          onClick={quoteSelection}
         >
-          {t('conversation.quoteInMessage')}
-        </button>
+          <button type="button" className="quote-offer-action" onClick={quoteSelection}>
+            {t('conversation.quoteInMessage')}
+          </button>
+          {/*
+            Offered only where an aside can actually be answered. A passage that
+            crosses two replies has no single author, and one still streaming
+            cannot be seen by a fork at all — so the button is absent rather than
+            present-and-failing.
+          */}
+          {selected.source !== null && (
+            <button
+              type="button"
+              className="quote-offer-action"
+              onClick={() => {
+                // Re-checked inside the closure rather than relying on the
+                // guard above: `selected` is state, so the narrowing the JSX
+                // condition proves does not survive into the callback.
+                const source = selected.source
+                if (source === null) return
+                setAskingAbout({ ...selected, source })
+                setSelected(null)
+                window.getSelection()?.removeAllRanges()
+              }}
+            >
+              {t('conversation.askAboutThis')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {askingAbout !== null && (
+        <QuickQuestion
+          conversationId={conversationId}
+          sourceEventId={askingAbout.source.eventId}
+          agent={askingAbout.source.actor}
+          excerpt={askingAbout.text}
+          left={askingAbout.left}
+          top={askingAbout.top}
+          placement={askingAbout.placement}
+          onClose={() => {
+            setAskingAbout(null)
+          }}
+          onStage={(text) => {
+            composer.current?.insert(text)
+          }}
+          onError={setError}
+        />
       )}
 
       {reviewing && (

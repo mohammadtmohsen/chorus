@@ -39,6 +39,16 @@ export interface ComposerHandle {
   focus: () => void
   /** Puts a passage from the transcript in the draft, as the quote offer does. */
   quote: (passage: string) => void
+  /**
+   * Puts text in the draft exactly as given.
+   *
+   * Separate from `quote`, which wraps whatever it is handed in `>` markers. An
+   * aside brought forward arrives already formatted — it carries its own
+   * quoting, a mention that decides routing, and a line saying where the answer
+   * came from. Re-quoting all of that would bury the instruction inside the
+   * evidence for it.
+   */
+  insert: (text: string) => void
   /** A drop lands on the whole pane, not on the box. */
   attach: (items: DataTransfer) => Promise<void>
 }
@@ -461,6 +471,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         focus: () => input.current?.focus(),
         quote: (passage: string) => {
           setDraft((current) => withQuote(current, passage))
+          input.current?.focus()
+        },
+        insert: (text: string) => {
+          setDraft((current) =>
+            current.trim() === '' ? text : `${current.replace(/\s+$/, '')}\n\n${text}`
+          )
           input.current?.focus()
         },
         attach,

@@ -85,6 +85,10 @@ const api: ChorusApi = {
   ideOpenProject: invoke('ide:openProject'),
   prepareHandoff: invoke('handoff:prepare'),
   sendHandoff: invoke('handoff:send'),
+  openAside: invoke('aside:open'),
+  askAside: invoke('aside:ask'),
+  closeAside: invoke('aside:close'),
+  listAsides: invoke('aside:list'),
 
   onEvents: (listener) => {
     // The payload is validated before it reaches renderer code: main is

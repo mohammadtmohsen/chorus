@@ -45,7 +45,8 @@
     "quoteInMessage": "Quote in message",
     "endConfirm": "An agent is working — press again to end this session",
     "cancel": "Cancel",
-    "waiting": "waiting"
+    "waiting": "waiting",
+    "askAboutThis": "Ask about this"
   },
   "workspace": {
     "sessions": "Sessions",
@@ -340,5 +341,15 @@
       "local": "local"
     },
     "note": "Installed through your own Claude configuration. A disabled plugin keeps its commands and skills out of every session."
+  },
+  "aside": {
+    "heading": "Ask {{agent}} about this",
+    "close": "Close",
+    "placeholder": "What about it?",
+    "followUp": "Anything else?",
+    "thinking": "Thinking — this takes a few seconds",
+    "quote": "Quote in message",
+    "takeForward": "Take this forward",
+    "reopened": "This aside has ended. Ask again to start a new one."
   }
 }

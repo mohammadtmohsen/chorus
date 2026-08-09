@@ -514,6 +514,126 @@ body {
   border-color: color-mix(in srgb, var(--bone) 40%, var(--line));
 }
 
+/*
+ * Two actions in the pill, split by a hairline rather than spaced apart: one
+ * object that offers two things reads as a choice about the passage, where two
+ * floating buttons read as two unrelated offers competing for the same spot.
+ */
+.quote-offer {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+}
+
+.quote-offer-action {
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--bone);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.quote-offer-action + .quote-offer-action {
+  border-left: 1px solid color-mix(in srgb, var(--bone) 18%, var(--line));
+}
+
+.quote-offer-action:hover {
+  background: color-mix(in srgb, var(--bone) 8%, transparent);
+}
+
+/*
+ * The quick-question card.
+ *
+ * `z-index: 5` — one above the quote offer it replaces, and far below the
+ * sheets' 80. It is anchored inside the pane and must never cover the window:
+ * the composer behind it stays usable, which is the difference between an aside
+ * and a modal.
+ */
+.quick-question {
+  position: absolute;
+  z-index: 5;
+  width: min(420px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 3);
+  border: 1px solid color-mix(in srgb, var(--bone) 22%, var(--line));
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
+}
+
+.quick-question[data-placement='above'] {
+  transform: translate(-50%, -100%);
+}
+
+.quick-question[data-placement='below'] {
+  transform: translateX(-50%);
+}
+
+.quick-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--step) * 2);
+  font-size: 12px;
+}
+
+.quick-close {
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* The passage, dimmed: it is the subject, not the answer. */
+.quick-excerpt {
+  margin: 0;
+  padding-left: calc(var(--step) * 2);
+  border-left: 2px solid color-mix(in srgb, var(--bone) 25%, var(--line));
+  color: var(--muted);
+  font-size: 12px;
+  max-height: 4.5em;
+  overflow: hidden;
+}
+
+.quick-answer {
+  max-height: 40vh;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.quick-working {
+  display: block;
+  margin-top: var(--step);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.quick-input {
+  width: 100%;
+  padding: calc(var(--step) * 2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--bone);
+  font: inherit;
+  font-size: 13px;
+  resize: none;
+}
+
+.quick-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--step);
+}
+
 /* A file is over this pane and will land in its composer. */
 .pane[data-file-over='true'] {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--codex) 60%, transparent);

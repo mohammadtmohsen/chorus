@@ -606,6 +606,50 @@ export const IPC_CONTRACT = {
     response: z.object({ handoffId: z.string() }),
   },
   /**
+   * A small question about one passage of one reply, asked in a fork.
+   *
+   * `excerpt` is sent so main can check it against what the log actually holds,
+   * not so main can trust it. The renderer is the least trustworthy thing in the
+   * process tree — it renders untrusted agent output — and a caller that could
+   * name any event and any excerpt could put words in an agent's mouth and have
+   * them quoted back as its own.
+   *
+   * There is no `aside:history`: an aside is a conversation, so
+   * `conversation:history` already reads it, and its events reach the renderer
+   * on the same push channel as everything else.
+   */
+  'aside:open': {
+    request: z.object({
+      conversationId: z.string(),
+      sourceEventId: z.string(),
+      excerpt: z.string().min(1),
+      question: z.string().min(1),
+    }),
+    response: z.object({ asideId: z.string() }),
+  },
+  /** A follow-up, which only works while the fork is still alive. */
+  'aside:ask': {
+    request: z.object({ asideId: z.string(), question: z.string().min(1) }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+  /** Ends the fork. The transcript stays in the log. */
+  'aside:close': {
+    request: z.object({ asideId: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+  /** What has already been asked about a conversation, or about one reply in it. */
+  'aside:list': {
+    request: z.object({ conversationId: z.string(), sourceEventId: z.string().optional() }),
+    response: z.array(
+      z.object({
+        id: z.string(),
+        sourceEventId: z.string(),
+        title: z.string(),
+        createdAt: z.number().int(),
+      })
+    ),
+  },
+  /**
    * The repository as it stands on disk, not as the log describes it. Those
    * differ after a crash, a manual edit, or a denied approval.
    */
@@ -944,6 +988,10 @@ export interface ChorusApi {
   readonly sendHandoff: (
     request: IpcRequest<'handoff:send'>
   ) => Promise<IpcResponse<'handoff:send'>>
+  readonly openAside: (request: IpcRequest<'aside:open'>) => Promise<IpcResponse<'aside:open'>>
+  readonly askAside: (request: IpcRequest<'aside:ask'>) => Promise<IpcResponse<'aside:ask'>>
+  readonly closeAside: (request: IpcRequest<'aside:close'>) => Promise<IpcResponse<'aside:close'>>
+  readonly listAsides: (request: IpcRequest<'aside:list'>) => Promise<IpcResponse<'aside:list'>>
   /** Returns an unsubscribe function. */
   readonly onEvents: (listener: (events: TranscriptEvent[]) => void) => () => void
 }
