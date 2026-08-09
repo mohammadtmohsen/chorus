@@ -59,6 +59,14 @@ export function QuickQuestion(props: {
   const { t } = useTranslation()
   const [question, setQuestion] = useState('')
   const [asideId, setAsideId] = useState<string | null>(null)
+  /**
+   * The fork, started when the card opened rather than when the question was
+   * asked.
+   *
+   * Held as a promise so a fast typist who hits Enter before the CLI has
+   * finished booting waits on the same boot rather than starting a second one.
+   */
+  const opening = useRef<Promise<string> | null>(null)
   const [state, setState] = useState<AsideState>(EMPTY_ASIDE)
   const [asking, setAsking] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
@@ -68,6 +76,40 @@ export function QuickQuestion(props: {
 
   useEffect(() => {
     input.current?.focus()
+  }, [])
+
+  /*
+   * Boot the fork immediately, before there is a question to ask it.
+   *
+   * Measured in Phase 0: about 2.6 of the 4.2 seconds to first token was the CLI
+   * spawning and loading 151 tools, 51 slash commands and 5 MCP servers. None of
+   * that depends on the question, and all of it used to happen after the user
+   * pressed Enter. Started here it overlaps with them typing, so what is left to
+   * wait for is the agent itself.
+   *
+   * The cost of being wrong is a spawned process the user never asks anything —
+   * paid in a few hundred milliseconds of CPU, not in tokens, since a fork bills
+   * nothing until a turn is sent. Closing the card disposes of it either way.
+   */
+  useEffect(() => {
+    const boot = window.chorus
+      .openAside({
+        conversationId: props.conversationId,
+        sourceEventId: props.sourceEventId,
+        excerpt: props.excerpt,
+      })
+      .then((result) => {
+        setAsideId(result.asideId)
+        return result.asideId
+      })
+    opening.current = boot
+    boot.catch((e: unknown) => {
+      props.onError(e instanceof Error ? e.message : String(e))
+      props.onClose()
+    })
+    // Mount only, deliberately: the passage a card is about cannot change once
+    // it is open, and re-running this would boot a second CLI for the same
+    // question.
   }, [])
 
   /*
@@ -157,34 +199,17 @@ export function QuickQuestion(props: {
     const text = question.trim()
     if (text === '' || asking) return
     setAsking(true)
+    setQuestion('')
 
-    if (asideId === null) {
-      window.chorus
-        .openAside({
-          conversationId: props.conversationId,
-          sourceEventId: props.sourceEventId,
-          excerpt: props.excerpt,
-          question: text,
-        })
-        .then((result) => {
-          setAsideId(result.asideId)
-          setQuestion('')
-        })
-        .catch((e: unknown) => {
-          props.onError(e instanceof Error ? e.message : String(e))
-          props.onClose()
-        })
-        .finally(() => {
-          setAsking(false)
-        })
-      return
-    }
-
-    window.chorus
-      .askAside({ asideId, question: text })
-      .then(() => {
-        setQuestion('')
-      })
+    /*
+     * Waits on the boot that started when the card opened. By the time anyone
+     * has typed a question this has usually already resolved, which is the whole
+     * point — but a one-word question typed fast can beat it, and that must
+     * queue rather than race.
+     */
+    const ready = opening.current ?? Promise.reject(new Error('This aside never opened'))
+    ready
+      .then((id) => window.chorus.askAside({ asideId: id, question: text }))
       .catch((e: unknown) => {
         props.onError(e instanceof Error ? e.message : String(e))
       })
@@ -193,7 +218,8 @@ export function QuickQuestion(props: {
       })
   }
 
-  const started = asideId !== null
+  /** Something has been asked, so the answer region has a reason to exist. */
+  const started = asking || state.answer !== '' || state.failed !== null || state.working
 
   return (
     <div
@@ -252,7 +278,7 @@ export function QuickQuestion(props: {
           className="quick-input"
           rows={2}
           value={question}
-          placeholder={started ? t('aside.followUp') : t('aside.placeholder')}
+          placeholder={state.answer === '' ? t('aside.placeholder') : t('aside.followUp')}
           onChange={(e) => {
             setQuestion(e.target.value)
           }}

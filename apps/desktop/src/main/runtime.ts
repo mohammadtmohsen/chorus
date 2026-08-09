@@ -185,7 +185,10 @@ export class ChorusRuntime {
    * walks open conversations — restore, the sidebar, quit — should find one,
    * and keeping them in the same map is how they would.
    */
-  private readonly asides = new Map<string, { service: ConversationService; parentId: string }>()
+  private readonly asides = new Map<
+    string,
+    { service: ConversationService; parentId: string; excerpt: string }
+  >()
   /** Last renderer-owned editor arrangement, persisted beside the active sessions. */
   private workspaceSnapshot: WorkspaceSnapshot | null = null
   /** The latest windows each provider reported, for a window opened later. */
@@ -509,7 +512,16 @@ export class ChorusRuntime {
     conversationId: string
     sourceEventId: string
     excerpt: string
-    question: string
+    /**
+     * Optional, and usually absent.
+     *
+     * The card opens this the moment it appears, before the user has typed
+     * anything, so the CLI is spawning and loading its config while they write
+     * the question rather than afterwards. Measured, that is about 2.6 of the
+     * 4.2 seconds — two thirds of the wait was a process starting, not an agent
+     * thinking. Asking without a question is what lets that happen in parallel.
+     */
+    question?: string
   }): Promise<{ asideId: string }> {
     const parent = this.active.get(request.conversationId)
     if (parent === undefined) throw new Error('That conversation is not open')
@@ -587,9 +599,17 @@ export class ChorusRuntime {
       neverAsks: true,
     })
     await service.attach(forked, opts, await adapter.health())
-    this.asides.set(asideId, { service, parentId: request.conversationId })
+    /*
+     * Held so `askAside` can quote the same passage on every turn. The fork sees
+     * the excerpt once per question rather than once per aside, because a
+     * follow-up three turns in should still be anchored to the passage rather
+     * than to whatever was said most recently.
+     */
+    this.asides.set(asideId, { service, parentId: request.conversationId, excerpt })
 
-    await service.deliver(asideQuestion(excerpt, request.question))
+    if (request.question !== undefined && request.question !== '') {
+      await service.deliver(asideQuestion(excerpt, request.question))
+    }
     return { asideId }
   }
 
@@ -601,7 +621,7 @@ export class ChorusRuntime {
       // continuing it does not, which is why a reopened aside is view-only.
       throw new Error('That aside has ended — ask again to start a new one')
     }
-    await aside.service.deliver(question)
+    await aside.service.deliver(asideQuestion(aside.excerpt, question))
   }
 
   /** Ends an aside's fork. Its transcript stays in the log. */

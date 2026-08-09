@@ -189,3 +189,40 @@ describe('a closed aside cannot be continued', () => {
     await expect(runtime.askAside(asideId, 'and the other half?')).rejects.toThrow(/has ended/)
   })
 })
+
+describe('the fork boots before there is a question', () => {
+  it('opens without one, so the CLI starts while the user types', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+    })
+    // Forked and attached, but nothing asked yet. Two thirds of the measured
+    // wait was this happening after Enter rather than before it.
+    expect(adapter.forked).toHaveLength(1)
+    expect(adapter.forked[0]?.session.sent).toHaveLength(0)
+    expect(asideId).not.toBe('')
+  })
+
+  it('anchors every follow-up to the passage, not just the first', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+    })
+    await runtime.askAside(asideId, 'what does that mean?')
+    await runtime.askAside(asideId, 'and how far behind?')
+
+    const sent = adapter.forked[0]?.session.sent ?? []
+    expect(sent).toHaveLength(2)
+    // A follow-up three turns in should still be about the passage rather than
+    // about whatever was said most recently.
+    for (const message of sent) {
+      expect(message.text).toContain('> The projection lags')
+      expect(message.text).toContain('do not continue the work')
+    }
+    expect(sent[1]?.text).toContain('and how far behind?')
+  })
+})

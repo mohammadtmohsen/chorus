@@ -623,7 +623,13 @@ export const IPC_CONTRACT = {
       conversationId: z.string(),
       sourceEventId: z.string(),
       excerpt: z.string().min(1),
-      question: z.string().min(1),
+      /**
+       * Usually absent. The card opens the aside as soon as it appears so the
+       * CLI boots while the user types, and sends the question separately —
+       * about two thirds of the measured wait was process startup rather than
+       * the agent, and this is what moves it off the critical path.
+       */
+      question: z.string().min(1).optional(),
     }),
     response: z.object({ asideId: z.string() }),
   },

@@ -327,6 +327,39 @@ selector looked for `.markdown`, a class `MarkdownView` does not emit; the aside
 had answered correctly all along. Neither was in the code under test, and both
 looked exactly like it was broken.
 
+## The wait was mostly not the agent
+
+Phase 0 measured 4–8.5 seconds to first token and the plan treated that as the
+cost of the feature. It was not. Of Claude's 4.2 seconds, about **2.6 was the CLI
+spawning and loading 151 tools, 51 slash commands and 5 MCP servers** — work that
+does not depend on the question and was being done _after_ the user pressed
+Enter.
+
+So the fork now boots when the card opens rather than when the question is sent.
+`openAside`'s `question` is optional; the card calls it on mount and `askAside`
+separately on submit, holding the boot as a promise so someone who types faster
+than the CLI starts waits on the same boot instead of racing it.
+
+Measured in the running app, with a six-second pause standing in for reading the
+passage and typing:
+
+|                         | before   | after   |
+| ----------------------- | -------- | ------- |
+| card on screen          | —        | 15 ms   |
+| first token after Enter | ~4200 ms | 1444 ms |
+
+That is the agent's own speed, which is what it should always have been. **Open
+question 1 is closed** — not by deciding the wait was tolerable, but by finding
+that most of it was ours rather than the model's.
+
+The cost of being wrong is a spawned process nobody asks anything, paid in a few
+hundred milliseconds of CPU rather than in tokens: a fork bills nothing until a
+turn is sent, and closing the card disposes of it either way.
+
+One consequence worth noting: `askAside` now re-quotes the passage on every turn,
+so a follow-up three turns in is still anchored to the excerpt rather than to
+whatever was said most recently. Tested.
+
 ### What is left
 
 The badge on a source reply that already has asides, and reopening one

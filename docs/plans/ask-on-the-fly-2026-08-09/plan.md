@@ -120,13 +120,16 @@ The card shows the excerpt, names the agent it will ask, and takes a short
 question. The answer streams inside it. The main composer, attachments, IDE
 context, current turn, scroll-follow, busy state and routing do not change.
 
-**It will not be instant, and the design has to say so.** Phase 0 measured 4–8.5
-seconds to first token on both providers. So the card opens immediately with the
-excerpt and a visible pending state rather than appearing when the answer is
-ready, and it can be dismissed while the answer is still in flight — a wait you
-cannot walk away from is worse than the turn this feature is avoiding. Phase 2's
-tooling suppression is the attempt to shorten it; open question 1 is what to do
-if that fails.
+**The fork boots when the card opens, not when the question is sent.** Phase 0
+measured 4–8.5 seconds to first token and most of it turned out to be the CLI
+starting rather than the agent thinking — work that does not depend on the
+question and was being done after the user pressed Enter. Started when the card
+appears, it overlaps with reading the passage and typing, and what is left is
+1.4 seconds of the agent itself.
+
+The card still opens with a pending state rather than waiting for the answer, and
+can still be dismissed mid-flight: a wait you cannot walk away from would be
+worse than the turn this feature avoids, however short it is.
 
 It has **three exits**:
 
@@ -428,19 +431,14 @@ Record each shipped phase in this folder's `STATUS.md`.
 
 ## Open questions
 
-_Closed by Phase 0:_ whether an aside should use a cheaper model — it should not,
-because prompt caching already left 2 uncached input tokens against ~26k of
-context, so there is nothing to save. And whether inherited hooks should be
-suppressed — they should, which made it Phase 2 work rather than a question.
+_Closed by measurement:_ whether an aside should use a cheaper model — it should
+not, because prompt caching already left 2 uncached input tokens against ~26k of
+context. Whether inherited config should be suppressed — no, decided on consent.
+And whether a 4–8 second answer could feel like an aside — the question
+dissolved: two thirds of that was the CLI starting, which now happens while the
+user types, leaving 1.4 seconds of the agent actually thinking.
 
-1. **Whether a 4–8 second answer can feel like an aside at all.** This is the
-   real risk the spike exposed and it is a design question, not a technical one.
-   The card opens instantly with the excerpt and a pending state, and can be
-   dismissed while the answer is still in flight — but if suppressing tooling in
-   Phase 2 does not bring the wait down, the honest options are to make the card
-   quieter and more patient, or to admit the interaction is a small panel rather
-   than a tooltip and name it accordingly.
-2. **What a multi-turn aside promotes.** The prefill is specified as "the excerpt
+1. **What a multi-turn aside promotes.** The prefill is specified as "the excerpt
    and the answer", which is right for the one-question case the feature is named
    for. Ask three follow-ups and the useful conclusion is spread across them, and
    that spec quietly picks one. The options are the whole aside transcript
@@ -450,11 +448,11 @@ suppressed — they should, which made it Phase 2 work rather than a question.
    answer plus the excerpt, because the staged text is editable before it is sent
    and a user who needs more can paste more — but that is a lean, not a decision,
    and it should be made against a real multi-turn aside rather than in advance.
-3. **How long a dismissed aside stays reachable.** The badge is durable now; if
+2. **How long a dismissed aside stays reachable.** The badge is durable now; if
    asides turn out to be numerous and disposable, "forever" may be the wrong
    answer and a retention rule is a schema decision better made at migration time
    than after it.
-4. **Whether asides should count toward the session summary and spend.** They
+3. **Whether asides should count toward the session summary and spend.** They
    are real tokens against the user's account, so leaving them out understates
    cost — but folding them into `summariseSession` would make an aside look like
    work done in the room.

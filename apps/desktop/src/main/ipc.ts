@@ -516,7 +516,7 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       conversationId: string
       sourceEventId: string
       excerpt: string
-      question: string
+      question?: string
     }) => runtime.openAside(request),
 
     'aside:ask': async (request: { asideId: string; question: string }) => {
