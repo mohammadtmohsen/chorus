@@ -5,7 +5,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ChorusRuntime } from './runtime.js'
+import { ChorusRuntime, explainPrompt } from './runtime.js'
+import { DEFAULT_SETTINGS, writeSettings } from './settings.js'
 
 /**
  * What an aside refuses to do, which matters more than what it does.
@@ -23,6 +24,7 @@ const silent = new Logger()
 let runtime: ChorusRuntime
 let adapter: FakeAdapter
 let conversationId: string
+let dataPath: string
 
 const adapters = (): Map<AgentId, AgentAdapter> => {
   adapter = new FakeAdapter({ id: 'claude' })
@@ -43,7 +45,8 @@ const reply = (text: string): string => {
 }
 
 beforeEach(async () => {
-  runtime = ChorusRuntime.open(mkdtempSync(join(tmpdir(), 'chorus-aside-')), silent, adapters())
+  dataPath = mkdtempSync(join(tmpdir(), 'chorus-aside-'))
+  runtime = ChorusRuntime.open(dataPath, silent, adapters())
   const started = await runtime.startConversation({ agents: ['claude'], cwd: process.cwd() })
   conversationId = started.conversationId
 })
@@ -274,5 +277,127 @@ describe('an aside may explain, not act', () => {
       .filter((e) => e.payload.type === 'approval.decided')
       .map((e) => (e.payload as unknown as { outcome: string }).outcome)
     expect(verdicts).toEqual(['deny'])
+  })
+})
+
+describe('explainPrompt', () => {
+  const prompt = explainPrompt('The projection lags behind the log.', 'Lebanese Arabic')
+
+  it('quotes the passage, so the fork is anchored to it', () => {
+    expect(prompt).toContain('> The projection lags behind the log.')
+  })
+
+  it('names the language, more than once', () => {
+    // Once is a suggestion. The measured failure is drifting back to English
+    // after the first sentence, and the prompt has to still be arguing by then.
+    expect(prompt.match(/Lebanese Arabic/g)?.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('asks for plain language before it asks for a language', () => {
+    // Level first, language second. Leading with the language produces a
+    // faithful translation of something still too dense.
+    expect(prompt.indexOf('Short sentences')).toBeLessThan(prompt.indexOf('Write every word'))
+  })
+
+  it('names the reader as a developer, so the answer is not condescending', () => {
+    expect(prompt).toContain('not a beginner')
+  })
+
+  it('keeps identifiers as written rather than translating them', () => {
+    expect(prompt).toContain('exactly as written')
+  })
+
+  it('carries the do-not-work clause', () => {
+    // Without it a fork treats the request as the next turn of the work, which
+    // no permission rule catches because reading files is allowed.
+    expect(prompt).toContain('Do not continue the work')
+  })
+
+  it('quotes a multi-line passage as one block', () => {
+    expect(explainPrompt('one\n\ntwo', 'Arabic')).toContain('> one\n>\n> two')
+  })
+})
+
+describe('opening an explanation', () => {
+  const withLanguage = (language: string): void => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: language })
+  }
+
+  it('refuses when no language is set, rather than guessing one', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'The projection lags',
+        purpose: 'explanation',
+      })
+    ).rejects.toThrow(/No language is set/)
+  })
+
+  it('asks the fork immediately, because there is nothing to type', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'explanation',
+    })
+    const sent = adapter.forked[0]?.session.sent ?? []
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.text).toContain('Arabic')
+    expect(sent[0]?.text).toContain('> The projection lags')
+  })
+
+  it('logs the intent in the user’s words, not the instruction', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'explanation',
+    })
+    const said = runtime.store
+      .read(asideId)
+      .filter((e) => e.payload.type === 'user.message')
+      .map((e) => (e.payload as unknown as { text: string }).text)
+    // What someone reopening this in a week needs to see — not four paragraphs
+    // of prompt they never wrote.
+    expect(said).toEqual(['Explain this in Arabic.'])
+  })
+
+  it('records the purpose and the language as they were', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'explanation',
+    })
+
+    // Changing the setting afterwards must not rewrite history.
+    withLanguage('French')
+    const created = runtime.store
+      .read(asideId)
+      .find((e) => e.payload.type === 'conversation.created')
+    const aside = (created?.payload as unknown as { aside: Record<string, unknown> }).aside
+    expect(aside).toMatchObject({ purpose: 'explanation', language: 'Arabic' })
+  })
+
+  it('reads an aside opened without a purpose as a question', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+    })
+    const created = runtime.store
+      .read(asideId)
+      .find((e) => e.payload.type === 'conversation.created')
+    const aside = (created?.payload as unknown as { aside: { purpose: string } }).aside
+    expect(aside.purpose).toBe('question')
   })
 })

@@ -151,6 +151,56 @@ function asideQuestion(excerpt: string, question: string): string {
   ].join('\n')
 }
 
+/**
+ * What a fork is asked when someone did not follow a passage.
+ *
+ * **Level first, language second**, and the ordering is the feature. A prompt
+ * that leads with the language produces a faithful translation of something
+ * still too dense — the reader is no better off, in a second language.
+ *
+ * Two failure modes the wording works against, both of which read as a bad
+ * feature rather than a bad prompt. **Condescension**: "explain simply" invites
+ * an answer starting from first principles, which is insulting to someone who
+ * understood every word but one, so the reader is named as what they are — a
+ * developer on this project who has not met this particular thing. And
+ * **length**: a model asked to explain will keep explaining, while the card is
+ * 190px tall and a passage of one sentence deserves an answer of three.
+ *
+ * The do-not-work clause is the same one `asideQuestion` carries, and for the
+ * same measured reason: without it a fork treats the request as the next turn of
+ * the work and starts doing things, which no permission rule catches because
+ * reading files is allowed.
+ */
+export function explainPrompt(excerpt: string, language: string): string {
+  return [
+    'Someone reading this conversation did not follow the passage below.',
+    'Say what it means, plainly. They are a developer working on this project who',
+    'has not met this particular thing before — not a beginner, so do not start',
+    'from first principles or explain what they already know.',
+    '',
+    'Short sentences, concrete rather than abstract, one idea at a time. No jargon',
+    'except the jargon being explained. Keep identifiers, file names and technical',
+    `terms exactly as written, and explain each one in ${language} where it appears.`,
+    '',
+    `Write every word of your explanation in ${language}. Not bilingually, and not`,
+    `only the first sentence — if you find yourself back in the passage's own`,
+    `language, return to ${language}.`,
+    '',
+    'You have the whole conversation. Use it, and say *why* where the why is the',
+    'confusing part.',
+    '',
+    // Each clause whole on its own line. A phrase split across a line break is
+    // harder to read and easier to weaken by editing one half of it.
+    'Do not restate the passage. Do not widen the subject.',
+    'Do not continue the work or change anything. Answer this and stop.',
+    '',
+    excerpt
+      .split('\n')
+      .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+      .join('\n'),
+  ].join('\n')
+}
+
 /** Long enough for a cold provider start, short enough not to look like a hang. */
 const REOPEN_TIMEOUT_MS = 20_000
 
@@ -513,6 +563,13 @@ export class ChorusRuntime {
     sourceEventId: string
     excerpt: string
     /**
+     * Why it is being opened, and therefore what the fork is first asked.
+     *
+     * `explanation` carries its own first turn: there is nothing for the user to
+     * type, so opening and asking are one act. `question` opens empty and waits.
+     */
+    purpose?: 'question' | 'explanation'
+    /**
      * Optional, and usually absent.
      *
      * The card opens this the moment it appears, before the user has typed
@@ -611,6 +668,21 @@ export class ChorusRuntime {
       inherits: 'config',
     })
 
+    /*
+     * The language is read here, not accepted from the caller.
+     *
+     * The renderer already has its source event re-resolved for this reason —
+     * it renders untrusted agent output and is the least trustworthy thing in
+     * the process tree. A language string is prompt content, which is the same
+     * class of problem wearing a smaller word.
+     */
+    const purpose = request.purpose ?? 'question'
+    const language =
+      purpose === 'explanation' ? readSettings(this.userDataPath).explainLanguage : ''
+    if (purpose === 'explanation' && language === '') {
+      throw new Error('No language is set to explain in')
+    }
+
     const asideId = newConversationId()
     this.store.append({
       conversationId: asideId,
@@ -619,7 +691,13 @@ export class ChorusRuntime {
         type: 'conversation.created',
         projectId: parent.cwd,
         title: excerpt.slice(0, 80),
-        aside: { parentId: request.conversationId, sourceEventId: request.sourceEventId },
+        aside: {
+          parentId: request.conversationId,
+          sourceEventId: request.sourceEventId,
+          purpose,
+          // The language as it was, not as it will be. Settings change.
+          ...(language === '' ? {} : { language }),
+        },
       },
     })
 
@@ -659,9 +737,24 @@ export class ChorusRuntime {
      */
     this.asides.set(asideId, { service, parentId: request.conversationId, excerpt })
 
-    if (request.question !== undefined && request.question !== '') {
-      // Logged as well as delivered: `deliver` does not write to the log, and an
-      // aside reopened later would otherwise hold answers with no questions.
+    /*
+     * An explanation asks itself. There is nothing for the user to type, so the
+     * first turn belongs to opening — which is also why it lives here and not in
+     * the card: a mount effect runs twice in development, and unlike a leaked
+     * process a sent prompt is already paid for and already in the log before any
+     * cleanup could run.
+     *
+     * What is *logged* is the intent in the user's own words; what is delivered
+     * is the instruction. `sendUserMessage` exists for exactly that split, and a
+     * transcript reading "Explain this in Arabic." is what someone reopening this
+     * a week later needs — not four paragraphs of prompt they never wrote.
+     */
+    if (purpose === 'explanation') {
+      await service.sendUserMessage(
+        `Explain this in ${language}.`,
+        explainPrompt(excerpt, language)
+      )
+    } else if (request.question !== undefined && request.question !== '') {
       await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
     }
     return { asideId }

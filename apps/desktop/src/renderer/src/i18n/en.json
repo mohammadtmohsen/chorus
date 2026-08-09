@@ -46,7 +46,8 @@
     "endConfirm": "An agent is working — press again to end this session",
     "cancel": "Cancel",
     "waiting": "waiting",
-    "askAboutThis": "Ask about this"
+    "askAboutThis": "Ask about this",
+    "explainSimply": "Explain simply"
   },
   "workspace": {
     "sessions": "Sessions",
@@ -354,6 +355,7 @@
     "thinking": "Thinking",
     "quote": "Quote in message",
     "takeForward": "Take this forward",
-    "reopened": "This aside has ended. Ask again to start a new one."
+    "reopened": "This aside has ended. Ask again to start a new one.",
+    "explaining": "Explaining in {{language}}"
   }
 }

@@ -46,6 +46,20 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
       .object({
         parentId: z.string().min(1),
         sourceEventId: z.string().min(1),
+        /**
+         * Why it was opened. `question` by absence, so the asides written
+         * before explanations existed read correctly rather than needing a
+         * backfill the log cannot take.
+         */
+        purpose: z.enum(['question', 'explanation']).default('question'),
+        /**
+         * For an explanation, the language as it was **at the time**.
+         *
+         * Recorded rather than read back from settings, because the setting can
+         * change: a row explaining a passage in Arabic does not become a French
+         * row six months later because someone edited a preference.
+         */
+        language: z.string().optional(),
       })
       .optional(),
   }),

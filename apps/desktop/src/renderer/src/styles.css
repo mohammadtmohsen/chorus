@@ -648,6 +648,43 @@ body {
  * while the answer streams in. A box that grows for eight seconds is hard to
  * read and impossible to click into.
  */
+/*
+ * Direction comes from the text, not from a setting.
+ *
+ * The language field is free text — "Lebanese Arabic", "simple Arabic" — so
+ * there is no locale to map to `rtl`, and any table that tried would be wrong
+ * for the first person who typed something reasonable. `plaintext` reads the
+ * direction from each paragraph's own first strong character, which is right for
+ * Arabic, right for English, and right for a language nobody thought of.
+ *
+ * Per paragraph rather than per block: an answer that opens with an English
+ * identifier and continues in Arabic would otherwise take its direction from the
+ * wrong word.
+ */
+.quick-answer .md-p,
+.quick-answer .md-h,
+.quick-answer li {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+/*
+ * Identifiers stay a single left-to-right run inside right-to-left prose. This
+ * is the case the feature creates on purpose by keeping `DeltaBuffer` and
+ * `better-sqlite3` untranslated — without isolation they are reordered around
+ * the Arabic around them and read as gibberish.
+ */
+.quick-answer .md-inline-code,
+.quick-answer code {
+  unicode-bidi: isolate;
+}
+
+/* The passage is the agent's original, and takes its own direction too. */
+.quick-excerpt {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
 .quick-answer {
   flex: 1 1 auto;
   min-height: 0;

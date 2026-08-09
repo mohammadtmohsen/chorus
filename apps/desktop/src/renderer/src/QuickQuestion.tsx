@@ -45,8 +45,20 @@ function Thinking({ agent }: { agent: string }): React.JSX.Element {
 }
 
 export function QuickQuestion(props: {
-  conversationId: string
-  sourceEventId: string
+  /**
+   * The aside, already opening.
+   *
+   * Handed in rather than started here, and that is the contract: a mount effect
+   * runs twice in development, and while a leaked fork can be closed after the
+   * fact a *sent prompt* is already paid for and already in the log. An
+   * explanation sends on open, so the only safe place to open one is somewhere
+   * that happens once per click.
+   */
+  opening: Promise<string>
+  /** An explanation asks itself; a question waits for one to be typed. */
+  purpose: 'question' | 'explanation'
+  /** Named on the card, so where the language came from is legible. */
+  language: string
   agent: string
   excerpt: string
   left: number
@@ -61,14 +73,6 @@ export function QuickQuestion(props: {
   const { t } = useTranslation()
   const [question, setQuestion] = useState('')
   const [asideId, setAsideId] = useState<string | null>(null)
-  /**
-   * The fork, started when the card opened rather than when the question was
-   * asked.
-   *
-   * Held as a promise so a fast typist who hits Enter before the CLI has
-   * finished booting waits on the same boot rather than starting a second one.
-   */
-  const opening = useRef<Promise<string> | null>(null)
   const [state, setState] = useState<AsideState>(EMPTY_ASIDE)
   const [asking, setAsking] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
@@ -76,37 +80,36 @@ export function QuickQuestion(props: {
   /** Where it ends up, once it knows how big it is. */
   const [at, setAt] = useState<{ left: number; top: number } | null>(null)
 
-  useEffect(() => {
-    input.current?.focus()
-  }, [])
-
   /*
-   * Boot the fork immediately, before there is a question to ask it.
+   * Something has to hold the caret.
    *
-   * Measured in Phase 0: about 2.6 of the 4.2 seconds to first token was the CLI
-   * spawning and loading 151 tools, 51 slash commands and 5 MCP servers. None of
-   * that depends on the question, and all of it used to happen after the user
-   * pressed Enter. Started here it overlaps with them typing, so what is left to
-   * wait for is the agent itself.
+   * Asking focuses its box. Explaining has no box yet and the toolbar that was
+   * clicked has gone, so focus would fall to the document — leaving Escape as
+   * the only key that did anything and nothing for a screen reader to announce.
+   * The card itself takes it instead, which is why it carries `tabIndex={-1}`.
    *
-   * The cleanup closes what the *promise* resolves to, not what state holds.
-   * Dismissing the card during the two seconds a CLI takes to start would
-   * otherwise leave a fork nobody ever closes: `asideId` has not committed yet,
-   * so a cleanup reading state finds nothing to close. This also makes React's
-   * double-invoked mount effect in development correct rather than merely
-   * survivable — the first fork is closed as the first cleanup runs.
+   * Deliberately not moved again when the follow-up box appears: the user is
+   * reading an answer, and taking the caret mid-sentence is the same intrusion
+   * as a card that resizes while it streams.
    */
   useEffect(() => {
-    const boot = window.chorus
-      .openAside({
-        conversationId: props.conversationId,
-        sourceEventId: props.sourceEventId,
-        excerpt: props.excerpt,
-      })
-      .then((result) => result.asideId)
-    opening.current = boot
+    // Waits for `at`, because until the card has been measured it is
+    // `visibility: hidden` — and a hidden element cannot take focus, so this
+    // silently did nothing and left the caret on the document.
+    if (at === null) return
+    if (props.purpose === 'explanation') card.current?.focus()
+    else input.current?.focus()
+  }, [props.purpose, at])
 
-    boot.then(
+  /*
+   * Adopt the boot the click started. Nothing is opened here.
+   *
+   * The cleanup still closes what the promise resolves to rather than what state
+   * holds, because dismissing during the two seconds a CLI takes to start would
+   * otherwise leave a fork nobody closes — `asideId` has not committed yet.
+   */
+  useEffect(() => {
+    props.opening.then(
       (id) => {
         setAsideId(id)
       },
@@ -115,15 +118,12 @@ export function QuickQuestion(props: {
         props.onClose()
       }
     )
-
     return () => {
-      // Closing an aside that never opened is a no-op in the runtime, so a
-      // failed boot needs no special case here.
-      void boot.then((id) => window.chorus.closeAside({ asideId: id })).catch(() => undefined)
+      void props.opening
+        .then((id) => window.chorus.closeAside({ asideId: id }))
+        .catch(() => undefined)
     }
-    // Mount only, deliberately: the passage a card is about cannot change once
-    // it is open, and re-running this would boot a second CLI for the same
-    // question.
+    // The aside a card is about cannot change once it is open.
   }, [])
 
   /*
@@ -243,13 +243,11 @@ export function QuickQuestion(props: {
     setQuestion('')
 
     /*
-     * Waits on the boot that started when the card opened. By the time anyone
-     * has typed a question this has usually already resolved, which is the whole
-     * point — but a one-word question typed fast can beat it, and that must
-     * queue rather than race.
+     * Waits on the boot the click started. Usually resolved long before anyone
+     * has typed — but a one-word follow-up can beat it, and that must queue
+     * rather than race.
      */
-    const ready = opening.current ?? Promise.reject(new Error('This aside never opened'))
-    ready
+    props.opening
       .then((id) => window.chorus.askAside({ asideId: id, question: text }))
       .catch((e: unknown) => {
         props.onError(e instanceof Error ? e.message : String(e))
@@ -259,13 +257,34 @@ export function QuickQuestion(props: {
       })
   }
 
-  /** Something has been asked, so the answer region has a reason to exist. */
-  const started = asking || state.answer !== '' || state.failed !== null || state.working
+  /**
+   * Whether there is an answer region at all.
+   *
+   * An explanation has one from the first frame: it asked itself, so a card with
+   * nothing in it would be a card that appears to have done nothing.
+   */
+  /*
+   * The language belongs here rather than on the button. A constant label keeps
+   * the offer a constant width — the pill already overflowed a narrow pane once
+   * — and this is the moment the language actually matters.
+   */
+  const heading =
+    props.purpose === 'explanation'
+      ? t('aside.explaining', { language: props.language })
+      : t('aside.heading', { agent: props.agent })
+
+  const started =
+    props.purpose === 'explanation' ||
+    asking ||
+    state.answer !== '' ||
+    state.failed !== null ||
+    state.working
 
   return (
     <div
       ref={card}
       className="quick-question"
+      tabIndex={-1}
       /*
        * Hidden until it has been measured, so the first paint is not the card
        * in the wrong place followed by a jump. One frame, because
@@ -277,10 +296,10 @@ export function QuickQuestion(props: {
           : { left: `${String(at.left)}px`, top: `${String(at.top)}px` }
       }
       role="dialog"
-      aria-label={t('aside.heading', { agent: props.agent })}
+      aria-label={heading}
     >
       <header className="quick-head">
-        <strong>{t('aside.heading', { agent: props.agent })}</strong>
+        <strong>{heading}</strong>
         <button type="button" className="quick-close" onClick={props.onClose}>
           {t('aside.close')}
         </button>
@@ -316,6 +335,18 @@ export function QuickQuestion(props: {
       >
         <textarea
           ref={input}
+          /*
+           * Present only once there is something to follow up on. An explanation
+           * asks itself, so an empty box beside a pending answer would invite a
+           * second question before the first had arrived.
+           */
+          /*
+           * Keyed on there being something on screen rather than on the turn
+           * having finished. `answered` waits for the provider to close the
+           * turn, which can be seconds after the last word — long enough for the
+           * box to look like it is never coming.
+           */
+          hidden={props.purpose === 'explanation' && state.answer === '' && state.failed === null}
           className="quick-input"
           rows={2}
           value={question}

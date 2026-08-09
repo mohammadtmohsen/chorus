@@ -173,7 +173,20 @@ export function Session(props: {
     /** So a card that cannot fit above clears the passage instead of covering it. */
     selectionHeight: number
     source: SourceEntry
+    purpose: 'question' | 'explanation'
+    /** Started by the click, because a mount effect runs twice and can send twice. */
+    opening: Promise<string>
   } | null>(null)
+  /**
+   * The language explanations come back in, or empty when there is none.
+   *
+   * Re-read on every selection rather than held from mount. `App` reads settings
+   * once and keeps only the session defaults, so nothing here would otherwise
+   * learn that the language had just been set — and the sheet where it is set is
+   * a few clicks from the passage where it is used. One IPC call per selection is
+   * cheaper than being wrong.
+   */
+  const [explainLanguage, setExplainLanguage] = useState('')
   /* The cast, the folder, the profile, Restart and End all live on the
      session's card in the sidenav now, along with the state each of them needs
      while it is mid-flight. */
@@ -406,6 +419,14 @@ export function Session(props: {
       sourceEntryAt(range.endContainer),
       text
     )
+    if (source !== null) {
+      window.chorus
+        .readSettings()
+        .then((settings) => {
+          setExplainLanguage(settings.explainLanguage)
+        })
+        .catch(() => undefined)
+    }
     setSelected(at === null ? null : { text, source, selectionHeight: box.height, ...at })
   }, [])
 
@@ -426,6 +447,36 @@ export function Session(props: {
       document.removeEventListener('selectionchange', onChange)
     }
   }, [])
+
+  /**
+   * Opens an aside on the selected passage, and starts its fork here.
+   *
+   * The open belongs to the click. A card that opened its own fork in a mount
+   * effect would open two in development, and for an explanation — which sends
+   * its first turn on open — the second is a paid turn already written to the
+   * log before any cleanup could run. A click happens once.
+   */
+  const openCard = useCallback(
+    (purpose: 'question' | 'explanation') => {
+      const passage = selected
+      const source = passage?.source ?? null
+      if (passage === null || source === null) return
+
+      const opening = window.chorus
+        .openAside({
+          conversationId,
+          sourceEventId: source.eventId,
+          excerpt: passage.text,
+          purpose,
+        })
+        .then((result) => result.asideId)
+
+      setAskingAbout({ ...passage, source, purpose, opening })
+      setSelected(null)
+      window.getSelection()?.removeAllRanges()
+    },
+    [selected, conversationId]
+  )
 
   /** Puts the passage in the draft and leaves the caret under it, ready for the question. */
   const quoteSelection = useCallback(() => {
@@ -875,17 +926,26 @@ export function Session(props: {
               type="button"
               className="quote-offer-action"
               onClick={() => {
-                // Re-checked inside the closure rather than relying on the
-                // guard above: `selected` is state, so the narrowing the JSX
-                // condition proves does not survive into the callback.
-                const source = selected.source
-                if (source === null) return
-                setAskingAbout({ ...selected, source })
-                setSelected(null)
-                window.getSelection()?.removeAllRanges()
+                openCard('question')
               }}
             >
               {t('conversation.askAboutThis')}
+            </button>
+          )}
+          {/*
+            Offered only when a language has been set. There is no honest guess
+            at someone's own language, and an action that cannot say which one it
+            would answer in is worse than an absent one.
+          */}
+          {selected.source !== null && explainLanguage !== '' && (
+            <button
+              type="button"
+              className="quote-offer-action"
+              onClick={() => {
+                openCard('explanation')
+              }}
+            >
+              {t('conversation.explainSimply')}
             </button>
           )}
         </div>
@@ -893,8 +953,9 @@ export function Session(props: {
 
       {askingAbout !== null && (
         <QuickQuestion
-          conversationId={conversationId}
-          sourceEventId={askingAbout.source.eventId}
+          opening={askingAbout.opening}
+          purpose={askingAbout.purpose}
+          language={explainLanguage}
           agent={askingAbout.source.actor}
           excerpt={askingAbout.text}
           left={askingAbout.left}

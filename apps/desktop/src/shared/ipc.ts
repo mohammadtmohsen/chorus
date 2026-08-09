@@ -661,6 +661,12 @@ export const IPC_CONTRACT = {
        * the agent, and this is what moves it off the critical path.
        */
       question: z.string().min(1).optional(),
+      /**
+       * `explanation` carries its own first turn — main reads the language and
+       * builds the prompt, because prompt content from the renderer is the same
+       * class of problem as an unverified source event.
+       */
+      purpose: z.enum(['question', 'explanation']).optional(),
     }),
     response: z.object({ asideId: z.string() }),
   },
