@@ -43,9 +43,9 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
          * event appended before asides existed carries none of them and must
          * still project — which is the property `rebuildProjections` leans on.
          */
-        kind: payload.kind ?? null,
-        parentId: payload.parentId ?? null,
-        sourceEventId: payload.sourceEventId ?? null,
+        kind: payload.aside === undefined ? null : 'aside',
+        parentId: payload.aside?.parentId ?? null,
+        sourceEventId: payload.aside?.sourceEventId ?? null,
       })
       break
 

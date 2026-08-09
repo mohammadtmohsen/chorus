@@ -7,17 +7,20 @@ import { profileById } from './policy/rules.js'
 import { FakeAdapter, type FakeAgentSession } from './testing/fake-adapter.js'
 
 /**
- * An aside answers its own approvals, and the shape of that answer is the whole
- * reconciliation between two things the user asked for.
+ * An aside answers its own approvals, because it can never stop and wait for a
+ * person: there is no room in the card for an approval, and an aside nobody is
+ * watching would hold one open until its deadline and wedge the fork.
  *
- * "When I give you a permission I want to keep it on the side chat" means grants
- * must carry. "It should close like a tooltip" means it can never stop and wait
- * for a person — there is no room in the card for an approval, and an aside
- * nobody is watching would hold one open until its deadline, wedging the fork.
+ * `evaluate` still runs first and unchanged, so whatever the profile allows
+ * outright goes through — for the read-only profile that is `SAFE_READS`, which
+ * is how an aside can go and look something up. Only the `ask` outcome is
+ * replaced, by a deny.
  *
- * So: `evaluate` runs first and unchanged, and only the `ask` outcome is
- * replaced. Already-granted things go through; new consent is refused because
- * nobody is there to give it.
+ * The reconciliation with "a permission I gave should hold in the side chat"
+ * went the other way in the end, and the last test here is why: a grant outranks
+ * `ask`, so handing a populated `SessionGrants` to something that never asks
+ * converts every past "always allow" into silent permission to act. `openAside`
+ * therefore gives an aside its own empty grants; this flag only removes the card.
  */
 
 const CONV = 'conv-aside'
@@ -76,7 +79,7 @@ beforeEach(() => {
   store.append({
     conversationId: CONV,
     actor: 'user',
-    payload: { type: 'conversation.created', projectId: 'p1', title: 'Aside', kind: 'aside' },
+    payload: { type: 'conversation.created', projectId: 'p1', title: 'Aside' },
   })
   adapter = new FakeAdapter({ id: 'claude' })
 })
@@ -119,8 +122,8 @@ describe('an aside never waits for a person', () => {
   })
 })
 
-describe('an aside keeps the permissions already given', () => {
-  it('allows what the profile allows, without asking', async () => {
+describe('an aside may look, but not act', () => {
+  it('allows what the profile allows outright, without asking', async () => {
     await open()
     session.emit({
       type: 'approval.requested',
@@ -134,12 +137,12 @@ describe('an aside keeps the permissions already given', () => {
       },
     } as never)
     await tick()
-    // `SAFE_READS` allows this outright, and an aside must not become stricter
-    // than the session it copies.
+    // `SAFE_READS` allows this outright, which is how an aside can go and look
+    // something up rather than only reason from what it already has.
     expect(decisions()).toEqual([{ outcome: 'allow', decidedBy: 'policy' }])
   })
 
-  it('honours a grant the user gave in the parent conversation', async () => {
+  it('does not let a past grant authorise acting inside the fork', async () => {
     const grants = new SessionGrants()
     grants.addAlways({
       id: newApprovalId(),
@@ -150,11 +153,13 @@ describe('an aside keeps the permissions already given', () => {
       expiresAt: 0,
     } as never)
 
+    // The dangerous combination, pinned: a grant outranks `ask`, and a service
+    // that never asks would turn every past "always allow" into silent
+    // permission to act. `openAside` gives an aside its own empty grants for
+    // exactly this reason; this asserts what happens if one ever arrives anyway.
     await open({ grants })
     askableCommand()
     await tick()
-    // The point of carrying grants: having said "always" once, the user is not
-    // silently refused in the aside.
     expect(decisions()).toEqual([{ outcome: 'allow', decidedBy: 'policy' }])
   })
 })

@@ -157,10 +157,10 @@ chosen and carries on. `transcript.ts:345` argues for that notice existing at
 all, and the argument applies here exactly: _"without this the only trace is a
 reply that quietly assumed something."_
 
-**Not yet confirmed from the log:** `userinput.answered` also carries a
-`dismissed` outcome, so these two instances may have been dismissed rather than
-timed out. The five-minute deadline is verified to exist; that it is what fired
-here is inference.
+**Not yet confirmed from the log:** `userinput.answered` also carries a `cancel`
+outcome, so these two instances may have been cancelled rather than timed out.
+The five-minute deadline is verified to exist; that it is what fired here is
+inference.
 
 Why it matters beyond the annoyance: the deadline is hardest on the longest
 answers, which are the ones attached to the questions most worth asking. Up to

@@ -30,17 +30,24 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
      * An aside: a conversation held in a fork of another conversation's agent,
      * about one passage of one reply.
      *
-     * All three optional, so every `conversation.created` ever appended still
+     * Optional as a whole, so every `conversation.created` ever appended still
      * parses and still rebuilds as the ordinary conversation it was. Absent
      * means ordinary — there is no `kind: 'main'`, because inventing one would
      * make the old rows wrong rather than merely quiet.
      *
-     * They travel together: an aside without its parent could not be found, and
-     * without its source event could not say what it is about.
+     * One optional *object* rather than three optional fields, which is the
+     * shape the invariant actually has: an aside without its parent cannot be
+     * found and without its source cannot say what it is about, so a half-filled
+     * one is not a lesser aside, it is a corrupt row. Three independent
+     * optionals let that through, and `aside:list` then returns a null where the
+     * IPC contract promises a string.
      */
-    kind: z.literal('aside').optional(),
-    parentId: z.string().optional(),
-    sourceEventId: z.string().optional(),
+    aside: z
+      .object({
+        parentId: z.string().min(1),
+        sourceEventId: z.string().min(1),
+      })
+      .optional(),
   }),
 
   /**

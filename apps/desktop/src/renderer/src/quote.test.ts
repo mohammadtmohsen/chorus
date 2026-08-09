@@ -84,7 +84,8 @@ describe('anchorFor', () => {
   const pane = rect(100, 50, 400, 600)
 
   it('centres the button on the selection, above it', () => {
-    // Selection 200..300 across, so centred at 250 → 150 inside the pane.
+    // Selection 200..300 across, so centred at 250 → 150 inside the pane, which
+    // clears the two-action pill's half-width and so is not clamped.
     const at = anchorFor(rect(200, 300, 100, 20), pane)
     expect(at).toEqual({ left: 150, top: 242, placement: 'above' })
   })
@@ -107,14 +108,14 @@ describe('anchorFor', () => {
   })
 
   it('clamps to the left edge of a narrow pane', () => {
-    // Half the button (64) plus the 4px margin the clamp keeps.
+    // Half the pill (120) plus the 4px margin the clamp keeps.
     const at = anchorFor(rect(100, 300, 10, 20), pane)
-    expect(at?.left).toBe(68)
+    expect(at?.left).toBe(124)
   })
 
   it('clamps to the right edge', () => {
     const at = anchorFor(rect(480, 300, 20, 20), pane)
-    expect(at?.left).toBe(332)
+    expect(at?.left).toBe(276)
   })
 
   it('survives a pane narrower than the button', () => {

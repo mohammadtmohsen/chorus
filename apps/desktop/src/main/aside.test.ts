@@ -1,6 +1,6 @@
 import { FakeAdapter } from '@chorus/orchestrator'
 import type { AgentAdapter } from '@chorus/agent-protocol'
-import { Logger, type AgentId } from '@chorus/shared'
+import { Logger, newApprovalId, type AgentId } from '@chorus/shared'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,6 +28,8 @@ const adapters = (): Map<AgentId, AgentAdapter> => {
   adapter = new FakeAdapter({ id: 'claude' })
   return new Map<AgentId, AgentAdapter>([['claude', adapter]])
 }
+
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 /** Puts a finished agent reply in the log and hands back its event id. */
 const reply = (text: string): string => {
@@ -224,5 +226,53 @@ describe('the fork boots before there is a question', () => {
       expect(message.text).toContain('do not continue the work')
     }
     expect(sent[1]?.text).toContain('and how far behind?')
+  })
+})
+
+describe('an aside may explain, not act', () => {
+  it('does not inherit a grant the user gave in the parent conversation', async () => {
+    const publish = {
+      kind: 'command' as const,
+      command: ['npm', 'publish'],
+      cwd: process.cwd(),
+      withNetwork: false,
+      expiresAt: 5 * 60_000,
+    }
+
+    // The user allows it once, always, in the room.
+    const parentSession = adapter.sessions[0]
+    const granted = newApprovalId()
+    parentSession?.emit({
+      type: 'approval.requested',
+      request: { id: granted, ...publish },
+    } as never)
+    await tick()
+    await runtime.decideApproval(conversationId, 'claude', granted, {
+      outcome: 'allow',
+      scope: 'always',
+    })
+
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+    })
+
+    // The same command, now inside the fork. A grant outranks `ask`, and an
+    // aside never asks — so carrying the parent's grants would have let this run
+    // silently in a window nobody is watching.
+    const fork = adapter.forked[0]?.session
+    fork?.emit({
+      type: 'approval.requested',
+      request: { id: newApprovalId(), ...publish },
+    } as never)
+    await tick()
+
+    const verdicts = runtime.store
+      .read(asideId)
+      .filter((e) => e.payload.type === 'approval.decided')
+      .map((e) => (e.payload as unknown as { outcome: string }).outcome)
+    expect(verdicts).toEqual(['deny'])
   })
 })

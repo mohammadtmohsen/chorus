@@ -417,9 +417,18 @@ export class CodexAdapter implements AgentAdapter {
    * No `lastTurnId`: every fork is taken at the thread's head. Forking at an
    * older turn is possible in the protocol and deliberately unused, because
    * Chorus's own log does not record turn ids it could point at.
+   *
+   * **`inherits` is honoured only as `'config'`.** `ThreadForkParams` offers
+   * `baseInstructions` and a `config` map, neither of which is an off switch for
+   * the user's MCP servers and hooks, so `'nothing'` has nothing to map onto
+   * here. Silently accepting it would make the port's most safety-relevant
+   * option mean two different things per provider, which is worse than refusing.
    */
   async fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
     if (sessionRef === '') throw new Error('Cannot fork a thread that has no id yet')
+    if (opts.inherits === 'nothing') {
+      throw new Error('codex cannot fork without the user configuration')
+    }
     const rpc = await this.handshake()
     const forked = (await rpc.request('thread/fork', {
       threadId: sessionRef,

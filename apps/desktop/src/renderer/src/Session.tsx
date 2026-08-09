@@ -154,6 +154,8 @@ export function Session(props: {
      * the card adds only the card.
      */
     source: SourceEntry | null
+    /** Carried into the card, so it can clear the passage when it drops below. */
+    selectionHeight: number
   } | null>(null)
   /**
    * The open quick-question card, if any.
@@ -168,6 +170,8 @@ export function Session(props: {
     left: number
     top: number
     placement: 'above' | 'below'
+    /** So a card that cannot fit above clears the passage instead of covering it. */
+    selectionHeight: number
     source: SourceEntry
   } | null>(null)
   /* The cast, the folder, the profile, Restart and End all live on the
@@ -389,7 +393,8 @@ export function Session(props: {
       setSelected(null)
       return
     }
-    const at = anchorFor(range.getBoundingClientRect(), paneEl.getBoundingClientRect())
+    const box = range.getBoundingClientRect()
+    const at = anchorFor(box, paneEl.getBoundingClientRect())
     /*
      * Both ends, not `commonAncestorContainer`: a range spanning two entries has
      * the scroller as its common ancestor, which carries none of the attributes
@@ -401,7 +406,7 @@ export function Session(props: {
       sourceEntryAt(range.endContainer),
       text
     )
-    setSelected(at === null ? null : { text, source, ...at })
+    setSelected(at === null ? null : { text, source, selectionHeight: box.height, ...at })
   }, [])
 
   useEffect(() => {
@@ -895,6 +900,7 @@ export function Session(props: {
           left={askingAbout.left}
           top={askingAbout.top}
           placement={askingAbout.placement}
+          selectionHeight={askingAbout.selectionHeight}
           onClose={() => {
             setAskingAbout(null)
           }}

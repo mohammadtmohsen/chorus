@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { asideState, EMPTY_ASIDE, fitCard, promotion, type AsideState } from './aside.js'
 import { MarkdownView } from './MarkdownView.js'
 import { EMPTY_VIEW, reduceEvents, type TranscriptView } from './transcript.js'
+import type { TranscriptEvent } from '../../shared/ipc.js'
 
 /**
  * A small question about one passage, answered in a fork of the agent that said
@@ -51,6 +52,7 @@ export function QuickQuestion(props: {
   left: number
   top: number
   placement: 'above' | 'below'
+  selectionHeight: number
   onClose: () => void
   /** Stages text into the composer — quoting, or taking the answer forward. */
   onStage: (text: string) => void
@@ -87,9 +89,12 @@ export function QuickQuestion(props: {
    * pressed Enter. Started here it overlaps with them typing, so what is left to
    * wait for is the agent itself.
    *
-   * The cost of being wrong is a spawned process the user never asks anything —
-   * paid in a few hundred milliseconds of CPU, not in tokens, since a fork bills
-   * nothing until a turn is sent. Closing the card disposes of it either way.
+   * The cleanup closes what the *promise* resolves to, not what state holds.
+   * Dismissing the card during the two seconds a CLI takes to start would
+   * otherwise leave a fork nobody ever closes: `asideId` has not committed yet,
+   * so a cleanup reading state finds nothing to close. This also makes React's
+   * double-invoked mount effect in development correct rather than merely
+   * survivable — the first fork is closed as the first cleanup runs.
    */
   useEffect(() => {
     const boot = window.chorus
@@ -98,15 +103,24 @@ export function QuickQuestion(props: {
         sourceEventId: props.sourceEventId,
         excerpt: props.excerpt,
       })
-      .then((result) => {
-        setAsideId(result.asideId)
-        return result.asideId
-      })
+      .then((result) => result.asideId)
     opening.current = boot
-    boot.catch((e: unknown) => {
-      props.onError(e instanceof Error ? e.message : String(e))
-      props.onClose()
-    })
+
+    boot.then(
+      (id) => {
+        setAsideId(id)
+      },
+      (e: unknown) => {
+        props.onError(e instanceof Error ? e.message : String(e))
+        props.onClose()
+      }
+    )
+
+    return () => {
+      // Closing an aside that never opened is a no-op in the runtime, so a
+      // failed boot needs no special case here.
+      void boot.then((id) => window.chorus.closeAside({ asideId: id })).catch(() => undefined)
+    }
     // Mount only, deliberately: the passage a card is about cannot change once
     // it is open, and re-running this would boot a second CLI for the same
     // question.
@@ -133,7 +147,8 @@ export function QuickQuestion(props: {
         fitCard(
           { left: props.left, top: props.top, placement: props.placement },
           { width: pane.clientWidth, height: pane.clientHeight },
-          { width: el.offsetWidth, height: el.offsetHeight }
+          { width: el.offsetWidth, height: el.offsetHeight },
+          props.selectionHeight
         )
       )
     }
@@ -143,7 +158,7 @@ export function QuickQuestion(props: {
     return () => {
       observer.disconnect()
     }
-  }, [props.left, props.top, props.placement])
+  }, [props.left, props.top, props.placement, props.selectionHeight])
 
   /*
    * Escape closes, and a click anywhere outside does too.
@@ -172,28 +187,54 @@ export function QuickQuestion(props: {
   }, [props])
 
   /*
-   * The aside is an ordinary conversation, so its events arrive on the same
-   * push channel as everything else and reduce with the same reducer. Filtering
-   * by its own id is all that separates it from the transcript behind.
+   * History first, then the live stream — the same order the main transcript
+   * uses, and for the same reason.
+   *
+   * Subscribing alone loses anything appended between the fork opening and this
+   * effect running, which is a real window: a question can be submitted the
+   * moment the boot resolves, and a fast answer can begin before React has
+   * committed `asideId`. Seeding from the log and then applying only events past
+   * `lastSeq` means the overlap is harmless and nothing is missed.
    */
   useEffect(() => {
     if (asideId === null) return
     let view: TranscriptView = EMPTY_VIEW
-    return window.chorus.onEvents((events) => {
+    let live = false
+    const pending: TranscriptEvent[] = []
+
+    const apply = (events: readonly TranscriptEvent[]): void => {
+      const fresh = events.filter((e) => e.seq > view.lastSeq)
+      if (fresh.length === 0) return
+      view = reduceEvents(view, fresh)
+      setState(asideState(view))
+    }
+
+    const stop = window.chorus.onEvents((events) => {
       const mine = events.filter((e) => e.conversationId === asideId)
       if (mine.length === 0) return
-      view = reduceEvents(view, mine)
-      setState(asideState(view))
+      // Held until the history read lands, so a delta cannot be applied to an
+      // empty view and then re-applied underneath it.
+      if (!live) pending.push(...mine)
+      else apply(mine)
     })
-  }, [asideId])
 
-  /** Closing ends the fork. The transcript stays in the log. */
-  useEffect(
-    () => () => {
-      if (asideId !== null) void window.chorus.closeAside({ asideId })
-    },
-    [asideId]
-  )
+    window.chorus
+      .history({ conversationId: asideId })
+      .then((past) => {
+        apply(past)
+        live = true
+        apply(pending)
+        pending.length = 0
+      })
+      .catch(() => {
+        // A history read that fails still leaves the live stream usable.
+        live = true
+        apply(pending)
+        pending.length = 0
+      })
+
+    return stop
+  }, [asideId])
 
   const ask = (): void => {
     const text = question.trim()

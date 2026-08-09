@@ -116,17 +116,18 @@ export function withQuote(draft: string, selection: string): string {
  * subtle — anchored by its top edge above the selection, the button sits *on
  * top of* the passage it is offering to quote.
  *
- * `width` is only ever used to clamp — CSS centres the button itself with
+ * `width` is only ever used to clamp — CSS centres the offer itself with
  * `translate(-50%)` — so it is an estimate, and it has to be re-derived whenever
- * the label changes. "Quote in message" is 16 characters of 11px monospace
- * (~6.6px each) inside `--step * 3` padding either side and a 1px border:
- * 16 × 6.6 + 18 + 2 ≈ 126, rounded up. The previous 96 was left over from a
- * shorter label and already let the pill overhang a narrow pane.
+ * the actions change. The pill now holds two of them: "Quote in message" and
+ * "Ask about this", 16 and 14 characters of 11px monospace (~6.6px each), each
+ * inside `--step * 3` padding either side, plus a 1px divider and a 1px border:
+ * (16 + 14) × 6.6 + 4 × 9 + 2 ≈ 236, rounded up. A single-action estimate left
+ * the second button hanging off a narrow pane.
  */
 export function anchorFor(
   selection: DOMRect,
   pane: DOMRect,
-  button = { width: 128, gap: 8, room: 34 }
+  button = { width: 240, gap: 8, room: 34 }
 ): { left: number; top: number; placement: 'above' | 'below' } | null {
   if (selection.width === 0 && selection.height === 0) return null
 

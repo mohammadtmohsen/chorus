@@ -139,9 +139,14 @@ export interface ForkOpts extends SessionOpts {
    *
    * An explicit choice at the call site rather than a default buried in an
    * adapter, because it trades two things against each other and neither answer
-   * is free: `inherit` keeps the fork faithful to the session it copies, while
-   * `none` is faster to first token and makes "this cannot act" a property of
+   * is free: `config` keeps the fork faithful to the session it copies, while
+   * `nothing` is faster to first token and makes "this cannot act" a property of
    * the process rather than a promise about it.
+   *
+   * **Not every provider can do both.** Claude has `settingSources: []`; Codex
+   * has no equivalent on `thread/fork` and rejects `'nothing'` rather than
+   * accepting it and ignoring it. A safety-relevant option that means two
+   * different things per provider is worse than one that refuses.
    */
   readonly inherits: 'config' | 'nothing'
 }

@@ -117,3 +117,15 @@ describe('fork', () => {
     expect(typeof adapter.fork).toBe('function')
   })
 })
+
+describe('what codex cannot do', () => {
+  it('refuses to fork without the user configuration, rather than ignoring the request', async () => {
+    const { adapter } = spy()
+    // `ThreadForkParams` has no off switch for MCP servers and hooks, so
+    // accepting `'nothing'` would silently give the opposite of what a caller
+    // asking for isolation expects.
+    await expect(adapter.fork('thr_original', forking({ inherits: 'nothing' }))).rejects.toThrow(
+      /without the user configuration/
+    )
+  })
+})

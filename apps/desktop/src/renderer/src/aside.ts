@@ -85,6 +85,8 @@ export function fitCard(
   anchor: { readonly left: number; readonly top: number; readonly placement: 'above' | 'below' },
   pane: { readonly width: number; readonly height: number },
   card: { readonly width: number; readonly height: number },
+  /** How tall the selected passage is, so falling past it clears it. */
+  selectionHeight = 0,
   gap = 8
 ): { left: number; top: number } {
   const margin = 4
@@ -94,8 +96,22 @@ export function fitCard(
   const centred = anchor.left - card.width / 2
   const left = Math.max(margin, Math.min(centred, pane.width - card.width - margin))
 
-  const above = anchor.top - card.height - gap
-  const below = anchor.top + gap
+  /*
+   * `anchorFor` returns a *hanging edge*, not a box corner, and which edge
+   * depends on the placement it chose: 'above' is the selection's top less a
+   * gap, 'below' is its bottom plus one. So converting to a card corner is not
+   * one subtraction — it is one for the edge you were given and a different one
+   * for the edge you are falling to.
+   *
+   * Crossing the passage is the part that bit. A card that could not fit above
+   * used to drop to `anchor.top`, which for an 'above' anchor is *the top of the
+   * selection* — landing the card squarely on the words it was quoting. Clearing
+   * it costs the selection's own height plus both gaps.
+   */
+  const crossing = gap * 2 + selectionHeight
+  const above =
+    anchor.placement === 'above' ? anchor.top - card.height : anchor.top - crossing - card.height
+  const below = anchor.placement === 'below' ? anchor.top : anchor.top + crossing
   const fitsAbove = above >= margin
   const fitsBelow = below + card.height + margin <= pane.height
 

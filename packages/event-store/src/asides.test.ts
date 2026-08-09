@@ -30,7 +30,7 @@ const created = (id: string, over: Record<string, unknown> = {}): void => {
 }
 
 const aside = (id: string, sourceEventId = REPLY): void => {
-  created(id, { kind: 'aside', parentId: PARENT, sourceEventId })
+  created(id, { aside: { parentId: PARENT, sourceEventId } })
 }
 
 const row = (id: string): Record<string, unknown> =>

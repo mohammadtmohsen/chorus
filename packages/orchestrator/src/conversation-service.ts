@@ -65,11 +65,16 @@ export interface ConversationServiceOptions {
    * an unanswered approval until its deadline — a fork wedged on a question the
    * user never saw.
    *
-   * So an `ask` verdict becomes a deny here rather than a card. What it is
-   * **not** is a blanket refusal: `evaluate` runs first and unchanged, so
-   * anything the profile allows or the user has already granted still goes
-   * through. Consent given in the parent conversation is carried, not forgotten
-   * — only *new* consent is refused, because there is nobody to give it.
+   * So an `ask` verdict becomes a deny here rather than a card. `evaluate` still
+   * runs first and unchanged, so whatever the profile allows outright still goes
+   * through — for an aside that is the read-only profile's safe reads, which is
+   * how it can go and look something up.
+   *
+   * What must **not** be handed to a service in this mode is a populated
+   * `SessionGrants`. A grant outranks an `ask`, and a caller that never asks
+   * turns every past "always allow" into silent permission to act inside a fork
+   * nobody is watching. The caller owns that decision; this flag only removes
+   * the card.
    */
   readonly neverAsks?: boolean
 }
@@ -197,9 +202,16 @@ export class ConversationService {
    * `deliver` on each recipient, or the transcript shows the user repeating
    * themselves once per agent.
    */
-  async sendUserMessage(text: string): Promise<void> {
+  async sendUserMessage(text: string, delivered: string = text): Promise<void> {
+    /*
+     * The two can differ, and for an aside they do. What is logged is the
+     * question as it was typed; what is delivered carries the quoted passage and
+     * the instruction not to work, which is scaffolding rather than something
+     * the user said. Logging the wrapper would put words in their mouth in their
+     * own transcript.
+     */
     this.appendOne({ actor: 'user', payload: { type: 'user.message', text } })
-    await this.deliver(text)
+    await this.deliver(delivered)
   }
 
   /** Delivers without logging — the shared-conversation path. */
@@ -607,11 +619,6 @@ export class ConversationService {
          * choice — the provider is told nothing was chosen, which it can recover
          * from; an invented answer it cannot.
          */
-        if (this.neverAsks) {
-          void this.answerUserInput(event.request.id, { outcome: 'timeout' }, 'system')
-          return
-        }
-
         const timer = this.scheduler.setTimeout(
           () => {
             // Never fabricates an answer: `timeout` tells the provider nothing
@@ -621,6 +628,22 @@ export class ConversationService {
           Math.max(0, event.request.expiresAt - this.scheduler.now())
         )
         this.pendingUserInput.set(event.request.id, { request: event.request, timer })
+
+        /*
+         * Answered *after* being registered, which is the whole point of the
+         * ordering.
+         *
+         * `answerUserInput` looks the request up in `pendingUserInput` and
+         * returns silently when it is not there — a deliberate guard against
+         * double-submits. Called before the `set` above, as this was, it hit
+         * that guard every time: the provider was never told, and the turn this
+         * branch exists to unblock stayed blocked forever. The timer is set and
+         * immediately cleared by the answer, which costs nothing and keeps one
+         * path through this case rather than two.
+         */
+        if (this.neverAsks) {
+          void this.answerUserInput(event.request.id, { outcome: 'timeout' }, 'system')
+        }
         return
       }
 

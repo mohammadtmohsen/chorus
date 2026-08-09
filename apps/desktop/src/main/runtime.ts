@@ -1,4 +1,4 @@
-import { existsSync, renameSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, renameSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
@@ -559,6 +559,58 @@ export class ChorusRuntime {
       throw new Error(`${agentId} has not started a session yet`)
     }
 
+    /*
+     * The passage must belong to the session about to be forked.
+     *
+     * Source authenticity says the reply is genuinely that agent's; it says
+     * nothing about *which* of its sessions said it. An agent taken out of a
+     * conversation and brought back gets a new session, and forking that one to
+     * ask about a reply from the old one produces an agent politely explaining
+     * something it has never seen — the same failure as forking mid-turn, and
+     * just as hard to recognise as a bug rather than a bad answer.
+     *
+     * The check is the log's own: the last `session.started` for this agent at
+     * or before the reply must name the ref the participant is running now.
+     */
+    const startedRef = this.store
+      .read(request.conversationId)
+      .filter(
+        (e) =>
+          e.seq <= source.seq &&
+          e.payload.type === 'session.started' &&
+          e.payload.agentId === agentId
+      )
+      .map((e) => (e.payload as unknown as { sessionRef: string }).sessionRef)
+      .at(-1)
+
+    if (
+      startedRef !== undefined &&
+      startedRef !== '' &&
+      startedRef !== participant.session.sessionRef
+    ) {
+      throw new Error(`${agentId} has started a new session since it said that`)
+    }
+
+    /*
+     * Fork first, then write the row.
+     *
+     * The other order left a durable `conversation.created` behind whenever the
+     * fork failed — an aside in the log, findable by `listAsides`, with no
+     * session, no answer and no way to reach a terminal state. The log is
+     * append-only, so there was nothing to roll back with; not writing it is the
+     * only rollback available.
+     */
+    const opts: SessionOpts = {
+      cwd: parent.cwd,
+      sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
+    }
+    const forked = await adapter.fork(participant.session.sessionRef, {
+      ...opts,
+      // Decided with the user: the aside inherits the user's configuration, so
+      // hooks, skills and CLAUDE.md load exactly as they do in the room.
+      inherits: 'config',
+    })
+
     const asideId = newConversationId()
     this.store.append({
       conversationId: asideId,
@@ -567,35 +619,35 @@ export class ChorusRuntime {
         type: 'conversation.created',
         projectId: parent.cwd,
         title: excerpt.slice(0, 80),
-        kind: 'aside',
-        parentId: request.conversationId,
-        sourceEventId: request.sourceEventId,
+        aside: { parentId: request.conversationId, sourceEventId: request.sourceEventId },
       },
-    })
-
-    /*
-     * Read-only regardless of the parent's profile, so the sandbox an aside runs
-     * under cannot be wider than the question deserves.
-     */
-    const opts: SessionOpts = {
-      cwd: parent.cwd,
-      sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
-    }
-    const forked = await adapter.fork(participant.session.sessionRef, {
-      ...opts,
-      // Decided with the user: a fork that forgot what they had already allowed
-      // would be a different agent wearing the same name.
-      inherits: 'config',
     })
 
     const service = new ConversationService({
       store: this.store,
       conversationId: asideId,
       adapter,
-      // Read-only, and the parent's grants: consent already given carries, new
-      // consent is refused because there is nobody in a small card to give it.
       profile: profileById('read-only'),
-      grants: parent.grants,
+      /*
+       * Its own grants, deliberately empty — **not** the parent's.
+       *
+       * Carrying them was the intent ("a permission I gave should hold in the
+       * side chat") and it was wrong, because a grant outranks an `ask` and an
+       * aside never asks. The combination meant a previously allowed `npm
+       * publish`, or a granted MCP tool that posts to Slack, would run silently
+       * inside a hidden fork nobody is watching — and Claude's sandbox is
+       * emulated, so nothing below us would have stopped it either.
+       *
+       * Little is actually lost. Grants exist to stop the user being re-asked,
+       * and an aside does not ask in the first place; what they would have added
+       * here is the power to *act*, which is the one thing an explanation must
+       * not do. The read-only profile's own `SAFE_READS` still allows `git
+       * status`, `cat`, `grep` and friends, so an aside can still go and look.
+       *
+       * The user's configuration is a separate thing and still inherited in full
+       * — see `ForkOpts.inherits` — so hooks, skills and CLAUDE.md all load.
+       */
+      grants: new SessionGrants(),
       neverAsks: true,
     })
     await service.attach(forked, opts, await adapter.health())
@@ -608,7 +660,9 @@ export class ChorusRuntime {
     this.asides.set(asideId, { service, parentId: request.conversationId, excerpt })
 
     if (request.question !== undefined && request.question !== '') {
-      await service.deliver(asideQuestion(excerpt, request.question))
+      // Logged as well as delivered: `deliver` does not write to the log, and an
+      // aside reopened later would otherwise hold answers with no questions.
+      await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
     }
     return { asideId }
   }
@@ -621,7 +675,7 @@ export class ChorusRuntime {
       // continuing it does not, which is why a reopened aside is view-only.
       throw new Error('That aside has ended — ask again to start a new one')
     }
-    await aside.service.deliver(asideQuestion(aside.excerpt, question))
+    await aside.service.sendUserMessage(question, asideQuestion(aside.excerpt, question))
   }
 
   /** Ends an aside's fork. Its transcript stays in the log. */
@@ -756,7 +810,19 @@ export class ChorusRuntime {
     const conversation = this.require(conversationId)
     this.active.delete(conversationId)
     this.rememberOpen()
-    await Promise.all([...conversation.participants.values()].map((p) => p.service.close()))
+
+    /*
+     * The conversation's asides go with it. They fork its agents and are only
+     * reachable from its transcript, so a closed conversation leaving live forks
+     * behind is a leak with nothing left on screen to close them from.
+     */
+    const orphans = [...this.asides].filter(([, a]) => a.parentId === conversationId)
+    for (const [id] of orphans) this.asides.delete(id)
+
+    await Promise.all([
+      ...[...conversation.participants.values()].map((p) => p.service.close()),
+      ...orphans.map(([, a]) => a.service.close()),
+    ])
     this.log.info('conversation closed', {
       conversationId,
       remaining: this.active.size,
@@ -1570,10 +1636,23 @@ export class ChorusRuntime {
      */
     this.rememberOpen()
 
-    const services = [...this.active.values()].flatMap((c) =>
-      [...c.participants.values()].map((p) => p.service)
-    )
+    /*
+     * Asides are closed alongside participants, not forgotten.
+     *
+     * They live in their own map so nothing that walks open conversations finds
+     * one — which is right, and which also meant quitting drained the main
+     * services and left these running. A `DeltaBuffer` that never flushes loses
+     * the tail of whatever it held, no `session.ended` is written, and the pump
+     * outlives the database it writes into.
+     */
+    const services = [
+      ...[...this.active.values()].flatMap((c) =>
+        [...c.participants.values()].map((p) => p.service)
+      ),
+      ...[...this.asides.values()].map((a) => a.service),
+    ]
     await Promise.all(services.map((service) => service.close('shutdown')))
+    this.asides.clear()
     this.active.clear()
     await Promise.all([...this.adapters.values()].map((a) => a.dispose()))
 
@@ -1727,7 +1806,29 @@ function openOrRecover(
   path: string,
   userDataPath: string
 ): { db: SqliteHandle; store: EventStore; recovered: string | null } {
-  const backupFor = (from: number): string => join(userDataPath, `chorus.pre-v${String(from)}.db`)
+  /*
+   * Actually copies the file, which it did not before.
+   *
+   * `migrate` records whatever this returns as `backedUpTo`, so returning a
+   * filename without writing one advertises a snapshot that does not exist —
+   * worse than admitting there is none, because the advertised one is what
+   * anybody would reach for after a bad migration. This is the first migration
+   * to run against a database with data in it, so the claim had to become true.
+   *
+   * The `-wal` goes too. A copy of the main file alone can be missing committed
+   * frames that have not been checkpointed, which is a backup that restores to
+   * the wrong moment. Synchronous because `migrate` is, and safe here because
+   * nothing else has the database open yet.
+   */
+  const backupFor = (from: number): string => {
+    const destination = join(userDataPath, `chorus.pre-v${String(from)}.db`)
+    copyFileSync(path, destination)
+    for (const suffix of ['-wal', '-shm']) {
+      if (existsSync(`${path}${suffix}`))
+        copyFileSync(`${path}${suffix}`, `${destination}${suffix}`)
+    }
+    return destination
+  }
 
   try {
     const db = openSqlite({ path })
