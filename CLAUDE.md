@@ -170,6 +170,10 @@ a reason. An entry says what it is, why it matters, and what would make it done 
 if it cannot answer the third it is a thought, and belongs in a plan's open
 questions.
 
+Entries carry ids (`C-001` upward) so a commit can name what it closes. Ids never
+get reused: the next one is the highest ever used plus one, including entries that
+have already left the page.
+
 Plans are prose that argues, not checklists. Say what the problem is, what the
 shape of the answer is, and **what you are deliberately not doing**.
 

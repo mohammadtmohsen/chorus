@@ -13,6 +13,12 @@ what is deliberately parked.
 it done. An entry that cannot answer the third is a thought, not a task, and
 belongs in a plan's open questions instead.
 
+**Every entry has an id**, `C-001` upward, so a commit or a PR can name the thing
+it closes. Ids are permanent and never reused: when an entry ships it moves out
+and its number retires with it, because a recycled id makes an old reference point
+at the wrong work. The next id is the highest ever used plus one — including the
+ones no longer on this page.
+
 Move an entry out when it ships. A board that keeps its finished work stops being
 read, which is how the status summary went stale a day after it was written.
 
@@ -22,7 +28,7 @@ read, which is how the status summary went stale a day after it was written.
 
 Nothing here can be finished by me alone.
 
-### An application icon
+### C-001 · An application icon
 
 `electron-builder.yml` sets `buildResources: build`, so the packager looks for
 `apps/desktop/build/icon.icns`. That file does not exist, and the build says so
@@ -43,7 +49,7 @@ decision, not a packaging one.
 **Done when:** `apps/desktop/build/icon.icns` exists (1024×1024 source, macOS
 iconset) and `pnpm package` no longer prints that line.
 
-### Whether to notarize
+### C-002 · Whether to notarize
 
 The build is ad-hoc signed and **not** notarized, which is a documented decision
 rather than an oversight — `electron-builder.yml` explains it at length, and
@@ -62,7 +68,7 @@ re-litigates it.
 
 ## Open
 
-### The residual menu failure
+### C-003 · The residual menu failure
 
 `typing a slash offers the commands this project actually has` still fails
 occasionally after its fix. The mechanism behind the original bug is settled and
@@ -76,7 +82,7 @@ the instrumentation that killed them. That list is the head start.
 quiet run often enough to call the earlier failures environmental — with the
 number of runs stated rather than implied.
 
-### Measure what catch-up actually costs
+### C-004 · Measure what catch-up actually costs
 
 In a shared room each agent is fed what the other said, up to 12,000 characters a
 turn, with activity capped at 40% so it cannot crowd out speech. It is the one
@@ -91,7 +97,7 @@ and an agent's memory stop agreeing.
 share of the context window it accounts for, so 12,000 can be judged as generous,
 tight, or irrelevant on evidence.
 
-### The composed catch-up is not recorded
+### C-005 · The composed catch-up is not recorded
 
 `user.message` holds what you typed; the agent received that plus a preamble
 composed at delivery. It is a pure function of the events, so it is
@@ -102,7 +108,7 @@ the exact text it was given.
 is closed with the reason the log deliberately records the conversation rather
 than the prompts.
 
-### Should any of the e2e suite run in CI
+### C-006 · Should any of the e2e suite run in CI
 
 CI runs typecheck, lint, format, tests and a build. It **cannot** run the 26 e2e
 specs or `verify:package`, because both drive real `claude` and `codex` CLIs with
@@ -122,17 +128,17 @@ Not open questions and not oversights: judgements already made, kept here so the
 are not quietly reopened. The full reasoning is in the plan's `STATUS.md` and
 `DONE.md`.
 
-- **The todo panel.** The detail line shipped. The panel cannot be built honestly
+- **C-007 · The todo panel.** The detail line shipped. The panel cannot be built honestly
   on this machine, whose config replaces `TodoWrite` with
   `TaskCreate`/`TaskUpdate` — there is nothing here to see it with.
-- **Dialogs.** The CLI fails _closed_ on an undeclared kind, so today's behaviour
+- **C-008 · Dialogs.** The CLI fails _closed_ on an undeclared kind, so today's behaviour
   is a defined degradation; declaring it promises Chorus can render an
   undocumented payload, and being wrong parks the turn.
-- **Checkpoints.** `rewindFiles()` needs a uuid the CLI never emits. It exists
+- **C-009 · Checkpoints.** `rewindFiles()` needs a uuid the CLI never emits. It exists
   only in the CLI's private transcript, and reading that to revert files on disk
   risks the working tree on a format change.
-- **The context breakdown.** `totalTokens` excludes deferred categories, so the
+- **C-010 · The context breakdown.** `totalTokens` excludes deferred categories, so the
   obvious panel overstates usage by more than twice the total.
-- **Terminal sessions in the history sheet.** Chorus's log is authoritative; a CLI
+- **C-011 · Terminal sessions in the history sheet.** Chorus's log is authoritative; a CLI
   session is a different unit, and merged rows would look reopenable when they are
   not. `sessionRef` is already recorded if a correlation is ever wanted.
