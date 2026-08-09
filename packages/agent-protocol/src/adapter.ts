@@ -102,6 +102,16 @@ export interface ModelChoice {
    * that silently downgrades it.
    */
   readonly effortLevels?: readonly string[]
+  /**
+   * Whether the provider calls this one its default.
+   *
+   * Optional because only Codex says so — Claude's `ModelInfo` has no such
+   * field, and instead puts its default first and labels it. So a reader wants
+   * "the declared default, or failing that the first row", and must not assume
+   * position alone: the effort levels shown for "provider default" would then
+   * belong to whichever model happened to sort first.
+   */
+  readonly isDefault?: boolean
 }
 
 export interface SessionOpts {
@@ -184,6 +194,16 @@ export interface AgentSession {
    * Optional and allowed to answer empty: the list comes from the running CLI,
    * so a provider that cannot be asked simply offers no choice rather than
    * offering a hardcoded one that may be wrong.
+   *
+   * **Empty and failed are different answers, and this must not conflate them.**
+   * An implementation that catches its own errors and returns `[]` reports a
+   * broken request as a provider with nothing to offer, and no caller can tell
+   * the two apart afterwards. Reject instead. Nothing downstream fails as a
+   * result — the only caller records the outcome as a state for the settings
+   * sheet, which has separate words for each.
+   *
+   * Partial success is success: pages that arrived before a failure are a truer
+   * picker than an error, and should be returned.
    */
   supportedModels?(): Promise<readonly ModelChoice[]>
   /**

@@ -720,7 +720,15 @@ export class ClaudeSession implements AgentSession {
    */
   async supportedModels(): Promise<readonly ModelChoice[]> {
     const ask = (this.q as unknown as { supportedModels?: () => Promise<unknown> }).supportedModels
-    if (typeof ask !== 'function') return []
+    /*
+     * A CLI too old to be asked is a failure to read, not an empty catalogue.
+     *
+     * Returning `[]` here made the sheet say "It offers no model choice", which
+     * claims this CLI has exactly one model. "Its models could not be read" is
+     * what actually happened, and it tells someone their `claude` is old enough
+     * to be worth updating.
+     */
+    if (typeof ask !== 'function') throw new Error('this CLI cannot report its models')
 
     try {
       const models = await ask.call(this.q)
@@ -751,8 +759,13 @@ export class ClaudeSession implements AgentSession {
             : []
         return [{ value: row.value, label, ...(effortLevels.length === 0 ? {} : { effortLevels }) }]
       })
-    } catch {
-      return []
+    } catch (error) {
+      /*
+       * Rethrown rather than flattened to `[]`, so the sheet can say which of
+       * the two happened. The caller catches and records it as a state; no
+       * session fails because of this.
+       */
+      throw error instanceof Error ? error : new Error(String(error))
     }
   }
 

@@ -7,6 +7,7 @@ import type {
   ApprovalDecision,
   ForkOpts,
   HealthStatus,
+  ModelChoice,
   SessionOpts,
   UserInputResponse,
 } from '@chorus/agent-protocol'
@@ -25,6 +26,15 @@ export interface FakeAdapterOptions {
   readonly id?: AgentId
   readonly capabilities?: Partial<AgentCapabilities>
   readonly version?: string
+  /**
+   * What `supportedModels` does: answer with these, or fail.
+   *
+   * An `Error` rather than a boolean because the distinction being tested is
+   * precisely "asked and it broke" against "asked and it offered nothing", and
+   * a fake that can only do the second cannot cover the first. It could not,
+   * which is how a `failed` state shipped that no production adapter reached.
+   */
+  readonly models?: readonly ModelChoice[] | Error
 }
 
 /**
@@ -60,7 +70,8 @@ export class FakeAgentSession implements AgentSession {
 
   constructor(
     readonly sessionRef: string,
-    private readonly agentId: AgentId
+    private readonly agentId: AgentId,
+    private readonly models?: readonly ModelChoice[] | Error | undefined
   ) {}
 
   send(input: AgentInput): Promise<void> {
@@ -106,6 +117,12 @@ export class FakeAgentSession implements AgentSession {
   setPermissionMode(mode: string): Promise<void> {
     this.permissionModes.push(mode)
     return Promise.resolve()
+  }
+
+  /** Answers with what the adapter was configured to hold, or fails. */
+  supportedModels(): Promise<readonly ModelChoice[]> {
+    if (this.models instanceof Error) return Promise.reject(this.models)
+    return Promise.resolve(this.models ?? [])
   }
 
   close(): Promise<void> {
@@ -156,12 +173,14 @@ export class FakeAdapter implements AgentAdapter {
   readonly capabilities: AgentCapabilities
   readonly sessions: FakeAgentSession[] = []
   private readonly version: string
+  private readonly models: readonly ModelChoice[] | Error | undefined
   private counter = 0
 
   constructor(options: FakeAdapterOptions = {}) {
     this.id = options.id ?? 'claude'
     this.capabilities = { ...DEFAULT_CAPABILITIES, ...options.capabilities }
     this.version = options.version ?? '0.0.0-fake'
+    this.models = options.models
   }
 
   /**
@@ -175,14 +194,29 @@ export class FakeAdapter implements AgentAdapter {
 
   start(opts: SessionOpts): Promise<AgentSession> {
     this.startedOpts.push(opts)
-    const session = new FakeAgentSession(`fake-session-${String(++this.counter)}`, this.id)
+    const session = new FakeAgentSession(
+      `fake-session-${String(++this.counter)}`,
+      this.id,
+      this.models
+    )
     this.sessions.push(session)
     return Promise.resolve(session)
   }
 
+  /**
+   * Makes `resume` reject, so the fallback to a fresh start can be tested.
+   *
+   * A thread the provider has forgotten is a normal thing to find after a day
+   * away, and the fallback is a *new* session — which means it should start
+   * with what the settings sheet says new sessions start with. Nothing could
+   * reach that path before this.
+   */
+  failResume = false
+
   resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession> {
+    if (this.failResume) return Promise.reject(new Error('no such thread'))
     this.startedOpts.push(opts)
-    const session = new FakeAgentSession(sessionRef, this.id)
+    const session = new FakeAgentSession(sessionRef, this.id, this.models)
     this.sessions.push(session)
     return Promise.resolve(session)
   }
@@ -200,7 +234,11 @@ export class FakeAdapter implements AgentAdapter {
    */
   fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
     if (sessionRef === '') return Promise.reject(new Error('Cannot fork a session with no id yet'))
-    const session = new FakeAgentSession(`${sessionRef}-fork-${String(++this.counter)}`, this.id)
+    const session = new FakeAgentSession(
+      `${sessionRef}-fork-${String(++this.counter)}`,
+      this.id,
+      this.models
+    )
     this.forked.push({ from: sessionRef, inherits: opts.inherits, session })
     this.sessions.push(session)
     return Promise.resolve(session)

@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChorusRuntime } from './runtime.js'
 import { DEFAULT_SETTINGS, writeSettings } from './settings.js'
+import { writeOpenSessions, type OpenSession } from './open-sessions.js'
 
 /**
  * Which model each agent is started with, on each of the three paths.
@@ -164,5 +165,94 @@ describe('the model catalogue’s state', () => {
 
     const codexRow = runtime.knownModels().find((a) => a.agentId === 'codex')
     expect(codexRow?.status).toBe('unqueried')
+  })
+})
+
+describe('reopening the app', () => {
+  /**
+   * The three ways a *fresh* session is born on the reopen path.
+   *
+   * Reopening asks for options "as a resume", which deliberately strips the
+   * model: a rejoined thread already carries the one it was started with. But
+   * resolving that once, outside the decision, meant every fresh start reached
+   * from here got no model at all — including the two cases below, which are
+   * not resumes in any sense.
+   */
+  const saved = (over: Partial<OpenSession> = {}): OpenSession => ({
+    conversationId: 'conv-1',
+    agents: ['claude'],
+    cwd: CWD,
+    profileId: 'read-only',
+    title: 'a conversation',
+    sessionRefs: { claude: 'thread-1' },
+    lastSeenSeq: 0,
+    draft: '',
+    ...over,
+  })
+
+  it('does not re-point a thread it is genuinely resuming', () => {
+    // The behaviour the strip exists for, and which must survive the fix.
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    writeOpenSessions(dataPath, { sessions: [saved()], workspace: null })
+    return runtime.restoreOpenConversations().then(() => {
+      expect(startedWith(claude)).toEqual([undefined])
+    })
+  })
+
+  it('gives an agent with no saved thread the configured model', async () => {
+    // Claude's session id only arrives with its first message, so an agent that
+    // joined and never spoke is written down with `""` — a fresh start, not a
+    // resume, and it should begin where the sheet says.
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    writeOpenSessions(dataPath, {
+      sessions: [saved({ sessionRefs: { claude: '' } })],
+      workspace: null,
+    })
+    await runtime.restoreOpenConversations()
+    expect(startedWith(claude)).toEqual(['sonnet'])
+  })
+
+  it('gives a failed resume the configured model when it falls back', async () => {
+    // A thread the provider has forgotten is a normal thing to find after a day
+    // away. The fallback is a new session and starts like one.
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    claude.failResume = true
+    writeOpenSessions(dataPath, { sessions: [saved()], workspace: null })
+    await runtime.restoreOpenConversations()
+    expect(startedWith(claude)).toEqual(['sonnet'])
+  })
+
+  it('still keeps the two agents apart', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    writeOpenSessions(dataPath, {
+      sessions: [saved({ agents: ['claude', 'codex'], sessionRefs: { claude: '', codex: '' } })],
+      workspace: null,
+    })
+    await runtime.restoreOpenConversations()
+    expect(startedWith(claude)).toEqual(['sonnet'])
+    expect(startedWith(codex)).toEqual([undefined])
+  })
+})
+
+describe('a catalogue that fails', () => {
+  it('is recorded as failed, not as an agent with nothing to offer', async () => {
+    /*
+     * The state that shipped unreachable. Both production adapters caught every
+     * error and returned `[]`, so a request that failed drew as "It offers no
+     * model choice" — the exact ambiguity the four states were added to remove.
+     */
+    const broken = new FakeAdapter({ id: 'claude', models: new Error('the CLI fell over') })
+    const other = ChorusRuntime.open(
+      mkdtempSync(join(tmpdir(), 'chorus-broken-')),
+      silent,
+      new Map<AgentId, AgentAdapter>([['claude', broken]])
+    )
+    try {
+      await other.startConversation({ agents: ['claude'], cwd: CWD })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(other.knownModels().find((a) => a.agentId === 'claude')?.status).toBe('failed')
+    } finally {
+      await other.close()
+    }
   })
 })

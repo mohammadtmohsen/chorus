@@ -90,14 +90,28 @@ describe('supportedModels', () => {
     expect(await session.supportedModels?.()).toEqual([])
   })
 
-  it('offers no choice at all when the CLI cannot be asked', async () => {
-    // An older CLI has no such control, and a session must not fail because a
-    // picker could not be populated.
+  it('rejects when the CLI is too old to be asked, rather than reporting none', async () => {
+    /*
+     * "Could not be read" and "offers no choice" are different sentences, and
+     * the settings sheet says both. Returning `[]` here claimed an older CLI
+     * had exactly one model, when the truth is nobody could ask it.
+     *
+     * No session fails because of this: the only caller records it as a state.
+     */
     const session = await adapterWith({}).start(OPTS)
-    expect(await session.supportedModels?.()).toEqual([])
+    await expect(session.supportedModels?.()).rejects.toThrow()
+  })
+
+  it('rejects when the provider throws, for the same reason', async () => {
+    const session = await adapterWith({
+      supportedModels: () => Promise.reject(new Error('the CLI fell over')),
+    }).start(OPTS)
+    await expect(session.supportedModels?.()).rejects.toThrow('the CLI fell over')
   })
 
   it('survives a provider that answers with nonsense', async () => {
+    // An answer arrived and it was garbage — which is an empty catalogue, not a
+    // failed request. Nothing was thrown, so nothing is rethrown.
     const session = await adapterWith({
       supportedModels: () => Promise.resolve('not a list'),
     }).start(OPTS)

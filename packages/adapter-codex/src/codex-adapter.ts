@@ -207,6 +207,7 @@ export class CodexSession implements AgentSession {
             displayName?: unknown
             hidden?: unknown
             supportedReasoningEfforts?: unknown
+            isDefault?: unknown
           }
           if (typeof row.model !== 'string' || row.model === '') continue
           if (row.hidden === true) continue
@@ -225,6 +226,10 @@ export class CodexSession implements AgentSession {
                 ? row.displayName
                 : row.model,
             ...(efforts.length === 0 ? {} : { effortLevels: efforts }),
+            // Carried rather than inferred from position: the catalogue's order
+            // is the provider's to change, and `isDefault` is the only thing
+            // that actually says which one "provider default" means.
+            ...(row.isDefault === true ? { isDefault: true } : {}),
           })
         }
 
@@ -232,9 +237,21 @@ export class CodexSession implements AgentSession {
         if (typeof next !== 'string' || next === '') break
         cursor = next
       }
-    } catch {
-      // A CLI too old for `model/list`, or one that cannot answer right now.
-      // Whatever pages did arrive are still a better picker than none.
+    } catch (error) {
+      /*
+       * Rethrown when nothing arrived, so "it broke" stays distinguishable
+       * from "it offers nothing".
+       *
+       * Swallowing this returned `[]`, which the sheet drew as "It offers no
+       * model choice" — a confident statement about a request that failed.
+       * Nothing is lost by throwing: the only caller already catches, and
+       * records the failure as its own state.
+       *
+       * Partial pages are kept rather than discarded. A catalogue that broke on
+       * page three is still a usable picker, and reporting it as a failure
+       * would throw away models the CLI actually named.
+       */
+      if (choices.length === 0) throw error
     }
 
     return choices

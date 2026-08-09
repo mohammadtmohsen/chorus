@@ -329,14 +329,26 @@ function AgentDefaults({
 }: {
   agentId: 'codex' | 'claude'
   status: 'unqueried' | 'loading' | 'ready' | 'failed'
-  models: { value: string; label: string; effortLevels: string[] }[]
+  /* Taken from the response rather than restated, so the two cannot drift. */
+  models: IpcResponse<'agents:models'>['agents'][number]['models']
   model: string
   effort: string
   onChange: (next: { model?: string; effort?: string }) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  /*
+   * Which row "the provider's default" actually means.
+   *
+   * The declared default when there is one, and only then the first row. Codex
+   * reports `isDefault`; Claude has no such field and instead puts its default
+   * first and labels it "Default (recommended)". Reading position alone offered
+   * the effort levels of whichever model happened to sort first, which is a
+   * control that lies as soon as a catalogue is reordered.
+   */
+  const providerDefault = models.find((entry) => entry.isDefault === true) ?? models[0]
   const levels =
-    (model === '' ? models[0] : models.find((entry) => entry.value === model))?.effortLevels ?? []
+    (model === '' ? providerDefault : models.find((entry) => entry.value === model))
+      ?.effortLevels ?? []
 
   return (
     <div className="settings-agent">
@@ -359,7 +371,7 @@ function AgentDefaults({
              * as "choosing a model resets my effort".
              */
             const levelsFor =
-              (next === '' ? models[0] : models.find((entry) => entry.value === next))
+              (next === '' ? providerDefault : models.find((entry) => entry.value === next))
                 ?.effortLevels ?? []
             const keep = effort !== '' && levelsFor.includes(effort)
             onChange({ model: next, ...(keep ? {} : { effort: '' }) })

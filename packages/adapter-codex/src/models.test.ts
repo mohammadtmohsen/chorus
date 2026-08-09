@@ -39,7 +39,17 @@ const model = (over: Record<string, unknown> = {}): Record<string, unknown> => (
  * A server whose `model/list` answers from `pages`, one page per call, and which
  * records every request so a turn's parameters can be inspected.
  */
-function server(pages: Record<string, unknown>[][] = [[model()]]): {
+function server(
+  pages: Record<string, unknown>[][] = [[model()]],
+  /*
+   * Which `model/list` page answers with an error instead of data.
+   *
+   * Added because the test that claimed to cover a mid-catalogue failure passed
+   * a *successful* empty page — so the failure path had no coverage at all, and
+   * the adapter swallowing every error went unnoticed.
+   */
+  failAtPage?: number
+): {
   adapter: CodexAdapter
   sent: () => Record<string, unknown>[]
 } {
@@ -64,6 +74,12 @@ function server(pages: Record<string, unknown>[][] = [[model()]]): {
           reply({ thread: { id: 'thr_1' }, model: 'fake' })
           break
         case 'model/list': {
+          if (page === failAtPage) {
+            queueMicrotask(() =>
+              onLine?.(JSON.stringify({ id, error: { code: -32601, message: 'no such method' } }))
+            )
+            break
+          }
           const data = pages[page] ?? []
           const more = page < pages.length - 1
           page++
@@ -101,7 +117,12 @@ describe('supportedModels', () => {
     const { adapter } = server()
     const session = await adapter.start(OPTS)
     expect(await session.supportedModels?.()).toEqual([
-      { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', effortLevels: ['low', 'high'] },
+      {
+        value: 'gpt-5.1-codex',
+        label: 'GPT-5.1 Codex',
+        effortLevels: ['low', 'high'],
+        isDefault: true,
+      },
     ])
   })
 
@@ -150,11 +171,34 @@ describe('supportedModels', () => {
   })
 
   it('keeps whatever pages arrived when a later one fails', async () => {
-    // A CLI too old for `model/list` offers nothing; one that dies mid-catalogue
-    // has still told us something truer than an empty picker.
-    const { adapter } = server([])
+    // A catalogue that died on page two has still told us something truer than
+    // an empty picker, so the pages that arrived are kept and not reported as a
+    // failure.
+    const { adapter } = server([[model({ model: 'first' })], [model({ model: 'second' })]], 1)
     const session = await adapter.start(OPTS)
-    expect(await session.supportedModels?.()).toEqual([])
+    expect((await session.supportedModels?.())?.map((m) => m.value)).toEqual(['first'])
+  })
+
+  it('rejects when the very first page fails, rather than reporting no models', async () => {
+    /*
+     * The distinction the settings sheet is built on. Swallowing this returned
+     * `[]`, which drew as "It offers no model choice" — a confident statement
+     * about a request that never succeeded. The previous version of this test
+     * passed a successful empty page, so it proved nothing.
+     */
+    const { adapter } = server([[model()]], 0)
+    const session = await adapter.start(OPTS)
+    await expect(session.supportedModels?.()).rejects.toThrow()
+  })
+
+  it('reports the model the provider calls its default', async () => {
+    // Carried rather than inferred from row order: the renderer shows the
+    // default's effort levels, and position is the provider's to change.
+    const { adapter } = server([[model({ model: 'a', isDefault: false }), model({ model: 'b' })]])
+    const session = await adapter.start(OPTS)
+    const models = await session.supportedModels?.()
+    expect(models?.find((m) => m.isDefault === true)?.value).toBe('b')
+    expect(models?.[0]?.isDefault).toBeUndefined()
   })
 })
 

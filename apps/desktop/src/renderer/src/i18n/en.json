@@ -96,7 +96,7 @@
     "model": "Model",
     "effort": "Reasoning effort",
     "providerDefault": "The provider's default",
-    "newSessionsNote": "A default only. Each conversation can change its own from its card in the sidebar. The two agents do not share a model, so each has its own.",
+    "newSessionsNote": "Applies to sessions started from now on. The two agents do not share a model, so each has its own. A conversation already open keeps what it started with.",
     "explainHeading": "Explaining a passage",
     "explainLanguage": "Answer in",
     "explainPlaceholder": "Arabic",

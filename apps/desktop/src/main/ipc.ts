@@ -216,6 +216,7 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
             value: model.value,
             label: model.label,
             effortLevels: [...(model.effortLevels ?? [])],
+            ...(model.isDefault === true ? { isDefault: true } : {}),
           })),
         })),
       }),

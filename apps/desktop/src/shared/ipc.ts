@@ -396,6 +396,8 @@ export const IPC_CONTRACT = {
           status: z.enum(['unqueried', 'loading', 'ready', 'failed']),
           models: z.array(
             z.object({
+              /** The provider's own default, when it names one. See `ModelChoice`. */
+              isDefault: z.boolean().optional(),
               value: z.string(),
               label: z.string(),
               effortLevels: z.array(z.string()).default([]),

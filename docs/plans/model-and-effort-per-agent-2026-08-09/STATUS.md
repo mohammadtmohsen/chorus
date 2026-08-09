@@ -120,3 +120,53 @@ The first `settings:write` merge test asserted over a hand-built object and so
 only demonstrated JS spread semantics. It passed against the shallow merge. The
 replacement drives the real `buildHandlers` handler, and was checked by reverting
 the fix and watching it fail.
+
+## Phase 3 corrected after review: four defects, two of them real bugs
+
+Codex reviewed the shipped phase and was right on all four. Two were
+correctness, and both were in the half of the change nothing had driven.
+
+**Reopen ignored the configured model on every path that starts fresh.**
+`reopen()` asked for options "as a resume" — which deliberately strips the model,
+because a rejoined thread already carries its own — but it asked _before_ knowing
+whether there was a thread to rejoin. Three paths start fresh from there: an
+agent with no saved ref, a past conversation whose refs are deliberately empty,
+and a resume that failed and fell back. All three started with no model at all,
+which is the same bug this phase existed to fix, surviving in the half nobody
+tested. `startParticipant` now takes `(resuming: boolean) => SessionOpts` and
+asks at the point it knows, and the options it actually used are what get
+attached — not a second guess at which branch ran.
+
+**The `failed` state was unreachable.** Runtime recorded a rejection, and neither
+production adapter could produce one: both caught everything and returned `[]`.
+So a request that broke drew as "It offers no model choice" — precisely the
+ambiguity the four states were added to remove. Both adapters now reject, and the
+protocol says they must. Nothing downstream fails, because the only caller
+already catches. Codex keeps partial pages: a catalogue that died on page three
+is a truer picker than an error.
+
+The test that was supposed to cover this passed a _successful_ empty page. It
+proved nothing, and it is why the defect shipped. The fake now injects a real
+JSON-RPC error, and `FakeAdapter` can fail its catalogue at all — it could not
+before, which is the deeper reason the state went unverified.
+
+**Codex's declared default was dropped** while the renderer assumed `models[0]`
+was it. Measured live: Codex declares `gpt-5.6-sol` and it is currently also the
+first row, so the bug is latent rather than visible — which is the argument for
+fixing it, since row order is the provider's to change and the effort levels
+shown for "provider default" would then belong to another model. `ModelChoice`
+carries `isDefault`; the renderer reads the declared default _or_ the first row,
+because Claude's `ModelInfo` has no such field and instead puts its default first
+and labels it.
+
+**The copy promised a control that does not exist.** "Each conversation can
+change its own from its card in the sidebar" — there is no per-conversation
+picker, the plan excludes one, and `Settings.tsx` is the only file in the
+renderer that mentions models at all. Pre-existing text I extended rather than
+checked.
+
+### What this says about the phase
+
+The three cases I drove in the app were all _fresh-start_ cases. Reopen is the
+path a user actually takes every launch, and it had no test and no live run. Both
+correctness defects were there.

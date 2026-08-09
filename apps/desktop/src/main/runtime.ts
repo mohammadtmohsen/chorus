@@ -462,7 +462,7 @@ export class ChorusRuntime {
         this.startParticipant(
           agentId,
           conversationId,
-          this.sessionOptsFor({ cwd, profile }, agentId),
+          (resuming) => this.sessionOptsFor({ cwd, profile }, agentId, resuming),
           profile,
           grants
         )
@@ -1073,15 +1073,16 @@ export class ChorusRuntime {
     const started = await Promise.allSettled(
       entry.agents.map(async (agentId) => {
         /*
-         * Resolved inside the loop, and as a resume.
+         * Resolved inside the loop, and left undecided about resuming.
          *
-         * One object outside it meant every agent got the same model; asking
-         * for it as a resume means none of them gets one at all, because the
-         * thread the provider is rejoining already has the model it was started
-         * with. Passing today's preference here would re-point a conversation
-         * that already exists, days after anyone chose it.
+         * One object outside it meant every agent got the same model. Deciding
+         * "this is a resume" out here was the second half of the same mistake:
+         * an agent with no saved thread, or one whose resume fails, is started
+         * fresh from this path and must get the configured model. Only
+         * `startParticipant` knows which happened, so it asks.
          */
-        const sessionOpts = this.sessionOptsFor(conversation, agentId, true)
+        const sessionOpts = (resuming: boolean): SessionOpts =>
+          this.sessionOptsFor(conversation, agentId, resuming)
         /*
          * An empty ref is not a thread.
          *
@@ -1555,7 +1556,7 @@ export class ChorusRuntime {
     const participant = await this.startParticipant(
       agentId,
       conversationId,
-      this.sessionOptsFor(conversation, agentId),
+      (resuming) => this.sessionOptsFor(conversation, agentId, resuming),
       conversation.profile,
       conversation.grants
     )
@@ -1877,7 +1878,18 @@ export class ChorusRuntime {
   private async startParticipant(
     agentId: AgentId,
     conversationId: string,
-    sessionOpts: SessionOpts,
+    /*
+     * A factory, not an object, because only this method knows which it needs.
+     *
+     * Resuming strips the model — a rejoined thread already carries the one it
+     * was started with, and passing today's preference would re-point a
+     * conversation that already exists. But three paths inside here start
+     * *fresh* while reopening: an agent with no saved thread, a past
+     * conversation whose refs are deliberately empty, and a resume that failed
+     * and fell back. Resolved once outside, all three started with no model at
+     * all — the reopen half of the bug this phase was meant to fix.
+     */
+    sessionOpts: (resuming: boolean) => SessionOpts,
     profile: PermissionProfile,
     grants: SessionGrants,
     /** A provider thread to rejoin instead of starting a new one. */
@@ -1910,11 +1922,28 @@ export class ChorusRuntime {
      * find after a day away — and a session that opens without its context beats
      * one that refuses to open.
      */
-    const session = await (resumeFrom === undefined
-      ? SupervisedSession.start(adapter, sessionOpts)
-      : SupervisedSession.resume(adapter, resumeFrom, sessionOpts).catch(() =>
-          SupervisedSession.start(adapter, sessionOpts)
-        ))
+    const opened = await (resumeFrom === undefined
+      ? (async () => {
+          const opts = sessionOpts(false)
+          return { session: await SupervisedSession.start(adapter, opts), opts }
+        })()
+      : (async () => {
+          const resumeOpts = sessionOpts(true)
+          try {
+            return {
+              session: await SupervisedSession.resume(adapter, resumeFrom, resumeOpts),
+              opts: resumeOpts,
+            }
+          } catch {
+            // Fresh options on the fallback: this is now a new session, and it
+            // should start with what the sheet says new sessions start with.
+            const opts = sessionOpts(false)
+            return { session: await SupervisedSession.start(adapter, opts), opts }
+          }
+        })())
+    // The options actually used, so what is attached matches what was opened
+    // rather than a second guess at which branch ran.
+    const { session, opts: usedOpts } = opened
     /*
      * The preferred effort, applied once the session exists.
      *
@@ -2014,7 +2043,7 @@ export class ChorusRuntime {
         if (conversation !== undefined) conversation.planning = false
       },
     })
-    await service.attach(session, sessionOpts, health, reopening)
+    await service.attach(session, usedOpts, health, reopening)
     // Joining mid-conversation is not a case yet, but starting at the current
     // end of the log is what makes it one when it is.
     return { agentId, service, session, seenSeq: this.store.lastSeq() }
