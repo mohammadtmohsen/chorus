@@ -7,6 +7,17 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.8.1
+
+### Explain simply works again after a restart
+
+0.8.0 refused to explain or ask about any reply written before the app was last
+restarted — "claude has started a new session since it said that". Reopening a
+conversation resumes the same agent session, but the check that stops you asking
+about a reply from a session that never saw it could not tell a resume from a
+fresh start. Since most conversations outlive a restart, most replies were
+affected.
+
 ## 0.8.0
 
 ### Ask about one part of a reply, without derailing the conversation

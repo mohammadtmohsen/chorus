@@ -422,6 +422,52 @@ describe('a reply from a session that has since been replaced', () => {
     ).rejects.toThrow(/started a new session/)
   })
 
+  it('still allows one after a relaunch, which resumes rather than restarts', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+
+    // What reopening a conversation writes. The first version of this guard
+    // refused on any newer start at all, so the option vanished after every
+    // relaunch — which is most of the time, and is what someone hit in the app.
+    runtime.store.append({
+      conversationId,
+      actor: 'system',
+      payload: {
+        type: 'session.started',
+        agentId: 'claude',
+        sessionRef: '',
+        cwd: process.cwd(),
+        model: null,
+        cliVersion: null,
+        resumed: true,
+      },
+    })
+
+    await expect(
+      runtime.openAside({ conversationId, sourceEventId, excerpt: 'The projection lags' })
+    ).resolves.toMatchObject({ asideId: expect.any(String) })
+  })
+
+  it('allows one when the start predates the flag, rather than refusing on a guess', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    runtime.store.append({
+      conversationId,
+      actor: 'system',
+      payload: {
+        type: 'session.started',
+        agentId: 'claude',
+        sessionRef: '',
+        cwd: process.cwd(),
+        model: null,
+        cliVersion: null,
+      },
+    })
+    // Refusing wrongly takes the feature away; allowing wrongly is what happened
+    // before this guard existed.
+    await expect(
+      runtime.openAside({ conversationId, sourceEventId, excerpt: 'The projection lags' })
+    ).resolves.toMatchObject({ asideId: expect.any(String) })
+  })
+
   it('still allows a reply from the session that is running', async () => {
     const sourceEventId = reply('The projection lags behind the log.')
     await expect(

@@ -1,0 +1,20 @@
+{
+  // The workspace pins TypeScript 6.0.3; VS Code uses its own 5.x unless told.
+  // Type-aware ESLint rules run through the TS server, so a mismatched server
+  // cannot resolve the project's own imports and reports them as "a type that
+  // could not be resolved" — an error about the editor dressed as one about the
+  // code, while `pnpm check` stays green.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+
+  // `pnpm check` runs `prettier --check .`, so an editor formatting differently
+  // fails the gate on files nobody meant to touch.
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+
+  "search.exclude": {
+    "**/dist": true,
+    "**/out": true,
+    "**/release": true
+  }
+}

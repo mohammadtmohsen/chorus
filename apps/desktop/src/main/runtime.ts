@@ -629,42 +629,38 @@ export class ChorusRuntime {
      * The check is the log's own: the last `session.started` for this agent at
      * or before the reply must name the ref the participant is running now.
      */
-    const startedAtSource = this.store
-      .read(request.conversationId)
-      .filter(
-        (e) =>
-          e.seq <= source.seq &&
-          e.payload.type === 'session.started' &&
-          e.payload.agentId === agentId
-      )
-      .at(-1)
-
     /*
-     * Compared by **which `session.started` is current**, not by its
-     * `sessionRef`. Claude's real id arrives with its first message, so
-     * `session.started` is written with an empty string — and an earlier version
-     * of this check skipped empty refs, which meant it never fired for Claude at
-     * all, the provider it most needed to fire for. Event identity does not
-     * depend on a field that is filled in late.
+     * Only a session the agent *started afresh* can have missed the passage.
+     *
+     * Reopening a conversation writes a new `session.started` too, and the first
+     * version of this refused on any newer start at all — so the option
+     * disappeared after every relaunch, which is most of the time. A resume
+     * rejoins the same provider session and holds the same context; it is
+     * `addParticipant` that produces one which has never seen the reply.
+     *
+     * Compared by *event*, not by `sessionRef`. Claude's real id arrives with
+     * its first message, so `session.started` is written with an empty string —
+     * an earlier attempt skipped empty refs and therefore never fired for Claude
+     * at all, the provider it most needed to fire for.
+     *
+     * `resumed` absent means an event written before the flag existed, and those
+     * are treated as resumes. The two ways of being wrong are not equal: refusing
+     * wrongly takes the feature away, while allowing wrongly is the behaviour
+     * that existed before this guard did.
      */
-    const currentStart = this.store
+    const freshStartAfter = this.store
       .read(request.conversationId)
-      .filter((e) => e.payload.type === 'session.started' && e.payload.agentId === agentId)
-      .at(-1)
-
-    if (startedAtSource !== undefined && startedAtSource.id !== currentStart?.id) {
+      .find(
+        (e) =>
+          e.seq > source.seq &&
+          e.payload.type === 'session.started' &&
+          e.payload.agentId === agentId &&
+          e.payload.resumed === false
+      )
+    if (freshStartAfter !== undefined) {
       throw new Error(`${agentId} has started a new session since it said that`)
     }
 
-    /*
-     * Fork first, then write the row.
-     *
-     * The other order left a durable `conversation.created` behind whenever the
-     * fork failed — an aside in the log, findable by `listAsides`, with no
-     * session, no answer and no way to reach a terminal state. The log is
-     * append-only, so there was nothing to roll back with; not writing it is the
-     * only rollback available.
-     */
     /*
      * The language is read here, and read **before** anything is spawned.
      *
