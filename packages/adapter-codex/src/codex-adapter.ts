@@ -9,6 +9,7 @@ import type {
   ApprovalDecision,
   ForkOpts,
   HealthStatus,
+  ModelChoice,
   SandboxPolicy,
   SessionOpts,
   UserInputResponse,
@@ -106,6 +107,15 @@ export class CodexSession implements AgentSession {
    * session would otherwise accumulate every item it ever saw.
    */
   private readonly recentItems = new Map<string, ThreadItem>()
+  /**
+   * The reasoning effort in force, held because Codex has nowhere to put it.
+   *
+   * Claude takes effort as a session-level override and keeps it. Codex takes
+   * `effort` on `turn/start`, per turn — so "set the effort" here means
+   * "remember it and say it every time", and a session that forgot would
+   * silently revert to the model's default on the second turn.
+   */
+  private effort: string | null = null
 
   constructor(
     readonly sessionRef: string,
@@ -144,8 +154,90 @@ export class CodexSession implements AgentSession {
        * buys length rather than insight, and every token of it is billed.
        */
       summary: 'auto',
+      // Per turn, not per session — see `effort`.
+      ...(this.effort === null ? {} : { effort: this.effort }),
     })) as { turn?: { id?: string } }
     this.currentTurnId = result.turn?.id ?? null
+  }
+
+  /**
+   * Remembers the level; every later `turn/start` carries it.
+   *
+   * Deliberately does not talk to the server. There is no request that sets an
+   * effort for a thread — the field lives on the turn — so the only honest
+   * implementation is to hold it. Without this method at all,
+   * `SupervisedSession.setEffort` optional-chains into silence and a chosen
+   * effort is saved, displayed, and never sent.
+   */
+  setEffort(level: string): Promise<void> {
+    this.effort = level === '' ? null : level
+    return Promise.resolve()
+  }
+
+  /**
+   * The models this account is offered, from `model/list`.
+   *
+   * Paginated, and the cursor has to be followed: a first page is not the
+   * catalogue, and a picker built from one silently omits whatever came after.
+   *
+   * `hidden` models are skipped because they are hidden from the provider's own
+   * picker, and offering what another client deliberately does not is a way to
+   * end up recommending something unsupported.
+   *
+   * `value` is `Model.model`, not `Model.id`. The two come back identical from
+   * the catalogue today, so no live run distinguishes them — Codex's own
+   * model-override code uses `model` as the slug, which is the evidence that
+   * settles it.
+   */
+  async supportedModels(): Promise<readonly ModelChoice[]> {
+    const choices: ModelChoice[] = []
+    let cursor: string | undefined
+
+    try {
+      // Bounded, because a server that always returns a cursor would otherwise
+      // spin here forever. Far more pages than any real catalogue.
+      for (let page = 0; page < 20; page++) {
+        const result = (await this.rpc.request('model/list', {
+          ...(cursor === undefined ? {} : { cursor }),
+        })) as { data?: unknown; nextCursor?: unknown }
+
+        for (const entry of Array.isArray(result.data) ? result.data : []) {
+          const row = entry as {
+            model?: unknown
+            displayName?: unknown
+            hidden?: unknown
+            supportedReasoningEfforts?: unknown
+          }
+          if (typeof row.model !== 'string' || row.model === '') continue
+          if (row.hidden === true) continue
+
+          const efforts = (
+            Array.isArray(row.supportedReasoningEfforts) ? row.supportedReasoningEfforts : []
+          ).flatMap((option): string[] => {
+            const level = (option as { reasoningEffort?: unknown }).reasoningEffort
+            return typeof level === 'string' && level !== '' ? [level] : []
+          })
+
+          choices.push({
+            value: row.model,
+            label:
+              typeof row.displayName === 'string' && row.displayName !== ''
+                ? row.displayName
+                : row.model,
+            ...(efforts.length === 0 ? {} : { effortLevels: efforts }),
+          })
+        }
+
+        const next = result.nextCursor
+        if (typeof next !== 'string' || next === '') break
+        cursor = next
+      }
+    } catch {
+      // A CLI too old for `model/list`, or one that cannot answer right now.
+      // Whatever pages did arrive are still a better picker than none.
+    }
+
+    return choices
   }
 
   async interrupt(): Promise<void> {
