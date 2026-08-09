@@ -276,15 +276,22 @@ The blocker is design, not plumbing.
 
 ### C-012 · Model and effort per agent
 
-Shipped in `2bd59ac`. Each agent has its own model and effort row, named, and one
-that reports nothing says which kind of nothing it is — never asked, asked and
-offered none, or asked and failed. Those were one silence.
+Shipped in `2bd59ac`, corrected in `6f2e917`. Each agent has its own model and
+effort row, named, and one that reports nothing says which kind of nothing it is
+— never asked, asked and offered none, or asked and failed. Those were one
+silence.
 
 Two things the entry did not anticipate. The single saved value had to be folded
 onto **Claude** rather than split, because Claude's was the only catalogue the
 sheet ever showed, so that is whose the value already was. And `settings:write`
 merged shallowly, so writing one agent's model dropped the other's — the bug the
 per-agent change would otherwise have introduced on its first save.
+
+Review then found two more, both on the reopen path, which had neither a test nor
+a live run: fresh sessions born from a reopen got no model at all, and the
+`failed` catalogue state was unreachable because both adapters caught their own
+errors and returned an empty list. The test that was supposed to cover the second
+passed a _successful_ empty page.
 
 **Reopens if:** effort needs recording per conversation. It is a default only
 today, and a resumed thread silently drops to the provider's level because
