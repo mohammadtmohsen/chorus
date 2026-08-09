@@ -174,20 +174,48 @@ function asideQuestion(excerpt: string, question: string): string {
 export function explainPrompt(excerpt: string, language: string): string {
   return [
     'Someone reading this conversation did not follow the passage below.',
-    'Say what it means, plainly. They are a developer working on this project who',
-    'has not met this particular thing before — not a beginner, so do not start',
-    'from first principles or explain what they already know.',
+    'Say what it actually is here, what it means for the work, and — briefly — why',
+    'it is that way. Nothing else.',
     '',
-    'Short sentences, concrete rather than abstract, one idea at a time. No jargon',
-    'except the jargon being explained. Keep identifiers, file names and technical',
-    `terms exactly as written, and explain each one in ${language} where it appears.`,
+    // Lead position, because the list below said this and a real answer still
+    // opened with "this is not a code unit you saw in the source". An opening
+    // clause is the one the model commits to first.
+    'Begin with what it *is*. Never open by saying what it is not.',
     '',
-    `Write every word of your explanation in ${language}. Not bilingually, and not`,
-    `only the first sentence — if you find yourself back in the passage's own`,
+    // Also learned from a real answer: asked about a line in a task list, it
+    // explained the line's punctuation rather than the task.
+    'Explain the work the passage refers to, not how the passage is written.',
+    '',
+    // Two rounds of real answers taught this list. Each line is something that
+    // arrived unasked and pushed the useful part off the card.
+    'Leave out:',
+    '- what the words mean in general, or one by one, or where they come from;',
+    '- what something is *not*, or which other meaning is not intended;',
+    '- anything the passage already says, restated;',
+    '- remarks about this conversation, about your earlier messages, or about',
+    '  what you were or were not offering to do;',
+    '- background about the project or its conventions, unless the passage is',
+    '  about them.',
+    '',
+    // Bounded by a number, because "short" drifted twice. Lists are allowed only
+    // where the answer genuinely *is* a sequence — a real workflow, a real
+    // ordering — and never as a way of getting more room.
+    'Aim for about a hundred words. Plain paragraphs, short sentences, no headings',
+    'and no closing summary. Use a short numbered list only if the answer is a',
+    'sequence of steps; otherwise prose.',
+    '',
+    'They are a developer working on this project who has not met this particular',
+    'thing before — not a beginner. Do not start from first principles.',
+    '',
+    'Keep identifiers, file names and paths exactly as written, in their own',
+    'script. Do not translate or transliterate them.',
+    '',
+    `Write your explanation in ${language}. Every sentence of it — not bilingually,`,
+    `and not only the first line. If you find yourself back in the passage's own`,
     `language, return to ${language}.`,
     '',
-    'You have the whole conversation. Use it, and say *why* where the why is the',
-    'confusing part.',
+    'You have the whole conversation. Use it: say what this refers to *here*,',
+    'rather than what it could mean in general.',
     '',
     // Each clause whole on its own line. A phrase split across a line break is
     // harder to read and easier to weaken by editing one half of it.

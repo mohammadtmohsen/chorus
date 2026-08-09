@@ -290,13 +290,52 @@ describe('explainPrompt', () => {
   it('names the language, more than once', () => {
     // Once is a suggestion. The measured failure is drifting back to English
     // after the first sentence, and the prompt has to still be arguing by then.
-    expect(prompt.match(/Lebanese Arabic/g)?.length).toBeGreaterThanOrEqual(3)
+    expect(prompt.match(/Lebanese Arabic/g)?.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('asks for plain language before it asks for a language', () => {
+  it('asks for the thing, not a glossary of the words', () => {
+    // The failure this exists to stop: asked to explain each term "where it
+    // appears", it produced a heading per word and the etymology of one of them.
+    expect(prompt).toContain('what the words mean in general, or one by one')
+  })
+
+  it('bounds the length with a number rather than an adjective', () => {
+    // "Short" drifted twice: first to five sections with rules between them,
+    // then to four dense paragraphs of background.
+    expect(prompt).toContain('about a hundred words')
+    expect(prompt).toContain('no headings')
+  })
+
+  it('allows a list only where the answer is genuinely a sequence', () => {
+    // Banning lists outright was an over-correction — a four-step workflow reads
+    // worse as prose. The rule is about the shape of the answer, not the markup.
+    expect(prompt).toContain('only if the answer is a')
+  })
+
+  it('names the padding that actually arrived, rather than asking for brevity', () => {
+    // Every line of this list is something a real answer volunteered and that
+    // pushed the useful part off a 190px card.
+    for (const banned of ['one by one', 'is *not*', 'already says, restated', 'earlier messages']) {
+      expect(prompt).toContain(banned)
+    }
+  })
+
+  it('puts the sharpest rules where they are read first', () => {
+    // Both of these were in the list below and both were still broken by a real
+    // answer: it opened with what the thing was not, and explained the line's
+    // punctuation instead of the task. An opening clause is the one a model
+    // commits to first, so they moved up.
+    expect(prompt).toContain('Never open by saying what it is not')
+    expect(prompt).toContain('not how the passage is written')
+    expect(prompt.indexOf('Never open by saying')).toBeLessThan(prompt.indexOf('Leave out:'))
+  })
+
+  it('asks for the substance before it asks for a language', () => {
     // Level first, language second. Leading with the language produces a
     // faithful translation of something still too dense.
-    expect(prompt.indexOf('Short sentences')).toBeLessThan(prompt.indexOf('Write every word'))
+    expect(prompt.indexOf('what it means for the work')).toBeLessThan(
+      prompt.indexOf('Write your explanation')
+    )
   })
 
   it('names the reader as a developer, so the answer is not condescending', () => {
@@ -305,6 +344,7 @@ describe('explainPrompt', () => {
 
   it('keeps identifiers as written rather than translating them', () => {
     expect(prompt).toContain('exactly as written')
+    expect(prompt).toContain('Do not translate or transliterate them')
   })
 
   it('carries the do-not-work clause', () => {
