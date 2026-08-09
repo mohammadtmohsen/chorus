@@ -48,10 +48,38 @@ option; the fewest is four. A one-row select is not a case that arises.
 Verified end to end through the built adapter, not only against a fake transport:
 six choices, correct labels, correct per-model efforts.
 
-## What is left
+## Phase 2 done: the value stops crossing providers
 
-Phase 2 — `sessionOptsFor` takes an agent, `startConversation` starts calling it,
-and reopen stops pushing today's defaults into a resumed session.
+`pnpm check` green — 1095 tests, 7 of them new. None of the three paths had a
+test before, which is how two opposite bugs lived here at once.
+
+- **New conversations** now honour the setting. `startConversation` built its own
+  options with a cwd, a sandbox and no model, and never called `sessionOptsFor` —
+  so the sheet headed "New sessions start with" did nothing for new sessions.
+- **Reopen and add-participant** stop handing Claude's model to Codex.
+  `sessionOptsFor` takes an agent, and reopen resolves inside its loop rather
+  than once outside it.
+- **Reopen passes no model at all.** A resumed thread already carries one in the
+  provider's own record; passing today's preference would re-point a
+  conversation that already exists, days after anyone chose it.
+- **Effort follows the model** — Claude's, because that list has only ever been
+  Claude's, and Codex's levels differ per model.
+
+`sessionOptsFor` takes `{cwd, profile}` rather than a whole conversation.
+`startConversation` has both before an `ActiveConversation` exists, and the cast
+that would have papered over it is a lie the type system believes.
+
+### One asymmetry, deliberate
+
+The model is dropped on a reopen and the effort is not. A resumed thread carries
+its own model, so passing one overrides it; effort is recorded nowhere, so _not_
+passing it does not restore what the conversation had — it silently drops to the
+provider default. Neither is "what it was", and losing the preference is the
+worse of the two.
+
+The real answer is recording effort per conversation, which is not this plan.
+
+## What is left
 
 Phase 3 — per-agent settings, the merge semantics in `settings:write`, discovery's
 four states, and the sheet, together.

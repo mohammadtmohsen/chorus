@@ -429,15 +429,6 @@ export class ChorusRuntime {
     })
 
     const profile = profileById(options.profileId ?? '')
-    const sessionOpts: SessionOpts = {
-      cwd,
-      // The provider sandbox mirrors the profile, so we get defence in depth
-      // rather than relying only on our own gate (plan §4.4).
-      sandbox:
-        profile.id === 'read-only'
-          ? { mode: 'readOnly', writableRoots: [], networkAccess: false }
-          : { mode: 'workspaceWrite', writableRoots: [cwd], networkAccess: false },
-    }
 
     // One set of grants for the whole conversation: allowing something for
     // Codex should not mean being asked again the moment Claude does the same.
@@ -447,7 +438,22 @@ export class ChorusRuntime {
     // no reason, and one failing should not hide the other.
     const started = await Promise.allSettled(
       options.agents.map((agentId) =>
-        this.startParticipant(agentId, conversationId, sessionOpts, profile, grants)
+        /*
+         * Resolved per agent, and resolved *here*.
+         *
+         * This path used to build its own `SessionOpts` with a cwd, a sandbox
+         * and no model at all — so the sheet headed "New sessions start with"
+         * did nothing for new sessions, the one case its label promises. The
+         * provider sandbox still mirrors the profile, for defence in depth
+         * rather than relying only on our own gate (plan §4.4).
+         */
+        this.startParticipant(
+          agentId,
+          conversationId,
+          this.sessionOptsFor({ cwd, profile }, agentId),
+          profile,
+          grants
+        )
       )
     )
 
@@ -1052,10 +1058,18 @@ export class ChorusRuntime {
       draft: entry.draft,
       planning: false,
     }
-    const sessionOpts = this.sessionOptsFor(conversation)
-
     const started = await Promise.allSettled(
       entry.agents.map(async (agentId) => {
+        /*
+         * Resolved inside the loop, and as a resume.
+         *
+         * One object outside it meant every agent got the same model; asking
+         * for it as a resume means none of them gets one at all, because the
+         * thread the provider is rejoining already has the model it was started
+         * with. Passing today's preference here would re-point a conversation
+         * that already exists, days after anyone chose it.
+         */
+        const sessionOpts = this.sessionOptsFor(conversation, agentId, true)
         /*
          * An empty ref is not a thread.
          *
@@ -1514,7 +1528,7 @@ export class ChorusRuntime {
     const participant = await this.startParticipant(
       agentId,
       conversationId,
-      this.sessionOptsFor(conversation),
+      this.sessionOptsFor(conversation, agentId),
       conversation.profile,
       conversation.grants
     )
@@ -1550,17 +1564,51 @@ export class ChorusRuntime {
   }
 
   /** The provider sandbox mirrors the profile, so it is rebuilt when either moves. */
-  private sessionOptsFor(conversation: ActiveConversation): SessionOpts {
-    // A default, read at start rather than held: changing it in the sheet
-    // should affect the next session without the app having to be restarted.
-    const preferred = readSettings(this.userDataPath).model
+  /**
+   * The default model for one agent.
+   *
+   * The setting is still a single string, and that string was always chosen from
+   * **Claude's** list — the only catalogue the sheet has ever shown. So it is
+   * Claude's, and handing it to Codex sends a value from one provider's
+   * catalogue to another's API. Until the setting becomes a map per agent, the
+   * honest reading is to apply it where it came from and give Codex nothing,
+   * which is a provider default rather than a wrong one.
+   */
+  private preferredModelFor(agentId: AgentId): string {
+    return agentId === 'claude' ? readSettings(this.userDataPath).model : ''
+  }
+
+  /**
+   * What one agent starts with.
+   *
+   * Per agent, which it was not: this returned one object for whichever agent
+   * happened to be starting, so a Claude model reached Codex's `thread/start`.
+   *
+   * `resuming` drops the model entirely. A resumed session already has one —
+   * it is in the provider's own record of the thread — and passing today's
+   * preference would silently re-point a conversation that already exists at a
+   * different model, days after anyone chose it.
+   */
+  private sessionOptsFor(
+    /*
+     * The two fields this actually needs, rather than a whole conversation.
+     * `startConversation` has them before an `ActiveConversation` exists, and a
+     * cast to pretend otherwise would be a lie the type system believed.
+     */
+    where: { readonly cwd: string; readonly profile: PermissionProfile },
+    agentId: AgentId,
+    resuming = false
+  ): SessionOpts {
+    // Read at call time rather than held: changing the sheet should affect the
+    // next session without the app having to be restarted.
+    const preferred = resuming ? '' : this.preferredModelFor(agentId)
     return {
-      cwd: conversation.cwd,
+      cwd: where.cwd,
       ...(preferred === '' ? {} : { model: preferred }),
       sandbox:
-        conversation.profile.id === 'read-only'
+        where.profile.id === 'read-only'
           ? { mode: 'readOnly', writableRoots: [], networkAccess: false }
-          : { mode: 'workspaceWrite', writableRoots: [conversation.cwd], networkAccess: false },
+          : { mode: 'workspaceWrite', writableRoots: [where.cwd], networkAccess: false },
     }
   }
 
@@ -1867,7 +1915,23 @@ export class ChorusRuntime {
         // A CLI that cannot be asked simply offers no choice in the sheet.
       })
 
-    const effort = readSettings(this.userDataPath).effortLevel
+    /*
+     * Claude's, for the same reason the model is: the sheet's effort list has
+     * only ever been Claude's, so applying it to Codex sends one provider's
+     * level to another. Codex's own levels differ per model — `ultra` exists on
+     * some and not others — so the two lists are not interchangeable even where
+     * they overlap.
+     *
+     * Applied on a reopen as well as a fresh start, which is deliberately *not*
+     * what the model does. A resumed thread carries its own model in the
+     * provider's record, so passing one would override it; effort is not
+     * recorded anywhere, so not applying it does not restore what the
+     * conversation had — it silently drops to the provider default. Neither
+     * choice is "what it was", and losing the preference is the worse of the
+     * two. Recording effort per conversation is the real answer and is not this
+     * phase.
+     */
+    const effort = agentId === 'claude' ? readSettings(this.userDataPath).effortLevel : ''
     if (effort !== '') {
       await session.setEffort(effort).catch((error: unknown) => {
         this.log.warn('could not apply the preferred effort level', {

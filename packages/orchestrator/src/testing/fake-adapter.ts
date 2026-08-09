@@ -86,6 +86,20 @@ export class FakeAgentSession implements AgentSession {
     return Promise.resolve()
   }
 
+  /**
+   * Recorded rather than acted on, so a test can assert an effort was applied.
+   *
+   * Present at all because the real question is whether it was applied to the
+   * right agent: the preference has only ever come from Claude's list, and
+   * Codex's levels differ per model.
+   */
+  readonly efforts: string[] = []
+
+  setEffort(level: string): Promise<void> {
+    this.efforts.push(level)
+    return Promise.resolve()
+  }
+
   /** Recorded rather than acted on, so a test can assert the handover happened. */
   readonly permissionModes: string[] = []
 
@@ -150,13 +164,24 @@ export class FakeAdapter implements AgentAdapter {
     this.version = options.version ?? '0.0.0-fake'
   }
 
-  start(_opts: SessionOpts): Promise<AgentSession> {
+  /**
+   * Every `SessionOpts` this adapter was handed, in order.
+   *
+   * The model is the interesting field: three separate paths build one, and a
+   * value from one provider's catalogue reaching another's is invisible until
+   * something writes down what each was actually started with.
+   */
+  readonly startedOpts: SessionOpts[] = []
+
+  start(opts: SessionOpts): Promise<AgentSession> {
+    this.startedOpts.push(opts)
     const session = new FakeAgentSession(`fake-session-${String(++this.counter)}`, this.id)
     this.sessions.push(session)
     return Promise.resolve(session)
   }
 
-  resume(sessionRef: string, _opts: SessionOpts): Promise<AgentSession> {
+  resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession> {
+    this.startedOpts.push(opts)
     const session = new FakeAgentSession(sessionRef, this.id)
     this.sessions.push(session)
     return Promise.resolve(session)
