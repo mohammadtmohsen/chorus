@@ -153,7 +153,15 @@ export class CodexSession implements AgentSession {
     const resolve = this.openApprovals.get(id)
     if (resolve === undefined) return Promise.resolve()
     this.openApprovals.delete(id)
-    const scope = decision.outcome === 'allow' ? decision.scope : 'once'
+    /*
+     * `always` is Chorus's own idea, so it stops here.
+     *
+     * Codex knows two answers: this once, or for the rest of this run. Chorus
+     * remembering the answer past a restart is bookkeeping on our side, and the
+     * most the provider needs to be told is not to ask again while it is up.
+     */
+    const scope =
+      decision.outcome !== 'allow' ? 'once' : decision.scope === 'once' ? 'once' : 'session'
     resolve(toCodexDecision(decision.outcome, scope))
     return Promise.resolve()
   }

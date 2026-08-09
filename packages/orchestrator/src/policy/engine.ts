@@ -25,7 +25,11 @@ import { matches, subjectOf, type PermissionProfile, type Rule } from './rules.j
  */
 
 export type PolicyDecision =
-  | { readonly decision: 'allow'; readonly ruleId: string; readonly scope: 'once' | 'session' }
+  | {
+      readonly decision: 'allow'
+      readonly ruleId: string
+      readonly scope: 'once' | 'session' | 'always'
+    }
   | { readonly decision: 'deny'; readonly ruleId: string; readonly reason: string }
   | { readonly decision: 'ask'; readonly reason: string }
 
@@ -48,8 +52,30 @@ export function grantKey(request: ApprovalRequest): string {
   return `${request.agentId}:${request.kind}:${subject}`
 }
 
+export interface RememberedGrants {
+  /** Keys from a previous run, so an answer survives a restart. */
+  readonly keys?: readonly string[]
+  /** Called with the full set whenever it grows, for whoever persists it. */
+  readonly onRemember?: (keys: readonly string[]) => void
+}
+
 export class SessionGrants {
   private readonly granted = new Map<string, SessionGrant>()
+  /**
+   * Answers that outlive the window they were given in.
+   *
+   * Separate from `granted` rather than a flag on it, because the two have
+   * different rules: a session grant refuses the kinds that may never be
+   * auto-decided, and a remembered one is the user having decided anyway. Only
+   * a person can put a key in here.
+   */
+  private readonly rememberedKeys: Set<string>
+  private readonly onRemember: ((keys: readonly string[]) => void) | undefined
+
+  constructor(remembered: RememberedGrants = {}) {
+    this.rememberedKeys = new Set(remembered.keys ?? [])
+    this.onRemember = remembered.onRemember
+  }
 
   /** Returns false for kinds that may never be granted ahead of time. */
   add(request: ApprovalRequest): boolean {
@@ -57,6 +83,27 @@ export class SessionGrants {
     const key = grantKey(request)
     this.granted.set(key, { key, describe: describeRequest(request) })
     return true
+  }
+
+  /**
+   * Remembers an answer past this run, for any kind.
+   *
+   * Deliberately not refusing outward-facing kinds the way `add` does. That
+   * refusal protects the user from a *profile* deciding for them; this is the
+   * user deciding, and the button that reaches here is only ever pressed by
+   * someone reading the request.
+   */
+  addAlways(request: ApprovalRequest): void {
+    this.rememberedKeys.add(grantKey(request))
+    this.onRemember?.([...this.rememberedKeys])
+  }
+
+  isRemembered(request: ApprovalRequest): boolean {
+    return this.rememberedKeys.has(grantKey(request))
+  }
+
+  remembered(): string[] {
+    return [...this.rememberedKeys]
   }
 
   has(request: ApprovalRequest): boolean {
@@ -77,16 +124,43 @@ export function evaluate(
   profile: PermissionProfile,
   grants?: SessionGrants
 ): PolicyDecision {
-  // 1. Outward-facing actions are never decided for the user. A sent Slack
-  //    message is not recoverable the way a file edit is (plan §2.6).
-  if (requiresExplicitUserDecision(request.kind)) {
-    return { decision: 'ask', reason: 'Outward-facing actions always need a person' }
-  }
-
-  // 2. Denies are absolute.
+  /*
+   * 1. Denies are absolute, and now genuinely first.
+   *
+   * They used to sit behind the outward-facing check, which was harmless while
+   * that check could only ever return `ask` — a deny and an ask are both
+   * refusals. It stops being harmless the moment anything above it can return
+   * `allow`, so the order is now what the invariant says: nothing reaches past
+   * what the profile forbids. A test asserts it, and caught this in the version
+   * of the change where the remembered grant went first.
+   */
   const denial = firstMatch(profile.rules, request, 'deny')
   if (denial !== undefined) {
     return { decision: 'deny', ruleId: denial.id, reason: denial.describe }
+  }
+
+  /*
+   * 2. An answer the user already gave permanently.
+   *
+   * Above the outward-facing check on purpose, and this is the one place that
+   * check can be passed. A sent Slack message is not recoverable the way a file
+   * edit is (plan §2.6), which is why no profile and no tool annotation may
+   * allow one — but "the user said yes to this exact tool, permanently" is not
+   * the app deciding for them.
+   *
+   * The flaw it fixes, measured: an MCP call may never be auto-decided, so
+   * "allow for this session" on one was silently refused and the same tool asked
+   * again on every call, in every session, forever. On this machine that is 118
+   * tools across seven servers, `github: search_repositories` — a read — among
+   * them. Nothing can put a key in that set except a person pressing the button.
+   */
+  if (grants?.isRemembered(request) === true) {
+    return { decision: 'allow', ruleId: 'remembered-grant', scope: 'always' }
+  }
+
+  // 3. Otherwise an outward-facing action is never decided for the user.
+  if (requiresExplicitUserDecision(request.kind)) {
+    return { decision: 'ask', reason: 'Outward-facing actions always need a person' }
   }
 
   /*

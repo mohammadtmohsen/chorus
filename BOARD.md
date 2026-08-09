@@ -122,6 +122,23 @@ before tagging" and the release checklist says so.
 
 ---
 
+### C-012 · Model and effort per agent
+
+The pickers in Settings read `known.agents.find(a => a.agentId === 'claude')`, so
+they are Claude's and unlabelled as such. Asked for as "the model and effort
+should be based on the agent", which is right — a single pair of selects cannot
+honestly speak for two providers.
+
+**It is not a settings-screen change.** `adapter-codex` does not implement
+`supportedModels` at all, so codex reports no models and no effort levels: a
+per-agent picker today would draw Claude's list beside an empty box. The work is
+model discovery in the codex adapter first — the CLI has `-m`, so the list exists
+somewhere — and only then two labelled rows.
+
+**Done when:** each agent that reports models has its own model and effort row,
+named, and an agent that reports none says so rather than showing an empty
+control.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets

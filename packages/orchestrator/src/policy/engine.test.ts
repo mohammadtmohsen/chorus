@@ -24,12 +24,64 @@ const fileChange = (...paths: string[]): ApprovalRequest => ({
   files: paths.map((path) => ({ path, patch: '@@' })),
 })
 
-const mcp = (): ApprovalRequest => ({
+const mcp = (toolName = 'send_message'): ApprovalRequest => ({
   ...base,
   kind: 'mcpToolCall',
   serverName: 'slack',
-  toolName: 'send_message',
+  toolName,
   input: { channel: '#eng' },
+})
+
+describe('an answer the user gave permanently', () => {
+  /*
+   * The failure this exists for, measured on a real machine: an MCP tool call
+   * may never be auto-decided, so "allow for this session" was silently refused
+   * and the same tool asked again on every call, in every session, forever —
+   * 118 tools across seven servers, `github: search_repositories` among them.
+   */
+  it('lets an outward-facing action be remembered, which a session grant cannot', () => {
+    const grants = new SessionGrants()
+    expect(grants.add(mcp())).toBe(false)
+    expect(evaluate(mcp(), TRUSTED, grants)).toMatchObject({ decision: 'ask' })
+
+    grants.addAlways(mcp())
+    expect(evaluate(mcp(), TRUSTED, grants)).toMatchObject({
+      decision: 'allow',
+      ruleId: 'remembered-grant',
+      scope: 'always',
+    })
+  })
+
+  /* Keyed per tool, so saying yes to one is not saying yes to the server. */
+  it('answers for that tool and nothing else', () => {
+    const grants = new SessionGrants()
+    grants.addAlways(mcp())
+    expect(evaluate(mcp('delete_channel'), TRUSTED, grants)).toMatchObject({ decision: 'ask' })
+  })
+
+  /* Survives the restart, which is the entire point of the scope. */
+  it('is restored from the keys a previous run left behind', () => {
+    let saved: readonly string[] = []
+    const recording = new SessionGrants({ onRemember: (keys) => (saved = keys) })
+    recording.addAlways(mcp())
+    expect(saved).toHaveLength(1)
+
+    expect(evaluate(mcp(), TRUSTED, new SessionGrants())).toMatchObject({ decision: 'ask' })
+    expect(evaluate(mcp(), TRUSTED, new SessionGrants({ keys: saved }))).toMatchObject({
+      decision: 'allow',
+    })
+  })
+
+  /*
+   * The invariant that must not be traded away for convenience: a remembered
+   * answer widens what a profile permits and never reaches past what it forbids.
+   */
+  it('never beats a deny', () => {
+    const grants = new SessionGrants()
+    const banned = command('rm -rf /tmp/anything')
+    grants.addAlways(banned)
+    expect(evaluate(banned, TRUSTED, grants)).toMatchObject({ decision: 'deny' })
+  })
 })
 
 describe('outward-facing actions', () => {

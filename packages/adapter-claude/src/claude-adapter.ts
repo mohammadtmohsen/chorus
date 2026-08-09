@@ -238,7 +238,10 @@ export class ClaudeSession implements AgentSession {
        * Only on `session`. "Just this once" must not write a rule, which is the
        * entire difference between the two buttons.
        */
-      const always = decision.scope === 'session' ? pending.suggestions : undefined
+      // `session` and `always` are both "stop asking" as far as the CLI is
+      // concerned; the difference between them is whether Chorus forgets on quit.
+      const lasting = decision.scope !== 'once'
+      const always = lasting ? pending.suggestions : undefined
       pending.resolve({
         behavior: 'allow',
         updatedInput: decision.updatedInput ?? pending.input,
@@ -246,7 +249,7 @@ export class ClaudeSession implements AgentSession {
           ? {}
           : { updatedPermissions: always as never }),
         // So the CLI's own record of what happened matches what happened.
-        decisionClassification: decision.scope === 'session' ? 'user_permanent' : 'user_temporary',
+        decisionClassification: lasting ? 'user_permanent' : 'user_temporary',
       })
       return Promise.resolve()
     }

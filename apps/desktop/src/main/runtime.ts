@@ -42,6 +42,7 @@ import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/work
 import type { ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
+import { readRemembered, writeRemembered } from './remembered.js'
 import { readSettings } from './settings.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { findExecutable } from './which.js'
@@ -198,6 +199,24 @@ export class ChorusRuntime {
     return new ChorusRuntime(db, store, adapters ?? defaultAdapters(), log, userDataPath)
   }
 
+  /**
+   * Grants for one conversation, seeded with what the user answered permanently.
+   *
+   * The remembered set is machine-wide and the same for every room — answered
+   * once, which is the whole point — while the session half stays per
+   * conversation as before. Written back on every addition rather than at quit,
+   * because a decision lost to a crash is a decision the user has to make twice.
+   */
+  private newGrants(): SessionGrants {
+    return new SessionGrants({
+      keys: readRemembered(this.userDataPath),
+      onRemember: (keys) => {
+        writeRemembered(this.userDataPath, keys)
+        this.log.info('remembered a permission permanently', { total: keys.length })
+      },
+    })
+  }
+
   /** Told whenever a provider reports its account limits. */
   onLimitsReported(listener: (push: { agentId: AgentId; windows: UsageWindow[] }) => void): void {
     this.onLimits = listener
@@ -305,7 +324,7 @@ export class ChorusRuntime {
 
     // One set of grants for the whole conversation: allowing something for
     // Codex should not mean being asked again the moment Claude does the same.
-    const grants = new SessionGrants()
+    const grants = this.newGrants()
 
     // Started in parallel: two agents booting sequentially doubles the wait for
     // no reason, and one failing should not hide the other.
@@ -643,7 +662,7 @@ export class ChorusRuntime {
 
   private async reopen(entry: OpenSession): Promise<ActiveConversation | null> {
     const profile = profileById(entry.profileId)
-    const grants = new SessionGrants()
+    const grants = this.newGrants()
     const conversation: ActiveConversation = {
       conversationId: entry.conversationId,
       participants: new Map(),

@@ -80,7 +80,20 @@ export interface McpToolCallApproval extends ApprovalRequestBase {
 export type ApprovalRequest =
   CommandApproval | FileChangeApproval | PermissionGrantApproval | McpToolCallApproval
 
-export type ApprovalScope = 'once' | 'session'
+/**
+ * How long an answer lasts.
+ *
+ * `always` outlives the app, and exists because of the one case where `session`
+ * was a promise Chorus could not keep: an MCP tool call may never be
+ * auto-decided, so "allow for this session" on one was silently refused and the
+ * same tool asked again on every call, in every session, forever. A person who
+ * has answered "yes, this tool, always" has made a decision; forgetting it is
+ * not caution, it is amnesia.
+ *
+ * It is still never granted by a profile rule or inferred from a tool's
+ * annotations — only by someone pressing the button.
+ */
+export type ApprovalScope = 'once' | 'session' | 'always'
 
 export type ApprovalDecision =
   | {

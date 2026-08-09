@@ -239,6 +239,16 @@ export class ConversationService {
     // so the same action does not ask again. Outward-facing kinds refuse to be
     // remembered — `SessionGrants.add` returns false for them (plan §2.6).
     const entry = this.queue.get(approvalId)
+    /*
+     * "Always" is remembered past this run; "session" only until it ends.
+     *
+     * Both are recorded before the queue forgets the request, and only `always`
+     * may answer for a kind that can never be auto-decided — because that is the
+     * user having decided, not a profile deciding for them.
+     */
+    if (entry !== undefined && decision.outcome === 'allow' && decision.scope === 'always') {
+      this.grants.addAlways(entry.request)
+    }
     if (entry !== undefined && decision.outcome === 'allow' && decision.scope === 'session') {
       this.grants.add(entry.request)
 

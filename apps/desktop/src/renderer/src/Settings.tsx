@@ -297,8 +297,29 @@ function DefaultModel(): React.JSX.Element | null {
           value={model}
           onChange={(event) => {
             const next = event.target.value
+            /*
+             * The effort is reconciled with the model, not left to drift.
+             *
+             * Effort levels belong to a model, so choosing a different one can
+             * leave the saved level absent from the new list. The select then had
+             * no matching option and the browser drew it blank, while the file
+             * still held the old value — the picker said one thing and disk said
+             * another, which is the version of this bug that gets reported as
+             * "choosing a model resets my effort".
+             *
+             * Cleared to the provider's default when it no longer applies, and
+             * both fields are written in one call so the two cannot disagree.
+             */
+            const levelsFor =
+              (next === '' ? models[0] : models.find((entry) => entry.value === next))
+                ?.effortLevels ?? []
+            const keep = effort !== '' && levelsFor.includes(effort)
             setModel(next)
-            void window.chorus.writeSettings({ model: next })
+            if (!keep) setEffort('')
+            void window.chorus.writeSettings({
+              model: next,
+              ...(keep ? {} : { effortLevel: '' }),
+            })
           }}
         >
           <option value="">{t('settings.providerDefault')}</option>
