@@ -110,7 +110,11 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     type: z.literal('approval.decided'),
     approvalId: z.string(),
     outcome: z.enum(['allow', 'deny', 'cancel', 'timeout']),
-    scope: z.enum(['once', 'session']).nullable(),
+    /*
+     * `always` widens this and does not migrate anything: rows already written
+     * only ever hold `once` or `session`, so every existing log still parses.
+     */
+    scope: z.enum(['once', 'session', 'always']).nullable(),
     decidedBy: z.enum(['user', 'policy', 'system']),
     /** Which rule auto-decided this. Null means a human chose (plan §4.4). */
     policyRuleId: z.string().nullable(),

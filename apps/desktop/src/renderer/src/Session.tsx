@@ -448,7 +448,11 @@ export function Session(props: {
   }, [conversationId])
 
   const decide = useCallback(
-    (approval: PendingApproval, outcome: 'allow' | 'deny', scope: 'once' | 'session' = 'once') => {
+    (
+      approval: PendingApproval,
+      outcome: 'allow' | 'deny',
+      scope: 'once' | 'session' | 'always' = 'once'
+    ) => {
       window.chorus
         .decideApproval({
           conversationId,
@@ -860,7 +864,18 @@ export function Session(props: {
               decide(current, 'allow')
             }}
             onAllowAlways={() => {
-              decide(current, 'allow', 'session')
+              /*
+               * `session` is a lie for an outward-facing kind, so it says
+               * `always` there instead.
+               *
+               * An MCP tool call may never be auto-decided, which means a session
+               * grant for one was silently refused and the same tool asked again
+               * on the very next call. The wider button either widens something
+               * or it should not be offered; for these it now remembers the
+               * answer past a restart, which is the only scope that changes
+               * anything at all.
+               */
+              decide(current, 'allow', current.kind === 'mcpToolCall' ? 'always' : 'session')
             }}
             onDeny={() => {
               decide(current, 'deny')
@@ -1282,7 +1297,9 @@ function ApprovalCard({
           costs a deliberate press rather than the Enter that is already armed.
         */}
         <button type="button" className="btn" onClick={onAllowAlways}>
-          {t('approval.allowAlways')}
+          {approval.kind === 'mcpToolCall'
+            ? t('approval.allowRemembered')
+            : t('approval.allowAlways')}
         </button>
         <button type="button" className="btn" onClick={onDeny}>
           {t('approval.deny')}

@@ -67,7 +67,14 @@ export const ApprovalChoice = z.object({
   agentId: z.enum(['codex', 'claude']),
   approvalId: z.string(),
   outcome: z.enum(['allow', 'deny', 'cancel']),
-  scope: z.enum(['once', 'session']),
+  /**
+   * `always` outlives the app; `session` dies with it.
+   *
+   * The third is here because the second was a promise Chorus could not keep for
+   * an MCP call: those may never be auto-decided, so "allow for this session" was
+   * refused and the same tool asked again on every call, forever.
+   */
+  scope: z.enum(['once', 'session', 'always']),
 })
 export type ApprovalChoice = z.infer<typeof ApprovalChoice>
 

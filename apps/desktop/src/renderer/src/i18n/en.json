@@ -201,7 +201,8 @@
     "allowOnce": "Allow once",
     "deny": "Deny",
     "enterHint": "Enter to allow",
-    "allowAlways": "Allow for this session"
+    "allowAlways": "Allow for this session",
+    "allowRemembered": "Always allow this tool"
   },
   "question": {
     "asking": "{{agent}} is asking",
