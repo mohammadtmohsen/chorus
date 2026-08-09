@@ -282,7 +282,19 @@ export class ChorusRuntime {
    * remembering what a session already answered is both cheaper and available
    * when no session is.
    */
-  private readonly knownModelsByAgent = new Map<AgentId, readonly ModelChoice[]>()
+  /**
+   * What each agent's catalogue is doing, not just what is in it.
+   *
+   * A list and a length cannot say why it is empty. Discovery discarded an empty
+   * answer and swallowed a failure, so "not asked yet", "asked and offered
+   * nothing" and "asked and it broke" were one indistinguishable silence — and a
+   * sheet cannot be honest about an agent that reports nothing until they are
+   * separate facts.
+   */
+  private readonly knownModelsByAgent = new Map<
+    AgentId,
+    { status: 'unqueried' | 'loading' | 'ready' | 'failed'; models: readonly ModelChoice[] }
+  >()
 
   private constructor(
     private readonly db: SqliteHandle,
@@ -1498,11 +1510,26 @@ export class ChorusRuntime {
   }
 
   /** What the settings sheet offers, from whichever session last answered. */
-  knownModels(): { agentId: AgentId; models: ModelChoice[] }[] {
-    return [...this.knownModelsByAgent].map(([agentId, models]) => ({
-      agentId,
-      models: [...models],
-    }))
+  /**
+   * One row per adapter, whether or not it has ever been asked.
+   *
+   * Seeded from `adapters` rather than from what discovery happened to record,
+   * so the sheet can draw a row for an agent that has never run — which is the
+   * common case on a machine where only one agent has been used.
+   */
+  knownModels(): {
+    agentId: AgentId
+    status: 'unqueried' | 'loading' | 'ready' | 'failed'
+    models: ModelChoice[]
+  }[] {
+    return [...this.adapters.keys()].map((agentId) => {
+      const known = this.knownModelsByAgent.get(agentId)
+      return {
+        agentId,
+        status: known?.status ?? 'unqueried',
+        models: [...(known?.models ?? [])],
+      }
+    })
   }
 
   openConversations(): { conversationId: string; participants: AgentId[]; cwd: string }[] {
@@ -1565,17 +1592,16 @@ export class ChorusRuntime {
 
   /** The provider sandbox mirrors the profile, so it is rebuilt when either moves. */
   /**
-   * The default model for one agent.
+   * The default model for one agent, from that agent's own entry.
    *
-   * The setting is still a single string, and that string was always chosen from
-   * **Claude's** list — the only catalogue the sheet has ever shown. So it is
-   * Claude's, and handing it to Codex sends a value from one provider's
-   * catalogue to another's API. Until the setting becomes a map per agent, the
-   * honest reading is to apply it where it came from and give Codex nothing,
-   * which is a provider default rather than a wrong one.
+   * The setting was a single string until this, and that string was always
+   * chosen from **Claude's** list — the only catalogue the sheet ever showed —
+   * so handing it to Codex sent a value from one provider's catalogue to
+   * another's API. The schema's transform folds the old scalar onto Claude for
+   * exactly that reason; this only has to read the map.
    */
   private preferredModelFor(agentId: AgentId): string {
-    return agentId === 'claude' ? readSettings(this.userDataPath).model : ''
+    return readSettings(this.userDataPath).models[agentId]
   }
 
   /**
@@ -1906,21 +1932,35 @@ export class ChorusRuntime {
      * request per participant, and the answer does not change under a running
      * CLI.
      */
+    /*
+     * Recorded as a state, including when the answer is nothing.
+     *
+     * The previous version kept the result only when it was non-empty and
+     * swallowed a failure, which made an agent that offers no models
+     * indistinguishable from one nobody has asked — and from one whose CLI is
+     * too old to be asked. The sheet needs to tell a user which of those it is.
+     */
+    this.knownModelsByAgent.set(agentId, {
+      status: 'loading',
+      models: this.knownModelsByAgent.get(agentId)?.models ?? [],
+    })
     void session
       .supportedModels()
       .then((models) => {
-        if (models.length > 0) this.knownModelsByAgent.set(agentId, models)
+        this.knownModelsByAgent.set(agentId, { status: 'ready', models })
       })
-      .catch(() => {
-        // A CLI that cannot be asked simply offers no choice in the sheet.
+      .catch((error: unknown) => {
+        this.knownModelsByAgent.set(agentId, { status: 'failed', models: [] })
+        this.log.warn('could not read the model catalogue', {
+          agentId,
+          message: error instanceof Error ? error.message : String(error),
+        })
       })
 
     /*
-     * Claude's, for the same reason the model is: the sheet's effort list has
-     * only ever been Claude's, so applying it to Codex sends one provider's
-     * level to another. Codex's own levels differ per model — `ultra` exists on
-     * some and not others — so the two lists are not interchangeable even where
-     * they overlap.
+     * That agent's own, for the same reason the model is. Codex's levels differ
+     * per model — `ultra` exists on some and not others — so the two providers'
+     * lists are not interchangeable even where they appear to overlap.
      *
      * Applied on a reopen as well as a fresh start, which is deliberately *not*
      * what the model does. A resumed thread carries its own model in the
@@ -1931,7 +1971,7 @@ export class ChorusRuntime {
      * two. Recording effort per conversation is the real answer and is not this
      * phase.
      */
-    const effort = agentId === 'claude' ? readSettings(this.userDataPath).effortLevel : ''
+    const effort = readSettings(this.userDataPath).efforts[agentId]
     if (effort !== '') {
       await session.setEffort(effort).catch((error: unknown) => {
         this.log.warn('could not apply the preferred effort level', {

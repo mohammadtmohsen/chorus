@@ -103,3 +103,66 @@ describe('effort', () => {
     expect(codex.sessions[0]?.efforts).toEqual([])
   })
 })
+
+describe('the setting already on disk', () => {
+  it('folds the single model onto Claude, whose list it came from', () => {
+    // Not a split. Whatever is in a settings file today was chosen from Claude's
+    // catalogue, because that is the only one the sheet ever showed.
+    const written = writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    expect(written.models).toEqual({ claude: 'sonnet', codex: '' })
+  })
+
+  it('folds the single effort the same way', () => {
+    const written = writeSettings(dataPath, { ...DEFAULT_SETTINGS, effortLevel: 'high' })
+    expect(written.efforts).toEqual({ claude: 'high', codex: '' })
+  })
+
+  it('clears the legacy field, so the fold happens exactly once', () => {
+    // Left in place it would keep overwriting whatever Claude was later set to.
+    const written = writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    expect(written.model).toBe('')
+  })
+
+  it('does not overwrite a per-agent value that already exists', () => {
+    const written = writeSettings(dataPath, {
+      ...DEFAULT_SETTINGS,
+      model: 'sonnet',
+      models: { claude: 'opus', codex: '' },
+    })
+    expect(written.models.claude).toBe('opus')
+  })
+
+  it('leaves Codex on the provider default rather than inheriting a name', () => {
+    // The whole point: a Claude model reaching Codex's API is the bug.
+    const written = writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    expect(written.models.codex).toBe('')
+  })
+})
+
+describe('the model catalogue’s state', () => {
+  it('reports a row per adapter, even before any session has run', async () => {
+    // Seeded from the adapters rather than from what discovery recorded, so the
+    // sheet can draw a row for an agent that has never started.
+    expect(
+      runtime
+        .knownModels()
+        .map((a) => a.agentId)
+        .sort()
+    ).toEqual(['claude', 'codex'])
+    expect(runtime.knownModels().every((a) => a.status === 'unqueried')).toBe(true)
+    await Promise.resolve()
+  })
+
+  it('tells an empty answer apart from a failed one', async () => {
+    // These were one silence: an empty result was discarded and a failure
+    // swallowed, so a sheet could not say which had happened.
+    await runtime.startConversation({ agents: ['claude'], cwd: CWD })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const claudeRow = runtime.knownModels().find((a) => a.agentId === 'claude')
+    expect(claudeRow?.status).toBe('ready')
+    expect(claudeRow?.models).toEqual([])
+
+    const codexRow = runtime.knownModels().find((a) => a.agentId === 'codex')
+    expect(codexRow?.status).toBe('unqueried')
+  })
+})

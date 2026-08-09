@@ -84,6 +84,13 @@ export const SettingsShape = z.object({
   /** Empty means the provider's own choice, which is not a model name. */
   model: z.string().default(''),
   effortLevel: z.string().default(''),
+  /** Per agent, because the two providers share no model. */
+  models: z
+    .object({ codex: z.string().default(''), claude: z.string().default('') })
+    .default({ codex: '', claude: '' }),
+  efforts: z
+    .object({ codex: z.string().default(''), claude: z.string().default('') })
+    .default({ codex: '', claude: '' }),
   /**
    * The language an explanation comes back in. Empty means the action is not
    * offered — see the plan: there is no sensible guess at someone's own language,
@@ -381,6 +388,12 @@ export const IPC_CONTRACT = {
       agents: z.array(
         z.object({
           agentId: z.enum(['codex', 'claude']),
+          /**
+           * Why the list is what it is. An empty `ready` and an empty `failed`
+           * look identical without this, and the sheet has to say different
+           * things about them.
+           */
+          status: z.enum(['unqueried', 'loading', 'ready', 'failed']),
           models: z.array(
             z.object({
               value: z.string(),
@@ -758,7 +771,16 @@ export const IPC_CONTRACT = {
   },
   /** A patch: sending only what changed keeps one field from clobbering another. */
   'settings:write': {
-    request: SettingsShape.partial(),
+    /*
+     * `.partial()` only reaches the top level, so the per-agent maps would still
+     * demand both agents — and a caller setting one agent's model would have to
+     * send the other's too, which is how the value gets clobbered in the first
+     * place. Their fields are optional here, and main merges a level deeper.
+     */
+    request: SettingsShape.partial().extend({
+      models: z.object({ codex: z.string(), claude: z.string() }).partial().optional(),
+      efforts: z.object({ codex: z.string(), claude: z.string() }).partial().optional(),
+    }),
     response: SettingsShape,
   },
   'diagnostics:read': {

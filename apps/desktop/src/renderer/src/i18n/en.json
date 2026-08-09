@@ -96,11 +96,17 @@
     "model": "Model",
     "effort": "Reasoning effort",
     "providerDefault": "The provider's default",
-    "newSessionsNote": "A default only. Each conversation can change its own from its card in the sidebar.",
+    "newSessionsNote": "A default only. Each conversation can change its own from its card in the sidebar. The two agents do not share a model, so each has its own.",
     "explainHeading": "Explaining a passage",
     "explainLanguage": "Answer in",
     "explainPlaceholder": "Arabic",
-    "explainNote": "When you select part of a reply, an agent can explain it plainly in this language. Write it however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. Leave it empty and the option is not offered. This does not change Chorus's own language."
+    "explainNote": "When you select part of a reply, an agent can explain it plainly in this language. Write it however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. Leave it empty and the option is not offered. This does not change Chorus's own language.",
+    "catalogue": {
+      "unqueried": "Its models are read from a running session — start one to choose.",
+      "loading": "Reading its models…",
+      "failed": "Its models could not be read. Provider default still applies.",
+      "none": "It offers no model choice."
+    }
   },
   "activity": {
     "label": "Agents and settings",

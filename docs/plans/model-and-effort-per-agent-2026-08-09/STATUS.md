@@ -79,7 +79,44 @@ worse of the two.
 
 The real answer is recording effort per conversation, which is not this plan.
 
-## What is left
+## Phase 3 done: the settings are per-agent, and the sheet draws one row each
 
-Phase 3 — per-agent settings, the merge semantics in `settings:write`, discovery's
-four states, and the sheet, together.
+Shipped as one change because it could not be split — turning the IPC's `model`
+and `effortLevel` from strings into per-agent maps breaks the existing component
+in the same commit.
+
+- **`models` and `efforts` are maps keyed by agent.** A zod `.transform()` folds
+  a legacy scalar onto **Claude** and clears it, because the only catalogue the
+  sheet ever showed was Claude's — so whatever is on disk today was chosen from
+  it. The clear is what makes the fold happen exactly once; left in place it
+  would keep overwriting whatever Claude was later set to.
+- **`settings:write` merges one level deeper.** A spread is shallow, so sending
+  `{models: {codex: 'x'}}` replaced the whole map and dropped Claude's — one
+  agent's model silently clearing the other's, with nothing on screen to show it.
+- **Discovery has four states** (`unqueried` / `loading` / `ready` / `failed`)
+  where it had one silence. An empty answer was discarded and a failure
+  swallowed, so the sheet could not say which had happened. Rows are seeded from
+  the adapters, not from what discovery recorded, so an agent that has never
+  started still gets a row.
+- **A saved model that is no longer in any catalogue stays selected and named.**
+  Dropping it to the provider default would hide the value that is actually
+  being sent, and leave no way to change it.
+
+### Verified in the running app, not just in tests
+
+The three cases the plan asked for, driven through CDP:
+
+- **Both agents present** — a row each, Codex offering its own six models with
+  the provider default first; picking a Codex model left Claude's `opus` intact
+  on disk. This is the merge bug, caught end to end.
+- **One agent never started** — Codex still gets a row, with the provider default
+  and the note that its models are read from a running session.
+- **A model the CLI would reject** — `sonnet-4-retired` stays selected and named
+  on screen rather than silently reverting.
+
+### A test that proved nothing, replaced
+
+The first `settings:write` merge test asserted over a hand-built object and so
+only demonstrated JS spread semantics. It passed against the shallow merge. The
+replacement drives the real `buildHandlers` handler, and was checked by reverting
+the fix and watching it fail.

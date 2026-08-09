@@ -308,65 +308,40 @@ function ExplainLanguage(): React.JSX.Element {
   )
 }
 
-function DefaultModel(): React.JSX.Element | null {
+/**
+ * One agent's model and effort, for new sessions.
+ *
+ * Per agent because the two providers share no model. One pair of selects for
+ * both was not a simplification: it sent a name from Claude's catalogue to
+ * Codex's API, because Claude's list was the only one this sheet ever showed.
+ *
+ * Codex's effort levels differ *per model* — `ultra` exists on some and not
+ * others — which is why the levels come off the chosen model rather than any
+ * list held globally.
+ */
+function AgentDefaults({
+  agentId,
+  status,
+  models,
+  model,
+  effort,
+  onChange,
+}: {
+  agentId: 'codex' | 'claude'
+  status: 'unqueried' | 'loading' | 'ready' | 'failed'
+  models: { value: string; label: string; effortLevels: string[] }[]
+  model: string
+  effort: string
+  onChange: (next: { model?: string; effort?: string }) => void
+}): React.JSX.Element {
   const { t } = useTranslation()
-  const [model, setModel] = useState('')
-  const [effort, setEffort] = useState('')
-
-  /*
-   * Asked until a session can answer, like the panels above.
-   *
-   * The list comes from a running CLI, and this sheet can be opened before any
-   * session has started — in which case a single fetch got nothing and the whole
-   * "New sessions start with" section returned null, permanently, for that
-   * opening. Measured: opened at launch it did not exist; opened twelve seconds
-   * later it had both rows.
-   *
-   * Claude's list, when there is one. It is the agent with an effort control,
-   * and a single pair of selects cannot honestly speak for two providers.
-   */
-  const models = useFromLiveSession<{ value: string; label: string; effortLevels: string[] }>(
-    () =>
-      window.chorus
-        .knownModels()
-        .then((known) => known.agents.find((agent) => agent.agentId === 'claude')?.models ?? []),
-    []
-  )
-
-  /* The saved choices are ours and on disk, so one ask is the whole story. */
-  useEffect(() => {
-    let live = true
-    window.chorus
-      .readSettings()
-      .then((settings) => {
-        if (!live) return
-        setModel(settings.model)
-        setEffort(settings.effortLevel)
-      })
-      .catch(() => {
-        // Defaults stand, which is what the empty strings already mean.
-      })
-    return () => {
-      live = false
-    }
-  }, [])
-
-  if (models.length === 0) return null
-
-  /*
-   * The chosen model's levels, or the first row's when nothing is chosen.
-   *
-   * Nothing chosen means the provider's default is in force, and the first row
-   * *is* that default — the CLI calls it "Default (recommended)". Matching on
-   * the empty string found no row, so the effort control did not render until a
-   * model had been picked, which made it look absent rather than defaulted.
-   */
   const levels =
     (model === '' ? models[0] : models.find((entry) => entry.value === model))?.effortLevels ?? []
 
   return (
-    <fieldset className="settings-models">
-      <legend>{t('settings.newSessions')}</legend>
+    <div className="settings-agent">
+      <span className={`settings-agent-name voice--${agentId}`}>{agentId}</span>
+
       <label>
         <span>{t('settings.model')}</span>
         <select
@@ -377,44 +352,50 @@ function DefaultModel(): React.JSX.Element | null {
              * The effort is reconciled with the model, not left to drift.
              *
              * Effort levels belong to a model, so choosing a different one can
-             * leave the saved level absent from the new list. The select then had
-             * no matching option and the browser drew it blank, while the file
-             * still held the old value — the picker said one thing and disk said
-             * another, which is the version of this bug that gets reported as
-             * "choosing a model resets my effort".
-             *
-             * Cleared to the provider's default when it no longer applies, and
-             * both fields are written in one call so the two cannot disagree.
+             * leave the saved level absent from the new list. The select then
+             * had no matching option and the browser drew it blank, while the
+             * file still held the old value — the picker said one thing and disk
+             * said another, which is the version of this bug that gets reported
+             * as "choosing a model resets my effort".
              */
             const levelsFor =
               (next === '' ? models[0] : models.find((entry) => entry.value === next))
                 ?.effortLevels ?? []
             const keep = effort !== '' && levelsFor.includes(effort)
-            setModel(next)
-            if (!keep) setEffort('')
-            void window.chorus.writeSettings({
-              model: next,
-              ...(keep ? {} : { effortLevel: '' }),
-            })
+            onChange({ model: next, ...(keep ? {} : { effort: '' }) })
           }}
         >
+          {/*
+            Always first and always reachable, including when discovery failed
+            and this is the only option there is. A saved model the CLI no longer
+            accepts can stop a session starting — which is exactly when the
+            catalogue cannot be fetched, and exactly when someone needs a way
+            back to "nothing chosen".
+          */}
           <option value="">{t('settings.providerDefault')}</option>
           {models.map((entry) => (
             <option key={entry.value} value={entry.value}>
               {entry.label}
             </option>
           ))}
+          {/*
+            A saved value the catalogue does not contain still has to be
+            selectable, or the control silently shows something other than what
+            is on disk.
+          */}
+          {model !== '' && !models.some((entry) => entry.value === model) && (
+            <option value={model}>{model}</option>
+          )}
         </select>
       </label>
+
       {levels.length > 0 && (
         <label>
           <span>{t('settings.effort')}</span>
           <select
             value={effort}
             onChange={(event) => {
-              const next = event.target.value
-              setEffort(next)
-              void window.chorus.writeSettings({ effortLevel: next })
+              onChange({ effort: event.target.value })
             }}
           >
             <option value="">{t('settings.providerDefault')}</option>
@@ -426,6 +407,97 @@ function DefaultModel(): React.JSX.Element | null {
           </select>
         </label>
       )}
+
+      {/*
+        Why the list is what it is, rather than an empty control that looks
+        broken. These were one silence until discovery began recording a state.
+      */}
+      {status !== 'ready' && <p className="footnote">{t(`settings.catalogue.${status}`)}</p>}
+      {status === 'ready' && models.length === 0 && (
+        <p className="footnote">{t('settings.catalogue.none')}</p>
+      )}
+    </div>
+  )
+}
+
+function DefaultModel(): React.JSX.Element {
+  const { t } = useTranslation()
+  const [agents, setAgents] = useState<IpcResponse<'agents:models'>['agents']>([])
+  const [chosen, setChosen] = useState<{
+    models: Record<string, string>
+    efforts: Record<string, string>
+  }>({ models: {}, efforts: {} })
+
+  /*
+   * Re-asked while the sheet is open, because the catalogue comes from a running
+   * CLI and this can be opened before any session has started. A single fetch
+   * got nothing and the whole section stayed empty for that opening.
+   */
+  useEffect(() => {
+    let live = true
+    const read = (): void => {
+      void window.chorus.knownModels().then(
+        (known) => {
+          if (live) setAgents(known.agents)
+        },
+        () => undefined
+      )
+    }
+    read()
+    const timer = setInterval(read, 4_000)
+    return () => {
+      live = false
+      clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    let live = true
+    window.chorus
+      .readSettings()
+      .then((settings) => {
+        if (live) setChosen({ models: settings.models, efforts: settings.efforts })
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [])
+
+  return (
+    <fieldset className="settings-models">
+      <legend>{t('settings.newSessions')}</legend>
+      {agents.map((agent) => (
+        <AgentDefaults
+          key={agent.agentId}
+          agentId={agent.agentId}
+          status={agent.status}
+          models={agent.models}
+          model={chosen.models[agent.agentId] ?? ''}
+          effort={chosen.efforts[agent.agentId] ?? ''}
+          onChange={(next) => {
+            setChosen((current) => ({
+              models: {
+                ...current.models,
+                ...(next.model === undefined ? {} : { [agent.agentId]: next.model }),
+              },
+              efforts: {
+                ...current.efforts,
+                ...(next.effort === undefined ? {} : { [agent.agentId]: next.effort }),
+              },
+            }))
+            /*
+             * One key per map, which main merges a level deeper. A shallow
+             * spread there would replace the whole map and drop the other
+             * agent's value.
+             */
+            void window.chorus.writeSettings({
+              ...(next.model === undefined ? {} : { models: { [agent.agentId]: next.model } }),
+              ...(next.effort === undefined ? {} : { efforts: { [agent.agentId]: next.effort } }),
+            })
+          }}
+        />
+      ))}
       <p className="footnote">{t('settings.newSessionsNote')}</p>
     </fieldset>
   )
@@ -446,6 +518,10 @@ function DefaultModel(): React.JSX.Element | null {
  * one: "new sessions start with", against a card control that changes the
  * conversation in front of you. If that wording ever slips, it becomes exactly
  * the duplicate this sheet got rid of.
+ *
+ * It is one row per agent rather than one pair of selects, which is not a
+ * cosmetic change: a single pair spoke for two providers that share no model,
+ * and sent a name from Claude's catalogue to Codex's API.
  */
 export function Settings(props: {
   probes: AgentProbeResult[] | null

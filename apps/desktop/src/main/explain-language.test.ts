@@ -68,11 +68,13 @@ describe('the setting on disk', () => {
 
   it('still parses a settings file written before this existed', () => {
     // Every key here is a default, and a file that predates one must not reset
-    // the rest of the user's preferences to get it.
+    // the rest of the user's preferences to get it. The single `model` is folded
+    // onto Claude on read — see the schema's transform — so it survives under
+    // the agent whose catalogue it was always chosen from.
     const path = where()
     writeSettings(path, { ...DEFAULT_SETTINGS, model: 'sonnet', explainLanguage: 'Arabic' })
     const reread = readSettings(path)
-    expect(reread.model).toBe('sonnet')
+    expect(reread.models.claude).toBe('sonnet')
     expect(reread.explainLanguage).toBe('Arabic')
   })
 })

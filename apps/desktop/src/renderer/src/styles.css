@@ -1599,6 +1599,29 @@ body {
   border-radius: 8px;
 }
 
+/*
+ * One block per agent inside the fieldset. Named rather than implied: two
+ * unlabelled pairs of selects would look like four unrelated controls.
+ */
+.settings-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0;
+}
+
+.settings-agent + .settings-agent {
+  border-top: 1px solid var(--line);
+  margin-top: 0.2rem;
+  padding-top: 0.6rem;
+}
+
+.settings-agent-name {
+  color: var(--voice, var(--bone));
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 .settings-models label {
   display: flex;
   gap: 1ch;

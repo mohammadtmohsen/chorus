@@ -211,6 +211,7 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       Promise.resolve({
         agents: runtime.knownModels().map((agent) => ({
           agentId: agent.agentId,
+          status: agent.status,
           models: agent.models.map((model) => ({
             value: model.value,
             label: model.label,
@@ -350,10 +351,25 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'settings:write': (request: Partial<Settings>) => {
       const path = app.getPath('userData')
-      // Merged over what is on disk, so a field the renderer did not send keeps
-      // whatever the menu or a previous session left there. Zod drops absent
-      // keys rather than passing them as undefined, so the spread is safe.
-      return Promise.resolve(writeSettings(path, { ...readSettings(path), ...request }))
+      const current = readSettings(path)
+      /*
+       * Merged over what is on disk, so a field the renderer did not send keeps
+       * whatever the menu or a previous session left there. Zod drops absent
+       * keys rather than passing them as undefined, so the spread is safe.
+       *
+       * The per-agent maps need their own merge, one level deeper. A spread is
+       * shallow, so sending `{ models: { codex: 'x' } }` would replace the whole
+       * map and silently drop Claude's — a caller setting one agent's model
+       * clearing the other's, with nothing on screen to show it had happened.
+       */
+      return Promise.resolve(
+        writeSettings(path, {
+          ...current,
+          ...request,
+          models: { ...current.models, ...request.models },
+          efforts: { ...current.efforts, ...request.efforts },
+        })
+      )
     },
 
     'diagnostics:read': () =>

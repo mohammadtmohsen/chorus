@@ -20,36 +20,80 @@ import { normaliseExplainLanguage } from '../shared/ipc.js'
  * carry a `scale` key; the schema drops it on the next read.
  */
 
-export const Settings = z.object({
-  agents: z.array(z.enum(['codex', 'claude'])),
-  /** Empty means "start at home", the same as leaving the field blank. */
-  cwd: z.string(),
-  profileId: z.string(),
+/**
+ * One value per agent, defaulting to "the provider decides".
+ *
+ * Empty is a real answer and not a missing one: a model nobody chose is the
+ * provider's own default, which is the right thing for a machine whose CLI we
+ * have not asked yet.
+ */
+const perAgent = z
+  .object({ codex: z.string().default(''), claude: z.string().default('') })
+  .default({ codex: '', claude: '' })
+
+export const Settings = z
+  .object({
+    agents: z.array(z.enum(['codex', 'claude'])),
+    /** Empty means "start at home", the same as leaving the field blank. */
+    cwd: z.string(),
+    profileId: z.string(),
+    /**
+     * The shape before models were per agent. Read, migrated, and then written
+     * back empty — see the transform below.
+     *
+     * Kept in the schema rather than deleted because zod strips what it does not
+     * name, and a settings file written by 0.8.1 would otherwise lose the model
+     * its owner had chosen on the first read after upgrading.
+     */
+    model: z.string().default(''),
+    effortLevel: z.string().default(''),
+    /**
+     * What a new session's agents start as, per agent. Empty means the provider's
+     * own choice, which is not the same as a named model and must stay
+     * expressible.
+     *
+     * Per agent because the two providers share no model. One value for both was
+     * not a simplification — it sent a name from one catalogue to the other's API.
+     */
+    models: perAgent,
+    /**
+     * Likewise reasoning effort, and per agent for a sharper reason: Codex's
+     * levels differ *per model* — `ultra` exists on some and not others — so even
+     * the levels the two providers appear to share are not interchangeable.
+     */
+    efforts: perAgent,
+    /**
+     * The language a passage is explained in, when someone asks for one.
+     *
+     * Empty is the default and means the action is not offered at all. There is no
+     * honest guess at a person's own language — the system locale describes the
+     * machine, not whoever is reading — and a wrong guess here produces an answer
+     * in a language nobody asked for.
+     *
+     * Normalised through the same function the renderer's field uses, so a
+     * hand-edited file with a newline in it is tidied on read rather than
+     * producing a control that looks empty while holding content.
+     */
+    explainLanguage: z.string().default('').transform(normaliseExplainLanguage),
+  })
   /**
-   * What a new session's agents start as. Empty means the provider's own
-   * choice, which is not the same as a named model and must stay expressible.
+   * Folds the old single model and effort onto **Claude**.
    *
-   * A default, like everything else here — a conversation's own picker
-   * overrides it, and the sheet's controls say "new sessions" for exactly that
-   * reason. `.default('')` so a file written before this still parses.
+   * Not a split. Whatever is in a settings file today was chosen from Claude's
+   * list, because that is the only catalogue the sheet has ever shown — so the
+   * honest migration is to recognise whose it was, and let Codex start with the
+   * provider default rather than inheriting a name its API does not know.
+   *
+   * A transform rather than a migration step someone has to remember to run, and
+   * it clears the legacy fields as it goes so the fold happens exactly once.
    */
-  model: z.string().default(''),
-  /** Likewise reasoning effort. Empty means whatever the model does unasked. */
-  effortLevel: z.string().default(''),
-  /**
-   * The language a passage is explained in, when someone asks for one.
-   *
-   * Empty is the default and means the action is not offered at all. There is no
-   * honest guess at a person's own language — the system locale describes the
-   * machine, not whoever is reading — and a wrong guess here produces an answer
-   * in a language nobody asked for.
-   *
-   * Normalised through the same function the renderer's field uses, so a
-   * hand-edited file with a newline in it is tidied on read rather than
-   * producing a control that looks empty while holding content.
-   */
-  explainLanguage: z.string().default('').transform(normaliseExplainLanguage),
-})
+  .transform((raw) => {
+    const models = { ...raw.models }
+    const efforts = { ...raw.efforts }
+    if (raw.model !== '' && models.claude === '') models.claude = raw.model
+    if (raw.effortLevel !== '' && efforts.claude === '') efforts.claude = raw.effortLevel
+    return { ...raw, model: '', effortLevel: '', models, efforts }
+  })
 export type Settings = z.infer<typeof Settings>
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -75,6 +119,8 @@ export const DEFAULT_SETTINGS: Settings = {
   effortLevel: '',
   // Off until someone says which language. See the field's own comment.
   explainLanguage: '',
+  models: { codex: '', claude: '' },
+  efforts: { codex: '', claude: '' },
 }
 
 function settingsPath(userDataPath: string): string {

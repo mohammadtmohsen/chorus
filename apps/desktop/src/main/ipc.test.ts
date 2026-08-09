@@ -84,3 +84,30 @@ describe('conversation:chooseCwd', () => {
     )
   })
 })
+
+describe('settings:write and the per-agent maps', () => {
+  const write = async (patch: unknown): Promise<{ models: Record<string, string> }> => {
+    const handler = buildHandlers({} as unknown as ChorusRuntime)['settings:write'] as unknown as (
+      r: unknown
+    ) => Promise<{ models: Record<string, string> }>
+    return handler(patch)
+  }
+
+  it('keeps the other agent’s model when only one is sent', async () => {
+    /*
+     * The shape of the bug: `{ ...current, ...request }` is shallow, so a patch
+     * naming one agent replaces the whole map and clears the other's value —
+     * with nothing on screen to show it had happened.
+     */
+    await write({ models: { claude: 'opus' } })
+    await write({ models: { codex: 'gpt-5.6-sol' } })
+    const after = await write({})
+    expect(after.models).toEqual({ claude: 'opus', codex: 'gpt-5.6-sol' })
+  })
+
+  it('keeps the other agent’s effort too', async () => {
+    await write({ efforts: { claude: 'high' } })
+    const after = await write({ efforts: { codex: 'ultra' } })
+    expect(after).toMatchObject({ efforts: { claude: 'high', codex: 'ultra' } })
+  })
+})
