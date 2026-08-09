@@ -259,8 +259,28 @@ export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * changed; being told to go and run a command is the same wait plus a
  * round trip.
  */
+/**
+ * The three things `electron-vite build` emits, checked separately.
+ *
+ * Together rather than as one `out/` tree, because they can fall out of step: a
+ * build that wrote main and preload and did not write renderer left the newest
+ * mtime under `out/` looking current while the bundle the window actually loads
+ * was two hours old. The suite then drove that old renderer and passed, which is
+ * the worst possible outcome — a spec reporting on code that is not under review.
+ *
+ * The self-perpetuating part is what makes it dangerous rather than merely
+ * wrong: those fresh `out/main` mtimes made the *next* run skip building too, so
+ * the staleness survived until someone built by hand. Ticket C-014.
+ */
+const ENVIRONMENTS = ['main', 'preload', 'renderer']
+
 export function ensureBuilt() {
-  const built = newest([join(APP, 'out')])
+  /*
+   * The oldest environment decides, not the newest file anywhere under `out/`.
+   * One stale output is a stale app however fresh the other two are.
+   */
+  const stamps = ENVIRONMENTS.map((name) => newest([join(APP, 'out', name)]))
+  const built = stamps.includes(undefined) ? undefined : Math.min(...stamps)
   const source = newest([join(APP, 'src'), join(APP, '../../packages')], BUILT)
 
   if (built !== undefined && source !== undefined && built >= source) return
@@ -269,6 +289,22 @@ export function ensureBuilt() {
     cwd: APP,
     stdio: 'inherit',
   })
+
+  /*
+   * Trust the build no further than its own output. `execFileSync` throwing is
+   * not the only way to end up with a stale bundle, and this check is cheap
+   * next to twenty-six Electron launches against the wrong code.
+   */
+  const after = ENVIRONMENTS.map((name) => newest([join(APP, 'out', name)]))
+  const rebuilt = after.includes(undefined) ? undefined : Math.min(...after)
+  if (rebuilt === undefined || (source !== undefined && rebuilt < source)) {
+    const stale = ENVIRONMENTS.filter(
+      (name, i) => after[i] === undefined || (source !== undefined && after[i] < source)
+    )
+    throw new Error(
+      `the build left ${stale.join(' and ')} older than src — refusing to test a stale app (C-014)`
+    )
+  }
 }
 
 /**
