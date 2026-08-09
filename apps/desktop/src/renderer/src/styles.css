@@ -502,16 +502,237 @@ body {
   cursor: pointer;
 }
 
-.quote-offer[data-placement='above'] {
-  transform: translate(-50%, -100%);
-}
-
-.quote-offer[data-placement='below'] {
-  transform: translateX(-50%);
-}
+/*
+ * No `transform`. `fitCard` measures the offer and returns a top-left corner,
+ * and a CSS transform on top of that would be a second opinion about position —
+ * which is precisely how the offer and the card came to disagree about which
+ * edge `top` meant.
+ */
 
 .quote-offer:hover {
   border-color: color-mix(in srgb, var(--bone) 40%, var(--line));
+}
+
+/*
+ * Two actions in the pill, split by a hairline rather than spaced apart: one
+ * object that offers two things reads as a choice about the passage, where two
+ * floating buttons read as two unrelated offers competing for the same spot.
+ */
+.quote-offer {
+  display: flex;
+  align-items: stretch;
+  /*
+   * Wraps rather than overflows. A pane can be narrower than two actions side by
+   * side — a four-way split gets to about 200px — and the estimate `anchorFor`
+   * clamps with cannot make a 237px pill fit a 200px pane. Stacking is the only
+   * honest answer; the alternative is an "Ask about this" you cannot click.
+   */
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 8px);
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Once wrapped, the divider belongs above rather than beside. */
+.quote-offer-action + .quote-offer-action {
+  border-left: 1px solid color-mix(in srgb, var(--bone) 18%, var(--line));
+}
+
+.quote-offer-action {
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--bone);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.quote-offer-action + .quote-offer-action {
+  border-left: 1px solid color-mix(in srgb, var(--bone) 18%, var(--line));
+}
+
+.quote-offer-action:hover {
+  background: color-mix(in srgb, var(--bone) 8%, transparent);
+}
+
+/*
+ * The quick-question card.
+ *
+ * `z-index: 5` — one above the quote offer it replaces, and far below the
+ * sheets' 80. It is anchored inside the pane and must never cover the window:
+ * the composer behind it stays usable, which is the difference between an aside
+ * and a modal.
+ */
+.quick-question {
+  position: absolute;
+  z-index: 5;
+  width: min(420px, calc(100% - 24px));
+  /*
+   * Capped, so a long answer scrolls inside the card instead of growing it past
+   * the top of the pane. Without this the header, the excerpt and the first half
+   * of the answer were clipped off — the card was taller than the thing holding
+   * it and nothing said so.
+   */
+  max-height: min(440px, calc(100% - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 3);
+  border: 1px solid color-mix(in srgb, var(--bone) 22%, var(--line));
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
+}
+
+/*
+ * Everything except the answer keeps its natural size. Only one region scrolls,
+ * because two scrollbars in a card this size is a worse answer than a clipped
+ * excerpt.
+ */
+.quick-head,
+.quick-excerpt,
+.quick-form,
+.quick-actions {
+  flex: 0 0 auto;
+}
+
+/*
+ * No `transform` here on purpose. `fitCard` returns a top-left corner having
+ * already measured the card and the pane, and a CSS transform on top of that
+ * would be a second opinion about position — which is how the pill's own
+ * off-by-a-card-height bug survived to a screenshot.
+ */
+
+.quick-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--step) * 2);
+  font-size: 12px;
+}
+
+.quick-close {
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* The passage, dimmed: it is the subject, not the answer. */
+.quick-excerpt {
+  margin: 0;
+  padding-left: calc(var(--step) * 2);
+  border-left: 2px solid color-mix(in srgb, var(--bone) 25%, var(--line));
+  color: var(--muted);
+  font-size: 12px;
+  max-height: 4.5em;
+  overflow-y: auto;
+}
+
+/*
+ * A fixed height, not a maximum.
+ *
+ * `min-height: 0` is the load-bearing line and the reason this did not scroll at
+ * all: a flex item defaults to `min-height: auto`, which refuses to shrink below
+ * its content, so `overflow-y` never engaged and the answer grew the card
+ * instead of scrolling inside it. Setting it is the standard fix and it is
+ * invisible until you know.
+ *
+ * Fixed rather than `max-height` so the card stops resizing under the pointer
+ * while the answer streams in. A box that grows for eight seconds is hard to
+ * read and impossible to click into.
+ */
+/*
+ * Direction comes from the text, not from a setting.
+ *
+ * The language field is free text — "Lebanese Arabic", "simple Arabic" — so
+ * there is no locale to map to `rtl`, and any table that tried would be wrong
+ * for the first person who typed something reasonable. `plaintext` reads the
+ * direction from each paragraph's own first strong character, which is right for
+ * Arabic, right for English, and right for a language nobody thought of.
+ *
+ * Per paragraph rather than per block: an answer that opens with an English
+ * identifier and continues in Arabic would otherwise take its direction from the
+ * wrong word.
+ */
+.quick-answer .md-p,
+.quick-answer .md-h,
+.quick-answer li {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+/*
+ * Identifiers stay a single left-to-right run inside right-to-left prose. This
+ * is the case the feature creates on purpose by keeping `DeltaBuffer` and
+ * `better-sqlite3` untranslated — without isolation they are reordered around
+ * the Arabic around them and read as gibberish.
+ */
+.quick-answer .md-inline-code,
+.quick-answer code {
+  unicode-bidi: isolate;
+}
+
+/* The passage is the agent's original, and takes its own direction too. */
+.quick-excerpt {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+.quick-answer {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 190px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+/*
+ * The sidebar's working row, in a card. `--voice` comes from the `voice--*`
+ * class the component applies, so the pip and the word take the colour of the
+ * agent being asked rather than a generic accent.
+ */
+.quick-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--step) * 1.5);
+  margin: 0;
+  color: var(--voice, var(--bone));
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Same 5px and the same 1.6s as `.workspace-session-pip`, deliberately. */
+.quick-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+.quick-input {
+  width: 100%;
+  padding: calc(var(--step) * 2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--bone);
+  font: inherit;
+  font-size: 13px;
+  resize: none;
+}
+
+.quick-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--step);
 }
 
 /* A file is over this pane and will land in its composer. */
@@ -1331,6 +1552,41 @@ body {
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * The language field borrows the model fieldset's shape rather than inventing
+ * one — they are two rows of the same kind of preference and should not look
+ * like two different ideas about what a settings row is.
+ */
+.settings-language {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.8rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.settings-language label {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.settings-language input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 22ch;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--bone);
+  font: inherit;
+  font-size: 12px;
 }
 
 .settings-models {

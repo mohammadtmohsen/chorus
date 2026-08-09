@@ -1,4 +1,4 @@
-import type { StoredEvent } from './events.js'
+import { asideMetaOf, type StoredEvent } from './events.js'
 import type { Database } from './port.js'
 
 /**
@@ -26,18 +26,36 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
   const base = { conversationId: event.conversationId, seq: event.seq, at: event.createdAt }
 
   switch (payload.type) {
-    case 'conversation.created':
+    case 'conversation.created': {
+      const aside = asideMetaOf(payload)
       db.prepare(
-        `INSERT INTO conversations (id, project_id, title, created_at, updated_at)
-         VALUES (@id, @projectId, @title, @at, @at)
+        `INSERT INTO conversations
+           (id, project_id, title, created_at, updated_at, kind, parent_id, source_event_id)
+         VALUES (@id, @projectId, @title, @at, @at, @kind, @parentId, @sourceEventId)
          ON CONFLICT (id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`
       ).run({
         id: base.conversationId,
         projectId: payload.projectId,
         title: payload.title,
         at: base.at,
+        /*
+         * `?? null` rather than omitted: the three columns are nullable and a
+         * missing bind parameter is an error in better-sqlite3, not a null. An
+         * event appended before asides existed carries none of them and must
+         * still project — which is the property `rebuildProjections` leans on.
+         */
+        /*
+         * Through `asideMetaOf`, not `payload.aside`. A row written by an
+         * earlier build carries the same facts under different names, and a
+         * projection that misses them rebuilds an aside as an ordinary
+         * conversation — silently, and into the session list.
+         */
+        kind: aside === null ? null : 'aside',
+        parentId: aside?.parentId ?? null,
+        sourceEventId: aside?.sourceEventId ?? null,
       })
       break
+    }
 
     case 'session.started':
       db.prepare(

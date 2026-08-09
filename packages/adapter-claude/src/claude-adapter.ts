@@ -20,6 +20,7 @@ import type {
   AgentInput,
   AgentSession,
   ApprovalDecision,
+  ForkOpts,
   HealthStatus,
   SessionOpts,
   UserInputResponse,
@@ -63,8 +64,11 @@ const run = promisify(execFile)
  * Three of these described the SDK's abilities rather than the adapter's, which
  * made them claims Chorus could not honour:
  *
- *  - `fork`: `AgentSession` has no fork method and no IPC channel reaches one.
- *    `conversation:restart` makes a *new* conversation, which is not a fork.
+ *  - `fork`: true since the phase that implemented `AgentAdapter.fork` — a real
+ *    branch via `forkSession` + `persistSession: false`, verified against the
+ *    running CLI to leave the original session's context and stored transcript
+ *    untouched. It was false while `conversation:restart` was the closest thing
+ *    Chorus had, and restarting makes a *new* conversation, which is not a fork.
  *  - `planStream`: `plan.updated` is emitted only by the Codex adapter. Nothing
  *    in this package produces one.
  *  - `modelSwitchMidSession`: false again, and this one has been both. It was
@@ -80,7 +84,7 @@ const run = promisify(execFile)
 export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   interrupt: true,
   steer: true,
-  fork: false,
+  fork: true,
   reasoningStream: true,
   planStream: false,
   // Claude has no aggregate turn diff; the workspace service derives one (§4.2).
@@ -848,6 +852,24 @@ export class ClaudeAdapter implements AgentAdapter {
     return Promise.resolve(this.spawn(opts, sessionRef))
   }
 
+  /**
+   * A branch of a session, which the original never learns about.
+   *
+   * `forkSession` is what separates this from `resume`. Resuming appends to the
+   * same stored session; forking gives the copy a new id and leaves the original
+   * exactly as it was — so an aside cannot enlarge the context the user is
+   * watching, or appear in a transcript they later reopen.
+   *
+   * `persistSession: false` is the other half. Without it the CLI would write
+   * every throwaway branch into `~/.claude/projects`, and a user who asked six
+   * small questions would find six sessions they never started.
+   */
+  async fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
+    if (sessionRef === '') throw new Error('Cannot fork a session that has no id yet')
+    await this.resolveOnce()
+    return Promise.resolve(this.spawn(opts, sessionRef, opts))
+  }
+
   async dispose(): Promise<void> {
     await Promise.all(this.sessions.map((s) => s.close()))
     this.sessions.length = 0
@@ -887,7 +909,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
-  private spawn(opts: SessionOpts, resume: string | undefined): ClaudeSession {
+  private spawn(opts: SessionOpts, resume: string | undefined, fork?: ForkOpts): ClaudeSession {
     /*
      * The SDK reports a spawn ENOENT as "the native binary failed to launch —
      * this usually means the binary does not match this system's libc", which
@@ -1018,6 +1040,22 @@ export class ClaudeAdapter implements AgentAdapter {
         ? {}
         : { pathToClaudeCodeExecutable: this.executablePath }),
       ...(resume === undefined ? {} : { resume }),
+      /*
+       * A branch, not a continuation — and one the CLI must not keep.
+       *
+       * Both flags together or neither: `forkSession` without
+       * `persistSession: false` still writes the branch to disk, and
+       * `persistSession: false` without `forkSession` would make the *original*
+       * session stop recording, which is the opposite of harmless.
+       */
+      ...(fork === undefined ? {} : { forkSession: true, persistSession: false }),
+      /*
+       * `[]` is the SDK's documented isolation mode: no user, project or local
+       * settings, so no inherited hooks and no MCP servers. It also drops
+       * CLAUDE.md, which is why it is the caller's choice and not a default —
+       * see `ForkOpts.inherits`.
+       */
+      ...(fork?.inherits === 'nothing' ? { settingSources: [] } : {}),
       canUseTool: (toolName, input, options) => {
         const session = holder.session
         if (session === undefined) {

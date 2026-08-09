@@ -136,6 +136,10 @@ describe('conformance: CodexAdapter', () => {
     expect(CONFORMANCE_CHECKS.declaresCapabilities(codexTarget().adapter)).toBeNull()
   })
 
+  it('backs every declared capability with a method', () => {
+    expect(CONFORMANCE_CHECKS.backsCapabilitiesWithMethods(codexTarget().adapter)).toBeNull()
+  })
+
   it('exposes a resumable session reference', async () => {
     const session = await codexTarget().adapter.start(OPTS)
     expect(CONFORMANCE_CHECKS.exposesSessionRef(session)).toBeNull()

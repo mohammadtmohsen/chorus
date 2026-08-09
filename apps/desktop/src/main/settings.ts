@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { normaliseExplainLanguage } from '../shared/ipc.js'
 
 /**
  * What a new session starts with, remembered between launches.
@@ -35,6 +36,19 @@ export const Settings = z.object({
   model: z.string().default(''),
   /** Likewise reasoning effort. Empty means whatever the model does unasked. */
   effortLevel: z.string().default(''),
+  /**
+   * The language a passage is explained in, when someone asks for one.
+   *
+   * Empty is the default and means the action is not offered at all. There is no
+   * honest guess at a person's own language — the system locale describes the
+   * machine, not whoever is reading — and a wrong guess here produces an answer
+   * in a language nobody asked for.
+   *
+   * Normalised through the same function the renderer's field uses, so a
+   * hand-edited file with a newline in it is tidied on read rather than
+   * producing a control that looks empty while holding content.
+   */
+  explainLanguage: z.string().default('').transform(normaliseExplainLanguage),
 })
 export type Settings = z.infer<typeof Settings>
 
@@ -59,6 +73,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // machine whose CLI we have not asked yet.
   model: '',
   effortLevel: '',
+  // Off until someone says which language. See the field's own comment.
+  explainLanguage: '',
 }
 
 function settingsPath(userDataPath: string): string {

@@ -29,7 +29,7 @@ beforeEach(() => {
 
 describe('migrations', () => {
   it('brings a fresh database to the current version', () => {
-    expect(currentVersion(db)).toBe(1)
+    expect(currentVersion(db)).toBe(2)
   })
 
   it('is idempotent — reopening applies nothing', () => {

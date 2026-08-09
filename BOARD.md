@@ -139,6 +139,77 @@ somewhere — and only then two labelled rows.
 named, and an agent that reports none says so rather than showing an empty
 control.
 
+### C-013 · A question card expires while you are answering it
+
+`mapping.ts:1011` stamps every question set with `expiresAt: ctx.now +
+ctx.approvalTtlMs`, and `approvalTtlMs` defaults to five minutes
+(`claude-adapter.ts:788`). The deadline is wall-clock from the moment the agent
+_raised_ the question, and nothing restarts it. Answering is not an input to it:
+the card can be on screen, focused and half-filled, and it still goes. Approvals
+carry the same stamp (`mapping.ts:1070`–`1126`).
+
+Hit twice in one session. An agent asked a three-part question; both times the
+card vanished mid-answer while the user was typing into it in another pane.
+
+A question that runs out its deadline leaves a notice reading `A question went
+unanswered in time.` (`transcript.ts:359`), and the agent is told nothing was
+chosen and carries on. `transcript.ts:345` argues for that notice existing at
+all, and the argument applies here exactly: _"without this the only trace is a
+reply that quietly assumed something."_
+
+**Not yet confirmed from the log:** `userinput.answered` also carries a `cancel`
+outcome, so these two instances may have been cancelled rather than timed out.
+The five-minute deadline is verified to exist; that it is what fired here is
+inference.
+
+Why it matters beyond the annoyance: the deadline is hardest on the longest
+answers, which are the ones attached to the questions most worth asking. Up to
+four panes are mounted at once and attention is _expected_ to move between them,
+so "typing in the other pane" is ordinary use rather than idling. And there is no
+warning — the card shows no countdown, so the first sign that a deadline existed
+is the card's absence.
+
+**The TTL is not the bug.** An approval nobody ever answers would wedge a turn
+forever, and the timeout is what stops that. What is wrong is that the clock
+ignores the person it is waiting for.
+
+**Done when:** the log has been read back to confirm which outcome actually
+fired; a question the user is demonstrably engaged with cannot expire under them
+— the deadline held while the card holds focus or a partial answer, or reset on
+input — and a card genuinely about to expire says so while it can still be
+answered, rather than vanishing into a notice.
+
+### C-015 · An agent cannot address another agent
+
+`parseMentions` runs in exactly one place: `runtime.send`, the path the **user's**
+message takes. An agent's own output goes `ConversationService.consume` →
+`handle` → `lifecycle` → `append`, and nothing on that path reads a mention. So
+when one agent writes `@codex` in a reply, it is prose. It reaches the other
+agent only as catch-up — trimmed to 1,500 characters per message inside a 12,000
+character budget, with activity capped at 40% — and never as a turn addressed to
+it.
+
+Noticed by being unable to do it. Asked to have codex review 3,383 lines, the
+only thing I could produce was a brief for the user to copy across by hand, or
+to point at the hand-off button. `sendHandoff` does deliver in full and does
+bypass catch-up, but it is driven from the UI by a person: `Entry`'s `onHandOff`
+is a button, not something an agent can reach.
+
+**Why it matters:** the premise is several agents in one shared conversation, and
+right now every exchange between them is relayed by hand. Review, second
+opinions and hand-backs are exactly the collaboration the product is for, and
+each one currently costs the user a copy and paste.
+
+**Why it is not obviously a bug.** Agents addressing each other directly is a
+real product decision with teeth: two agents that can each start the other's turn
+can loop, and a loop here spends the user's money while they are not looking.
+Whatever ships needs a bound — a depth limit, a visible cost, or the user
+confirming the first hop — and choosing which is the actual work.
+
+**Done when:** either an agent's mention routes like the user's, with that bound
+written down and enforced; or this is closed with "agents talk through the user
+on purpose" recorded as a decision, so it stops being rediscovered as a gap.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets

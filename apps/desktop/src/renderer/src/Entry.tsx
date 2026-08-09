@@ -205,6 +205,18 @@ export const Entry = memo(function Entry({
        * decoration every agent message wears.
        */
       data-final={final ? 'true' : undefined}
+      /*
+       * What a selection made inside this entry came out of.
+       *
+       * Always set, including on the rows an aside can never be asked about, so
+       * that `askableSource` decides from facts rather than from absence — a
+       * missing attribute and a streaming one would otherwise be the same thing
+       * to the reader, and only one of them may become askable a second later.
+       */
+      data-event-id={message.eventId}
+      data-actor={message.actor}
+      data-kind={message.kind}
+      data-status={message.status}
     >
       <span className="tick" aria-hidden="true" />
       <span className="speaker">{message.actor}</span>

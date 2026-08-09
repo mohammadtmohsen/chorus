@@ -42,10 +42,12 @@
     "nobodyHere": "Nobody is in this conversation. Add an agent to start again.",
     "restartLabel": "Start this session over, with nothing said in it",
     "endLabel": "End this session",
-    "askAboutThis": "Ask about this",
+    "quoteInMessage": "Quote in message",
     "endConfirm": "An agent is working — press again to end this session",
     "cancel": "Cancel",
-    "waiting": "waiting"
+    "waiting": "waiting",
+    "askAboutThis": "Ask about this",
+    "explainSimply": "Explain simply"
   },
   "workspace": {
     "sessions": "Sessions",
@@ -94,7 +96,11 @@
     "model": "Model",
     "effort": "Reasoning effort",
     "providerDefault": "The provider's default",
-    "newSessionsNote": "A default only. Each conversation can change its own from its card in the sidebar."
+    "newSessionsNote": "A default only. Each conversation can change its own from its card in the sidebar.",
+    "explainHeading": "Explaining a passage",
+    "explainLanguage": "Answer in",
+    "explainPlaceholder": "Arabic",
+    "explainNote": "When you select part of a reply, an agent can explain it plainly in this language. Write it however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. Leave it empty and the option is not offered. This does not change Chorus's own language."
   },
   "activity": {
     "label": "Agents and settings",
@@ -340,5 +346,17 @@
       "local": "local"
     },
     "note": "Installed through your own Claude configuration. A disabled plugin keeps its commands and skills out of every session."
+  },
+  "aside": {
+    "heading": "Ask {{agent}} about this",
+    "close": "Close",
+    "placeholder": "What about it?",
+    "followUp": "Anything else?",
+    "thinking": "Thinking",
+    "quote": "Quote in message",
+    "takeForward": "Take this forward",
+    "reopened": "This aside has ended. Ask again to start a new one.",
+    "explaining": "Explaining in {{language}}",
+    "explainingPending": "Explaining this"
   }
 }

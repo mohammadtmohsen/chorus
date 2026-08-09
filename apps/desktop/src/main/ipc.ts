@@ -504,6 +504,39 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         sourceEventIds: request.sourceEventIds,
         brief: request.brief,
       }),
+
+    /*
+     * Everything the renderer says about the passage is re-checked in
+     * `openAside` against what the log holds. Nothing is taken on trust here,
+     * which is why this handler is a straight pass-through rather than the place
+     * the validation lives — the check belongs next to the store, not next to
+     * the boundary that could be bypassed.
+     */
+    'aside:open': (request: {
+      conversationId: string
+      sourceEventId: string
+      excerpt: string
+      question?: string
+      purpose?: 'question' | 'explanation'
+    }) => runtime.openAside(request),
+
+    'aside:ask': async (request: { asideId: string; question: string }) => {
+      await runtime.askAside(request.asideId, request.question)
+      return { ok: true as const }
+    },
+
+    'aside:close': async (request: { asideId: string }) => {
+      await runtime.closeAside(request.asideId)
+      return { ok: true as const }
+    },
+
+    'aside:list': (request: { conversationId: string; sourceEventId?: string }) =>
+      Promise.resolve(
+        runtime.listAsides(
+          request.conversationId,
+          ...(request.sourceEventId === undefined ? [] : [request.sourceEventId])
+        )
+      ),
   }
 }
 

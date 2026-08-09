@@ -52,6 +52,31 @@ export const TranscriptEvent = z.object({
 export type TranscriptEvent = z.infer<typeof TranscriptEvent>
 
 /** Defaults for a new session. Zoom is not here: it lasts one launch. */
+/**
+ * The longest a language may be.
+ *
+ * Not a guess at how long a language name is — a bound on what a free-text field
+ * can do to everything downstream. The value reaches a prompt and, if the offer
+ * ever names it, a button: unbounded, it makes one enormous and the other wider
+ * than the pane, and no amount of measuring rescues a button that cannot fit.
+ * Forty is comfortably past "Lebanese Arabic" and nowhere near a paragraph.
+ */
+export const MAX_EXPLAIN_LANGUAGE = 40
+
+/**
+ * What the field accepts, applied wherever it is read or written.
+ *
+ * Free text is the point — "Lebanese Arabic" and "simple Arabic" are answers a
+ * locale list cannot express. Free is not unconstrained, though: a pasted
+ * newline would make a one-line control look empty while holding content, and
+ * whitespace alone would produce an action that appears to do nothing. Both
+ * collapse to the same normalisation rather than being rejected, because a paste
+ * should not become an error message.
+ */
+export function normaliseExplainLanguage(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_EXPLAIN_LANGUAGE)
+}
+
 export const SettingsShape = z.object({
   agents: z.array(z.enum(['codex', 'claude'])),
   cwd: z.string(),
@@ -59,6 +84,12 @@ export const SettingsShape = z.object({
   /** Empty means the provider's own choice, which is not a model name. */
   model: z.string().default(''),
   effortLevel: z.string().default(''),
+  /**
+   * The language an explanation comes back in. Empty means the action is not
+   * offered — see the plan: there is no sensible guess at someone's own language,
+   * and the system locale is a fact about the machine rather than the person.
+   */
+  explainLanguage: z.string().default('').transform(normaliseExplainLanguage),
 })
 
 export const ApprovalChoice = z.object({
@@ -606,6 +637,69 @@ export const IPC_CONTRACT = {
     response: z.object({ handoffId: z.string() }),
   },
   /**
+   * A small question about one passage of one reply, asked in a fork.
+   *
+   * `excerpt` is sent so main can check it against what the log actually holds,
+   * not so main can trust it. The renderer is the least trustworthy thing in the
+   * process tree — it renders untrusted agent output — and a caller that could
+   * name any event and any excerpt could put words in an agent's mouth and have
+   * them quoted back as its own.
+   *
+   * There is no `aside:history`: an aside is a conversation, so
+   * `conversation:history` already reads it, and its events reach the renderer
+   * on the same push channel as everything else.
+   */
+  'aside:open': {
+    request: z.object({
+      conversationId: z.string(),
+      sourceEventId: z.string(),
+      excerpt: z.string().min(1),
+      /**
+       * Usually absent. The card opens the aside as soon as it appears so the
+       * CLI boots while the user types, and sends the question separately —
+       * about two thirds of the measured wait was process startup rather than
+       * the agent, and this is what moves it off the critical path.
+       */
+      question: z.string().min(1).optional(),
+      /**
+       * `explanation` carries its own first turn — main reads the language and
+       * builds the prompt, because prompt content from the renderer is the same
+       * class of problem as an unverified source event.
+       */
+      purpose: z.enum(['question', 'explanation']).optional(),
+    }),
+    /**
+     * The language main actually used, echoed back.
+     *
+     * The renderer keeps its own copy for the button's label, and that copy can
+     * be a moment stale — long enough for a card to say Arabic while the prompt
+     * and the log say French. Main is authoritative, so it says which it was.
+     */
+    response: z.object({ asideId: z.string(), language: z.string() }),
+  },
+  /** A follow-up, which only works while the fork is still alive. */
+  'aside:ask': {
+    request: z.object({ asideId: z.string(), question: z.string().min(1) }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+  /** Ends the fork. The transcript stays in the log. */
+  'aside:close': {
+    request: z.object({ asideId: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+  /** What has already been asked about a conversation, or about one reply in it. */
+  'aside:list': {
+    request: z.object({ conversationId: z.string(), sourceEventId: z.string().optional() }),
+    response: z.array(
+      z.object({
+        id: z.string(),
+        sourceEventId: z.string(),
+        title: z.string(),
+        createdAt: z.number().int(),
+      })
+    ),
+  },
+  /**
    * The repository as it stands on disk, not as the log describes it. Those
    * differ after a crash, a manual edit, or a denied approval.
    */
@@ -944,6 +1038,10 @@ export interface ChorusApi {
   readonly sendHandoff: (
     request: IpcRequest<'handoff:send'>
   ) => Promise<IpcResponse<'handoff:send'>>
+  readonly openAside: (request: IpcRequest<'aside:open'>) => Promise<IpcResponse<'aside:open'>>
+  readonly askAside: (request: IpcRequest<'aside:ask'>) => Promise<IpcResponse<'aside:ask'>>
+  readonly closeAside: (request: IpcRequest<'aside:close'>) => Promise<IpcResponse<'aside:close'>>
+  readonly listAsides: (request: IpcRequest<'aside:list'>) => Promise<IpcResponse<'aside:list'>>
   /** Returns an unsubscribe function. */
   readonly onEvents: (listener: (events: TranscriptEvent[]) => void) => () => void
 }

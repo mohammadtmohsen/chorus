@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
+import { fitCard } from './aside.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
-import { anchorFor } from './quote.js'
+import { QuickQuestion } from './QuickQuestion.js'
+import { anchorOf, askableSource, type SelectionAnchor, type SourceEntry } from './quote.js'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
@@ -29,6 +31,26 @@ import {
  */
 const FOCUS_KEEPS_ITS_OWN =
   'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question'
+
+/**
+ * The transcript entry a DOM node sits inside, in the shape `askableSource`
+ * wants.
+ *
+ * Thin on purpose: the traversal is DOM, the judgement is not. Everything here
+ * comes straight off the attributes `Entry` writes, so the decision stays in a
+ * pure function that can be tested without a document.
+ */
+function sourceEntryAt(node: Node | null): SourceEntry | null {
+  const from = node instanceof Element ? node : (node?.parentElement ?? null)
+  const entry = from?.closest('.entry') ?? null
+  if (entry === null) return null
+  return {
+    eventId: entry.getAttribute('data-event-id') ?? '',
+    actor: entry.getAttribute('data-actor') ?? '',
+    kind: entry.getAttribute('data-kind') ?? '',
+    status: entry.getAttribute('data-status') ?? '',
+  }
+}
 
 export type AgentId = 'codex' | 'claude'
 /** Every agent Chorus knows how to seat, present or not. */
@@ -120,10 +142,49 @@ export function Session(props: {
   /** A passage selected in this pane's transcript, and where to offer to quote it. */
   const [selected, setSelected] = useState<{
     text: string
-    left: number
-    top: number
-    placement: 'above' | 'below'
+    /**
+     * The passage itself, unclamped.
+     *
+     * Raw on purpose. The old anchor arrived already clamped against a guess at
+     * the offer's width, which meant the true geometry was gone before anything
+     * could measure what was actually rendered — so a wider offer could never be
+     * placed correctly however carefully it was measured.
+     */
+    anchor: SelectionAnchor
+    /**
+     * The entry it came out of, when the passage is one an agent could be asked
+     * to expand on — `null` when it can only be quoted.
+     */
+    source: SourceEntry | null
   } | null>(null)
+  /**
+   * The open quick-question card, if any.
+   *
+   * Held apart from `selected` and seeded from it: once a card is open, the
+   * passage it is about must not change. Scrolling drops the offer and a later
+   * selection replaces it, and either would otherwise re-point a question that
+   * has already been asked.
+   */
+  const [askingAbout, setAskingAbout] = useState<{
+    text: string
+    anchor: SelectionAnchor
+    source: SourceEntry
+    purpose: 'question' | 'explanation'
+    /** Started by the click, because a mount effect runs twice and can send twice. */
+    opening: Promise<string>
+    /** Whatever main decided, so the card cannot name a stale language. */
+    language: Promise<string>
+  } | null>(null)
+  /**
+   * The language explanations come back in, or empty when there is none.
+   *
+   * Re-read on every selection rather than held from mount. `App` reads settings
+   * once and keeps only the session defaults, so nothing here would otherwise
+   * learn that the language had just been set — and the sheet where it is set is
+   * a few clicks from the passage where it is used. One IPC call per selection is
+   * cheaper than being wrong.
+   */
+  const [explainLanguage, setExplainLanguage] = useState('')
   /* The cast, the folder, the profile, Restart and End all live on the
      session's card in the sidenav now, along with the state each of them needs
      while it is mid-flight. */
@@ -343,8 +404,27 @@ export function Session(props: {
       setSelected(null)
       return
     }
-    const at = anchorFor(range.getBoundingClientRect(), paneEl.getBoundingClientRect())
-    setSelected(at === null ? null : { text, ...at })
+    const anchor = anchorOf(range.getBoundingClientRect(), paneEl.getBoundingClientRect())
+    /*
+     * Both ends, not `commonAncestorContainer`: a range spanning two entries has
+     * the scroller as its common ancestor, which carries none of the attributes
+     * the decision needs and would read as "no source" rather than as the
+     * cross-entry selection it actually is.
+     */
+    const source = askableSource(
+      sourceEntryAt(range.startContainer),
+      sourceEntryAt(range.endContainer),
+      text
+    )
+    if (source !== null) {
+      window.chorus
+        .readSettings()
+        .then((settings) => {
+          setExplainLanguage(settings.explainLanguage)
+        })
+        .catch(() => undefined)
+    }
+    setSelected(anchor === null ? null : { text, source, anchor })
   }, [])
 
   useEffect(() => {
@@ -364,6 +444,114 @@ export function Session(props: {
       document.removeEventListener('selectionchange', onChange)
     }
   }, [])
+
+  /**
+   * Where the offer ends up, once it knows how wide it is.
+   *
+   * Measured rather than estimated. The width depends on how many actions are
+   * shown and what they are labelled — two, or three when a language is set —
+   * and every constant written down for it has been wrong within a phase of
+   * being written.
+   */
+  const offer = useRef<HTMLDivElement | null>(null)
+  const [offerAt, setOfferAt] = useState<{ left: number; top: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const el = offer.current
+    const paneEl = pane.current
+    if (selected === null || el === null || paneEl === null) {
+      setOfferAt(null)
+      return
+    }
+    const place = (): void => {
+      setOfferAt(
+        fitCard(
+          selected.anchor,
+          { width: paneEl.clientWidth, height: paneEl.clientHeight },
+          { width: el.offsetWidth, height: el.offsetHeight }
+        )
+      )
+    }
+    place()
+    // Wrapping to a second line changes its height, which changes where it
+    // should hang from.
+    const observer = new ResizeObserver(place)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [selected])
+
+  /**
+   * Opens an aside on the selected passage, and starts its fork here.
+   *
+   * The open belongs to the click. A card that opened its own fork in a mount
+   * effect would open two in development, and for an explanation — which sends
+   * its first turn on open — the second is a paid turn already written to the
+   * log before any cleanup could run. A click happens once.
+   */
+  const openCard = useCallback(
+    (purpose: 'question' | 'explanation') => {
+      const passage = selected
+      const source = passage?.source ?? null
+      if (passage === null || source === null) return
+
+      const opened = window.chorus.openAside({
+        conversationId,
+        sourceEventId: source.eventId,
+        excerpt: passage.text,
+        purpose,
+      })
+
+      setAskingAbout({
+        ...passage,
+        source,
+        purpose,
+        opening: opened.then((result) => result.asideId),
+        /*
+         * The language main used, not the one this pane happened to be holding.
+         * The local copy is read asynchronously per selection and can be a
+         * moment behind — long enough for the card to say Arabic while the log
+         * says French.
+         */
+        language: opened.then((result) => result.language),
+      })
+      setSelected(null)
+      window.getSelection()?.removeAllRanges()
+    },
+    [selected, conversationId]
+  )
+
+  /**
+   * Closes the aside a card was showing. The other half of `openCard`.
+   *
+   * Here rather than in the card's own cleanup, because React runs an effect
+   * setup → cleanup → setup in development and the simulated cleanup would close
+   * the fork the second setup had just adopted. Opening and closing belong to one
+   * owner; this is it.
+   *
+   * Closes what the *promise* resolves to, not what the card managed to render:
+   * dismissing during the two seconds a CLI takes to start would otherwise leave
+   * a fork nobody closes.
+   */
+  const closeCard = useCallback((card: { opening: Promise<string> } | null) => {
+    if (card === null) return
+    void card.opening.then((id) => window.chorus.closeAside({ asideId: id })).catch(() => undefined)
+  }, [])
+
+  /*
+   * A pane can be unmounted with a card open — closing its tab, or another pane
+   * becoming the active one. The fork outlives the component unless something
+   * says otherwise.
+   */
+  const openCardRef = useRef<{ opening: Promise<string> } | null>(null)
+  openCardRef.current = askingAbout
+  useEffect(
+    () => () => {
+      closeCard(openCardRef.current)
+    },
+    [closeCard]
+  )
 
   /** Puts the passage in the draft and leaves the caret under it, ready for the question. */
   const quoteSelection = useCallback(() => {
@@ -785,19 +973,85 @@ export function Session(props: {
         mousedown on a button clears the selection before the click lands, so by
         the time the handler ran there would be nothing left to quote.
       */}
-      {selected !== null && (
-        <button
-          type="button"
+      {selected !== null && askingAbout === null && (
+        <div
           className="quote-offer"
-          data-placement={selected.placement}
-          style={{ left: `${String(selected.left)}px`, top: `${String(selected.top)}px` }}
+
+          /*
+           * The classifier's answer, visible in the DOM as well as in the
+           * buttons, so a wrong one is assertable rather than only lookable-at.
+           */
+          data-askable={selected.source === null ? undefined : 'true'}
+          ref={offer}
+          /*
+           * Hidden for the frame before it has been measured, so the first paint
+           * is not the offer in the wrong place followed by a jump.
+           */
+          style={
+            offerAt === null
+              ? { visibility: 'hidden' }
+              : { left: `${String(offerAt.left)}px`, top: `${String(offerAt.top)}px` }
+          }
           onMouseDown={(e) => {
             e.preventDefault()
           }}
-          onClick={quoteSelection}
         >
-          {t('conversation.askAboutThis')}
-        </button>
+          <button type="button" className="quote-offer-action" onClick={quoteSelection}>
+            {t('conversation.quoteInMessage')}
+          </button>
+          {/*
+            Offered only where an aside can actually be answered. A passage that
+            crosses two replies has no single author, and one still streaming
+            cannot be seen by a fork at all — so the button is absent rather than
+            present-and-failing.
+          */}
+          {selected.source !== null && (
+            <button
+              type="button"
+              className="quote-offer-action"
+              onClick={() => {
+                openCard('question')
+              }}
+            >
+              {t('conversation.askAboutThis')}
+            </button>
+          )}
+          {/*
+            Offered only when a language has been set. There is no honest guess
+            at someone's own language, and an action that cannot say which one it
+            would answer in is worse than an absent one.
+          */}
+          {selected.source !== null && explainLanguage !== '' && (
+            <button
+              type="button"
+              className="quote-offer-action"
+              onClick={() => {
+                openCard('explanation')
+              }}
+            >
+              {t('conversation.explainSimply')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {askingAbout !== null && (
+        <QuickQuestion
+          opening={askingAbout.opening}
+          purpose={askingAbout.purpose}
+          language={askingAbout.language}
+          agent={askingAbout.source.actor}
+          excerpt={askingAbout.text}
+          anchor={askingAbout.anchor}
+          onClose={() => {
+            closeCard(askingAbout)
+            setAskingAbout(null)
+          }}
+          onStage={(text) => {
+            composer.current?.insert(text)
+          }}
+          onError={setError}
+        />
       )}
 
       {reviewing && (

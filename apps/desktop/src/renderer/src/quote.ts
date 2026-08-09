@@ -12,6 +12,67 @@
  * without Chorus inventing a convention to teach it.
  */
 
+/**
+ * The transcript entry a selection came out of, flattened to what the decision
+ * needs.
+ *
+ * Read off the entry's own data attributes rather than passed down from the
+ * reducer, because the selection is made in the DOM and the DOM is the only
+ * place that knows which entry the pointer landed in. Strings rather than the
+ * reducer's unions: these come back from `getAttribute`, and narrowing them here
+ * — in the one function that decides — beats trusting an assertion at the edge.
+ */
+export interface SourceEntry {
+  readonly eventId: string
+  readonly actor: string
+  readonly kind: string
+  readonly status: string
+}
+
+/**
+ * How much text may be carried into an aside.
+ *
+ * A limit rather than a truncation: the excerpt is what the question is *about*,
+ * so half of one asks a different question than the one the user meant. Refusing
+ * is honest; trimming is not.
+ */
+export const MAX_EXCERPT_CHARS = 2_000
+
+/**
+ * Whether a selection can be asked about, and what it would be asked about.
+ *
+ * Quoting works on anything. Asking does not, and the reasons are not cosmetic:
+ *
+ * - **One entry only.** A range crossing two messages has no single author, and
+ *   an aside is routed to the author of the passage.
+ * - **An agent's own words.** User, system, tool, command and reasoning rows are
+ *   either not something an agent said or not something it can be asked to
+ *   expand on.
+ * - **Completed.** This is a provider constraint discovered by measurement, not
+ *   a preference: a fork taken mid-turn inherits the session only as far as the
+ *   last *completed* turn, so a fork asked about a still-streaming reply is
+ *   asked about text it cannot see. It answers that no such reply exists.
+ *
+ * Returns the source when all of that holds, and `null` when it does not — in
+ * which case the caller still offers to quote.
+ */
+export function askableSource(
+  start: SourceEntry | null,
+  end: SourceEntry | null,
+  excerpt: string,
+  limit: number = MAX_EXCERPT_CHARS
+): SourceEntry | null {
+  if (start === null || end === null) return null
+  if (start.eventId === '' || start.eventId !== end.eventId) return null
+  if (start.actor !== 'codex' && start.actor !== 'claude') return null
+  if (start.kind !== 'message') return null
+  if (start.status !== 'complete') return null
+
+  const body = excerpt.trim()
+  if (body === '' || body.length > limit) return null
+  return start
+}
+
 /** The selection, as a blockquote. */
 export function asQuote(selection: string): string {
   const body = selection.replace(/\r\n/g, '\n').trim()
@@ -43,39 +104,39 @@ export function withQuote(draft: string, selection: string): string {
 }
 
 /**
- * Where the button goes, in the pane's own coordinates.
+ * The passage, in the pane's own coordinates, and nothing decided yet.
  *
- * Centred on the selection and clear of it, then clamped so it cannot sit off
- * either edge of a narrow pane. Returns null when the selection has no
- * rectangle — a collapsed range, or one scrolled entirely out of view.
+ * This used to be `anchorFor`, which also chose above-or-below and clamped using
+ * a hand-written guess at how wide the offer was. Two things went wrong with
+ * that. The guess drifted every time a label changed — it was 96 for a
+ * fourteen-character button and had to become 240 for two of them, and a
+ * three-action offer would have needed a third revision nobody would remember to
+ * make. And because the clamped result was what got stored, the real geometry
+ * was gone by the time anything could have measured the truth.
  *
- * `placement` rather than a computed pixel height: the button is one line of
- * text in a font this module cannot measure, so the arithmetic gives an edge to
- * hang it from and CSS decides which way it hangs. Getting this wrong is not
- * subtle — anchored by its top edge above the selection, the button sits *on
- * top of* the passage it is offering to quote.
+ * So this returns the passage and stops. Whoever is being positioned measures
+ * itself and calls `fitCard`, which is now the only thing that decides where
+ * anything goes — the offer and the card included. One positioner cannot
+ * disagree with itself about which edge `top` means, which is what the two of
+ * them used to do.
+ *
+ * `null` when the selection has no rectangle: a collapsed range, or one scrolled
+ * entirely out of view.
  */
-export function anchorFor(
-  selection: DOMRect,
-  pane: DOMRect,
-  button = { width: 96, gap: 8, room: 34 }
-): { left: number; top: number; placement: 'above' | 'below' } | null {
+export interface SelectionAnchor {
+  /** The horizontal centre of the passage. */
+  readonly centreX: number
+  /** Its top edge. */
+  readonly top: number
+  /** How tall it is, so anything dropping below it can clear it. */
+  readonly height: number
+}
+
+export function anchorOf(selection: DOMRect, pane: DOMRect): SelectionAnchor | null {
   if (selection.width === 0 && selection.height === 0) return null
-
-  const half = button.width / 2
-  const centre = selection.left + selection.width / 2 - pane.left
-  const left = Math.min(Math.max(centre, half + 4), Math.max(pane.width - half - 4, half + 4))
-
-  /*
-   * Below the selection when there is no room above it.
-   *
-   * The first line of a transcript sits against the top of the pane, so a button
-   * placed above it would be clipped by the scroller — and the one selection you
-   * cannot easily re-make is the one you just made.
-   */
-  const top = selection.top - pane.top
-  if (top < button.room) {
-    return { left, top: selection.bottom - pane.top + button.gap, placement: 'below' }
+  return {
+    centreX: selection.left + selection.width / 2 - pane.left,
+    top: selection.top - pane.top,
+    height: selection.height,
   }
-  return { left, top: top - button.gap, placement: 'above' }
 }

@@ -12,6 +12,25 @@ export interface Migration {
   readonly up: string
 }
 
+/**
+ * The second migration this database has ever had, and the first to run against
+ * one holding real data.
+ *
+ * Three nullable columns and nothing else. Nullable is the whole design: every
+ * `conversation.created` ever appended lacks these fields, and a rebuild has to
+ * produce the same rows it always did for them. `kind IS NULL` therefore means
+ * "an ordinary conversation", which is what every existing row is.
+ *
+ * No index. Asides are read by `parent_id`, but a user has tens of
+ * conversations and a handful of asides each; an index here would be ceremony,
+ * and `PRAGMA user_version` moving is the risk worth minimising.
+ */
+const ASIDE_COLUMNS = `
+  ALTER TABLE conversations ADD COLUMN kind            TEXT;
+  ALTER TABLE conversations ADD COLUMN parent_id       TEXT;
+  ALTER TABLE conversations ADD COLUMN source_event_id TEXT;
+`
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -112,6 +131,11 @@ export const MIGRATIONS: readonly Migration[] = [
         last_seq INTEGER NOT NULL
       );
     `,
+  },
+  {
+    version: 2,
+    name: 'aside-conversations',
+    up: ASIDE_COLUMNS,
   },
 ]
 

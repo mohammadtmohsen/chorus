@@ -1,4 +1,4 @@
-import { existsSync, renameSync, statSync } from 'node:fs'
+import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { ClaudeAdapter } from '@chorus/adapter-claude'
@@ -17,6 +17,7 @@ import type {
 import {
   EventStore,
   openSqlite,
+  type AsideSummary,
   type ConversationSummary,
   type SqliteHandle,
   type StoredEvent,
@@ -123,6 +124,83 @@ interface ActiveConversation {
  */
 const JOINING_CATCHUP_CHARS = 60_000
 
+/**
+ * What the fork is actually asked.
+ *
+ * The excerpt is quoted rather than described, for the same reason `quote.ts`
+ * quotes into the composer: both CLIs already read `>` as quotation, so the
+ * agent sees the passage and the question as two separate things without Chorus
+ * inventing a convention to teach it.
+ *
+ * The framing is deliberate. Without it a fork treats the question as the next
+ * turn of the work and starts *doing* things — which is the one behaviour an
+ * aside must not have, and which no permission rule would catch because reading
+ * files is allowed.
+ */
+function asideQuestion(excerpt: string, question: string): string {
+  return [
+    'You are being asked a short side question about something you said.',
+    'Answer it and nothing else: do not continue the work, do not change files.',
+    '',
+    excerpt
+      .split('\n')
+      .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+      .join('\n'),
+    '',
+    question,
+  ].join('\n')
+}
+
+/**
+ * What a fork is asked when someone did not follow a passage.
+ *
+ * **Level first, language second**, and the ordering is the feature. A prompt
+ * that leads with the language produces a faithful translation of something
+ * still too dense — the reader is no better off, in a second language.
+ *
+ * Two failure modes the wording works against, both of which read as a bad
+ * feature rather than a bad prompt. **Condescension**: "explain simply" invites
+ * an answer starting from first principles, which is insulting to someone who
+ * understood every word but one, so the reader is named as what they are — a
+ * developer on this project who has not met this particular thing. And
+ * **length**: a model asked to explain will keep explaining, while the card is
+ * 190px tall and a passage of one sentence deserves an answer of three.
+ *
+ * The do-not-work clause is the same one `asideQuestion` carries, and for the
+ * same measured reason: without it a fork treats the request as the next turn of
+ * the work and starts doing things, which no permission rule catches because
+ * reading files is allowed.
+ */
+export function explainPrompt(excerpt: string, language: string): string {
+  return [
+    'Someone reading this conversation did not follow the passage below.',
+    'Say what it means, plainly. They are a developer working on this project who',
+    'has not met this particular thing before — not a beginner, so do not start',
+    'from first principles or explain what they already know.',
+    '',
+    'Short sentences, concrete rather than abstract, one idea at a time. No jargon',
+    'except the jargon being explained. Keep identifiers, file names and technical',
+    `terms exactly as written, and explain each one in ${language} where it appears.`,
+    '',
+    `Write every word of your explanation in ${language}. Not bilingually, and not`,
+    `only the first sentence — if you find yourself back in the passage's own`,
+    `language, return to ${language}.`,
+    '',
+    'You have the whole conversation. Use it, and say *why* where the why is the',
+    'confusing part.',
+    '',
+    // Each clause whole on its own line. A phrase split across a line break is
+    // harder to read and easier to weaken by editing one half of it.
+    'Do not restate the passage. Do not widen the subject.',
+    'Do not continue the work or change anything. Answer this and stop.',
+    '',
+    excerpt
+      .split('\n')
+      .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+      .join('\n'),
+  ].join('\n')
+}
+
 /** Long enough for a cold provider start, short enough not to look like a hang. */
 const REOPEN_TIMEOUT_MS = 20_000
 
@@ -150,6 +228,17 @@ export interface SendResult {
 
 export class ChorusRuntime {
   private readonly active = new Map<string, ActiveConversation>()
+  /**
+   * Live asides, by their own conversation id.
+   *
+   * Separate from `active` on purpose: an aside is not a session. Nothing that
+   * walks open conversations — restore, the sidebar, quit — should find one,
+   * and keeping them in the same map is how they would.
+   */
+  private readonly asides = new Map<
+    string,
+    { service: ConversationService; parentId: string; excerpt: string }
+  >()
   /** Last renderer-owned editor arrangement, persisted beside the active sessions. */
   private workspaceSnapshot: WorkspaceSnapshot | null = null
   /** The latest windows each provider reported, for a window opened later. */
@@ -456,6 +545,258 @@ export class ChorusRuntime {
   }
 
   /**
+   * Opens an aside: a fork of one agent, asked about one passage of one reply.
+   *
+   * Nothing here touches the parent. No `lastAddressed`, no `seenSeq`, no draft,
+   * no `rememberOpen` — an aside is not a turn, and a conversation that
+   * re-ordered its routing because someone asked a footnote would be exactly the
+   * derailment this feature exists to avoid.
+   *
+   * **The source is re-resolved from the log, never trusted from the caller.**
+   * The renderer sends an event id and the text it believes it selected; both
+   * are checked against what the store actually holds. A caller that could name
+   * any event and any excerpt could put words in an agent's mouth and have them
+   * quoted back as its own.
+   */
+  async openAside(request: {
+    conversationId: string
+    sourceEventId: string
+    excerpt: string
+    /**
+     * Why it is being opened, and therefore what the fork is first asked.
+     *
+     * `explanation` carries its own first turn: there is nothing for the user to
+     * type, so opening and asking are one act. `question` opens empty and waits.
+     */
+    purpose?: 'question' | 'explanation'
+    /**
+     * Optional, and usually absent.
+     *
+     * The card opens this the moment it appears, before the user has typed
+     * anything, so the CLI is spawning and loading its config while they write
+     * the question rather than afterwards. Measured, that is about 2.6 of the
+     * 4.2 seconds — two thirds of the wait was a process starting, not an agent
+     * thinking. Asking without a question is what lets that happen in parallel.
+     */
+    question?: string
+  }): Promise<{ asideId: string; language: string }> {
+    const parent = this.active.get(request.conversationId)
+    if (parent === undefined) throw new Error('That conversation is not open')
+
+    const source = this.store
+      .read(request.conversationId)
+      .find((e) => e.id === request.sourceEventId)
+    if (source === undefined) throw new Error('That passage is no longer in the log')
+
+    /*
+     * Only a finished agent message. A fork inherits the session *as persisted*,
+     * so it cannot see a turn still in flight — asked about a reply that is
+     * still arriving it answers that no such reply exists. Measured, not assumed:
+     * see the plan's STATUS.
+     */
+    if (source.payload.type !== 'agent.message.completed') {
+      throw new Error('An aside can only be asked about a finished reply')
+    }
+    const said = source.payload.text
+    const excerpt = request.excerpt.trim()
+    if (excerpt === '' || !said.includes(excerpt)) {
+      throw new Error('That passage is not part of that reply')
+    }
+
+    const agentId = source.actor
+    if (agentId !== 'codex' && agentId !== 'claude') {
+      throw new Error('Only an agent can be asked about what it said')
+    }
+    const participant = parent.participants.get(agentId)
+    if (participant === undefined) throw new Error(`${agentId} is no longer in this conversation`)
+
+    const adapter = this.adapters.get(agentId)
+    if (adapter?.fork === undefined) throw new Error(`${agentId} cannot be forked`)
+    if (participant.session.sessionRef === '') {
+      throw new Error(`${agentId} has not started a session yet`)
+    }
+
+    /*
+     * The passage must belong to the session about to be forked.
+     *
+     * Source authenticity says the reply is genuinely that agent's; it says
+     * nothing about *which* of its sessions said it. An agent taken out of a
+     * conversation and brought back gets a new session, and forking that one to
+     * ask about a reply from the old one produces an agent politely explaining
+     * something it has never seen — the same failure as forking mid-turn, and
+     * just as hard to recognise as a bug rather than a bad answer.
+     *
+     * The check is the log's own: the last `session.started` for this agent at
+     * or before the reply must name the ref the participant is running now.
+     */
+    const startedAtSource = this.store
+      .read(request.conversationId)
+      .filter(
+        (e) =>
+          e.seq <= source.seq &&
+          e.payload.type === 'session.started' &&
+          e.payload.agentId === agentId
+      )
+      .at(-1)
+
+    /*
+     * Compared by **which `session.started` is current**, not by its
+     * `sessionRef`. Claude's real id arrives with its first message, so
+     * `session.started` is written with an empty string — and an earlier version
+     * of this check skipped empty refs, which meant it never fired for Claude at
+     * all, the provider it most needed to fire for. Event identity does not
+     * depend on a field that is filled in late.
+     */
+    const currentStart = this.store
+      .read(request.conversationId)
+      .filter((e) => e.payload.type === 'session.started' && e.payload.agentId === agentId)
+      .at(-1)
+
+    if (startedAtSource !== undefined && startedAtSource.id !== currentStart?.id) {
+      throw new Error(`${agentId} has started a new session since it said that`)
+    }
+
+    /*
+     * Fork first, then write the row.
+     *
+     * The other order left a durable `conversation.created` behind whenever the
+     * fork failed — an aside in the log, findable by `listAsides`, with no
+     * session, no answer and no way to reach a terminal state. The log is
+     * append-only, so there was nothing to roll back with; not writing it is the
+     * only rollback available.
+     */
+    /*
+     * The language is read here, and read **before** anything is spawned.
+     *
+     * Not accepted from the caller: the renderer already has its source event
+     * re-resolved because it renders untrusted agent output, and a language
+     * string is prompt content — the same class of problem wearing a smaller
+     * word. And checked first, because a refusal after the fork leaves a CLI
+     * running that nobody has a handle to.
+     */
+    const purpose = request.purpose ?? 'question'
+    const language =
+      purpose === 'explanation' ? readSettings(this.userDataPath).explainLanguage : ''
+    if (purpose === 'explanation' && language === '') {
+      throw new Error('No language is set to explain in')
+    }
+
+    const opts: SessionOpts = {
+      cwd: parent.cwd,
+      sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
+    }
+    const forked = await adapter.fork(participant.session.sessionRef, {
+      ...opts,
+      // Decided with the user: the aside inherits the user's configuration, so
+      // hooks, skills and CLAUDE.md load exactly as they do in the room.
+      inherits: 'config',
+    })
+
+    const asideId = newConversationId()
+
+    /*
+     * Everything past the fork is wrapped, because everything past the fork can
+     * fail with a provider process already running.
+     *
+     * Appending, attaching, the health check and the first send each have their
+     * own way of going wrong, and any of them leaving a live CLI behind is a
+     * leak nobody has a handle to — the caller never learns an id, so it cannot
+     * close what it does not know about. The send is the sharp one: it happens
+     * after the service is already in `this.asides`, so failing there strands an
+     * entry as well as a process.
+     */
+    try {
+      this.store.append({
+        conversationId: asideId,
+        actor: 'user',
+        payload: {
+          type: 'conversation.created',
+          projectId: parent.cwd,
+          title: excerpt.slice(0, 80),
+          aside: {
+            parentId: request.conversationId,
+            sourceEventId: request.sourceEventId,
+            purpose,
+            // The language as it was, not as it will be. Settings change.
+            ...(language === '' ? {} : { language }),
+          },
+        },
+      })
+
+      const service = new ConversationService({
+        store: this.store,
+        conversationId: asideId,
+        adapter,
+        profile: profileById('read-only'),
+        /*
+         * Its own grants, deliberately empty — **not** the parent's.
+         *
+         * A grant outranks an `ask` and an aside never asks, so carrying them
+         * would mean a previously allowed `npm publish`, or a granted MCP tool
+         * that posts outward, running silently inside a fork nobody is watching.
+         * Claude's sandbox is emulated, so nothing below would have stopped it.
+         *
+         * Little is lost. Grants exist to stop the user being re-asked, and an
+         * aside does not ask; what they would add here is the power to act,
+         * which is the one thing an explanation must not have. `SAFE_READS`
+         * still lets it go and look. The user's *configuration* is a separate
+         * thing and still inherited in full — see `ForkOpts.inherits`.
+         */
+        grants: new SessionGrants(),
+        neverAsks: true,
+      })
+      await service.attach(forked, opts, await adapter.health())
+
+      this.asides.set(asideId, { service, parentId: request.conversationId, excerpt })
+
+      try {
+        if (purpose === 'explanation') {
+          await service.sendUserMessage(
+            `Explain this in ${language}.`,
+            explainPrompt(excerpt, language)
+          )
+        } else if (request.question !== undefined && request.question !== '') {
+          await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
+        }
+      } catch (error) {
+        this.asides.delete(asideId)
+        await service.close('closed')
+        throw error
+      }
+
+      return { asideId, language }
+    } catch (error) {
+      // The fork is ours until an id is handed back. Nobody else can close it.
+      await forked.close()
+      throw error
+    }
+  }
+
+  /** A follow-up in an aside that is still alive. */
+  async askAside(asideId: string, question: string): Promise<void> {
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) {
+      // Its fork was ephemeral and is gone. The transcript survives in the log;
+      // continuing it does not, which is why a reopened aside is view-only.
+      throw new Error('That aside has ended — ask again to start a new one')
+    }
+    await aside.service.sendUserMessage(question, asideQuestion(aside.excerpt, question))
+  }
+
+  /** Ends an aside's fork. Its transcript stays in the log. */
+  async closeAside(asideId: string): Promise<void> {
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) return
+    this.asides.delete(asideId)
+    await aside.service.close('closed')
+  }
+
+  /** The asides taken on a conversation, or on one reply within it. */
+  listAsides(conversationId: string, sourceEventId?: string): AsideSummary[] {
+    return this.store.listAsides(conversationId, sourceEventId)
+  }
+
+  /**
    * Builds the packet that would cross to another agent — without sending it.
    *
    * The user sees and edits this before anything moves. Agents keep separate
@@ -574,7 +915,19 @@ export class ChorusRuntime {
     const conversation = this.require(conversationId)
     this.active.delete(conversationId)
     this.rememberOpen()
-    await Promise.all([...conversation.participants.values()].map((p) => p.service.close()))
+
+    /*
+     * The conversation's asides go with it. They fork its agents and are only
+     * reachable from its transcript, so a closed conversation leaving live forks
+     * behind is a leak with nothing left on screen to close them from.
+     */
+    const orphans = [...this.asides].filter(([, a]) => a.parentId === conversationId)
+    for (const [id] of orphans) this.asides.delete(id)
+
+    await Promise.all([
+      ...[...conversation.participants.values()].map((p) => p.service.close()),
+      ...orphans.map(([, a]) => a.service.close()),
+    ])
     this.log.info('conversation closed', {
       conversationId,
       remaining: this.active.size,
@@ -1388,10 +1741,23 @@ export class ChorusRuntime {
      */
     this.rememberOpen()
 
-    const services = [...this.active.values()].flatMap((c) =>
-      [...c.participants.values()].map((p) => p.service)
-    )
+    /*
+     * Asides are closed alongside participants, not forgotten.
+     *
+     * They live in their own map so nothing that walks open conversations finds
+     * one — which is right, and which also meant quitting drained the main
+     * services and left these running. A `DeltaBuffer` that never flushes loses
+     * the tail of whatever it held, no `session.ended` is written, and the pump
+     * outlives the database it writes into.
+     */
+    const services = [
+      ...[...this.active.values()].flatMap((c) =>
+        [...c.participants.values()].map((p) => p.service)
+      ),
+      ...[...this.asides.values()].map((a) => a.service),
+    ]
     await Promise.all(services.map((service) => service.close('shutdown')))
+    this.asides.clear()
     this.active.clear()
     await Promise.all([...this.adapters.values()].map((a) => a.dispose()))
 
@@ -1545,19 +1911,52 @@ function openOrRecover(
   path: string,
   userDataPath: string
 ): { db: SqliteHandle; store: EventStore; recovered: string | null } {
-  const backupFor = (from: number): string => join(userDataPath, `chorus.pre-v${String(from)}.db`)
+  /**
+   * A snapshot, taken by SQLite rather than by the filesystem.
+   *
+   * The first version of this copied the main file and then its `-wal` and
+   * `-shm` in turn, which is not a snapshot: the three are copied at three
+   * different moments, and nothing stops another process — Chorus has no
+   * single-instance lock — writing between them. What that produces is a backup
+   * that looks fine and restores to a moment that never existed.
+   *
+   * `VACUUM INTO` is SQLite's own answer. It writes one consistent file from a
+   * live database, with no sidecars to keep in step, and it is synchronous,
+   * which `migrate` requires.
+   */
+  const snapshot = (db: SqliteHandle, from: number): string => {
+    const destination = join(userDataPath, `chorus.pre-v${String(from)}.db`)
+    // A leftover from an interrupted attempt would make VACUUM INTO fail.
+    if (existsSync(destination)) rmSync(destination)
+    // The path is ours, not a user's, but a quote in it would end the literal
+    // and the rest would be executed.
+    db.exec(`VACUUM INTO '${destination.replace(/'/g, "''")}'`)
+    return destination
+  }
 
+  /*
+   * Only *opening* may be treated as corruption.
+   *
+   * This catch used to wrap the migration too, and it recovers by renaming the
+   * database aside and starting an empty one. So a disk-full or a permission
+   * error while backing up — or any migration failure at all — presented as "your
+   * database was unreadable", and the user's history was moved out of the way to
+   * make room for nothing. A migration that cannot run has to fail loudly with
+   * the database untouched.
+   */
+  let db: SqliteHandle
+  let recovered: string | null = null
   try {
-    const db = openSqlite({ path })
-    return { db, store: EventStore.open(db, backupFor).store, recovered: null }
+    db = openSqlite({ path })
   } catch (error) {
     if (!existsSync(path)) throw error
-
     const moved = join(userDataPath, `chorus.unreadable-${String(Date.now())}.db`)
     renameSync(path, moved)
-    const db = openSqlite({ path })
-    return { db, store: EventStore.open(db, backupFor).store, recovered: moved }
+    db = openSqlite({ path })
+    recovered = moved
   }
+
+  return { db, store: EventStore.open(db, (from) => snapshot(db, from)).store, recovered }
 }
 
 /** Returns why a directory cannot be used, or null when it is fine. */
