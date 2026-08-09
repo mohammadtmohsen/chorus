@@ -385,6 +385,19 @@ direction and identifier isolation at the same time.
   the prompt cannot carry it.
 - It does not become a general "do X to this passage" menu. Two doors into a fork
   is a feature; five is a right-click menu.
+- **It does not let you choose which agent explains.** The passage's author does,
+  always. This is forced rather than chosen: the explanation is worth having
+  because it comes from a fork that already knows the conversation, and only the
+  agent that said it has a session to fork. Handing the passage to the other
+  agent would mean a fresh session and a summary — the approach this plan
+  rejected in the first place, because a summary can answer "what does this word
+  mean" but not "why did you pick that".
+
+  The cost is real and accepted: if the two providers differ in how well they
+  write your language, you get whichever one wrote the passage. Unmeasured — the
+  explanation path has only been driven against Claude. The fallback if it ever
+  matters is the one the room already offers: ask the other agent to write the
+  reply. Confirmed as the right trade rather than merely inherited.
 
 ## What the review corrected
 
