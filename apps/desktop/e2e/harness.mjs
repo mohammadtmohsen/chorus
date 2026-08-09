@@ -24,14 +24,24 @@ const APP = new URL('..', import.meta.url).pathname
 /** Chosen per spec so specs can run without fighting over a port. */
 let nextPort = 9800
 
-export async function launch({ userData, keepData = false } = {}) {
+/**
+ * @param options.executable A built `.app` binary to drive instead of `out/`.
+ *   What the specs assert is the same either way; what differs is whether the
+ *   code came from `electron-vite` or from the bundle a user actually installs.
+ */
+export async function launch({ userData, keepData = false, executable } = {}) {
   const port = nextPort++
   const dataPath = userData ?? mkdtemp()
   const env = { ...process.env, CHORUS_USER_DATA: dataPath }
   // The VS Code extension host sets this, and it makes Electron boot as Node.
   delete env.ELECTRON_RUN_AS_NODE
 
-  const child = spawn('npx', ['electron', '.', `--remote-debugging-port=${String(port)}`], {
+  const [command, args] =
+    executable === undefined
+      ? ['npx', ['electron', '.', `--remote-debugging-port=${String(port)}`]]
+      : [executable, [`--remote-debugging-port=${String(port)}`]]
+
+  const child = spawn(command, args, {
     cwd: APP,
     stdio: ['ignore', 'pipe', 'pipe'],
     env,
@@ -40,7 +50,39 @@ export async function launch({ userData, keepData = false } = {}) {
   child.stdout.on('data', (d) => (output += d.toString()))
   child.stderr.on('data', (d) => (output += d.toString()))
 
-  const socket = await connect(port)
+  /*
+   * A launch failure has to carry what the app said about it.
+   *
+   * `connect` can only report that no window ever appeared, which is the symptom
+   * of everything from a missing native module to a syntax error in main. The
+   * cause was already being captured here and thrown away — with a broken
+   * bundle, "the app never opened a window" was the entire diagnosis.
+   */
+  let socket
+  try {
+    socket = await connect(port)
+  } catch (error) {
+    child.kill('SIGKILL')
+    /*
+     * Both ends, because the useful line is at whichever one you did not keep.
+     * A native module that will not load prints its message first and twenty
+     * stack frames after it, so a tail showed only frames; a late crash is the
+     * other way round.
+     */
+    const lines = output.trim().split('\n')
+    const said =
+      lines.length <= 14
+        ? lines.join('\n')
+        : [
+            ...lines.slice(0, 8),
+            `  … ${String(lines.length - 14)} more lines …`,
+            ...lines.slice(-6),
+          ].join('\n')
+    throw new Error(
+      `${error.message}${said === '' ? ' (and said nothing)' : `\n\nthe app said:\n${said}`}`,
+      { cause: error }
+    )
+  }
   const session = makeSession(socket)
 
   return {
