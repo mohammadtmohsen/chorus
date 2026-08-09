@@ -38,7 +38,8 @@ every time:
 • default Electron icon is used  reason=application icon is not set
 ```
 
-So `Chorus-0.7.0-arm64.dmg` ships the generic Electron icon — in the DMG window,
+So every DMG so far — `Chorus-0.8.1-arm64.dmg` included — ships the generic
+Electron icon: in the DMG window,
 in the Dock, in the Applications folder, and in ⌘-Tab. It is the first thing
 anyone sees of the product and currently says "an Electron app".
 
@@ -48,21 +49,6 @@ decision, not a packaging one.
 
 **Done when:** `apps/desktop/build/icon.icns` exists (1024×1024 source, macOS
 iconset) and `pnpm package` no longer prints that line.
-
-### C-002 · Whether to notarize
-
-The build is ad-hoc signed and **not** notarized, which is a documented decision
-rather than an oversight — `electron-builder.yml` explains it at length, and
-`docs/install-macos.md` walks a user through the dialogs. Ad-hoc signing is what
-keeps macOS calling the app _untrusted_ rather than _damaged_, which is the
-difference between a warning you can click past and one you cannot.
-
-That is fine for `pnpm app:install` on your own machine. It is a blocker the
-moment you hand the DMG to someone else.
-
-**Done when:** either a Developer ID is available and notarization is wired, or
-this entry is closed with "personal builds only" written down so nobody
-re-litigates it.
 
 ---
 
@@ -218,6 +204,27 @@ line of each is **what would reopen it** — a parked ticket with no such condit
 is not parked, it is forgotten.
 
 Full reasoning, including the probes, is in the plan's `STATUS.md` and `DONE.md`.
+
+### C-002 · Whether to notarize
+
+Ad-hoc signed, not notarized, and that is a decision rather than an oversight.
+`electron-builder.yml` sets `identity: null` and then ad-hoc signs in
+`afterPack`, with a comment explaining why the two are not the same thing: an
+ad-hoc build is called _untrusted_, which is a warning you can click past, while
+an unsigned one is called _damaged_, which you cannot. `docs/install-macos.md`
+walks through the dialogs, and every release's notes repeat the two ways round
+them.
+
+Notarizing means the Apple Developer Program, a Developer ID certificate, and
+uploading each build to be scanned and stapled — an annual fee and an Apple
+account, neither of which is a commit. Parked rather than deleted for the reason
+this section exists: without a paragraph saying ad-hoc signing was chosen, the
+next person to build a DMG meets Gatekeeper and re-opens the question from
+nothing.
+
+**Reopens if:** the DMG goes to anyone but the person who built it. A one-time
+right-click → Open is friction on your own machine; it is a scary dialog and a
+documentation link to a stranger.
 
 ### C-007 · The todo panel
 
