@@ -17,6 +17,7 @@ import type {
 import {
   EventStore,
   openSqlite,
+  type AsideSummary,
   type ConversationSummary,
   type SqliteHandle,
   type StoredEvent,
@@ -123,6 +124,33 @@ interface ActiveConversation {
  */
 const JOINING_CATCHUP_CHARS = 60_000
 
+/**
+ * What the fork is actually asked.
+ *
+ * The excerpt is quoted rather than described, for the same reason `quote.ts`
+ * quotes into the composer: both CLIs already read `>` as quotation, so the
+ * agent sees the passage and the question as two separate things without Chorus
+ * inventing a convention to teach it.
+ *
+ * The framing is deliberate. Without it a fork treats the question as the next
+ * turn of the work and starts *doing* things — which is the one behaviour an
+ * aside must not have, and which no permission rule would catch because reading
+ * files is allowed.
+ */
+function asideQuestion(excerpt: string, question: string): string {
+  return [
+    'You are being asked a short side question about something you said.',
+    'Answer it and nothing else: do not continue the work, do not change files.',
+    '',
+    excerpt
+      .split('\n')
+      .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+      .join('\n'),
+    '',
+    question,
+  ].join('\n')
+}
+
 /** Long enough for a cold provider start, short enough not to look like a hang. */
 const REOPEN_TIMEOUT_MS = 20_000
 
@@ -150,6 +178,14 @@ export interface SendResult {
 
 export class ChorusRuntime {
   private readonly active = new Map<string, ActiveConversation>()
+  /**
+   * Live asides, by their own conversation id.
+   *
+   * Separate from `active` on purpose: an aside is not a session. Nothing that
+   * walks open conversations — restore, the sidebar, quit — should find one,
+   * and keeping them in the same map is how they would.
+   */
+  private readonly asides = new Map<string, { service: ConversationService; parentId: string }>()
   /** Last renderer-owned editor arrangement, persisted beside the active sessions. */
   private workspaceSnapshot: WorkspaceSnapshot | null = null
   /** The latest windows each provider reported, for a window opened later. */
@@ -453,6 +489,132 @@ export class ChorusRuntime {
     // clean quit.
     this.rememberOpen()
     return { targets: route.targets }
+  }
+
+  /**
+   * Opens an aside: a fork of one agent, asked about one passage of one reply.
+   *
+   * Nothing here touches the parent. No `lastAddressed`, no `seenSeq`, no draft,
+   * no `rememberOpen` — an aside is not a turn, and a conversation that
+   * re-ordered its routing because someone asked a footnote would be exactly the
+   * derailment this feature exists to avoid.
+   *
+   * **The source is re-resolved from the log, never trusted from the caller.**
+   * The renderer sends an event id and the text it believes it selected; both
+   * are checked against what the store actually holds. A caller that could name
+   * any event and any excerpt could put words in an agent's mouth and have them
+   * quoted back as its own.
+   */
+  async openAside(request: {
+    conversationId: string
+    sourceEventId: string
+    excerpt: string
+    question: string
+  }): Promise<{ asideId: string }> {
+    const parent = this.active.get(request.conversationId)
+    if (parent === undefined) throw new Error('That conversation is not open')
+
+    const source = this.store
+      .read(request.conversationId)
+      .find((e) => e.id === request.sourceEventId)
+    if (source === undefined) throw new Error('That passage is no longer in the log')
+
+    /*
+     * Only a finished agent message. A fork inherits the session *as persisted*,
+     * so it cannot see a turn still in flight — asked about a reply that is
+     * still arriving it answers that no such reply exists. Measured, not assumed:
+     * see the plan's STATUS.
+     */
+    if (source.payload.type !== 'agent.message.completed') {
+      throw new Error('An aside can only be asked about a finished reply')
+    }
+    const said = source.payload.text
+    const excerpt = request.excerpt.trim()
+    if (excerpt === '' || !said.includes(excerpt)) {
+      throw new Error('That passage is not part of that reply')
+    }
+
+    const agentId = source.actor
+    if (agentId !== 'codex' && agentId !== 'claude') {
+      throw new Error('Only an agent can be asked about what it said')
+    }
+    const participant = parent.participants.get(agentId)
+    if (participant === undefined) throw new Error(`${agentId} is no longer in this conversation`)
+
+    const adapter = this.adapters.get(agentId)
+    if (adapter?.fork === undefined) throw new Error(`${agentId} cannot be forked`)
+    if (participant.session.sessionRef === '') {
+      throw new Error(`${agentId} has not started a session yet`)
+    }
+
+    const asideId = newConversationId()
+    this.store.append({
+      conversationId: asideId,
+      actor: 'user',
+      payload: {
+        type: 'conversation.created',
+        projectId: parent.cwd,
+        title: excerpt.slice(0, 80),
+        kind: 'aside',
+        parentId: request.conversationId,
+        sourceEventId: request.sourceEventId,
+      },
+    })
+
+    /*
+     * Read-only regardless of the parent's profile, so the sandbox an aside runs
+     * under cannot be wider than the question deserves.
+     */
+    const opts: SessionOpts = {
+      cwd: parent.cwd,
+      sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
+    }
+    const forked = await adapter.fork(participant.session.sessionRef, {
+      ...opts,
+      // Decided with the user: a fork that forgot what they had already allowed
+      // would be a different agent wearing the same name.
+      inherits: 'config',
+    })
+
+    const service = new ConversationService({
+      store: this.store,
+      conversationId: asideId,
+      adapter,
+      // Read-only, and the parent's grants: consent already given carries, new
+      // consent is refused because there is nobody in a small card to give it.
+      profile: profileById('read-only'),
+      grants: parent.grants,
+      neverAsks: true,
+    })
+    await service.attach(forked, opts, await adapter.health())
+    this.asides.set(asideId, { service, parentId: request.conversationId })
+
+    await service.deliver(asideQuestion(excerpt, request.question))
+    return { asideId }
+  }
+
+  /** A follow-up in an aside that is still alive. */
+  async askAside(asideId: string, question: string): Promise<void> {
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) {
+      // Its fork was ephemeral and is gone. The transcript survives in the log;
+      // continuing it does not, which is why a reopened aside is view-only.
+      throw new Error('That aside has ended — ask again to start a new one')
+    }
+    await aside.service.deliver(question)
+  }
+
+  /** Ends an aside's fork. Its transcript stays in the log. */
+  async closeAside(asideId: string): Promise<void> {
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) return
+    this.asides.delete(asideId)
+    await aside.service.close('closed')
+  }
+
+  /** The asides taken on a conversation, or on one reply within it. */
+  listAsides(conversationId: string, sourceEventId?: string): AsideSummary[] {
+    return this.store.listAsides(conversationId, sourceEventId)
   }
 
   /**
