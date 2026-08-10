@@ -75,6 +75,10 @@ promotion, a new port capability, and the child-id hazard below.
 asked something that needs prior context, and the answers are compared. If (3)
 holds up, phases 1 and 3's forking disappear.
 
+> **Answered — design (2), see `STATUS.md`.** A fork knew a fact the agent had
+> read but never said; a reconstruction from Chorus's log did not, because
+> `tool.completed.summary` caps a `Read` at 120 characters. Phase 1 stays.
+
 ## Phase 1 — a persistent fork with a stable identity
 
 _Only if Phase 0 chooses (2)._
