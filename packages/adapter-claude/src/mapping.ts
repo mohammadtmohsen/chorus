@@ -68,6 +68,12 @@ interface SdkMessageLike {
     message?: { id?: string }
   }
   parent_tool_use_id?: string | null
+  /**
+   * The tool's full Output object, keyed by the matching `tool_use` block's
+   * name. `unknown` in `sdk.d.ts` because the shape is per-tool, and left
+   * `unknown` here so `readPatch` has to check rather than trust it.
+   */
+  tool_use_result?: unknown
   uuid?: string
   claude_code_version?: string
   model?: string
@@ -663,8 +669,25 @@ function mapToolResults(
 ): AgentEvent[] {
   const known = ctx.bashToolIds ?? new Set<string>()
   const events: AgentEvent[] = []
+  const blocks = (msg.message?.content ?? []) as ContentBlock[]
 
-  for (const block of (msg.message?.content ?? []) as ContentBlock[]) {
+  /*
+   * `tool_use_result` is one field on the message, so attaching it is only
+   * unambiguous while the message carries one result.
+   *
+   * It always has: the SDK splits an assistant turn into one message per content
+   * block, so even tool calls the model issued in parallel — same `message.id` —
+   * come back as separate user messages with a single `tool_result` each. That
+   * was measured rather than assumed. This guard is what makes it a checked
+   * invariant instead of a bet, and if a future SDK batches results the diff
+   * quietly stops appearing rather than landing under the wrong file.
+   */
+  const patch =
+    blocks.filter((b) => b.type === 'tool_result').length === 1
+      ? readPatch(msg.tool_use_result)
+      : undefined
+
+  for (const block of blocks) {
     const ref = block.tool_use_id
     if (block.type !== 'tool_result' || ref === undefined || ref === '') continue
 
@@ -672,12 +695,13 @@ function mapToolResults(
 
     if (!known.has(ref)) {
       const summary = firstNonEmpty(text.split('\n')[0])
+      const failed = block.is_error === true
       events.push({
         ...base,
         seq: ctx.seq + events.length,
         type: 'tool.completed',
         itemRef: ref,
-        status: block.is_error === true ? 'error' : 'ok',
+        status: failed ? 'error' : 'ok',
         ...(summary === undefined
           ? {}
           : {
@@ -686,6 +710,8 @@ function mapToolResults(
                   ? `${summary.slice(0, MAX_TOOL_DETAIL - 1)}…`
                   : summary,
             }),
+        // A failed edit changed nothing, so a diff of it would be fiction.
+        ...(patch === undefined || failed ? {} : patch),
       })
       continue
     }
@@ -709,6 +735,116 @@ function mapToolResults(
     })
   }
   return events
+}
+
+/**
+ * How much of a created file's body is worth writing down.
+ *
+ * Only the synthesized path is capped. An `Edit`'s hunks are already bounded by
+ * the change plus three lines of context, however large the file — measured, not
+ * assumed — so they are stored and rendered whole.
+ *
+ * This was 40, and 40 was wrong: driven in the real app, a 40-line block filled
+ * the transcript pane and scrolled its own `Write …/big.ts` row off the top, so
+ * the diff lost the one thing that said which file it belonged to. Enough to
+ * recognise a file beats enough to read it — what you are usually checking about
+ * a new file is that it appeared and roughly what it is, and the omitted count
+ * carries the rest honestly.
+ */
+const MAX_CREATE_PATCH_LINES = 12
+
+interface PatchHunk {
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+  lines: string[]
+}
+
+/**
+ * `structuredPatch` → unified diff text.
+ *
+ * `parseDiff` needs only the `diff --git` line and `@@` headers; it ignores
+ * `index`, `---` and `+++`, and `lines` already carry their `+`/`-`/` ` prefix.
+ * An absolute path makes the header read `a//tmp/x`, which looks odd and parses
+ * correctly — `FILE_HEADER` captures everything after `a/`.
+ */
+function toUnifiedDiff(filePath: string, hunks: readonly PatchHunk[]): string {
+  const out: string[] = [`diff --git a/${filePath} b/${filePath}`]
+  for (const h of hunks) {
+    out.push(
+      `@@ -${String(h.oldStart)},${String(h.oldLines)} ` +
+        `+${String(h.newStart)},${String(h.newLines)} @@`
+    )
+    out.push(...h.lines)
+  }
+  return `${out.join('\n')}\n`
+}
+
+function isPatchHunk(value: unknown): value is PatchHunk {
+  if (typeof value !== 'object' || value === null) return false
+  const h = value as Record<string, unknown>
+  return (
+    typeof h['oldStart'] === 'number' &&
+    typeof h['oldLines'] === 'number' &&
+    typeof h['newStart'] === 'number' &&
+    typeof h['newLines'] === 'number' &&
+    Array.isArray(h['lines']) &&
+    h['lines'].every((l) => typeof l === 'string')
+  )
+}
+
+/**
+ * The diff a file-mutating tool produced, read off `tool_use_result`.
+ *
+ * `tool_use_result` is the tool's full Output object and the SDK's own types say
+ * to render from it rather than parse the result text — which is what the
+ * `summary` above does, capped at 120 characters.
+ *
+ * The shape is `unknown` by design (it is per-tool), so every field is checked
+ * rather than trusted. A tool we do not recognise, or an SDK that moves the
+ * field, yields `undefined` and the row keeps today's behaviour.
+ *
+ * Creating a file is the one case with no diff to read: `structuredPatch` comes
+ * back empty and the text exists only in `content`, so an all-added hunk is
+ * synthesized here — the only patch in this file we author rather than relay,
+ * and the only one that needs a cap.
+ */
+function readPatch(result: unknown): { patch: string; omittedLines?: number } | undefined {
+  if (typeof result !== 'object' || result === null) return undefined
+  const r = result as Record<string, unknown>
+
+  const filePath = r['filePath']
+  const hunks = r['structuredPatch']
+  if (typeof filePath !== 'string' || filePath === '' || !Array.isArray(hunks)) return undefined
+
+  if (hunks.length > 0) {
+    if (!hunks.every(isPatchHunk)) return undefined
+    return { patch: toUnifiedDiff(filePath, hunks) }
+  }
+
+  // No hunks and a `create` with body text: a new file.
+  const content = r['content']
+  if (r['type'] !== 'create' || typeof content !== 'string' || content === '') return undefined
+
+  const all = content.split('\n')
+  // A trailing newline yields a final empty element that is not a line.
+  if (all.at(-1) === '') all.pop()
+  const shown = all.slice(0, MAX_CREATE_PATCH_LINES)
+  const omitted = all.length - shown.length
+
+  return {
+    patch: toUnifiedDiff(filePath, [
+      {
+        oldStart: 0,
+        oldLines: 0,
+        newStart: 1,
+        newLines: shown.length,
+        lines: shown.map((l) => `+${l}`),
+      },
+    ]),
+    ...(omitted > 0 ? { omittedLines: omitted } : {}),
+  }
 }
 
 /** `content` is a string on the simple path and blocks on the rich one. */

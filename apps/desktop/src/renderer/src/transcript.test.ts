@@ -366,6 +366,38 @@ describe('reduceEvents', () => {
     expect(view.messages[0]).toMatchObject({ toolStatus: 'error', detail: '/a.ts' })
   })
 
+  it('carries an edit patch onto the tool row without parsing it', () => {
+    // The reducer stays a pure fold: parsing is the component's job, so the
+    // string arrives here untouched.
+    const patch = 'diff --git a/a.ts b/a.ts\n@@ -1,1 +1,1 @@\n-a\n+b\n'
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't1', name: 'Edit', detail: '/a.ts' }, 'claude'),
+      event('tool.completed', { itemRef: 't1', status: 'ok', patch }, 'claude'),
+    ])
+    expect(view.messages[0]).toMatchObject({ patch, toolStatus: 'ok' })
+  })
+
+  it('leaves the patch off a row whose tool carried none', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't1', name: 'Read', detail: '/a.ts' }, 'claude'),
+      event('tool.completed', { itemRef: 't1', status: 'ok', patch: null }, 'claude'),
+    ])
+    expect(view.messages[0]?.patch).toBeUndefined()
+    expect(view.messages[0]?.omittedLines).toBeUndefined()
+  })
+
+  it('carries the omitted-line count for a capped new file', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('tool.started', { itemRef: 't1', name: 'Write', detail: '/new.ts' }, 'claude'),
+      event(
+        'tool.completed',
+        { itemRef: 't1', status: 'ok', patch: 'diff --git a/n b/n\n', omittedLines: 10 },
+        'claude'
+      ),
+    ])
+    expect(view.messages[0]).toMatchObject({ omittedLines: 10 })
+  })
+
   it('does not let a summary overwrite the subject that identifies the row', () => {
     // For a Read the summary is the first line of the file, which says less
     // than the path already shown.

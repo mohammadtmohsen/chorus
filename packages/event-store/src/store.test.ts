@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { redactPayload } from '@chorus/shared'
+import { ChorusEventPayload } from './events.js'
 import { currentVersion } from './migrations.js'
 import { openSqlite, type SqliteHandle } from './sqlite.js'
 import { EventStore } from './store.js'
@@ -635,5 +637,58 @@ describe('after close', () => {
 
   it('counts nothing while it is open', () => {
     expect(store.droppedWrites()).toBe(0)
+  })
+})
+
+/**
+ * Every stored payload is reparsed through the *current* schema on read, and
+ * `schema_ver` is recorded but never branched on — there is no upcasting step.
+ *
+ * So a field added to an existing event has to tolerate its own absence, or
+ * every conversation written before it shipped stops opening. That is a silent,
+ * total failure, and this is the cheapest place to catch it.
+ */
+describe('payload schema: fields added later', () => {
+  it('reads a tool.completed written before patches existed', () => {
+    const parsed = ChorusEventPayload.parse({
+      type: 'tool.completed',
+      itemRef: 't1',
+      status: 'ok',
+      summary: null,
+    })
+
+    expect(parsed).toMatchObject({ type: 'tool.completed', itemRef: 't1' })
+  })
+
+  it('round-trips a tool.completed that carries a patch', () => {
+    const patch = 'diff --git a/a.ts b/a.ts\n@@ -1,1 +1,1 @@\n-a\n+b\n'
+    const parsed = ChorusEventPayload.parse({
+      type: 'tool.completed',
+      itemRef: 't1',
+      status: 'ok',
+      summary: null,
+      patch,
+      omittedLines: 12,
+    })
+
+    expect(parsed).toMatchObject({ patch, omittedLines: 12 })
+  })
+
+  it('redacts a secret an agent edited into a file, before it reaches disk', () => {
+    /*
+     * The reason the patch is a string named `patch` rather than structured
+     * hunks: `redactPayload` keys on field name. Under `lines` this would be
+     * written down verbatim.
+     */
+    const { payload, redacted } = redactPayload({
+      type: 'tool.completed',
+      itemRef: 't1',
+      status: 'ok',
+      summary: null,
+      patch: 'diff --git a/.env b/.env\n@@ -1,1 +1,1 @@\n+KEY=sk-ant-api03-SECRETVALUEHERE\n',
+    })
+
+    expect(redacted.length).toBeGreaterThan(0)
+    expect((payload as { patch: string }).patch).not.toContain('SECRETVALUEHERE')
   })
 })

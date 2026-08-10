@@ -1891,6 +1891,29 @@ body {
 }
 
 /*
+ * The diff belongs to the row above it, so it is indented to the tool name
+ * rather than to the rail, and scrolls on its own — a long line of code must not
+ * widen the transcript and push every other row sideways.
+ */
+.tool-patch {
+  margin: 0.35rem 0 0.55rem 1.7ch;
+  overflow-x: auto;
+  border-left: 1px solid var(--faint);
+  padding-left: 1ch;
+}
+
+.tool-patch[data-nested='true'] {
+  margin-left: 3.7ch;
+}
+
+.tool-patch-omitted {
+  margin: 0.2rem 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/*
  * The label carries the severity, not the whole row.
  *
  * A tinted line of body text reads as an error message; a tinted two-word label

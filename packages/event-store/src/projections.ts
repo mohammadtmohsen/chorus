@@ -254,6 +254,11 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
     case 'tool.completed':
       // A notice is read back off the log with the rest of the transcript; no
       // query asks "which notices", so a table would be write cost for nothing.
+      //
+      // `tool.completed` now carries a patch, which makes "which edits touched
+      // this file" answerable — but nothing asks it. The review panel answers
+      // the file-level question from git, which stays right when an agent's edit
+      // is later reverted by hand. If that changes, this is where it changes.
       break
   }
 

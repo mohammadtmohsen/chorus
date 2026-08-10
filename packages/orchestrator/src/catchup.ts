@@ -270,6 +270,12 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
          * what the conversation said. Carrying them would also mean deciding
          * what to do with a secret answer, and the safest thing to do with one
          * is not move it across an agent boundary at all.
+         *
+         * `tool.completed`'s patch stays out for a different reason: the other
+         * agent shares the working tree and can read the file or run git itself.
+         * Replaying our rendering of a change it can observe directly would cost
+         * tokens on every catch-up to tell it something already true on disk —
+         * and would be wrong the moment the edit is amended after the fact.
          */
         break
     }

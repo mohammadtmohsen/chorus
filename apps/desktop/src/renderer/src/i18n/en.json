@@ -289,7 +289,9 @@
   "tool": {
     "running": "Running",
     "ok": "Done",
-    "error": "Failed"
+    "error": "Failed",
+    "patchOmitted_one": "+{{count}} more line not shown",
+    "patchOmitted_other": "+{{count}} more lines not shown"
   },
   "context": {
     "short": "{{percent}}% ctx",

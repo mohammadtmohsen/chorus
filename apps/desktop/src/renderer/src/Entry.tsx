@@ -1,6 +1,8 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { parseDiff } from '@chorus/workspace/diff'
 import { CodeRun } from './CodeRun.js'
 import { useTranslation } from 'react-i18next'
+import { FileDiff } from './FileDiff.js'
 import { MarkdownView } from './MarkdownView.js'
 import type { TranscriptMessage } from './transcript.js'
 import { useTypewriter } from './useTypewriter.js'
@@ -28,6 +30,44 @@ function displayName(actor: TranscriptMessage['actor'] | undefined): string {
       return 'the system'
   }
 }
+
+/**
+ * The diff an edit carried, drawn under its tool row.
+ *
+ * Open by default and with nothing to click, unlike `CommandEntry` — an edit is
+ * the one thing in a turn you almost always want to see, and hiding it behind a
+ * caret is the problem this solves. It stays affordable because a hunk is the
+ * change plus three lines of context however large the file; only a *created*
+ * file is capped, and then it says so.
+ *
+ * Memoised and parsed in a `useMemo`: the transcript hands down a fresh array on
+ * every streamed delta, and re-parsing every visible diff on each one would make
+ * typing next to a long turn cost more than the turn did.
+ */
+const ToolPatch = memo(function ToolPatch({
+  patch,
+  omittedLines,
+  nested,
+}: {
+  patch: string
+  omittedLines?: number | undefined
+  nested: boolean
+}): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const files = useMemo(() => parseDiff(patch), [patch])
+  if (files.length === 0) return null
+
+  return (
+    <div className="tool-patch" data-nested={nested ? 'true' : undefined}>
+      {files.map((file, i) => (
+        <FileDiff key={i} file={file} />
+      ))}
+      {omittedLines !== undefined && omittedLines > 0 && (
+        <p className="tool-patch-omitted">{t('tool.patchOmitted', { count: omittedLines })}</p>
+      )}
+    </div>
+  )
+})
 
 /**
  * A command, folded to its first line.
@@ -264,15 +304,29 @@ export const Entry = memo(function Entry({
            * it does to read, or the answer underneath it gets buried by its own
            * working.
            */
-          <p
-            className="tool-line"
-            data-status={message.toolStatus ?? 'running'}
-            data-nested={message.parentRef === undefined ? undefined : 'true'}
-          >
-            <span className="tool-dot" aria-label={t(`tool.${message.toolStatus ?? 'running'}`)} />
-            <span className="tool-name">{message.text}</span>
-            {message.detail !== undefined && <span className="tool-detail">{message.detail}</span>}
-          </p>
+          <>
+            <p
+              className="tool-line"
+              data-status={message.toolStatus ?? 'running'}
+              data-nested={message.parentRef === undefined ? undefined : 'true'}
+            >
+              <span
+                className="tool-dot"
+                aria-label={t(`tool.${message.toolStatus ?? 'running'}`)}
+              />
+              <span className="tool-name">{message.text}</span>
+              {message.detail !== undefined && (
+                <span className="tool-detail">{message.detail}</span>
+              )}
+            </p>
+            {message.patch !== undefined && (
+              <ToolPatch
+                patch={message.patch}
+                omittedLines={message.omittedLines}
+                nested={message.parentRef !== undefined}
+              />
+            )}
+          </>
         ) : message.kind === 'notice' ? (
           /*
            * A label the eye can skip, then the harness's own words.

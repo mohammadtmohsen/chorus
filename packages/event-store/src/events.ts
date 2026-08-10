@@ -315,6 +315,18 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     itemRef,
     status: z.enum(['ok', 'error']),
     summary: z.string().nullable(),
+    /*
+     * `.optional()` is load-bearing, not decoration.
+     *
+     * Every stored payload is reparsed through *this* schema on read
+     * (`toStoredEvent`), and `schema_ver` is recorded but never branched on, so
+     * there is no upcasting step. A bare `.nullable()` accepts null but not a
+     * missing key, which would make every `tool.completed` already on disk fail
+     * validation and every existing conversation fail to open — which is why
+     * `resumed` and `parentId` above are optional too.
+     */
+    patch: z.string().nullable().optional(),
+    omittedLines: z.number().int().nullable().optional(),
   }),
 
   z.object({

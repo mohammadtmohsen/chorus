@@ -98,6 +98,46 @@ rename to new.ts
     expect(parseDiff(multi)[0]?.hunks[1]?.lines[0]).toMatchObject({ before: 50 })
   })
 
+  /*
+   * The adapter serializes an agent's edit into this exact shape, and it is
+   * thinner than git's: no `index`, no `---`/`+++`, and an absolute path makes
+   * the header read `a//repo/...`. Recorded from a real `replace_all` edit.
+   *
+   * Pinned here rather than in the adapter because this parser is the consumer,
+   * and a change to either side that silently stopped agreeing would show up as
+   * diffs vanishing from the transcript rather than as a failure.
+   */
+  it('reads the thin diff an agent edit produces', () => {
+    const patch =
+      'diff --git a//repo/delta.ts b//repo/delta.ts\n' +
+      '@@ -1,4 +1,4 @@\n' +
+      '-const a = "TOKEN"\n' +
+      '+const a = "MARKER"\n' +
+      ' const pad1 = 0\n' +
+      '@@ -16,4 +16,4 @@\n' +
+      ' const qad8 = 0\n' +
+      '-const c = "TOKEN"\n' +
+      '+const c = "MARKER"\n'
+
+    const [file] = parseDiff(patch)
+    expect(file?.path).toBe('/repo/delta.ts')
+    expect(file).toMatchObject({ added: 2, removed: 2 })
+    expect(file?.hunks).toHaveLength(2)
+    expect(file?.hunks[1]?.lines[1]).toMatchObject({ kind: 'removed', before: 17 })
+    expect(file?.hunks[1]?.lines[2]).toMatchObject({ kind: 'added', after: 17 })
+  })
+
+  it('reads a synthesized new-file diff as all additions', () => {
+    const [file] = parseDiff(
+      'diff --git a//repo/new.ts b//repo/new.ts\n@@ -0,0 +1,2 @@\n+one\n+two\n'
+    )
+    expect(file).toMatchObject({ added: 2, removed: 0 })
+    expect(file?.hunks[0]?.lines).toMatchObject([
+      { kind: 'added', after: 1 },
+      { kind: 'added', after: 2 },
+    ])
+  })
+
   it('returns nothing for an empty diff', () => {
     expect(parseDiff('')).toEqual([])
   })

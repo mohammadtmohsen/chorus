@@ -863,6 +863,8 @@ export class ConversationService {
           itemRef: event.itemRef,
           status: event.status,
           summary: event.summary ?? null,
+          patch: event.patch ?? null,
+          omittedLines: event.omittedLines ?? null,
         })
         return
 

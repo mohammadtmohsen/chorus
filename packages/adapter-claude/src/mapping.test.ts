@@ -1179,3 +1179,163 @@ describe('user input results', () => {
     }
   })
 })
+
+/**
+ * The diff an edit carried.
+ *
+ * Shapes here are copied from a recorded session against claude 2.1.226, not
+ * from `sdk-tools.d.ts` — `tool_use_result` is `unknown` in the types, and this
+ * codebase has been wrong five times about what the SDK actually sends.
+ */
+describe('mapping: edit patches', () => {
+  const CTX = { seq: 1, now: 1_000, approvalTtlMs: 1_000 }
+
+  const result = (toolUseResult: unknown, opts: { isError?: boolean } = {}) =>
+    mapSdkMessage(
+      {
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 't1',
+              content: 'ok',
+              ...(opts.isError === true ? { is_error: true } : {}),
+            },
+          ],
+        },
+        tool_use_result: toolUseResult,
+      },
+      CTX
+    )
+
+  /** The fields under test, read off the first event without re-deriving the union. */
+  interface PatchView {
+    patch?: string
+    omittedLines?: number
+    status?: string
+  }
+  const first = (toolUseResult: unknown, opts: { isError?: boolean } = {}): PatchView =>
+    result(toolUseResult, opts)[0] as unknown as PatchView
+
+  const EDIT = {
+    filePath: '/repo/alpha.ts',
+    oldString: '  const base = 1',
+    newString: '  const base = 2',
+    originalFile: 'x',
+    userModified: false,
+    replaceAll: false,
+    structuredPatch: [
+      {
+        oldStart: 1,
+        oldLines: 5,
+        newStart: 1,
+        newLines: 5,
+        lines: [
+          ' export function widgetCount(): number {',
+          '-  const base = 1',
+          '+  const base = 2',
+          '   const extra = 1',
+        ],
+      },
+    ],
+  }
+
+  it('serializes an edit into a diff parseDiff can read', () => {
+    const event = first(EDIT)
+    expect(event.patch).toBe(
+      'diff --git a//repo/alpha.ts b//repo/alpha.ts\n' +
+        '@@ -1,5 +1,5 @@\n' +
+        ' export function widgetCount(): number {\n' +
+        '-  const base = 1\n' +
+        '+  const base = 2\n' +
+        '   const extra = 1\n'
+    )
+  })
+
+  it('keeps every hunk when replace_all touched several places', () => {
+    const hunks = [1, 9, 18].map((start) => ({
+      oldStart: start,
+      oldLines: 1,
+      newStart: start,
+      newLines: 1,
+      lines: ['-const a = "TOKEN"', '+const a = "MARKER"'],
+    }))
+    const event = first({ ...EDIT, replaceAll: true, structuredPatch: hunks })
+    expect(event.patch?.match(/^@@ /gm)).toHaveLength(3)
+    expect(event.patch).toContain('@@ -18,1 +18,1 @@')
+  })
+
+  it('synthesizes an all-added diff for a created file, capped and counted', () => {
+    const body = Array.from({ length: 50 }, (_, i) => `line ${String(i + 1)}`).join('\n')
+    const event = first({
+      type: 'create',
+      filePath: '/repo/new.ts',
+      content: body,
+      originalFile: null,
+      structuredPatch: [],
+      userModified: false,
+    })
+
+    expect(event.omittedLines).toBe(38)
+    expect(event.patch).toContain('@@ -0,0 +1,12 @@')
+    expect(event.patch).toContain('+line 12')
+    expect(event.patch).not.toContain('+line 13')
+  })
+
+  it('does not count omitted lines when a created file fits', () => {
+    const event = first({
+      type: 'create',
+      filePath: '/repo/small.ts',
+      content: 'a\nb\n',
+      originalFile: null,
+      structuredPatch: [],
+      userModified: false,
+    })
+
+    expect(event.omittedLines).toBeUndefined()
+    expect(event.patch).toContain('@@ -0,0 +1,2 @@')
+  })
+
+  it('carries no patch for a failed edit, which changed nothing', () => {
+    const event = first(EDIT, { isError: true })
+    expect(event.status).toBe('error')
+    expect(event.patch).toBeUndefined()
+  })
+
+  it.each([
+    ['absent', undefined],
+    ['not an object', 'nope'],
+    ['missing structuredPatch', { filePath: '/a.ts' }],
+    ['a malformed hunk', { filePath: '/a.ts', structuredPatch: [{ oldStart: 'one' }] }],
+    ['a tool that touches no file', { type: 'text', file: { content: 'x' } }],
+  ])('carries no patch when tool_use_result is %s', (_label, value) => {
+    const event = first(value)
+    expect(event.patch).toBeUndefined()
+  })
+
+  it('attaches nothing when a message carries more than one result', () => {
+    /*
+     * `tool_use_result` is one field on the message, so it is only unambiguous
+     * while there is one result to own it. The SDK splits parallel calls into
+     * separate messages, which is why this is a guard rather than a code path —
+     * but a wrong diff under the wrong file is worse than no diff.
+     */
+    const events = mapSdkMessage(
+      {
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 't1', content: 'ok' },
+            { type: 'tool_result', tool_use_id: 't2', content: 'ok' },
+          ],
+        },
+        tool_use_result: EDIT,
+      },
+      CTX
+    ) as unknown as PatchView[]
+
+    expect(events).toHaveLength(2)
+    expect(events.every((e) => e.patch === undefined)).toBe(true)
+  })
+})

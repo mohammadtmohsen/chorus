@@ -1,10 +1,10 @@
-import { memo, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FileDiff } from './FileDiff.js'
 import { useDialog } from './useDialog.js'
 import type { IpcResponse } from '../../shared/ipc.js'
 
 type Workspace = IpcResponse<'workspace:read'>
-type DiffFile = Workspace['diff'][number]
 
 /**
  * Reviewing what an agent actually did, without leaving Chorus (plan M7).
@@ -130,34 +130,6 @@ export function ReviewPanel({
     </div>
   )
 }
-
-/** Memoised: switching files should not re-render every hunk of the old one. */
-const FileDiff = memo(function FileDiff({ file }: { file: DiffFile }): React.JSX.Element {
-  const { t } = useTranslation()
-  if (file.binary) return <p className="muted">{t('review.binary')}</p>
-
-  return (
-    <>
-      {file.hunks.map((hunk, i) => (
-        <table key={i} className="hunk">
-          <caption>{hunk.header}</caption>
-          <tbody>
-            {hunk.lines.map((line, j) => (
-              <tr key={j} className={`line line--${line.kind}`}>
-                <td className="gutter">{line.before ?? ''}</td>
-                <td className="gutter">{line.after ?? ''}</td>
-                <td className="sign">
-                  {line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ''}
-                </td>
-                <td className="code">{line.text}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ))}
-    </>
-  )
-})
 
 /** Keeps the tail of a path — the part that identifies the file. */
 function shorten(path: string): string {

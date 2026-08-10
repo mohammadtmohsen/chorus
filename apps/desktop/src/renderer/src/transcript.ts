@@ -39,6 +39,16 @@ export interface TranscriptMessage {
   readonly toolStatus?: 'running' | 'ok' | 'error'
   /** Tools only: the enclosing call, when this happened inside a subagent. */
   readonly parentRef?: string
+  /**
+   * Tools only: a unified diff of what a file-mutating tool changed.
+   *
+   * Carried as text and parsed by the component. Keeping `parseDiff` out of the
+   * reducer is what lets this stay a pure fold that tests can drive with plain
+   * payloads.
+   */
+  readonly patch?: string
+  /** Tools only: lines left out of `patch` to keep a created file bounded. */
+  readonly omittedLines?: number
   /** Notices only: severity, so the row can be tinted without reading its text. */
   readonly level?: 'info' | 'warn' | 'error'
   /**
@@ -287,10 +297,16 @@ function apply(view: Mutable, event: TranscriptEvent): void {
        * what is there keeps the row identifying.
        */
       const summary = str('summary')
+      // The patch is carried, not parsed. Parsing is the component's job; the
+      // reducer stays a pure fold over payloads.
+      const patch = str('patch')
+      const omitted = num('omittedLines')
       view.messages[at] = {
         ...prev,
         toolStatus: str('status') === 'error' ? 'error' : 'ok',
         ...(prev.detail === undefined && summary !== '' ? { detail: summary } : {}),
+        ...(patch === '' ? {} : { patch }),
+        ...(omitted > 0 ? { omittedLines: omitted } : {}),
       }
       return
     }

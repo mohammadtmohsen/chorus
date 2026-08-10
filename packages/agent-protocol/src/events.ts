@@ -163,6 +163,27 @@ export interface ToolCompleted extends AgentEventBase {
   readonly itemRef: string
   readonly status: 'ok' | 'error'
   readonly summary?: string
+  /**
+   * A unified diff of what a file-mutating tool actually changed.
+   *
+   * It rides on the *result*, not on `tool.started`, because a patch on the call
+   * would record a change the agent proposed — a denied or failed edit would
+   * leave a durable diff of something that never happened. Here it describes
+   * what the file became.
+   *
+   * A string rather than structured hunks, and named `patch`, so it passes
+   * through `redactPayload`'s TEXT_FIELDS on the way to disk. Structured hunks
+   * would sit under a key called `lines`, redaction would never fire, and a
+   * secret an agent edited would be written into the log verbatim.
+   */
+  readonly patch?: string
+  /**
+   * Lines dropped from `patch` to keep it bounded, or absent when it is whole.
+   *
+   * A count rather than a marker inside the diff text: the log is durable and
+   * has no translator, so the renderer is what turns this into words.
+   */
+  readonly omittedLines?: number
 }
 
 /** Who is speaking when a notice appears. The renderer labels the row from this. */
