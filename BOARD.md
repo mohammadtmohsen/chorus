@@ -316,6 +316,44 @@ case Chorus cannot see: an answer the _provider_ rejects for a reason of its own
 one it accepted, or this is closed with the reason the log deliberately records
 what Chorus did rather than what the provider made of it.
 
+### C-023 · Translate a passage into your own language
+
+A fourth action on the selection toolbar: render the selected text in the
+reader's own language, faithfully. Asked for as _"english => my language,
+professional translation for the selected text"_.
+
+Planned in `docs/plans/translate-a-passage-2026-08-10/plan.md`.
+
+**It is not "Explain simply" with a different prompt** — the two are opposites,
+and that is the finding worth keeping. Explain answers _what does this mean_ and
+its output is deliberately **not** the passage: `explainPrompt` says "do not
+restate the passage", caps at about a hundred words and forbids headings, and
+every line of its "leave out" list was earned from a real answer that went wrong.
+Translation's output **is** the passage, in another language. Sharing one prompt
+would mean a single string holding two contradictory instructions, and the first
+bad answer would be edited in a direction that damages the other feature.
+
+So: a third `purpose` on the aside path, with its own prompt. Everything else is
+reuse — the fork, the card, the lifecycle, the language setting, and RTL already
+works from the `unicode-bidi: plaintext` handling.
+
+**Three decisions come before any code**, two of them the user's:
+
+- **One language setting or two?** `explainLanguage` is free text whose own
+  placeholder suggests _"simple Arabic"_ — a good instruction for an explanation
+  and a strange one for a professional translation.
+- **Icon or label?** The request says "translate icon"; the toolbar is text-only
+  today (`Quote in message`, `Ask about this`, `Explain simply`). One icon among
+  three labels reads as an accident. All four or none.
+- **Does a fourth button fit?** The offer is a small bar anchored to the
+  selection, and four labels may be wider than the passage on a narrow pane.
+
+**Done when:** selecting a passage offers a translation in the language from
+Settings; it reads as a translation rather than a paraphrase or an explanation;
+identifiers, paths and code survive unchanged in their own script; a passage
+already in that language says so rather than paraphrasing; and the action is
+absent when no language is set, as Explain is.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
