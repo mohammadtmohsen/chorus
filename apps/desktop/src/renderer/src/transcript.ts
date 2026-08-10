@@ -613,6 +613,25 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       })
       return
 
+    case 'aside.promoted':
+      /*
+       * Said in the transcript, because the room's rules changed here.
+       *
+       * Everything above this line was answered by a fork that could only look;
+       * everything below it can act, under a profile someone chose. A reader
+       * scrolling back through one continuous log would otherwise have no way to
+       * see where that happened.
+       */
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        actor: 'system',
+        kind: 'notice',
+        text: 'Opened as a conversation. It can now act, with your approval.',
+        status: 'complete',
+      })
+      return
+
     default:
       return
   }

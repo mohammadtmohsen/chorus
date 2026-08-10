@@ -165,3 +165,49 @@ Four on `SupervisedSession.fork`, and a conformance check —
 returned, because the hazard lives in the returned object rather than in the
 call. `FakeAdapter` gained `forkKeepsParentRef` to model it; nothing could reach
 that path before. The guard was proved by removing it and watching the test fail.
+
+## Phase 2 done: `aside.promoted`
+
+The five-file change, on the `conversation.renamed` pattern: payload schema,
+projection case, catch-up case, and the renderer's reduction. The runtime that
+appends it is Phase 3.
+
+**The projection clears `kind` and nothing else.** That single field does both
+jobs — `listConversations` filters `kind IS NULL`, `listAsides` filters
+`kind = 'aside'` — so nulling it reveals the room _and_ drops it out of its
+parent's aside list. `parent_id` and `source_event_id` stay as provenance,
+because where a room came from is worth keeping and nothing queries them for an
+ordinary conversation.
+
+The payload records what the conversation **was**, in the same spirit as
+`conversation.renamed` carrying `previousTitle`: read back later, the log should
+say where this room came from rather than merely that something changed.
+
+**Catch-up is an explicit no-op with a reason.** Promotion changes how Chorus
+files a conversation, not what was said in it, and an agent told "this used to be
+an aside" could act on none of it.
+
+**The renderer says it happened**, because the room's rules change at that line:
+everything above was answered by a fork that could only look, everything below
+can act under a profile someone chose. One continuous log would otherwise hide
+the moment.
+
+### Verified
+
+Five tests, and the one that matters replays: promote an aside, rebuild
+projections, and it is still an ordinary conversation — with an unpromoted
+sibling still hidden, which guards the obvious way to get this wrong (clearing
+`kind` for everything). Proved by deleting the projection case and watching three
+of them fail.
+
+That test is the entire justification for this being an event: `kind = 'aside'`
+is re-derived from `conversation.created` on every rebuild, so a direct `UPDATE`
+would be erased by the one operation the log guarantees.
+
+### Filed while here
+
+**C-022** — `transcript.ts` builds every system notice from an English literal,
+which contradicts the stated convention that reducers carry keys and the renderer
+turns them into words. `aside.promoted`'s line was written the same way rather
+than inventing a second mechanism for one event, so this now has one more
+instance and a reason to be fixed.

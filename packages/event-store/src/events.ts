@@ -242,6 +242,26 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     previousTitle: z.string(),
   }),
 
+  /**
+   * An aside stopped being an aside and became a conversation of its own.
+   *
+   * An event rather than a column write, because `kind = 'aside'` is *derived*
+   * from `conversation.created` on every rebuild — a direct `UPDATE` would be
+   * erased by the one operation the log guarantees. See
+   * `docs/plans/aside-that-acts-2026-08-10/part-b.md`.
+   *
+   * It records what the conversation **was**, in the same spirit as
+   * `conversation.renamed` carrying `previousTitle`: read back a week later, the
+   * log should say where this room came from, not merely that something changed.
+   * The projection keeps those columns as provenance and clears only `kind`,
+   * which is the field that hides it.
+   */
+  z.object({
+    type: z.literal('aside.promoted'),
+    parentId: z.string(),
+    sourceEventId: z.string(),
+  }),
+
   z.object({
     type: z.literal('project.changed'),
     cwd: z.string(),

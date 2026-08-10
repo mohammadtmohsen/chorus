@@ -221,6 +221,28 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
     case 'file.change.proposed':
     case 'diff.updated':
     case 'usage.updated':
+    case 'aside.promoted': {
+      /*
+       * Clears `kind` and nothing else.
+       *
+       * `kind` is what hides a conversation: `listConversations` filters on
+       * `kind IS NULL` and `listAsides` on `kind = 'aside'`, so nulling it both
+       * reveals the room and drops it out of its parent's aside list. The
+       * `parent_id` and `source_event_id` stay as provenance — where this came
+       * from is worth keeping, and nothing queries them for an ordinary
+       * conversation.
+       *
+       * Ordering takes care of itself: events replay by seq, so
+       * `conversation.created` has already written `kind = 'aside'` by the time
+       * this runs, on a rebuild exactly as on the original append.
+       */
+      db.prepare(`UPDATE conversations SET kind = NULL, updated_at = @at WHERE id = @id`).run({
+        id: base.conversationId,
+        at: base.at,
+      })
+      break
+    }
+
     case 'conversation.renamed':
     case 'project.changed':
     case 'policy.changed':

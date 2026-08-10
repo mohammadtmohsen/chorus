@@ -312,6 +312,30 @@ be reconstructed from it — with a stated rule about secrets — or it is writt
 down that the log records the conversation and not the agent's working set, so the
 next person does not rediscover this as a bug.
 
+### C-022 · The transcript reducer hardcodes English
+
+`transcript.ts` builds every system notice from an English literal —
+`'A question went unanswered in time.'`, `'Interrupted.'`,
+`'Denied — nobody answered in time.'` and now
+`'Opened as a conversation…'` — while `CLAUDE.md` says the opposite:
+
+> **No hardcoded user-facing strings** — `i18n/en.json`. The reducers have no
+> translator, which is why events carry keys (`notice.source`) and the renderer
+> turns them into words.
+
+The stated design exists and is used for some things; the notice path is not one
+of them. Noticed while adding `aside.promoted`, whose line was written the same
+way rather than inventing a second mechanism for one event.
+
+**Why it matters more than it looks:** the app already ships an explain-in-your-
+language feature and RTL support, so a user reading Arabic gets a transcript with
+English system lines in it. And the workaround is not "translate in `Entry`" —
+the reducer decides the _wording_, so the key has to come from the reduction.
+
+**Done when:** the notices `transcript.ts` produces carry keys rather than
+sentences, `en.json` holds the words, and a pure-reducer test can still assert
+what was produced without a translator.
+
 ### C-019 · A rejected answer is still logged as answered
 
 Split out of C-018, which it hid. `userinput.answered` is appended when _Chorus_

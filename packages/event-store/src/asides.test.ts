@@ -180,3 +180,70 @@ describe('an aside written by an earlier build', () => {
     expect(asideMetaOf(created!.payload)).toMatchObject({ purpose: 'question' })
   })
 })
+
+describe('promotion', () => {
+  const promote = (id: string): void => {
+    store.append(
+      {
+        conversationId: id,
+        actor: 'user',
+        payload: { type: 'aside.promoted', parentId: PARENT, sourceEventId: REPLY },
+      },
+      2000
+    )
+  }
+
+  it('turns an aside into a listed conversation', () => {
+    created('aside-1', { aside: { parentId: PARENT, sourceEventId: REPLY, purpose: 'question' } })
+    expect(store.listConversations().map((c) => c.conversationId)).not.toContain('aside-1')
+
+    promote('aside-1')
+    expect(store.listConversations().map((c) => c.conversationId)).toContain('aside-1')
+  })
+
+  it('drops it out of its parent’s aside list', () => {
+    // The same field does both jobs, so this is not a second assertion of the
+    // first: `listAsides` filters `kind = 'aside'` and `listConversations`
+    // filters `kind IS NULL`.
+    created('aside-2', { aside: { parentId: PARENT, sourceEventId: REPLY, purpose: 'question' } })
+    promote('aside-2')
+    expect(store.listAsides(PARENT).map((a) => a.id)).not.toContain('aside-2')
+  })
+
+  it('survives a projection rebuild, which is why it is an event', () => {
+    /*
+     * The whole reason promotion is logged rather than written straight to the
+     * column: `kind = 'aside'` is re-derived from `conversation.created` every
+     * time projections are rebuilt, so an UPDATE would be undone by the one
+     * operation the log guarantees. Replay order does the work — created first,
+     * promoted after.
+     */
+    created('aside-3', { aside: { parentId: PARENT, sourceEventId: REPLY, purpose: 'question' } })
+    promote('aside-3')
+    store.rebuildProjections()
+    expect(store.listConversations().map((c) => c.conversationId)).toContain('aside-3')
+    expect(store.listAsides(PARENT).map((a) => a.id)).not.toContain('aside-3')
+  })
+
+  it('keeps an unpromoted aside hidden after the same rebuild', () => {
+    // Guards the obvious way to get this wrong: clearing `kind` for everything.
+    created('aside-4', { aside: { parentId: PARENT, sourceEventId: REPLY, purpose: 'question' } })
+    created('aside-5', { aside: { parentId: PARENT, sourceEventId: REPLY, purpose: 'question' } })
+    promote('aside-4')
+    store.rebuildProjections()
+    expect(store.listConversations().map((c) => c.conversationId)).not.toContain('aside-5')
+    expect(store.listAsides(PARENT).map((a) => a.id)).toContain('aside-5')
+  })
+
+  it('keeps where it came from, so the log still says so', () => {
+    created('aside-6', { aside: { parentId: PARENT, sourceEventId: REPLY, purpose: 'question' } })
+    promote('aside-6')
+    const row = db
+      .prepare(
+        'SELECT parent_id AS parentId, source_event_id AS sourceEventId FROM conversations WHERE id = @id'
+      )
+      .get({ id: 'aside-6' }) as { parentId: string | null; sourceEventId: string | null }
+    expect(row.parentId).toBe(PARENT)
+    expect(row.sourceEventId).toBe(REPLY)
+  })
+})

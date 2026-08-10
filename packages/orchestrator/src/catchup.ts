@@ -188,6 +188,16 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
       case 'conversation.renamed':
         break
 
+      /*
+       * Whose room this is does not change what the other agent needs to know.
+       *
+       * Promotion changes how Chorus files a conversation, not what was said in
+       * it — the transcript either side of it is unchanged, and an agent told
+       * "this used to be an aside" could act on none of it.
+       */
+      case 'aside.promoted':
+        break
+
       case 'policy.changed':
         lines.push({
           seq: event.seq,
