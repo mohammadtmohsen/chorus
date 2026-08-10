@@ -59,29 +59,59 @@ not continue the work, do not change files"_, so a compliant agent never attempt
 the thing that would raise an approval — and `neverAsks` would deny it anyway.
 Promotion is a button.
 
-## Phases
+## Phase 0 — decide whether the parent fork is needed at all
 
-### Phase 1 — a fork the port can keep
+**Before any provider work.** An earlier draft put this last, which was the wrong
+order: if reconstructing from Chorus's own log turns out good enough, Phase 1
+does not exist and neither does most of the risk in this plan.
 
-`ForkOpts` gains persistence. Claude omits `persistSession: false`; Codex passes
-`ephemeral: false`. The port's current doc comment says _"Always ephemeral,
-rather than a flag"_ and that sentence stops being true — it should be replaced
-with the reason it now is a flag, not deleted.
+The question is narrow. A promoted room needs the _work's_ context. Design (2)
+gets it from the provider by forking the parent; design (3) gets it from our log,
+which holds the whole transcript already. The difference is the model's own
+reasoning about the work — real, but not obviously worth a persistent branch per
+promotion, a new port capability, and the child-id hazard below.
 
-No product change. It is separated because it is the only provider-facing risk in
-Part B, it is independently testable against both CLIs, and getting it wrong
-means branches quietly accumulating on disk.
+**Done when:** one promoted-style room is built each way against a real agent and
+asked something that needs prior context, and the answers are compared. If (3)
+holds up, phases 1 and 3's forking disappear.
 
-**Done when:** both adapters can take a persistent fork, conformance covers it,
-and a live run shows the branch surviving where an ephemeral one does not.
+## Phase 1 — a persistent fork with a stable identity
 
-### Phase 2 — `aside.promoted`
+_Only if Phase 0 chooses (2)._
+
+**Not "omit `persistSession: false`" on the existing path.** `spawn` constructs
+`new ClaudeSession(resume ?? '', …)`, so a forked session reports the **parent's**
+id until the child emits its own. Today that is harmless because an aside is
+never written to `open-sessions.json`; a promoted room is, so the window is long
+enough to save, supervise and later resume the _parent_ under the child's name.
+
+The SDK has the right tool and it is not the one we are using:
+
+```ts
+forkSession(sessionId, opts): Promise<ForkSessionResult>
+// ForkSessionResult.sessionId — "New session UUID. Resumable via
+// query({ options: { resume: sessionId } })"
+```
+
+Copy the transcript, take the returned id, then resume _that_. The child's
+identity is known before anything attaches to it.
+
+**And it must be supervised.** `AgentAdapter.fork` returns a raw session, while an
+ordinary participant is a `SupervisedSession` — so a provider crash in a promoted
+room would lose it rather than resume it. This needs `SupervisedSession.fork()`
+alongside `start` and `resume`.
+
+**Done when:** a persistent fork's `sessionRef` is non-empty and **different from
+the parent's** before attachment, the branch survives where an ephemeral one does
+not, and a killed provider process is resumed into the same branch.
+
+## Phase 2 — `aside.promoted`
 
 The durable event, as a five-file change on the `conversation.renamed` pattern:
-payload schema, a projection case that clears the conversation's aside identity,
-a catch-up case (a no-op with a reason — the other agent runs under its own
-harness and cannot act on ours), the runtime that appends it, and the renderer
-reducing it to a line so the transcript says the room changed character.
+payload schema, a projection case that clears the conversation's aside identity, a
+catch-up case (a no-op with a reason — the other agent runs under its own harness
+and cannot act on ours), the runtime that appends it, and the renderer reducing it
+to a line so the transcript says the room changed character.
 
 The projection is the interesting part: it must clear `kind`, and it must survive
 `rebuildProjections`. The test that matters builds a database with a promoted
@@ -91,30 +121,58 @@ risk.
 **Done when:** a promoted aside is an ordinary conversation after a rebuild, and
 an unpromoted one is still hidden.
 
-### Phase 3 — `promoteAside` in the runtime
+## Phase 3 — `promoteAside`, atomically
 
-The operation, with no UI: fork the parent persistently, build an ordinary
-`ConversationService` on the aside's **existing `conversationId`** so the log
-stays one thread, replay the aside's exchange as opening context, append
-`aside.promoted`, move it from `asides` into `active`, and close the aside's
-ephemeral fork.
+The operation, with no UI. Three things an earlier draft got wrong, each of which
+changes the design rather than the wording.
 
-Two details that are easy to miss and both change behaviour:
+**Promotion must not wake the model.** The draft said "replay the aside's exchange
+as opening context", and there is no way to do that: `send()` starts a real user
+turn. Replaying would produce an extra answer, possibly run tools under the
+newly-chosen profile, and make "Open as conversation" behave like "ask that again,
+now, with permissions". Catch-up cannot stand in either — `collect` skips events
+whose `actor` is the recipient (`catchup.ts:101`), and the aside's answer was
+written by the very agent being promoted, so the one thing worth carrying is
+exactly what it drops.
 
-- **The aside framing must not carry over.** `asideQuestion` wraps every
-  follow-up with "do not continue the work". A promoted room that kept it would
-  be a room that refuses to work, which is the whole point inverted.
-- **Grants start empty, and the profile is chosen at promotion.** Inheriting the
-  parent's grants is B2 arriving through a side door. Choosing a profile is the
-  explicit act that makes this safe, and it is a real decision on a real surface.
+So the context is **seeded, not sent**: a block holding the excerpt, the question
+and the completed answer, labelled as already dealt with, held and prepended to
+the **first real user message after promotion**. Promoting and then walking away
+costs nothing and starts no turn.
+
+**Grants are `newGrants()`, not `new SessionGrants()`.** The draft said "empty",
+which sounds safe and is wrong twice: `newGrants()` seeds the machine-wide
+remembered "always allow" answers and carries the `onRemember` callback that
+persists new ones. A literally empty set would silently forget permissions the
+user already gave permanently, and quietly fail to save any they gave in the
+promoted room. Fresh instance, not the parent's — that part was right.
+
+**The transition needs a commit point.** The draft's order created the persistent
+service before closing the ephemeral one, so a still-streaming aside would have
+two services appending interleaved lifecycle events to one conversation. And it
+left four races: two rapid promotions creating two permanent branches; the parent
+being closed while its fork is being taken; a failure after the branch exists but
+before `aside.promoted` is appended, orphaning a provider session; and promotion
+while the source agent has been removed, replaced, or is mid-turn.
+
+What that needs: a **single-flight promise per aside**, an **idle precondition**
+(the aside must not be streaming), **revalidation** of the source agent and
+session at the moment of forking — the same checks `openAside` already makes — a
+**defined commit point** (the `aside.promoted` append), and **failure cleanup**
+that closes a branch created before a failure, the way `openAside` already closes
+a fork it cannot finish setting up.
+
+**The aside framing must not carry over.** `asideQuestion` wraps every follow-up
+with "do not continue the work, do not change files". A promoted room that kept
+it would refuse to work, which is the whole point inverted.
 
 **Done when:** the domain works headless — a promoted conversation takes an
-approval, and a relaunch reopens it, which is what Phase 1 was for.
+approval, survives a relaunch, and two promotion calls racing produce one branch.
 
-### Phase 4 — the surface
+## Phase 4 — the surface
 
-"Open as conversation" on the card. The card closes; the conversation appears as
-a tab. `MAX_PANES = 4` bounds panes and **not** tabs, so there is no placement
+"Open as conversation" on the card. The card closes; the conversation appears as a
+tab. `MAX_PANES = 4` bounds panes and **not** tabs, so there is no placement
 crisis — but which pane, and whether it takes focus, is still a decision.
 
 **Done when:** the whole path is driven in the real app: notice something in a
@@ -143,15 +201,15 @@ context — but it means the promoted room may know things the aside did not, an
 the aside's excerpt may refer to a passage the parent has since moved past. Worth
 deciding deliberately rather than discovering.
 
-**2. What if the parent has been closed?** The aside outlives its parent's pane
-today only until the parent closes, which closes its asides too. Promotion of an
-aside whose parent is gone has no fork source. Refuse, or fall back to design (3)
-for that case alone?
+**2. ~~What if the parent has been closed?~~** Already answered by the code:
+`closeConversation` closes and removes its live asides, so there is no promotable
+aside without a parent. The real question is the **race** — a parent closing while
+one of its asides is mid-promotion — which Phase 3's commit point has to settle.
 
-**3. Does the promoted room need the parent at all?** If the answer to 1 and 2 is
-"it is awkward", design (3) — reconstruct from Chorus's log — gets simpler by
-comparison, and the honest comparison should be made once rather than assumed
-away here.
+**3. Moved to Phase 0**, because it can delete Phase 1. Answering "does the
+promoted room need the parent's provider context at all" after building a
+persistent-fork capability would be finding out whether the expensive part was
+necessary once it is already paid for.
 
 **4. What does the sidebar show?** A promoted aside becomes a listed
 conversation, and its title is the first 80 characters of the excerpt. That reads
