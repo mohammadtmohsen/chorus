@@ -584,3 +584,105 @@ describe('a failed open leaves nothing behind', () => {
     }
   })
 })
+
+describe('promoting an aside into a conversation', () => {
+  const openOne = async (): Promise<string> => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+    })
+    return asideId
+  }
+
+  it('becomes a live conversation on its own id, so the log stays one thread', async () => {
+    const asideId = await openOne()
+    const { conversationId: promoted } = await runtime.promoteAside(asideId, 'workspace-write')
+    expect(promoted).toBe(asideId)
+    expect(runtime.openConversations().map((c) => c.conversationId)).toContain(asideId)
+  })
+
+  it('forks the parent, because an aside cannot be forked', async () => {
+    /*
+     * Both providers fork from disk and an aside is deliberately never written
+     * there, so there is nothing of it to fork. The parent is on disk.
+     */
+    const asideId = await openOne()
+    const parentRef = adapter.sessions[0]?.sessionRef
+    adapter.forked.length = 0
+    await runtime.promoteAside(asideId, 'workspace-write')
+    expect(adapter.forked[0]?.from).toBe(parentRef)
+    expect(adapter.forked[0]?.persist).toBe(true)
+  })
+
+  it('starts no turn — promotion must not wake the model', async () => {
+    // `send` starts a real turn, so delivering the aside's exchange here would
+    // produce an answer nobody asked for, under the profile just chosen.
+    const asideId = await openOne()
+    const before = adapter.sessions.flatMap((s) => s.sent).length
+    await runtime.promoteAside(asideId, 'workspace-write')
+    expect(adapter.sessions.flatMap((s) => s.sent).length).toBe(before)
+  })
+
+  it('carries the aside into the next real message, once', async () => {
+    const asideId = await openOne()
+    await runtime.promoteAside(asideId, 'workspace-write')
+
+    await runtime.send(asideId, 'now fix it')
+    const first = adapter.sessions.at(-1)?.sent.at(-1)?.text ?? ''
+    expect(first).toContain('began as a side question')
+    expect(first).toContain('The projection lags')
+    expect(first).toContain('now fix it')
+
+    await runtime.send(asideId, 'and again')
+    const second = adapter.sessions.at(-1)?.sent.at(-1)?.text ?? ''
+    expect(second).not.toContain('began as a side question')
+    expect(second).toContain('and again')
+  })
+
+  it('records the change of identity in the log', async () => {
+    const asideId = await openOne()
+    await runtime.promoteAside(asideId, 'workspace-write')
+    const types = runtime.store.read(asideId).map((e) => e.payload.type)
+    expect(types).toContain('aside.promoted')
+  })
+
+  it('takes the profile chosen at promotion, not the parent’s', async () => {
+    // Choosing is the explicit act that makes acting safe; inheriting would be
+    // the parent's grants arriving through a side door.
+    const asideId = await openOne()
+    await runtime.promoteAside(asideId, 'workspace-write')
+    expect(runtime.openConversations().find((c) => c.conversationId === asideId)).toBeDefined()
+  })
+
+  it('makes one branch when promoted twice at once', async () => {
+    // Two clicks, one permanent provider session.
+    const asideId = await openOne()
+    adapter.forked.length = 0
+    const [a, b] = await Promise.all([
+      runtime.promoteAside(asideId, 'workspace-write'),
+      runtime.promoteAside(asideId, 'workspace-write'),
+    ])
+    expect(a.conversationId).toBe(b.conversationId)
+    expect(adapter.forked).toHaveLength(1)
+  })
+
+  it('refuses an aside that has already been promoted', async () => {
+    const asideId = await openOne()
+    await runtime.promoteAside(asideId, 'workspace-write')
+    await expect(runtime.promoteAside(asideId, 'workspace-write')).rejects.toThrow(/has ended/)
+  })
+
+  it('refuses when the conversation it came from is gone', async () => {
+    const asideId = await openOne()
+    await runtime.closeConversation(conversationId)
+    await expect(runtime.promoteAside(asideId, 'workspace-write')).rejects.toThrow()
+  })
+
+  it('leaves the aside out of the aside list once promoted', async () => {
+    const asideId = await openOne()
+    await runtime.promoteAside(asideId, 'workspace-write')
+    expect(runtime.listAsides(conversationId).map((a) => a.id)).not.toContain(asideId)
+  })
+})

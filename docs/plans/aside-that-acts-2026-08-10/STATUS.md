@@ -211,3 +211,65 @@ which contradicts the stated convention that reducers carry keys and the rendere
 turns them into words. `aside.promoted`'s line was written the same way rather
 than inventing a second mechanism for one event, so this now has one more
 instance and a reason to be fixed.
+
+## Phase 3 done: `promoteAside`, atomically
+
+The domain works with no UI. An aside becomes a conversation on **its own
+`conversationId`**, so the log stays one thread rather than gaining a copy.
+
+**The parent is forked, kept.** `startParticipant` gained a `forkFrom` path using
+`SupervisedSession.fork(… persist: true)`, so a promoted room is supervised like
+any other and reuses the existing wiring — service, pump, effort, catalogue.
+
+**Promotion starts no turn.** The seed rides on `Participant.seedContext` and is
+prepended to the _next_ real message, once. Sending it at promotion would have
+produced an answer nobody asked for, possibly running tools under the profile
+just chosen — "open as a conversation" behaving like "ask that again, now, with
+permissions". A test asserts nothing is sent, and a second asserts the seed does
+not arrive twice.
+
+**Grants are `newGrants()`.** Fresh, not the parent's instance — but seeded with
+the machine-wide remembered answers and carrying the `onRemember` callback. A
+literally empty set would have silently forgotten permanent permissions and
+failed to persist new ones.
+
+### The transition, and where it commits
+
+Ordered so one conversation can never have two live services: the ephemeral fork
+is closed **first**, then the persistent one is opened. If the fork then fails,
+the aside is gone — but its transcript is in the log, and losing the ability to
+continue a side question is a smaller failure than two writers on one thread.
+
+- **Single-flight** per aside, holding the _promise_ rather than a boolean, so a
+  second click gets the first answer instead of a second permanent branch on
+  disk. Proved by removing the guard and watching the test fail.
+- **An idle precondition** — refuses while a turn is in flight, read off the log
+  rather than asked of the service, since the log is the thing a second writer
+  would corrupt.
+- **Revalidation** at the moment of promotion: the parent still open, the agent
+  still a participant, its session still started. None of it trusted from when
+  the aside was opened.
+- **The commit point is the `aside.promoted` append.** A failure there closes the
+  branch just created rather than leaving it running with nothing pointing at it.
+
+### Two things the service did not expose
+
+`ConversationService` has no `isBusy()` and no `agentId`. Rather than widen its
+API for one caller, busy is derived from the log (`turn.started` without a
+matching `turn.completed`) and the agent id is carried on the aside entry, where
+`openAside` already knew it.
+
+### Tests
+
+Ten, covering: it becomes a live conversation on its own id; it forks the parent
+with `persist`; it starts no turn; the seed arrives once and not twice; the
+identity change is logged; two concurrent promotions make one branch; a promoted
+aside cannot be promoted again; promotion refuses when the parent is gone; and it
+drops out of `listAsides`.
+
+### Not done
+
+No UI — that is Phase 4, and until it exists nobody can reach this. And the
+promoted room has never been driven against a real CLI: the fork path is
+exercised by `FakeAdapter`, while Phase 1's live run covered the adapter half
+separately.

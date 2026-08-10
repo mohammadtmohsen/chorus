@@ -85,6 +85,21 @@ interface Participant {
    */
   seenSeq: number
   /**
+   * Context this agent must be given, prepended to the **next** real message.
+   *
+   * Promotion cannot send it. `send` starts a turn: delivering the aside's
+   * exchange at the moment of promotion would produce an answer nobody asked
+   * for, possibly run tools under the profile just chosen, and make "open as a
+   * conversation" behave like "ask that again, now, with permissions".
+   *
+   * Catch-up cannot carry it either — it skips events whose actor is the
+   * recipient, and the aside's answer was written by this very agent, so the one
+   * thing worth carrying is exactly what it drops.
+   *
+   * So it waits here, costs nothing, and rides along when the user next speaks.
+   */
+  seedContext?: string
+  /**
    * A larger catch-up allowance, used once.
    *
    * An agent joining an hour-old conversation has to read all of it, and the
@@ -265,7 +280,7 @@ export class ChorusRuntime {
    */
   private readonly asides = new Map<
     string,
-    { service: ConversationService; parentId: string; excerpt: string }
+    { service: ConversationService; parentId: string; excerpt: string; agentId: AgentId }
   >()
   /** Last renderer-owned editor arrangement, persisted beside the active sessions. */
   private workspaceSnapshot: WorkspaceSnapshot | null = null
@@ -569,6 +584,18 @@ export class ChorusRuntime {
             .read(conversationId, { afterSeq: p.seenSeq })
             .filter((e) => e.seq < stored.seq)
 
+          /*
+           * The seed goes before the user's words, once.
+           *
+           * It is context about what already happened, so it reads as
+           * background rather than as an instruction — and it is dropped after
+           * one delivery whether or not the turn succeeds, because a seed that
+           * could arrive twice is worse than one that arrives late.
+           */
+          const seeded =
+            p.seedContext === undefined ? route.text : `${p.seedContext}\n\n${route.text}`
+          delete p.seedContext
+
           await p.service.deliver(
             withCatchup(
               {
@@ -577,7 +604,7 @@ export class ChorusRuntime {
                 events: missed,
                 ...(p.catchupBudget === undefined ? {} : { maxTotalChars: p.catchupBudget }),
               },
-              route.text
+              seeded
             )
           )
           p.seenSeq = stored.seq
@@ -789,7 +816,7 @@ export class ChorusRuntime {
       })
       await service.attach(forked, opts, await adapter.health())
 
-      this.asides.set(asideId, { service, parentId: request.conversationId, excerpt })
+      this.asides.set(asideId, { service, parentId: request.conversationId, excerpt, agentId })
 
       try {
         if (purpose === 'explanation') {
@@ -823,6 +850,201 @@ export class ChorusRuntime {
       throw new Error('That aside has ended — ask again to start a new one')
     }
     await aside.service.sendUserMessage(question, asideQuestion(aside.excerpt, question))
+  }
+
+  /**
+   * In flight promotions, so two clicks cannot make two permanent branches.
+   *
+   * Keyed by aside id and holding the promise rather than a boolean: a second
+   * caller should get the same answer as the first, not a refusal and not a
+   * second provider session on disk.
+   */
+  private readonly promoting = new Map<string, Promise<{ conversationId: string }>>()
+
+  /**
+   * Turns an aside into a conversation of its own.
+   *
+   * The aside stops being a tooltip and becomes a room: a pane, a profile, an
+   * approval card, and a transcript that was already being kept. What it gains
+   * is the ability to act — under permissions someone chose at this moment,
+   * which is the explicit act that makes it safe.
+   *
+   * **The parent is forked, not the aside.** Both providers fork from disk and
+   * an aside is deliberately never written there, so there is nothing of it to
+   * fork. The parent is on disk, and forking it is what already gives an aside
+   * its context — this one is simply kept.
+   */
+  async promoteAside(asideId: string, profileId: string): Promise<{ conversationId: string }> {
+    const inFlight = this.promoting.get(asideId)
+    if (inFlight !== undefined) return inFlight
+
+    const run = this.runPromotion(asideId, profileId).finally(() => {
+      this.promoting.delete(asideId)
+    })
+    this.promoting.set(asideId, run)
+    return run
+  }
+
+  private async runPromotion(
+    asideId: string,
+    profileId: string
+  ): Promise<{ conversationId: string }> {
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) throw new Error('That aside has ended — ask again to start a new one')
+    if (this.active.has(asideId)) throw new Error('That aside is already a conversation')
+
+    /*
+     * Not while it is still answering.
+     *
+     * Two services would otherwise write to one conversation — the ephemeral
+     * fork finishing its turn and the promoted one starting — and the log would
+     * interleave two agents' lifecycle events under a single id.
+     */
+    if (this.stillAnswering(asideId)) {
+      throw new Error('Wait for the aside to finish answering, then open it as a conversation')
+    }
+
+    // Revalidated now, not trusted from when the aside was opened: the parent
+    // may have been closed, the agent removed, or its session replaced since.
+    const parent = this.active.get(aside.parentId)
+    if (parent === undefined) throw new Error('The conversation this came from is no longer open')
+    const { agentId } = aside
+    const source = parent.participants.get(agentId)
+    if (source === undefined) throw new Error(`${agentId} is no longer in that conversation`)
+    if (source.session.sessionRef === '') {
+      throw new Error(`${agentId} has not started a session yet`)
+    }
+
+    const profile = profileById(profileId)
+    const seed = this.asideSeed(asideId, aside.excerpt)
+
+    /*
+     * The ephemeral fork is closed *before* the persistent one is opened.
+     *
+     * Ordering, not tidiness: it is the only way one conversation cannot have
+     * two live services. If the fork below fails the aside is gone — but its
+     * transcript is in the log, and losing the ability to continue a side
+     * question is a smaller failure than two writers appending to one thread.
+     */
+    this.asides.delete(asideId)
+    await aside.service.close('closed')
+
+    const grants = this.newGrants()
+    const where = { cwd: parent.cwd, profile }
+    let participant
+    try {
+      participant = await this.startParticipant(
+        agentId,
+        asideId,
+        (resuming) => this.sessionOptsFor(where, agentId, resuming),
+        profile,
+        grants,
+        undefined,
+        false,
+        source.session.sessionRef
+      )
+    } catch (error) {
+      throw new Error(
+        `Could not open this as a conversation: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      )
+    }
+
+    /*
+     * The commit point. Everything above can fail and leave nothing but a
+     * closed aside; from here the conversation exists.
+     *
+     * A failure to append is a failure to promote, so the branch just created is
+     * closed rather than left running with nothing pointing at it — the same
+     * reasoning as `openAside`'s cleanup.
+     */
+    try {
+      this.store.append({
+        conversationId: asideId,
+        actor: 'user',
+        payload: {
+          type: 'aside.promoted',
+          parentId: aside.parentId,
+          sourceEventId: '',
+        },
+      })
+    } catch (error) {
+      await participant.service.close('closed')
+      throw error
+    }
+
+    participant.seedContext = seed
+    // Its watermark starts at the end: everything before this is either the
+    // aside's own transcript, which the fork does not need told back to it, or
+    // the seed above.
+    participant.seenSeq = this.store.lastSeq()
+
+    const conversation: ActiveConversation = {
+      conversationId: asideId,
+      participants: new Map([[agentId, participant]]),
+      grants,
+      profile,
+      cwd: parent.cwd,
+      title: aside.excerpt.slice(0, 80),
+      lastAddressed: agentId,
+      lastSeenSeq: 0,
+      draft: '',
+      planning: false,
+    }
+    this.active.set(asideId, conversation)
+    this.rememberOpen()
+    this.log.info('aside promoted', { asideId, parentId: aside.parentId, agentId, profileId })
+    return { conversationId: asideId }
+  }
+
+  /**
+   * Whether a conversation has a turn still in flight.
+   *
+   * Read off the log rather than asked of the service, which tracks no such
+   * state — and the log is the thing that would be corrupted by a second writer,
+   * so it is the right place to ask.
+   */
+  private stillAnswering(conversationId: string): boolean {
+    let open = 0
+    for (const event of this.store.read(conversationId)) {
+      if (event.payload.type === 'turn.started') open += 1
+      if (event.payload.type === 'turn.completed') open -= 1
+    }
+    return open > 0
+  }
+
+  /**
+   * What the promoted room is told about where it came from.
+   *
+   * Its own transcript, framed as already handled. The fork it is built on has
+   * the *work's* context but not the aside's — that conversation happened in a
+   * branch this one is not descended from — so without this the room would not
+   * know the question it was opened to continue.
+   */
+  private asideSeed(asideId: string, excerpt: string): string {
+    const said = this.store
+      .read(asideId)
+      .flatMap((e) => (e.payload.type === 'agent.message.completed' ? [e.payload.text] : []))
+      .join('\n\n')
+      .trim()
+
+    const quote = (text: string): string =>
+      text
+        .split('\n')
+        .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+        .join('\n')
+
+    return [
+      'For context, this conversation began as a side question about a passage you',
+      'had written. That exchange has already happened — you do not need to answer',
+      'it again.',
+      '',
+      'The passage:',
+      quote(excerpt),
+      ...(said === '' ? [] : ['', 'What you said about it:', quote(said)]),
+      '',
+      'You are now in an ordinary conversation and may act on what is asked next.',
+    ].join('\n')
   }
 
   /** Ends an aside's fork. Its transcript stays in the log. */
@@ -1902,7 +2124,16 @@ export class ChorusRuntime {
      * reopening — and announcing it as somebody joining put a "claude joined" in
      * the transcript on every launch.
      */
-    reopening = false
+    reopening = false,
+    /*
+     * A session to branch from, kept, instead of starting or resuming.
+     *
+     * Promotion needs the *work's* context, and Chorus's log cannot supply it —
+     * `tool.completed` stores a summary capped at 120 characters, so a room
+     * rebuilt from the log cannot answer a question about a file the agent read
+     * (measured; see the plan's STATUS). A fork of the parent can.
+     */
+    forkFrom?: string
   ): Promise<Participant> {
     const adapter = this.adapters.get(agentId)
     if (adapter === undefined) throw new Error(`No adapter registered for "${agentId}"`)
@@ -1922,25 +2153,40 @@ export class ChorusRuntime {
      * find after a day away — and a session that opens without its context beats
      * one that refuses to open.
      */
-    const opened = await (resumeFrom === undefined
+    const opened = await (forkFrom !== undefined
       ? (async () => {
           const opts = sessionOpts(false)
-          return { session: await SupervisedSession.start(adapter, opts), opts }
+          return {
+            session: await SupervisedSession.fork(adapter, forkFrom, {
+              ...opts,
+              // The user's own hooks, skills and project instructions, as
+              // everywhere else. A promoted room is an ordinary room.
+              inherits: 'config' as const,
+              // Kept, because this one is going to be saved and reopened.
+              persist: true,
+            }),
+            opts,
+          }
         })()
-      : (async () => {
-          const resumeOpts = sessionOpts(true)
-          try {
-            return {
-              session: await SupervisedSession.resume(adapter, resumeFrom, resumeOpts),
-              opts: resumeOpts,
-            }
-          } catch {
-            // Fresh options on the fallback: this is now a new session, and it
-            // should start with what the sheet says new sessions start with.
+      : resumeFrom === undefined
+        ? (async () => {
             const opts = sessionOpts(false)
             return { session: await SupervisedSession.start(adapter, opts), opts }
-          }
-        })())
+          })()
+        : (async () => {
+            const resumeOpts = sessionOpts(true)
+            try {
+              return {
+                session: await SupervisedSession.resume(adapter, resumeFrom, resumeOpts),
+                opts: resumeOpts,
+              }
+            } catch {
+              // Fresh options on the fallback: this is now a new session, and it
+              // should start with what the sheet says new sessions start with.
+              const opts = sessionOpts(false)
+              return { session: await SupervisedSession.start(adapter, opts), opts }
+            }
+          })())
     // The options actually used, so what is attached matches what was opened
     // rather than a second guess at which branch ran.
     const { session, opts: usedOpts } = opened
