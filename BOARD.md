@@ -133,19 +133,31 @@ low by a factor of five. Planned in
 Why it matters beyond the annoyance: the deadline is hardest on the longest
 answers, which are the ones attached to the questions most worth asking. Up to
 four panes are mounted at once and attention is _expected_ to move between them,
-so "typing in the other pane" is ordinary use rather than idling. And there is no
-warning — the card shows no countdown, so the first sign that a deadline existed
-is the card's absence.
+so "typing in the other pane" is ordinary use rather than idling.
 
 **The TTL is not the bug.** An approval nobody ever answers would wedge a turn
 forever, and the timeout is what stops that. What is wrong is that the clock
 ignores the person it is waiting for.
 
-**Done when:** the log has been read back to confirm which outcome actually
-fired; a question the user is demonstrably engaged with cannot expire under them
-— the deadline held while the card holds focus or a partial answer, or reset on
-input — and a card genuinely about to expire says so while it can still be
-answered, rather than vanishing into a notice.
+**In progress — phase 1 shipped** (`139bc41`). A card now shows a countdown in
+its last minute, so a deadline is no longer invisible until the card is gone. The
+threshold comes from the data: the median successful answer took 55 seconds.
+
+Two of the three conditions below are met. What remains is the deadline itself
+responding to the person, which is blocked on a live Codex probe and a decision
+about how an extended deadline reaches a remounting card — both written up in the
+plan.
+
+One correction to the measurement above: those 15 `answered` outcomes record that
+Chorus _sent_ an answer, not that Claude took it, and for part of that period it
+did not (C-018). **10 of 25 is the optimistic reading**, and the figures are worth
+re-taking now that answers land.
+
+**Done when:** ~~the log has been read back to confirm which outcome actually
+fired~~; a question the user is demonstrably engaged with cannot expire under
+them — the deadline held while the card holds focus or a partial answer, or reset
+on input — and ~~a card genuinely about to expire says so while it can still be
+answered~~.
 
 ### C-015 · An agent cannot address another agent
 
