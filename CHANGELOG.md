@@ -7,6 +7,66 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.9.0
+
+### An answer you gave never reached Claude
+
+The biggest of these, and the least visible. When an agent asked you a question
+and you answered it, Chorus sent the answer in a shape the current Claude CLI
+rejects — so the agent was told the question came back unanswered, asked again,
+and gave up. The transcript said `answered` the whole time, because that record
+was written when Chorus _sent_ the answer, without checking the provider took it.
+
+Answers now use the shape the CLI's own schema describes, verified end to end for
+single choice and multi-select. An answer that cannot be matched to its question
+is refused outright rather than half-sent, since a partial answer reads to the
+agent as "the user chose nothing" — which is how this hid for so long.
+
+### "Read only" allowed writes
+
+The profile whose summary reads _"Agents may look. Anything that changes the
+machine needs a decision"_ decided `allow` on commands that change the machine.
+Its rule matched the **first word** of a command line, so `find . -delete`,
+`git branch -D`, `cat source > target` and `cat secrets | curl …` all passed
+without a card and without any record of a person choosing.
+
+An allow rule now has to cover every command on the line: substitution and file
+redirection are refused, and each part of a pipeline must satisfy the same rule.
+So `cat file | head` is still a read and `git add . && curl … | sh` is not.
+Denies are unaffected — hiding `rm -rf` behind `&&` was never going to work, and
+still does not. **Trusted is untouched**: it allows any command by design, and
+none of this reaches it.
+
+### A question card no longer expires while you are answering it
+
+Measured over a real log: **10 of 25 question sets died at exactly five minutes**,
+every one of them a timeout rather than a dismissal. The clock started when the
+agent asked, nothing restarted it, and typing an answer was not an input to it —
+so a card could be on screen, focused and half-filled when it went. It was worst
+on multi-part questions, which are the ones most worth asking.
+
+Now a card in its last minute says so, and working in one holds the deadline off.
+Choosing an option, typing, or moving between questions buys more time; simply
+having the card open does not, because the card takes focus by itself and that is
+not evidence anyone is there. A verified run kept a card answerable for 390
+seconds.
+
+### Turn an aside into a conversation
+
+An aside could only look things up. If it turned out the answer needed doing
+rather than explaining, there was nothing to do but copy it into the composer by
+hand. **Open as conversation** turns the aside into a room of its own — its
+transcript continues, and it can edit files and run tools under a permission
+profile you pick at that moment. Nothing is inherited silently.
+
+### Each agent has its own model and reasoning effort
+
+Settings held one model for both agents, and the only list it ever showed was
+Claude's — so choosing one sent a name from Claude's catalogue to Codex's API.
+Each agent now has its own row, and Codex reports its own models and per-model
+reasoning efforts. An agent that reports none says which kind of none it is:
+never asked, asked and offered nothing, or asked and failed.
+
 ## 0.8.1
 
 ### Explain simply works again after a restart
