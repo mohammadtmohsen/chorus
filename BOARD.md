@@ -270,6 +270,12 @@ place to notice. Anything built here has to avoid claiming the opposite falsehoo
 — an answer that did land, recorded as failed — and must not add a round trip to
 the common path.
 
+**Partly addressed.** `answerUserInput` now refuses an `answered` response whose
+answer ids do not exactly match the questions asked, before anything is written —
+so the one case Chorus can detect for itself no longer produces a false record,
+and the adapter denies rather than sending a partial set. What remains is the
+case Chorus cannot see: an answer the _provider_ rejects for a reason of its own.
+
 **Done when:** an answer the provider rejects is distinguishable in the log from
 one it accepted, or this is closed with the reason the log deliberately records
 what Chorus did rather than what the provider made of it.

@@ -986,9 +986,14 @@ export function mapUserInputRequest(
       const options = Array.isArray(q['options']) ? q['options'] : []
       return {
         /*
-         * Claude's questions carry no id, so position is the identity. The
-         * answer goes back inside `updatedInput` as a positional array, so this
+         * Claude's questions carry no id, so position is the identity, and it
          * only has to be stable within the one request — which it is.
+         *
+         * The id is **not** what goes back. The CLI keys answers by the
+         * question's own text, so this is an index used to look that text up in
+         * the original input; see `toClaudeUserInputResult`. This comment used
+         * to claim the answer returned as a positional array, which was true of
+         * an older CLI and is how C-018 survived review.
          */
         id: String(index),
         header: typeof q['header'] === 'string' ? q['header'] : '',
@@ -1051,19 +1056,37 @@ export function toClaudeUserInputResult(
   const asked: unknown[] = Array.isArray(input['questions'])
     ? (input['questions'] as unknown[])
     : []
-  const answers: Record<string, string> = {}
+  const entries: [string, string][] = []
   for (const answer of response.answers) {
     const question = asked[Number(answer.questionId)]
     const text =
       typeof question === 'object' && question !== null
         ? (question as Record<string, unknown>)['question']
         : undefined
-    // A question we cannot name is one the CLI cannot match, so it is dropped
-    // rather than sent under a key it will not recognise.
-    if (typeof text !== 'string' || text === '') continue
-    answers[text] = answer.values.join(',')
+    /*
+     * An answer we cannot name denies the whole set rather than being dropped.
+     *
+     * Dropping it sends a partial or empty record, which the CLI reads as "the
+     * user chose nothing" — the exact shape of C-018: an `allow` carrying an
+     * answer that never lands, logged as `answered`. A deny is the one outcome
+     * the agent recovers from, and it is what the timeout path already does for
+     * the same reason.
+     */
+    if (typeof text !== 'string' || text === '') {
+      return { behavior: 'deny', message: 'The answer could not be matched to the question.' }
+    }
+    entries.push([text, answer.values.join(',')])
   }
-  return { behavior: 'allow', updatedInput: { ...input, answers } }
+
+  /*
+   * `fromEntries`, not assignment into `{}`.
+   *
+   * The keys are question text the agent wrote, so `__proto__` is reachable —
+   * and `obj['__proto__'] = x` on a plain object sets the prototype rather than
+   * an own property, serialising to `{}`. The answer would vanish with no error
+   * anywhere. `fromEntries` defines the property directly.
+   */
+  return { behavior: 'allow', updatedInput: { ...input, answers: Object.fromEntries(entries) } }
 }
 
 /**

@@ -558,13 +558,56 @@ describe('agent questions', () => {
   })
 
   it('clears the question once answered, and a double submit is harmless', async () => {
+    // A complete answer set, because an `answered` outcome that names none of
+    // the questions is now refused — see the test below for why.
+    const full = {
+      outcome: 'answered' as const,
+      answers: [
+        { questionId: 'db', values: ['Postgres'] },
+        { questionId: 'token', values: ['x'] },
+      ],
+    }
     await ask()
-    await service.answerUserInput('q1', { outcome: 'answered', answers: [] })
+    await service.answerUserInput('q1', full)
     expect(service.pendingQuestions()).toHaveLength(0)
 
     // A UI that fires twice must not throw at the user or tell the agent twice.
-    await service.answerUserInput('q1', { outcome: 'answered', answers: [] })
+    await service.answerUserInput('q1', full)
     expect(session().userInputResponses).toHaveLength(1)
+    expect(store.read(CONV, { types: ['userinput.answered'] })).toHaveLength(1)
+  })
+
+  it('refuses an answer that does not name the questions asked', async () => {
+    /*
+     * The log entry is written *before* the provider is told, so an unvalidated
+     * response becomes a permanent `answered` record for something the provider
+     * may reject — which is how C-018 stayed invisible for weeks. A renderer
+     * left open across a new request produces exactly this.
+     */
+    await ask()
+    await service.answerUserInput('q1', {
+      outcome: 'answered',
+      answers: [{ questionId: 'not-a-question', values: ['x'] }],
+    })
+
+    expect(store.read(CONV, { types: ['userinput.answered'] })).toHaveLength(0)
+    expect(session().userInputResponses).toHaveLength(0)
+  })
+
+  it('leaves the question pending so it can be answered again', async () => {
+    // Not resolved as `cancel`: the user did not cancel, and saying they did
+    // would be a different lie. The deadline still bounds it.
+    await ask()
+    await service.answerUserInput('q1', { outcome: 'answered', answers: [] })
+    expect(service.pendingQuestions()).toHaveLength(1)
+  })
+
+  it('still accepts a timeout, which names no questions by design', async () => {
+    // The completeness rule applies only to `answered`. A timeout carries no
+    // answers and must stay able to resolve the card.
+    await ask()
+    await service.answerUserInput('q1', { outcome: 'timeout' }, 'system')
+    expect(service.pendingQuestions()).toHaveLength(0)
     expect(store.read(CONV, { types: ['userinput.answered'] })).toHaveLength(1)
   })
 

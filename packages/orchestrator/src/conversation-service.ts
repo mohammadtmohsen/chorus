@@ -351,6 +351,31 @@ export class ConversationService {
     // by design — a double-submit from the UI must not throw at the user.
     if (pending === undefined) return
     const { request } = pending
+
+    /*
+     * The answers must name the questions that were actually asked, checked
+     * before anything is written down.
+     *
+     * The log entry is deliberately written before the provider is told, so an
+     * unvalidated response becomes a permanent `answered` record for an answer
+     * the provider may reject — which is precisely how C-018 stayed invisible
+     * for weeks. A renderer left open across a new request, or an id regression,
+     * produces exactly that.
+     *
+     * Left pending rather than resolved: the card stays up, the user can answer
+     * again, and the deadline still bounds it. Recording a `cancel` the user did
+     * not ask for would be its own lie.
+     */
+    if (response.outcome === 'answered') {
+      const asked = new Set(request.questions.map((q) => q.id))
+      const answered = new Set(response.answers.map((a) => a.questionId))
+      const matches = asked.size === answered.size && [...asked].every((id) => answered.has(id))
+      // No logger on this class, and a `notice` would put a line in the
+      // transcript for what is a caller bug rather than something the
+      // conversation did. Returning is the behaviour; the test is the record.
+      if (!matches) return
+    }
+
     this.scheduler.clearTimeout(pending.timer)
     this.pendingUserInput.delete(userInputId)
 

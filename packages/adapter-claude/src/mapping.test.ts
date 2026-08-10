@@ -1112,15 +1112,64 @@ describe('user input results', () => {
     })
   })
 
-  it('drops an answer whose question it cannot name', () => {
-    // A key the CLI did not send is a key it cannot match, so it would fail
-    // validation for the whole call rather than just that one answer.
+  it('denies rather than dropping an answer whose question it cannot name', () => {
+    /*
+     * This dropped the entry and returned `allow` with an empty record, which
+     * the CLI reads as "the user chose nothing" — an answer that never lands,
+     * logged as `answered`. That is C-018's shape exactly, so a stale renderer
+     * or a future id regression would recreate it silently.
+     *
+     * A deny is recoverable: the agent is told nothing was chosen, which is the
+     * same thing the timeout path says and for the same reason.
+     */
     expect(
       toClaudeUserInputResult(
         { questions: [{ question: 'Which?', options: [] }] },
         { outcome: 'answered', answers: [{ questionId: '7', values: ['x'] }] }
       )
-    ).toMatchObject({ updatedInput: { answers: {} } })
+    ).toMatchObject({ behavior: 'deny' })
+  })
+
+  it('denies a partially resolvable set rather than sending half of it', () => {
+    // Half an answer is not a smaller answer; it is a wrong one.
+    expect(
+      toClaudeUserInputResult(
+        { questions: [{ question: 'Which?', options: [] }] },
+        {
+          outcome: 'answered',
+          answers: [
+            { questionId: '0', values: ['ok'] },
+            { questionId: '9', values: ['nope'] },
+          ],
+        }
+      )
+    ).toMatchObject({ behavior: 'deny' })
+  })
+
+  it('survives a question the agent called __proto__', () => {
+    /*
+     * The keys are text the agent wrote, so this is reachable input. Assigning
+     * `answers['__proto__']` on a plain object sets the prototype instead of an
+     * own property and serialises to `{}` — the answer would disappear with no
+     * error anywhere, which is the same silent loss C-018 caused.
+     */
+    const result = toClaudeUserInputResult(
+      { questions: [{ question: '__proto__', options: [] }] },
+      { outcome: 'answered', answers: [{ questionId: '0', values: ['kept'] }] }
+    )
+    if (result.behavior !== 'allow') throw new Error('expected the answer to be allowed')
+    const answers = result.updatedInput['answers']
+    expect(Object.prototype.hasOwnProperty.call(answers, '__proto__')).toBe(true)
+    /*
+     * Round-tripped, because what reaches the CLI is JSON — and read back with
+     * `hasOwnProperty` rather than compared to a literal. An expected value
+     * written `{ __proto__: 'kept' }` is the same footgun: the literal sets a
+     * prototype and evaluates to `{}`, so the assertion fails against correct
+     * code. It did, while this test was being written.
+     */
+    const roundTripped: unknown = JSON.parse(JSON.stringify(answers))
+    expect((roundTripped as Record<string, string>)['__proto__']).toBe('kept')
+    expect(Object.keys(roundTripped as Record<string, string>)).toEqual(['__proto__'])
   })
 
   it('denies rather than fabricating an answer on cancel or timeout', () => {
