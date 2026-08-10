@@ -259,6 +259,13 @@ So this is not a flag to flip. Granting the power to act without solving the
 first two turns the aside into the one place where a dangerous action is
 auto-approved and invisible.
 
+Part B is sequenced in `docs/plans/aside-that-acts-2026-08-10/part-b.md`: a
+persistent fork the port can express, a durable `aside.promoted` event, the
+runtime operation, then the surface. Its architecture turns on a constraint found
+while planning — **an aside cannot be promoted by forking it**, because both
+providers fork from disk and an aside is deliberately never written there. It
+forks the _parent_ instead.
+
 Planned in `docs/plans/aside-that-acts-2026-08-10/plan.md`, whose review found
 three contracts Part B must satisfy: promotion needs a durable `aside.promoted`
 event rather than a projection flip; the existing service cannot be moved,
