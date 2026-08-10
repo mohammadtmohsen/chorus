@@ -796,6 +796,28 @@ export const IPC_CONTRACT = {
     request: z.object({}),
     response: SettingsShape,
   },
+  /**
+   * Holds a question's deadline off while someone is answering it.
+   *
+   * `engaged: true` means a gesture the app cannot manufacture — an option
+   * chosen, text typed, a step taken. Focus does not count: the card focuses
+   * itself on mount, so a rule that trusted focus would extend the deadline the
+   * instant the card appeared, with no person involved.
+   *
+   * `engaged: false` reads the deadline in force and changes nothing, which is
+   * how a card that has just remounted learns the current one instead of
+   * replaying the original `expiresAt` from the log.
+   */
+  'userinput:extend': {
+    request: z.object({
+      conversationId: z.string(),
+      userInputId: z.string(),
+      engaged: z.boolean(),
+    }),
+    /** Null when the question has already been answered or has expired. */
+    response: z.object({ expiresAt: z.number().nullable() }),
+  },
+
   /** A patch: sending only what changed keeps one field from clobbering another. */
   'settings:write': {
     /*
@@ -1064,6 +1086,9 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:history'>
   ) => Promise<IpcResponse<'conversation:history'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
+  readonly extendQuestion: (
+    request: IpcRequest<'userinput:extend'>
+  ) => Promise<IpcResponse<'userinput:extend'>>
   readonly answerQuestion: (request: QuestionAnswer) => Promise<{ ok: true }>
   readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
   readonly setProfile: (request: IpcRequest<'policy:set'>) => Promise<IpcResponse<'policy:set'>>

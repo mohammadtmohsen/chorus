@@ -1061,6 +1061,25 @@ export class ChorusRuntime {
     ].join('\n')
   }
 
+  /**
+   * Holds a question's deadline off while someone is answering it.
+   *
+   * Asked of every participant rather than routed by agent: a `userInputId`
+   * belongs to whichever service raised it, and the caller — a card — knows the
+   * question but not which agent's queue it is sitting in. The first service
+   * that recognises it answers; the rest return null, which is what "not mine"
+   * means here.
+   */
+  extendUserInput(conversationId: string, userInputId: string, engaged: boolean): number | null {
+    const conversation = this.active.get(conversationId)
+    if (conversation === undefined) return null
+    for (const participant of conversation.participants.values()) {
+      const at = participant.service.extendUserInput(userInputId, engaged)
+      if (at !== null) return at
+    }
+    return null
+  }
+
   /** Ends an aside's fork. Its transcript stays in the log. */
   async closeAside(asideId: string): Promise<void> {
     const aside = this.asides.get(asideId)

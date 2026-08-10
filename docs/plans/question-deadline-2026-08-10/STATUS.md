@@ -182,7 +182,56 @@ execution. `peek()` holds the callback so it can be invoked _after_ the
 extension, which is the only faithful model of the race. Proved by deleting the
 guard and watching that test alone fail.
 
+## Phase 2 done: proven in the app, after the first run failed
+
+`userinput:extend` through preload and main; the runtime asks each participant in
+turn, because a `userInputId` belongs to whichever service raised it and a card
+knows the question but not the queue. The card holds the deadline in force
+itself, seeded from the Phase 1 seam, and moves it on a gesture — an option
+chosen, text typed, a step taken. **Never focus**, which the card manufactures on
+mount. Throttled to one call per 20 seconds, since a gesture buys two minutes.
+`engaged: false` on arrival reads the deadline without claiming anyone is there.
+
+### The live run
+
+```
+still alive at 330s — past the old deadline
+still alive at 360s — past the old deadline
+still alive at 390s — past the old deadline
+  ok  the card survived 390s (old deadline: 300s)
+  ok  the answer still reached the agent after the extension
+  ok  logged as answered, not timeout
+```
+
+10 of 25 question sets in the real log died at exactly 300.0s. This one was still
+answerable at 390 and its answer landed.
+
+### The first run failed, and both reasons are worth keeping
+
+**The driver typed into a box that did not exist.** The question rendered as
+choice buttons — `inputs: []`, `textareas: []` — so the typing hit nothing, no
+gesture was ever reported, and the card correctly died at 301s. The failure was
+real and the cause was the test. It now clicks an option, which every question
+set has, and reports `NO CONTROL` rather than silently succeeding when there is
+nothing to click.
+
+**`engaged: true` moving the deadline by 0s is correct.** A gesture buys
+`now + 2 minutes`; a fresh question already has five, so early gestures are
+no-ops and the extension only bites near the deadline. It never shortens, which
+is what makes that safe. Reading "moved by 0s" in a debug run looked exactly like
+the bug and was not.
+
+That second one exposed a gap: **every unit test used a 60-second fixture**, where
+`now + 2min` always exceeds the deadline, so the far-from-deadline case had no
+coverage at all. It has a test now.
+
+### Deliberately not extended: approvals
+
+They keep Phase 1's countdown and nothing more. An approval is one click, not a
+form, and the log agrees — **5 timeouts in 4,248 approvals (0.1%)** against 40%
+of question sets.
+
 ### Not done
 
-The renderer does not call any of this yet, so no deadline is extended in
-practice. That is the rest of Phase 2.
+Phase 3: a half-filled answer still dies when you switch panes, with no timeout
+involved.

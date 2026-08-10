@@ -726,6 +726,21 @@ describe('a deadline that responds to the person', () => {
     expect(first).toBe(service.pendingQuestions()[0]?.expiresAt)
   })
 
+  it('buys nothing while there is already more time than a gesture is worth', async () => {
+    /*
+     * A gesture buys `now + 2 minutes`, so early in a five-minute question it is
+     * a no-op — correct, and surprising enough that a live run reading "moved by
+     * 0s" looked like a bug. `ASKED` expires at 60s against a clock at 0, so the
+     * far-future case needs its own request.
+     */
+    session().emit({
+      type: 'userinput.requested',
+      request: { ...ASKED, id: 'q-far' as UserInputId, expiresAt: 300_000 },
+    })
+    await tick()
+    expect(service.extendUserInput('q-far', true)).toBe(300_000)
+  })
+
   it('never pulls a deadline back towards now', async () => {
     // A gesture late in a long grace period must not shorten what it already
     // bought.

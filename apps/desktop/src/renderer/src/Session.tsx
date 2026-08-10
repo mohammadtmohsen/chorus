@@ -1159,6 +1159,7 @@ export function Session(props: {
         {asking !== undefined && (
           <QuestionCard
             key={asking.userInputId}
+            conversationId={conversationId}
             request={asking}
             deadline={asking.expiresAt}
             waiting={view.questions.length - 1}
@@ -1292,6 +1293,7 @@ function DeadlineNote({ deadline }: { deadline: number }): React.JSX.Element | n
  * it a multiple choice would produce an answer it cannot take back.
  */
 function QuestionCard({
+  conversationId,
   request,
   deadline,
   waiting,
@@ -1299,16 +1301,17 @@ function QuestionCard({
   onAnswer,
   onDismiss,
 }: {
+  /** Which conversation this question belongs to, for the deadline call. */
+  conversationId: string
   request: PendingQuestion
   /*
-   * The *effective* deadline, passed in rather than read off the request.
+   * Where the deadline **starts**, not where it stays.
    *
-   * A seam on purpose. Today it is the request's own `expiresAt`; Phase 2 of the
-   * plan lets engagement push it out, at which point only the expression that
-   * fills this prop changes and the card is untouched. Reaching for
-   * `request.expiresAt` here would be a second source of truth to unpick later —
-   * and the renderer only ever replays the *original* value, so a card that read
-   * it directly would show a stale deadline after the first extension.
+   * A seam, and Phase 2 is what it was for: the card now holds the deadline in
+   * force itself and moves it as someone works, seeding from this. The renderer
+   * only ever replays the *original* `expiresAt`, so a card that read
+   * `request.expiresAt` directly would show a stale deadline the moment anything
+   * extended it — which is why this was a prop before it needed to be.
    */
   deadline: number
   /** How many more sets are queued behind this one. */
@@ -1330,6 +1333,48 @@ function QuestionCard({
   const takeFocus = (el: HTMLElement | null): void => {
     first.current = el
   }
+  /*
+   * The deadline in force, which is not the one the log replays after an
+   * extension. Seeded from the prop — the Phase 1 seam — and moved by the
+   * answers below.
+   */
+  const [effective, setEffective] = useState(deadline)
+  const lastTold = useRef(0)
+
+  /**
+   * Tells main someone is working on this, and takes the deadline back.
+   *
+   * `engaged` must be a gesture the app cannot manufacture. Focus is not one:
+   * this card focuses its own first control on mount, so trusting focus would
+   * extend the deadline the instant it appeared with nobody involved.
+   *
+   * Throttled, because a gesture buys two minutes and typing would otherwise
+   * send one of these per keystroke.
+   */
+  const held = useCallback(
+    (engaged: boolean) => {
+      const now = Date.now()
+      if (engaged && now - lastTold.current < 20_000) return
+      if (engaged) lastTold.current = now
+      void window.chorus
+        .extendQuestion({ conversationId, userInputId: request.userInputId, engaged })
+        .then(({ expiresAt }) => {
+          if (expiresAt !== null) setEffective(expiresAt)
+        })
+        .catch(() => undefined)
+    },
+    [conversationId, request.userInputId]
+  )
+
+  /*
+   * Read once on arrival, and read rather than claimed: a card that has just
+   * remounted needs the deadline in force, and mounting is not evidence that
+   * anyone is there.
+   */
+  useEffect(() => {
+    held(false)
+  }, [held])
+
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [typed, setTyped] = useState<Record<string, string>>({})
   /** Which question of the set is on screen; a set of one never shows it. */
@@ -1361,6 +1406,8 @@ function QuestionCard({
   const asked = request.questions[step]
 
   const toggle = (q: QuestionField, value: string): void => {
+    // Choosing an option is the clearest evidence there is that someone is here.
+    held(true)
     setPicked((current) => {
       const chosen = current[q.id] ?? []
       /*
@@ -1413,7 +1460,7 @@ function QuestionCard({
         {waiting > 0 && (
           <span className="question-queue">{t('question.waiting', { count: waiting })}</span>
         )}
-        <DeadlineNote deadline={deadline} />
+        <DeadlineNote deadline={effective} />
       </header>
 
       <div className="question-item">
@@ -1494,6 +1541,7 @@ function QuestionCard({
             onChange={(e) => {
               const { value } = e.target
               setTyped((current) => ({ ...current, [asked.id]: value }))
+              held(true)
             }}
           />
         )}
@@ -1508,6 +1556,7 @@ function QuestionCard({
             className="btn"
             onClick={() => {
               setStep((current) => current - 1)
+              held(true)
             }}
           >
             {t('question.back')}
@@ -1533,6 +1582,7 @@ function QuestionCard({
             disabled={!done(asked)}
             onClick={() => {
               setStep((current) => current + 1)
+              held(true)
             }}
           >
             {t('question.next')}
