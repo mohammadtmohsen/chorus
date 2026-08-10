@@ -541,7 +541,13 @@ export class CodexAdapter implements AgentAdapter {
     const rpc = await this.handshake()
     const forked = (await rpc.request('thread/fork', {
       threadId: sessionRef,
-      ephemeral: true,
+      /*
+       * Ephemeral unless the caller wants the branch kept. `thread/fork` loads
+       * the thread from disk, so an ephemeral fork is also a fork nothing can
+       * fork again — which is why promoting an aside forks its parent rather
+       * than the aside itself.
+       */
+      ephemeral: opts.persist !== true,
       cwd: opts.cwd,
       approvalPolicy: 'on-request',
       sandbox: toSandboxMode(opts.sandbox),

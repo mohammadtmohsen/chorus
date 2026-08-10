@@ -99,3 +99,69 @@ It also suggests something outside this plan: **the transcript's tool output is
 lossy in a way nobody has decided on.** 120 characters is a display-oriented cap
 sitting on the durable log, and it is why a conversation cannot be rebuilt from
 Chorus's own record. That is worth its own entry rather than a footnote here.
+
+## Phase 1 done: a persistent fork that knows its own name
+
+`ForkOpts` gains `persist`, and the port's "always ephemeral, rather than a flag"
+comment is replaced with the reason it is now a flag rather than deleted.
+
+**Claude copies first and resumes the copy.** Not "omit `persistSession: false`"
+on the existing path — `spawn` builds `new ClaudeSession(resume ?? '', …)`, so a
+forked session reports the **parent's** id until the child announces itself. For
+an aside that is harmless because nothing writes it down; for a branch that
+becomes a conversation it is not, because the id is saved and a later relaunch
+would resume the parent believing it was the child. The SDK's module-level
+`forkSession(sessionId)` copies the transcript and returns the new id up front, so
+what is handed back already knows its own name.
+
+**Codex passes `ephemeral: !persist`.** One line, and previously unverified —
+Codex had never forked in anger, and all 11 asides in the log are Claude's.
+
+**`SupervisedSession.fork`** joins `start` and `resume`. `AgentAdapter.fork`
+returns a raw session, which is right for an aside — it dies with its question —
+and wrong for a room someone works in, where a provider crash should restart
+rather than lose it. It refuses a session still carrying its parent's ref, since
+the restart path resumes `sessionRef` and would otherwise put the user back in
+the conversation they branched away from.
+
+### Verified against both real CLIs
+
+|                                        | claude        | codex         |
+| -------------------------------------- | ------------- | ------------- |
+| branch gets a distinct id              | yes           | yes           |
+| told a codeword, closed, resumed by id | **remembers** | **remembers** |
+
+That is the property a promoted room actually needs: not "a fork happened" but
+"this branch can be rejoined after the process let it go". Both providers pass.
+
+### The ephemeral contrast, which proves the flag is not decorative
+
+A persistent branch resuming is only half the claim; the other half is that an
+**ephemeral** one does not. Both providers refuse, and they refuse differently:
+
+|        | ephemeral branch, closed then resumed by id            |
+| ------ | ------------------------------------------------------ |
+| claude | resumes, but carries none of the branch's conversation |
+| codex  | refuses outright — `no rollout found for thread id …`  |
+
+So `persist` changes real behaviour on both, and asides have not been quietly
+leaving sessions on disk.
+
+**A correction to my own write-up.** I first recorded this check as unfinished
+and hanging, and reasoned it was probably the documented _"`thread/resume` on an
+id the provider has forgotten can simply never answer"_. That was wrong: the run
+had completed and its output was buffered, so silence read as a hang. The result
+above is what actually happened. The inference was plausible, which is exactly
+why it should not have been written down as though observed.
+
+Claude's behaviour is still worth noting — resuming an unknown id **succeeds**
+and yields an empty session rather than an error, so a lost branch would look
+like a working one that has forgotten everything.
+
+### Tests
+
+Four on `SupervisedSession.fork`, and a conformance check —
+`forkHasItsOwnRef` — which is checked against a session an adapter has really
+returned, because the hazard lives in the returned object rather than in the
+call. `FakeAdapter` gained `forkKeepsParentRef` to model it; nothing could reach
+that path before. The guard was proved by removing it and watching the test fail.

@@ -9,6 +9,7 @@ import type {
   AgentInput,
   AgentSession,
   ApprovalDecision,
+  ForkOpts,
   SessionOpts,
   UserInputResponse,
 } from '@chorus/agent-protocol'
@@ -113,6 +114,34 @@ export class SupervisedSession implements AgentSession {
     deps: SupervisedSessionDeps = {}
   ): Promise<SupervisedSession> {
     const first = await adapter.resume(sessionRef, opts)
+    return new SupervisedSession(adapter, opts, first, policy, deps)
+  }
+
+  /**
+   * A branch, supervised like any other session.
+   *
+   * `AgentAdapter.fork` returns a raw session, which is right for an aside — it
+   * is thrown away with its question, and a crash mid-answer costs nothing worth
+   * restarting. A persistent fork becomes a conversation someone works in, so
+   * losing it to a provider crash is the same failure as losing a room.
+   *
+   * The restart path resumes `sessionRef`, which is why `ForkOpts.persist`
+   * requires the returned session to already carry the *child's* id: a fork
+   * still reporting its parent's would, on the first crash, quietly restart the
+   * user into the conversation they branched away from.
+   */
+  static async fork(
+    adapter: AgentAdapter,
+    sessionRef: string,
+    opts: ForkOpts,
+    policy: SupervisorPolicy = DEFAULT_SUPERVISOR_POLICY,
+    deps: SupervisedSessionDeps = {}
+  ): Promise<SupervisedSession> {
+    if (adapter.fork === undefined) throw new Error(`${adapter.id} cannot be forked`)
+    const first = await adapter.fork(sessionRef, opts)
+    if (first.sessionRef === sessionRef) {
+      throw new Error('A persistent fork must report its own id, not its parent’s')
+    }
     return new SupervisedSession(adapter, opts, first, policy, deps)
   }
 

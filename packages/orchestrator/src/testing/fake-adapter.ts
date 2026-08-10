@@ -232,21 +232,45 @@ export class FakeAdapter implements AgentAdapter {
    * `fork: true` here, and in the Codex adapter, with no implementation behind
    * either.
    */
+  /**
+   * Makes `fork` return a session still carrying the parent's ref.
+   *
+   * The hazard `ForkOpts.persist` exists to prevent: Claude's query-based fork
+   * reports the parent's id until the child announces itself, and a persistent
+   * branch saved during that window resumes the parent under the child's name.
+   * Nothing could reach that path before this.
+   */
+  forkKeepsParentRef = false
+
   fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
     if (sessionRef === '') return Promise.reject(new Error('Cannot fork a session with no id yet'))
+    if (this.forkKeepsParentRef) {
+      const stale = new FakeAgentSession(sessionRef, this.id, this.models)
+      this.sessions.push(stale)
+      return Promise.resolve(stale)
+    }
     const session = new FakeAgentSession(
       `${sessionRef}-fork-${String(++this.counter)}`,
       this.id,
       this.models
     )
-    this.forked.push({ from: sessionRef, inherits: opts.inherits, session })
+    this.forked.push({
+      from: sessionRef,
+      inherits: opts.inherits,
+      persist: opts.persist === true,
+      session,
+    })
     this.sessions.push(session)
     return Promise.resolve(session)
   }
 
   /** Every fork taken, so a test can assert what was branched and how. */
-  readonly forked: { from: string; inherits: ForkOpts['inherits']; session: FakeAgentSession }[] =
-    []
+  readonly forked: {
+    from: string
+    inherits: ForkOpts['inherits']
+    persist: boolean
+    session: FakeAgentSession
+  }[] = []
 
   health(): Promise<HealthStatus> {
     return Promise.resolve({ state: 'ready', version: this.version })

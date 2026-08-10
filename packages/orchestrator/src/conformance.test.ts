@@ -56,6 +56,24 @@ describe.each(TARGETS)('conformance: $name', ({ create }) => {
     expect(CONFORMANCE_CHECKS.exposesSessionRef(session)).toBeNull()
   })
 
+  it('gives a fork an id of its own, not its parent’s', async () => {
+    /*
+     * The hazard `ForkOpts.persist` exists for. A branch that answers to its
+     * parent's ref is saved under the child's name and resumed as the parent
+     * on the next relaunch — invisible for an aside, which is never written
+     * down, and a lost conversation for a promoted one.
+     */
+    const target = create()
+    if (target.adapter.fork === undefined) return
+    const parent = await target.adapter.start(CONFORMANCE_OPTS)
+    const forked = await target.adapter.fork(parent.sessionRef, {
+      ...CONFORMANCE_OPTS,
+      inherits: 'config',
+      persist: true,
+    })
+    expect(CONFORMANCE_CHECKS.forkHasItsOwnRef(parent.sessionRef, forked)).toBeNull()
+  })
+
   it('emits events with monotonic seq and its own agent id', async () => {
     const target = create()
     const session = await target.adapter.start(CONFORMANCE_OPTS)

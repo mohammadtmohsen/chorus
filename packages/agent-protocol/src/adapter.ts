@@ -133,9 +133,11 @@ export interface SessionOpts {
  * holding ~26k tokens and asking one question cost **two** uncached input tokens,
  * because prompt caching absorbs the inherited context.
  *
- * **Always ephemeral**, rather than a flag: nothing wants a fork that outlives
- * its question, and a persisted one would litter the user's own session history
- * with fragments they never started.
+ * **Ephemeral by default**, because nothing wants a fork that outlives its
+ * question and a persisted one litters the user's session history with fragments
+ * they never started. It is a flag rather than a fixed property only because
+ * promoting an aside into a real conversation needs a branch that survives — see
+ * `persist`, and `docs/plans/aside-that-acts-2026-08-10/part-b.md`.
  *
  * **One measured constraint.** A fork inherits the session *as persisted*, so a
  * fork taken while a turn is in flight cannot see that turn — asked about a reply
@@ -159,6 +161,21 @@ export interface ForkOpts extends SessionOpts {
    * different things per provider is worse than one that refuses.
    */
   readonly inherits: 'config' | 'nothing'
+  /**
+   * Whether the branch outlives the process that made it.
+   *
+   * Absent or `false` is the ordinary case: an aside, thrown away with its
+   * question. `true` is for a fork that becomes a conversation of its own, which
+   * must be resumable after a relaunch and therefore has to exist on disk.
+   *
+   * **A persistent fork must report its own id.** Claude's ordinary fork path
+   * carries the *parent's* `sessionRef` until the child announces itself, which
+   * is harmless for something never written down and dangerous for something
+   * that is — the id gets saved, and a later resume rejoins the parent under the
+   * child's name. An adapter implementing this must return a session whose
+   * `sessionRef` is already the child's.
+   */
+  readonly persist?: boolean
 }
 
 export interface AgentInput {

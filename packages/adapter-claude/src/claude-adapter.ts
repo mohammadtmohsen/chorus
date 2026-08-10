@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { promisify } from 'node:util'
 import {
+  forkSession,
   query,
   renameSession,
   type Options,
@@ -876,11 +877,34 @@ export class ClaudeAdapter implements AgentAdapter {
    * `persistSession: false` is the other half. Without it the CLI would write
    * every throwaway branch into `~/.claude/projects`, and a user who asked six
    * small questions would find six sessions they never started.
+   *
+   * `opts.persist` takes the opposite path deliberately — see below.
    */
   async fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
     if (sessionRef === '') throw new Error('Cannot fork a session that has no id yet')
     await this.resolveOnce()
-    return Promise.resolve(this.spawn(opts, sessionRef, opts))
+
+    if (opts.persist !== true) return this.spawn(opts, sessionRef, opts)
+
+    /*
+     * A persistent fork copies first and resumes the copy, rather than spawning
+     * with `forkSession: true`.
+     *
+     * The query path builds `new ClaudeSession(resume ?? '', …)`, so a forked
+     * session reports the **parent's** id until the child emits its own. For an
+     * aside that is harmless — nothing writes it down. For a branch that becomes
+     * a conversation it is not: the id is saved to `open-sessions.json`, and a
+     * later relaunch resumes the *parent* believing it is the child.
+     *
+     * `forkSession` copies the stored transcript and returns the new id up
+     * front, so what is handed back already knows its own name.
+     */
+    const copy = await forkSession(sessionRef, { dir: opts.cwd })
+    if (copy.sessionId === '' || copy.sessionId === sessionRef) {
+      throw new Error('The fork did not get an id of its own')
+    }
+    // Resumed, not forked again: the copy already is the branch.
+    return this.spawn(opts, copy.sessionId)
   }
 
   async dispose(): Promise<void> {

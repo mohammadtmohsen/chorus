@@ -89,6 +89,26 @@ export const CONFORMANCE_CHECKS = {
     return typeof session.sessionRef === 'string' ? null : 'sessionRef must be a string'
   },
 
+  /**
+   * A fork must not answer to its parent's name.
+   *
+   * Claude's query-based fork reports the parent's `sessionRef` until the child
+   * announces itself. That is invisible for an aside, which is never written
+   * down — and wrong for a persistent branch, which is saved and later resumed:
+   * the first relaunch would rejoin the parent believing it was the branch.
+   *
+   * Checked against a session an adapter has actually returned, because the
+   * hazard is in the returned object rather than in the call.
+   */
+  forkHasItsOwnRef(parentRef: string, forked: AgentSession): string | null {
+    if (typeof forked.sessionRef !== 'string' || forked.sessionRef === '') {
+      return 'a fork must expose a sessionRef'
+    }
+    return forked.sessionRef === parentRef
+      ? `the fork reported its parent's ref (${parentRef})`
+      : null
+  },
+
   /** Sequence numbers must be strictly increasing — the log's ordering leans on it. */
   monotonicSeq(events: readonly AgentEvent[]): string | null {
     for (let i = 1; i < events.length; i++) {
