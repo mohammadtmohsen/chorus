@@ -260,6 +260,42 @@ an aside cannot silently inherit power granted to the main conversation; a
 dismissed or expired card cannot leave an approval pending or a tool half-run;
 and the deny message stops claiming a rule that no longer holds.
 
+### C-020 · The read-only profile is not read-only
+
+Found while planning C-017 and verified against the real engine, not read off the
+source. `SAFE_READS` (`rules.ts:126`) matches a **prefix of the whole command
+line**, so everything after the first word is unexamined. Under the profile whose
+summary is _"Agents may look. Anything that changes the machine needs a
+decision"_, all of these are decided `allow`, with no card and no record of a
+person having chosen:
+
+```
+ALLOW <- find . -delete
+ALLOW <- git branch -D scratch
+ALLOW <- cat source > target
+ALLOW <- rg needle . | xargs touch marker
+ALLOW <- find . -exec rm {} ;
+ALLOW <- cat evil > /Users/me/.zshrc
+```
+
+`UNIVERSAL_DENIES` does not catch them: it denies `rm -rf`, force-push and
+history rewrites, and none of the above is any of those. The last two are the
+sharp ones — an allowlisted reader is used as a vehicle for an arbitrary write.
+
+**This is not an aside problem.** It is the ordinary read-only profile, which is
+the default for every new conversation, and it is live today. Asides only make it
+worse: they run this profile with `neverAsks`, so the allowlist is the _entire_
+gate, and Claude's sandbox is `emulated` and enforces nothing underneath.
+
+**Why it has not bitten:** the agents have not tried. Nothing in the log shows an
+allowlisted command being used this way, which is a statement about behaviour and
+not about the rule.
+
+**Done when:** a command is judged on what it actually does rather than on how it
+starts — redirects, pipes, `-exec`, `-delete`, and mutating subcommands of
+otherwise-safe tools are not silently allowed — and the cases above are pinned by
+tests that fail against today's rule.
+
 ### C-019 · A rejected answer is still logged as answered
 
 Split out of C-018, which it hid. `userinput.answered` is appended when _Chorus_
