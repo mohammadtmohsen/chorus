@@ -144,9 +144,14 @@ its last minute, so a deadline is no longer invisible until the card is gone. Th
 threshold comes from the data: the median successful answer took 55 seconds.
 
 Two of the three conditions below are met. What remains is the deadline itself
-responding to the person, which is blocked on a live Codex probe and a decision
-about how an extended deadline reaches a remounting card — both written up in the
-plan.
+responding to the person.
+
+**One of its two blockers has since cleared.** `askUserQuestionTimeout` defaults
+to `'never'` in `sdk.d.ts`, confirmed with a stalled `canUseTool`, so **Claude
+does not give up** and extending is safe from its side — the five minutes is
+entirely ours to choose. Still open: the Codex probe, and how an extended
+deadline reaches a card that has remounted, since the renderer replays only the
+_original_ `expiresAt`.
 
 One correction to the measurement above: those 15 `answered` outcomes record that
 Chorus _sent_ an answer, not that Claude took it, and for part of that period it
@@ -224,6 +229,60 @@ the delegating agent's resumption is in the log as its own turn, attributable to
 the delegation rather than appearing from nowhere; and a reviewer that never
 answers, or a pair that ping-pongs, is bounded — with the bound written down and
 visible to the user rather than implicit.
+
+### C-021 · The log cannot rebuild a conversation, because tool output is capped
+
+Found by C-017's Phase 0. `tool.completed` stores a `summary`, and for a `Read`
+it is capped at `MAX_TOOL_DETAIL = 120` characters — measured over the live log,
+196 Reads with a **maximum of 120 and an average of 41**. `Edit` and `Write` sit
+at the cap too.
+
+120 is a sensible width for a **line in a transcript**. It is sitting on the
+**durable log**, which is the thing this project says is the source of truth, and
+the consequence was measured rather than argued: a room rebuilt from Chorus's own
+record could not answer a question about a file the agent had read, while a
+provider fork could.
+
+**Why it matters:** "the event log is the source of truth" is the rule everything
+else here follows from. For agent _speech_ it holds. For what an agent _saw_ it
+does not — the log records that a tool ran and roughly what it was, not what came
+back. Anything that needs to reconstruct an agent's working state from the log is
+therefore built on sand, and C-017's Part B has to fork a provider session
+precisely because of this.
+
+**Why it is not a simple fix.** Storing full tool output means storing whatever a
+tool read — including the contents of files the permission engine treats as
+secret, which the answer-redaction path deliberately keeps out of the log. Size
+is the lesser problem; deciding what may be written down is the real one.
+
+**Done when:** either the log carries enough tool output that a conversation can
+be reconstructed from it — with a stated rule about secrets — or it is written
+down that the log records the conversation and not the agent's working set, so the
+next person does not rediscover this as a bug.
+
+### C-022 · The transcript reducer hardcodes English
+
+`transcript.ts` builds every system notice from an English literal —
+`'A question went unanswered in time.'`, `'Interrupted.'`,
+`'Denied — nobody answered in time.'` and now
+`'Opened as a conversation…'` — while `CLAUDE.md` says the opposite:
+
+> **No hardcoded user-facing strings** — `i18n/en.json`. The reducers have no
+> translator, which is why events carry keys (`notice.source`) and the renderer
+> turns them into words.
+
+The stated design exists and is used for some things; the notice path is not one
+of them. Noticed while adding `aside.promoted`, whose line was written the same
+way rather than inventing a second mechanism for one event.
+
+**Why it matters more than it looks:** the app already ships an explain-in-your-
+language feature and RTL support, so a user reading Arabic gets a transcript with
+English system lines in it. And the workaround is not "translate in `Entry`" —
+the reducer decides the _wording_, so the key has to come from the reduction.
+
+**Done when:** the notices `transcript.ts` produces carry keys rather than
+sentences, `en.json` holds the words, and a pure-reducer test can still assert
+what was produced without a translator.
 
 ### C-019 · A rejected answer is still logged as answered
 
