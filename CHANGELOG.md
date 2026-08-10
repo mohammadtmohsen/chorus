@@ -7,6 +7,29 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.9.1
+
+### Asking about a passage works again
+
+**If you installed 0.9.0 or 0.8.x, this is the one to take.** Selecting part of a
+reply and choosing "Ask about this" or "Explain simply" usually failed with _That
+passage is not part of that reply_.
+
+Chorus checks that a selection really came from the reply it names — that check
+is what stops anything putting words in an agent's mouth and having them quoted
+back. But it compared the **markdown source** in the log against what the browser
+gave it, which is the **rendered** text. Those differ whenever markdown changes
+something on the way to the screen: a selection over `` `some/path.md` `` arrives
+without its backticks, and one crossing a line break inside a paragraph arrives
+with a space where the log has a newline. Both were refused.
+
+Since agents write inline code constantly, most selections were affected. The
+check now also reads the source the way the transcript renders it, using the same
+parser that draws it. Selections from code blocks, which matched before, still
+do.
+
+Present since 0.8.0, when asking about a passage shipped.
+
 ## 0.9.0
 
 ### An answer you gave never reached Claude
