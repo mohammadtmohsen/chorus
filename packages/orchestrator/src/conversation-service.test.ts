@@ -13,7 +13,7 @@ const OPTS = {
 }
 
 /** Never fires on its own; tests decide when the time bound trips. */
-function manualScheduler(): Scheduler & { fire: () => void } {
+function manualScheduler(): Scheduler & { fire: () => void; peek: () => (() => void) | null } {
   let pending: (() => void) | null = null
   return {
     setTimeout(fn) {
@@ -29,6 +29,15 @@ function manualScheduler(): Scheduler & { fire: () => void } {
       pending = null
       p?.()
     },
+    /**
+     * The pending callback, without removing it.
+     *
+     * For the one case `clearTimeout` cannot model: a real `setTimeout` that has
+     * already been dequeued for execution runs whatever `clearTimeout` does
+     * afterwards. Holding the callback and invoking it after an extension is the
+     * only way to reproduce that here.
+     */
+    peek: () => pending,
   }
 }
 
@@ -665,5 +674,111 @@ describe('agent question deadlines', () => {
     await service.close()
 
     expect(session().userInputResponses[0]?.response).toMatchObject({ outcome: 'cancel' })
+  })
+})
+
+describe('a deadline that responds to the person', () => {
+  /*
+   * C-013. The clock measured time since the *agent asked*: nothing restarted
+   * it, answering was not an input to it, and a card could be on screen,
+   * focused and half-filled when it went. 10 of 25 question sets in the real
+   * log died at exactly 300.0s.
+   */
+  /** Local, because `ASK_TTL` belongs to another block. Same shape. */
+  const ASKED: UserInputRequest = {
+    id: 'q-ttl' as UserInputId,
+    agentId: 'claude',
+    expiresAt: 60_000,
+    questions: [
+      {
+        id: 'a',
+        header: 'H',
+        question: 'Q?',
+        options: [],
+        multiSelect: false,
+        allowOther: false,
+        isSecret: false,
+      },
+    ],
+  }
+
+  const ask = async (): Promise<void> => {
+    session().emit({ type: 'userinput.requested', request: ASKED })
+    await tick()
+  }
+
+  it('pushes the deadline out when the person does something', async () => {
+    await ask()
+    const before = service.pendingQuestions()[0]?.expiresAt ?? 0
+    const after = service.extendUserInput('q-ttl', true)
+    expect(after).not.toBeNull()
+    expect(after ?? 0).toBeGreaterThan(before)
+  })
+
+  it('reads without changing anything when nothing was done', async () => {
+    // A remounting card asks this way. Mounting is not evidence of a person —
+    // the card focuses itself — so it must be able to say "I am back, what is
+    // the deadline" without claiming attention it cannot prove.
+    await ask()
+    const first = service.extendUserInput('q-ttl', false)
+    const second = service.extendUserInput('q-ttl', false)
+    expect(first).toBe(second)
+    expect(first).toBe(service.pendingQuestions()[0]?.expiresAt)
+  })
+
+  it('never pulls a deadline back towards now', async () => {
+    // A gesture late in a long grace period must not shorten what it already
+    // bought.
+    await ask()
+    const long = service.extendUserInput('q-ttl', true) ?? 0
+    const again = service.extendUserInput('q-ttl', true) ?? 0
+    expect(again).toBeGreaterThanOrEqual(long)
+  })
+
+  it('stops extending at a ceiling, so a stuck renderer cannot wedge a turn', async () => {
+    await ask()
+    let last = 0
+    for (let i = 0; i < 200; i++) last = service.extendUserInput('q-ttl', true) ?? 0
+    expect(last).toBeLessThanOrEqual(ASKED.expiresAt + 30 * 60_000)
+  })
+
+  it('does not extend a question that is already gone', async () => {
+    await ask()
+    await service.answerUserInput('q-ttl', { outcome: 'timeout' }, 'system')
+    expect(service.extendUserInput('q-ttl', true)).toBeNull()
+  })
+
+  it('survives an expiry that fires after an extension was granted', async () => {
+    /*
+     * The race the re-arm exists for: a queued `setTimeout` cannot be
+     * un-queued, so an extension arriving in the same tick as the expiry would
+     * otherwise resolve against a deadline that has already moved — which is
+     * this bug again with extra steps.
+     */
+    await ask()
+    // Held before the extension, exactly as the runtime would already have it
+    // queued. `clearTimeout` cannot call this back.
+    const alreadyQueued = scheduler.peek()
+    service.extendUserInput('q-ttl', true)
+    alreadyQueued?.()
+    await tick()
+
+    expect(service.pendingQuestions()).toHaveLength(1)
+    expect(store.read(CONV, { types: ['userinput.answered'] })).toHaveLength(0)
+  })
+
+  it('still times out once the extended deadline is reached', async () => {
+    // The TTL is not the bug and must survive the fix.
+    await ask()
+    service.extendUserInput('q-ttl', true)
+    scheduler.fire()
+    await tick()
+    scheduler.fire()
+    await tick()
+
+    expect(service.pendingQuestions()).toHaveLength(0)
+    expect(store.read(CONV, { types: ['userinput.answered'] })[0]?.payload).toMatchObject({
+      outcome: 'timeout',
+    })
   })
 })

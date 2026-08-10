@@ -87,6 +87,27 @@ export interface ContextWindow {
   readonly percentUsed: number
 }
 
+/**
+ * How long a genuine gesture buys.
+ *
+ * Two minutes, from the data rather than rounded to it: the median successful
+ * answer took 55 seconds and the slowest took 255. Two minutes is comfortably
+ * more than a typical answer from a standing start, so someone still working
+ * keeps buying time with each thing they do, and someone who has walked away
+ * loses it once.
+ */
+const ENGAGED_GRACE_MS = 120_000
+
+/**
+ * The furthest a deadline may ever be pushed, from when the question was asked.
+ *
+ * Not a limit on the person — if gestures keep arriving they are there, and the
+ * turn is not wedged. It bounds the case the deadline exists for: a renderer
+ * that reports engagement it does not have. Half an hour is far beyond any
+ * answer ever observed here and still finite.
+ */
+const MAX_EXTENSION_MS = 30 * 60_000
+
 export class ConversationService {
   private readonly store: EventStore
   private readonly conversationId: string
@@ -113,7 +134,14 @@ export class ConversationService {
    */
   private readonly pendingUserInput = new Map<
     string,
-    { request: UserInputRequest; timer: unknown }
+    {
+      request: UserInputRequest
+      timer: unknown
+      /** The deadline in force, which is not the request's after an extension. */
+      expiresAt: number
+      /** The furthest it may ever be pushed. See `extendUserInput`. */
+      ceiling: number
+    }
   >()
   private readonly scheduler: Scheduler
   private session: AgentSession | null = null
@@ -396,6 +424,67 @@ export class ConversationService {
     await this.session?.respondToUserInput(request.id, response)
   }
 
+  /**
+   * Arms the deadline, and re-checks it when it fires.
+   *
+   * The re-check is the point. A `setTimeout` already queued cannot be
+   * un-queued, so an extension arriving in the same tick as the expiry would
+   * otherwise lose the race silently — which is this bug again with extra steps.
+   */
+  private armUserInputTimer(userInputId: string, at: number): unknown {
+    return this.scheduler.setTimeout(
+      () => {
+        const pending = this.pendingUserInput.get(userInputId)
+        if (pending === undefined) return
+        if (pending.expiresAt !== at) {
+          /*
+           * Extended after this timer was armed. Re-arm for the deadline that is
+           * now in force rather than resolving against one that has moved.
+           *
+           * Compared against the time this timer was armed *for*, not against
+           * the clock: a queued callback cannot be un-queued, so the race is
+           * real — and a wall-clock test would also depend on the scheduler
+           * advancing, which the fake one deliberately does not.
+           */
+          pending.timer = this.armUserInputTimer(userInputId, pending.expiresAt)
+          return
+        }
+        // Never fabricates an answer: `timeout` tells the provider nothing was
+        // chosen, which is recoverable. A guessed answer is not.
+        void this.answerUserInput(userInputId, { outcome: 'timeout' }, 'system')
+      },
+      Math.max(0, at - this.scheduler.now())
+    )
+  }
+
+  /**
+   * Pushes a question's deadline out, or just reports it.
+   *
+   * The clock measured time since the *agent asked*; nothing restarted it, and
+   * answering was not an input to it — so a card could be on screen, focused and
+   * half-filled, and still expire. Measured over the real log, 10 of 25 question
+   * sets died at exactly 300.0s.
+   *
+   * `engaged` must mean a gesture the app cannot manufacture. The card focuses
+   * itself on mount, so focus is not evidence; a remounting card asks with
+   * `engaged: false`, which reads the deadline and changes nothing.
+   */
+  extendUserInput(userInputId: string, engaged: boolean): number | null {
+    const pending = this.pendingUserInput.get(userInputId)
+    if (pending === undefined) return null
+    if (!engaged) return pending.expiresAt
+
+    const next = Math.min(this.scheduler.now() + ENGAGED_GRACE_MS, pending.ceiling)
+    // Never shortens: a gesture late in a long grace period must not pull the
+    // deadline back towards now.
+    if (next <= pending.expiresAt) return pending.expiresAt
+
+    pending.expiresAt = next
+    this.scheduler.clearTimeout(pending.timer)
+    pending.timer = this.armUserInputTimer(userInputId, next)
+    return next
+  }
+
   /** Question sets still waiting on the user, for the UI to draw after a replay. */
   pendingQuestions(): UserInputRequest[] {
     return [...this.pendingUserInput.values()].map((p) => p.request)
@@ -644,15 +733,25 @@ export class ConversationService {
          * choice — the provider is told nothing was chosen, which it can recover
          * from; an invented answer it cannot.
          */
-        const timer = this.scheduler.setTimeout(
-          () => {
-            // Never fabricates an answer: `timeout` tells the provider nothing
-            // was chosen, which is recoverable. A guessed answer is not.
-            void this.answerUserInput(event.request.id, { outcome: 'timeout' }, 'system')
-          },
-          Math.max(0, event.request.expiresAt - this.scheduler.now())
+        /*
+         * The ceiling, fixed when the question arrives.
+         *
+         * Engagement may push the deadline out but never past this, so a
+         * renderer that reported interest forever could not hold a turn open
+         * forever. A provider's own deadline wins where it exists — Codex
+         * declares one in principle and never in practice, so this costs
+         * nothing today and is correct on the day it does.
+         */
+        const ceiling = Math.min(
+          event.request.expiresAt + MAX_EXTENSION_MS,
+          event.request.autoResolvesAt ?? Number.MAX_SAFE_INTEGER
         )
-        this.pendingUserInput.set(event.request.id, { request: event.request, timer })
+        this.pendingUserInput.set(event.request.id, {
+          request: event.request,
+          timer: this.armUserInputTimer(event.request.id, event.request.expiresAt),
+          expiresAt: event.request.expiresAt,
+          ceiling,
+        })
 
         /*
          * Answered *after* being registered, which is the whole point of the

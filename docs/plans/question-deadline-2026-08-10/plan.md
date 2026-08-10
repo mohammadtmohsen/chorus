@@ -187,6 +187,33 @@ the push channel — with the requirement that a remounting card can **ask** for
 current deadline rather than only receiving future pushes, or it comes back
 showing the stale one.
 
+### Decided: one call, and it is not a push
+
+Neither a logged event nor a push channel. Both are heavier than the problem.
+
+Looking at what exists: there is no pending-state channel from main at all —
+`questionIds` is derived in the renderer's _own_ store from the event stream
+(`store.ts:162`). Building one for this would be new machinery for a number only
+one card ever reads.
+
+And the extension is **caused by the very card that needs to know about it**. So
+a single request answers both halves:
+
+```
+userinput:extend { userInputId, engaged } -> { expiresAt }
+```
+
+- `engaged: true` — a real gesture happened; main pushes the deadline out, within
+  the cap, and returns the new one.
+- `engaged: false` — read it, change nothing. This is what a **remounting** card
+  sends, so it comes back with the current deadline instead of replaying the
+  stale original.
+
+The distinction matters because mounting is not evidence of a person, and the
+card mounts itself into focus. `engaged: false` is exactly the honest way for a
+card to say "I am back, what is the deadline" without claiming attention it
+cannot prove.
+
 ### Phase 3 — Let a half-filled answer survive unmounting
 
 The draft rides in `SessionCarry`, the existing mechanism for exactly this
@@ -242,13 +269,18 @@ if the provider still accepts an answer well past five minutes. **Measured with 
 live probe, not read out of types** — hold a real question set unanswered past the
 deadline and see whether a late answer is still taken.
 
-**1b. What does Codex actually enforce?** _Blocker for Phase 2, and the more
-dangerous of the two_ because the plan previously assumed an answer here. Needed
-from a live Codex question set: whether `isBlocking: false` means the turn
-proceeds without us, what `autoResolutionMs` still does now that it is deprecated,
-and whether a late answer is accepted or discarded. Codex has never raised a
-question in this log, so a probe has to provoke one. Until this runs, "whichever
-comes first" is a phrase with no defined meaning and no rule may be built on it.
+**1b. ~~What does Codex actually enforce?~~ Cannot be measured, and that is the
+answer.** Probed directly against the installed CLI with an explicit instruction
+to use its request-user-input tool: **Codex finished the turn without ever
+raising a question.** The protocol marks the path `EXPERIMENTAL`, and the live
+log agrees — 0 of 25 question sets are Codex's.
+
+So the semantics of `autoResolutionMs` and `isBlocking` stay unknown, and the
+honest response is not to guess but to make the absence safe: **never extend past
+a provider-declared deadline when one is present**, which costs nothing today
+because none ever is, and is correct on the day Codex starts declaring one. What
+must **not** happen is a rule built on the deprecated field's assumed meaning —
+which is what an earlier draft of this plan proposed.
 
 **2. What is the right cap?** The data bounds it from below: successful answers
 ran to 255s, so any cap under about six minutes is still too tight. It does not

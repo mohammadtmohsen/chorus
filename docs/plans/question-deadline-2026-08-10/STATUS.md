@@ -124,3 +124,65 @@ known to land.
 Phase 2 and Phase 3, both still blocked on the contracts in the plan — the Codex
 probe and a state-path decision for Phase 2, the identity and secret-lifecycle
 rules for Phase 3. Neither is schedulable yet.
+
+## Phase 2, domain half: the deadline responds to the person
+
+Both of Phase 2's blockers are settled, one by measurement and one by failing to
+measure.
+
+**Claude does not give up** — `askUserQuestionTimeout` defaults to `'never'`, so
+extending is safe from its side and the five minutes is entirely ours.
+
+**Codex cannot be measured, and that is the answer.** Probed against the
+installed CLI with an explicit instruction to use its request-user-input tool:
+_codex finished the turn without ever raising a question_. The protocol marks the
+path `EXPERIMENTAL` and the live log agrees — 0 of 25 question sets are Codex's.
+So rather than guess at `autoResolutionMs`, whose replacement `isBlocking`
+answers a different question entirely, the ceiling simply **never extends past a
+provider-declared deadline where one exists**. That costs nothing today because
+none ever is, and is right on the day one appears.
+
+### The numbers, and why
+
+- **A gesture buys two minutes.** The median successful answer took 55 seconds
+  and the slowest 255, so two minutes is comfortably more than a typical answer
+  from a standing start. Someone still working keeps buying time; someone who
+  walked away loses it once.
+- **The ceiling is 30 minutes from the original ask.** Not a limit on the person
+  — if gestures keep arriving they are there and nothing is wedged. It bounds the
+  case the deadline exists for: a renderer reporting engagement it does not have.
+
+### `extendUserInput(id, engaged)`
+
+One call does both halves, which is why neither a logged event nor a push channel
+was needed. `engaged: true` pushes the deadline out within the ceiling and
+returns it; `engaged: false` reads it and changes nothing — which is what a
+**remounting** card sends, so it comes back with the deadline in force instead of
+replaying the stale original.
+
+It never shortens: a gesture late in a long grace period must not pull back what
+it already bought.
+
+### The race, and a test that could not model it at first
+
+A queued `setTimeout` cannot be un-queued, so an extension arriving in the same
+tick as the expiry would resolve against a deadline that has already moved. The
+timer now re-checks **the time it was armed for** against the deadline in force,
+and re-arms rather than firing.
+
+Compared against the armed-for time rather than the clock, for two reasons: it
+states the actual question ("did this move since I was scheduled?"), and a
+wall-clock check would depend on the scheduler advancing, which the fake one
+deliberately does not — that version broke an existing test, which is how the
+weakness was found.
+
+The test needed the harness extended too. `manualScheduler.clearTimeout` really
+removes the callback, so it cannot reproduce a real timer already dequeued for
+execution. `peek()` holds the callback so it can be invoked _after_ the
+extension, which is the only faithful model of the race. Proved by deleting the
+guard and watching that test alone fail.
+
+### Not done
+
+The renderer does not call any of this yet, so no deadline is extended in
+practice. That is the rest of Phase 2.
