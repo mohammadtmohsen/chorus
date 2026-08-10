@@ -101,13 +101,23 @@ rediscovered.
 
 ## What the probe found by accident: answering may not reach Claude at all
 
-Filed as **C-018**. `mapping.ts:1034` sends `answers` as an array of arrays; the
-installed CLI rejects that with a schema error and the agent is told the question
-was never answered. See the board entry for the evidence.
+**Fixed** — C-018, now retired. `mapping.ts` sent `answers` as an array of
+arrays; the installed CLI wants a record keyed by the question's own text. Taken
+from the CLI binary's own schema description rather than guessed:
+
+> "The answers provided by the user (question text -> answer string;
+> multi-select answers are comma-separated)"
+
+Verified in the running app: the agent now repeats the choice back, for single
+choice and for multi-select, and asks **once** rather than retrying after a
+rejection.
 
 This bears on the numbers this plan is built on. The log's 15 `answered`
 outcomes record that **Chorus sent an answer**, not that Claude received one — so
-"40% of question sets are lost" may be the optimistic reading.
+"40% of question sets are lost" is the optimistic reading, and the true figure
+over the affected period is worse. The logging weakness that hid it is now
+**C-019**; the measurements in this plan should be re-taken once answers are
+known to land.
 
 ## What is left
 

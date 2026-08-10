@@ -1017,6 +1017,18 @@ export function mapUserInputRequest(
  * The original input is preserved and `answers` added alongside: the CLI
  * matches the response against the questions it sent, so dropping them would
  * leave it unable to line the two up.
+ *
+ * **A record keyed by the question's own text**, not a positional array. Read
+ * out of the installed CLI's own schema description, which says exactly this:
+ *
+ *   "The answers provided by the user (question text -> answer string;
+ *    multi-select answers are comma-separated)"
+ *
+ * This shipped as `[[label]]` and the CLI rejected it — "the `answers`
+ * parameter is expected as a `record` but was provided as an `array`" — so the
+ * agent was told the question came back unanswered while Chorus logged an
+ * `answered` outcome. C-018. The positional form was probably right once; the
+ * lesson is that it is not ours to assume, and the schema is in the binary.
  */
 export function toClaudeUserInputResult(
   input: Record<string, unknown>,
@@ -1029,10 +1041,29 @@ export function toClaudeUserInputResult(
     // not told, which is recoverable; a made-up choice is not.
     return { behavior: 'deny', message: 'The user did not answer the question.' }
   }
-  return {
-    behavior: 'allow',
-    updatedInput: { ...input, answers: response.answers.map((a) => [...a.values]) },
+  /*
+   * Keyed by the question text the CLI sent, which means reading it back out of
+   * `input` — our own `questionId` is a position we invented, because Claude's
+   * questions carry no id of their own.
+   */
+  // `Array.isArray` narrows `unknown` to `any[]`, so the element type is stated
+  // rather than inherited — an `any` here would spread into everything below.
+  const asked: unknown[] = Array.isArray(input['questions'])
+    ? (input['questions'] as unknown[])
+    : []
+  const answers: Record<string, string> = {}
+  for (const answer of response.answers) {
+    const question = asked[Number(answer.questionId)]
+    const text =
+      typeof question === 'object' && question !== null
+        ? (question as Record<string, unknown>)['question']
+        : undefined
+    // A question we cannot name is one the CLI cannot match, so it is dropped
+    // rather than sent under a key it will not recognise.
+    if (typeof text !== 'string' || text === '') continue
+    answers[text] = answer.values.join(',')
   }
+  return { behavior: 'allow', updatedInput: { ...input, answers } }
 }
 
 /**

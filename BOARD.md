@@ -248,55 +248,31 @@ an aside cannot silently inherit power granted to the main conversation; a
 dismissed or expired card cannot leave an approval pending or a tool half-run;
 and the deny message stops claiming a rule that no longer holds.
 
-### C-018 · An answered question may never reach Claude
+### C-019 · A rejected answer is still logged as answered
 
-Found while probing the SDK for C-013's Phase 2, and it is worse than the bug
-that plan is about: a question that expires is lost, but this loses one that was
-answered on time.
+Split out of C-018, which it hid. `userinput.answered` is appended when _Chorus_
+sends the answer, and nothing checks whether the provider took it — so for as
+long as the answer shape was wrong, the transcript read `outcome: 'answered'`
+while the agent behaved as though nobody had replied. The bug was invisible in
+the one place anyone would look for it.
 
-`toClaudeUserInputResult` (`adapter-claude/src/mapping.ts:1034`) sends the answer
-as an **array of arrays**:
+The same is true of approvals: `approval.decided` records our verdict, not the
+provider's acceptance of it.
 
-```ts
-updatedInput: { ...input, answers: response.answers.map((a) => [...a.values]) }
-```
+**Why it matters beyond the bug that is now fixed:** it will hide the next one.
+It also means the log cannot be trusted for exactly the kind of measurement
+C-013's plan is built on — "15 of 25 answered" counts answers sent, not answers
+received.
 
-The installed CLI rejects that shape outright. From a standalone SDK probe using
-the same version and the same `canUseTool` path:
+**Why it is not trivial.** `canUseTool` returns a value; a rejection surfaces as
+a later tool error or a retry, not as a failed promise, so there is no obvious
+place to notice. Anything built here has to avoid claiming the opposite falsehood
+— an answer that did land, recorded as failed — and must not add a round trip to
+the common path.
 
-> The permission handler returned `updatedInput` for AskUserQuestion that failed
-> schema validation: the `answers` parameter is expected as a `record` but was
-> provided as an `array`.
-
-The agent then retries, fails again, and tells the user the question never
-reached them.
-
-**Reproduced in the running app**, not only in the probe. Answering a real card
-through the UI produced: `userinput.requested` **twice**, `userinput.answered`
-once, one assistant message — `"I'll ask you now."` — and no acknowledgement of
-the choice. The agent asked, was handed an answer it could not parse, asked
-again, and gave up.
-
-**Why it has not been noticed:** the log records `outcome: 'answered'` when
-_Chorus_ sends the answer, with no idea whether the provider took it. So the
-transcript looks correct while the agent behaves as though nobody replied. This
-also means C-013's "15 of 25 answered" counts answers that may never have landed.
-
-**What is known about the right shape**, from probing: `answers` is a record
-keyed by the question's `header` — the SDK's input carries no question `id`, only
-`header` — and the value is a string, established by a deliberately wrong probe:
-
-> `answers.Indentation` came back as an object where a string was expected
-
-A record of `header → string` passes schema validation, but the agent still
-reported no answer in that run, so the contract is **not fully pinned down** and
-must not be guessed at a third time.
-
-**Done when:** an answer chosen in the card demonstrably reaches the agent — a
-live run where it repeats the choice back — the shape is taken from the CLI's own
-schema rather than inferred, `multiSelect` and free-text/Other are covered as well
-as single choice, and a provider that rejects an answer is not recorded as
-`answered`.
+**Done when:** an answer the provider rejects is distinguishable in the log from
+one it accepted, or this is closed with the reason the log deliberately records
+what Chorus did rather than what the provider made of it.
 
 ## Parked, with reasons
 

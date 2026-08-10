@@ -1070,7 +1070,16 @@ describe('user input requests', () => {
 })
 
 describe('user input results', () => {
-  it('sends answers back through updatedInput, preserving the original input', () => {
+  it('keys answers by the question text, which is what the CLI matches on', () => {
+    /*
+     * C-018. This asserted `answers: [['Postgres']]` and passed, while the
+     * installed CLI rejected that shape outright — "expected as a `record` but
+     * was provided as an `array`" — so the agent was told the question came
+     * back unanswered. The test was written from the same assumption as the
+     * code, which is why it confirmed rather than caught it.
+     *
+     * The shape is the CLI's own: "question text -> answer string".
+     */
     const input = { questions: [{ question: 'Which?', header: 'H', options: [] }] }
     expect(
       toClaudeUserInputResult(input, {
@@ -1079,23 +1088,39 @@ describe('user input results', () => {
       })
     ).toEqual({
       behavior: 'allow',
-      updatedInput: { ...input, answers: [['Postgres']] },
+      updatedInput: { ...input, answers: { 'Which?': 'Postgres' } },
     })
   })
 
-  it('keeps multi-select answers grouped per question', () => {
+  it('joins a multi-select with commas, as the schema asks', () => {
+    const input = {
+      questions: [
+        { question: 'Which databases?', options: [] },
+        { question: 'Which cache?', options: [] },
+      ],
+    }
+    expect(
+      toClaudeUserInputResult(input, {
+        outcome: 'answered',
+        answers: [
+          { questionId: '0', values: ['a', 'b'] },
+          { questionId: '1', values: ['c'] },
+        ],
+      })
+    ).toMatchObject({
+      updatedInput: { answers: { 'Which databases?': 'a,b', 'Which cache?': 'c' } },
+    })
+  })
+
+  it('drops an answer whose question it cannot name', () => {
+    // A key the CLI did not send is a key it cannot match, so it would fail
+    // validation for the whole call rather than just that one answer.
     expect(
       toClaudeUserInputResult(
-        {},
-        {
-          outcome: 'answered',
-          answers: [
-            { questionId: '0', values: ['a', 'b'] },
-            { questionId: '1', values: ['c'] },
-          ],
-        }
+        { questions: [{ question: 'Which?', options: [] }] },
+        { outcome: 'answered', answers: [{ questionId: '7', values: ['x'] }] }
       )
-    ).toMatchObject({ updatedInput: { answers: [['a', 'b'], ['c']] } })
+    ).toMatchObject({ updatedInput: { answers: {} } })
   })
 
   it('denies rather than fabricating an answer on cancel or timeout', () => {
