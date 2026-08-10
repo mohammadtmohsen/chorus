@@ -259,12 +259,15 @@ So this is not a flag to flip. Granting the power to act without solving the
 first two turns the aside into the one place where a dangerous action is
 auto-approved and invisible.
 
-Part B is sequenced in `docs/plans/aside-that-acts-2026-08-10/part-b.md`: a
-persistent fork the port can express, a durable `aside.promoted` event, the
-runtime operation, then the surface. Its architecture turns on a constraint found
-while planning — **an aside cannot be promoted by forking it**, because both
-providers fork from disk and an aside is deliberately never written there. It
-forks the _parent_ instead.
+Part B is sequenced in `docs/plans/aside-that-acts-2026-08-10/part-b.md`. Its
+architecture turns on a constraint found while planning — **an aside cannot be
+promoted by forking it**, because both providers fork from disk and an aside is
+deliberately never written there — so it forks the _parent_ instead.
+
+Phase 0 asks whether it needs to fork anything: Chorus's log already holds the
+transcript, and if reconstructing from it is good enough the persistent-fork work
+does not exist. That question is first because answering it later would mean
+finding out whether the expensive part was necessary after paying for it.
 
 Planned in `docs/plans/aside-that-acts-2026-08-10/plan.md`, whose review found
 three contracts Part B must satisfy: promotion needs a durable `aside.promoted`
