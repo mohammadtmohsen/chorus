@@ -248,6 +248,56 @@ an aside cannot silently inherit power granted to the main conversation; a
 dismissed or expired card cannot leave an approval pending or a tool half-run;
 and the deny message stops claiming a rule that no longer holds.
 
+### C-018 · An answered question may never reach Claude
+
+Found while probing the SDK for C-013's Phase 2, and it is worse than the bug
+that plan is about: a question that expires is lost, but this loses one that was
+answered on time.
+
+`toClaudeUserInputResult` (`adapter-claude/src/mapping.ts:1034`) sends the answer
+as an **array of arrays**:
+
+```ts
+updatedInput: { ...input, answers: response.answers.map((a) => [...a.values]) }
+```
+
+The installed CLI rejects that shape outright. From a standalone SDK probe using
+the same version and the same `canUseTool` path:
+
+> The permission handler returned `updatedInput` for AskUserQuestion that failed
+> schema validation: the `answers` parameter is expected as a `record` but was
+> provided as an `array`.
+
+The agent then retries, fails again, and tells the user the question never
+reached them.
+
+**Reproduced in the running app**, not only in the probe. Answering a real card
+through the UI produced: `userinput.requested` **twice**, `userinput.answered`
+once, one assistant message — `"I'll ask you now."` — and no acknowledgement of
+the choice. The agent asked, was handed an answer it could not parse, asked
+again, and gave up.
+
+**Why it has not been noticed:** the log records `outcome: 'answered'` when
+_Chorus_ sends the answer, with no idea whether the provider took it. So the
+transcript looks correct while the agent behaves as though nobody replied. This
+also means C-013's "15 of 25 answered" counts answers that may never have landed.
+
+**What is known about the right shape**, from probing: `answers` is a record
+keyed by the question's `header` — the SDK's input carries no question `id`, only
+`header` — and the value is a string, established by a deliberately wrong probe:
+
+> `answers.Indentation` came back as an object where a string was expected
+
+A record of `header → string` passes schema validation, but the agent still
+reported no answer in that run, so the contract is **not fully pinned down** and
+must not be guessed at a third time.
+
+**Done when:** an answer chosen in the card demonstrably reaches the agent — a
+live run where it repeats the choice back — the shape is taken from the CLI's own
+schema rather than inferred, `multiSelect` and free-text/Other are covered as well
+as single choice, and a provider that rejects an answer is not recorded as
+`answered`.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
