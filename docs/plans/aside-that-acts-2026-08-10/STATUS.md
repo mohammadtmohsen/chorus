@@ -273,3 +273,70 @@ No UI — that is Phase 4, and until it exists nobody can reach this. And the
 promoted room has never been driven against a real CLI: the fork path is
 exercised by `FakeAdapter`, while Phase 1's live run covered the adapter half
 separately.
+
+## Phase 4 done: the surface, and the whole path in the real app
+
+"Open as conversation" sits below a rule in the card, apart from the two buttons
+above it. Those stage text into a composer; this one changes what the thing is
+allowed to do, so it gets its own row and the profile is read before the button.
+
+The profile select defaults to the **parent's** — the permission the user already
+chose for this work — and is visible and changeable before the click. Inheriting
+it silently would have been the thing the aside design refused; offering it as a
+default with the choice on screen is the explicit act.
+
+`aside:promote` returns the whole session rather than an id, as
+`conversation:reopen` does: promotion decides the room's profile, title and cwd,
+and a renderer that had to guess any of them would draw a tab describing
+something other than what was opened.
+
+### Driven end to end, twice
+
+**The functional path**, and it is the one that matters: opened an aside on a
+real reply, promoted it under `workspace-write`, and asked the promoted room to
+edit a file. It did.
+
+```
+promoted: { conversationId: <the aside's own id>, profileId: "workspace-write", … }
+  ok  promoted on the aside's own id
+  ok  took the profile chosen at promotion
+  ok  the change of identity is in the log
+```
+
+and on disk afterwards:
+
+```
+line one
+line two
+line three
+PROMOTED-OK
+```
+
+**The surface**, driven through the toolbar rather than the IPC: select a passage
+→ "Ask about this" → the card → the promote row → a new tab, card closed.
+
+```
+promote row: { present: true, options: [Read only, Workspace write, Trusted],
+               selected: "read-only", button: "Open as conversation" }
+```
+
+### Two things the driver got wrong before it got them right
+
+Both were my test's fault and both are worth recording, because each looked like
+a product bug for a while.
+
+**It selected the user's own message.** The prompt quoted the sentence verbatim,
+so the first matching paragraph in the transcript was the user's, and
+`askableSource` correctly refuses those — the toolbar offered only "Quote in
+message" and I nearly went looking for a regression. Scoping the query to
+`.entry[data-actor="claude"]` fixed it.
+
+**Selecting and triggering across two calls lost the range.** A re-render between
+them collapsed it. Doing both inside one `evaluate` is what made it reliable.
+
+### One real defect found by looking
+
+The profile select rendered as a **native light control in a dark card**. Select
+styling in this app is scoped — `.sheet select` and `.settings-models select`
+each carry their own — and the card is neither, so it fell through to the browser
+default. Styled to match, and re-verified.

@@ -71,9 +71,18 @@ export function QuickQuestion(props: {
   excerpt: string
   /** The passage, unclamped — the card measures itself and fits from it. */
   anchor: SelectionAnchor
+  /** The parent's profile, offered as the promoted room's starting point. */
+  profileId: string
   onClose: () => void
   /** Stages text into the composer — quoting, or taking the answer forward. */
   onStage: (text: string) => void
+  /**
+   * Opens this aside as a conversation of its own, under the chosen profile.
+   *
+   * The card does not do it itself: promotion ends with a room that has to
+   * appear as a tab, and only the workspace knows how to do that.
+   */
+  onPromote: (asideId: string, profileId: string) => void
   onError: (message: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -82,6 +91,22 @@ export function QuickQuestion(props: {
   const [language, setLanguage] = useState('')
   const [state, setState] = useState<AsideState>(EMPTY_ASIDE)
   const [asking, setAsking] = useState(false)
+  /** What the promoted room would be allowed to do. Shown, and changeable. */
+  const [profileId, setProfileId] = useState(props.profileId)
+  const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    let live = true
+    window.chorus.profiles().then(
+      (list) => {
+        if (live) setProfiles(list.map((p) => ({ id: p.id, name: p.name })))
+      },
+      () => undefined
+    )
+    return () => {
+      live = false
+    }
+  }, [])
   const input = useRef<HTMLTextAreaElement>(null)
   const card = useRef<HTMLDivElement>(null)
   /** Where it ends up, once it knows how big it is. */
@@ -425,6 +450,39 @@ export function QuickQuestion(props: {
           }}
         >
           {t('aside.takeForward')}
+        </button>
+      </div>
+
+      {/*
+        The other way out of a card: stop being a footnote and become a room.
+        Everything above this point could only look; a promoted conversation can
+        act, which is why the profile is chosen here and not inherited quietly.
+      */}
+      <div className="quick-promote">
+        <label>
+          <span className="sr-only">{t('aside.profileLabel')}</span>
+          <select
+            value={profileId}
+            onChange={(event) => {
+              setProfileId(event.target.value)
+            }}
+          >
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn"
+          disabled={asideId === null || state.working}
+          onClick={() => {
+            if (asideId !== null) props.onPromote(asideId, profileId)
+          }}
+        >
+          {t('aside.openAsConversation')}
         </button>
       </div>
     </div>

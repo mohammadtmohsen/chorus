@@ -697,6 +697,31 @@ export const IPC_CONTRACT = {
     request: z.object({ asideId: z.string(), question: z.string().min(1) }),
     response: z.object({ ok: z.literal(true) }),
   },
+  /**
+   * Turns an aside into a conversation of its own, able to act.
+   *
+   * The profile is chosen here rather than inherited: it is the explicit act
+   * that makes acting safe, and a room that silently arrived with the parent's
+   * permissions would be the thing the aside design refused.
+   */
+  'aside:promote': {
+    request: z.object({ asideId: z.string(), profileId: z.string() }),
+    /*
+     * The whole session, as `conversation:reopen` returns — not just the id.
+     *
+     * Promotion decides the room's profile, title and cwd, and a renderer that
+     * had to guess any of them would put a tab on screen describing something
+     * other than what was opened.
+     */
+    response: z.object({
+      conversationId: z.string(),
+      participants: z.array(z.enum(['codex', 'claude'])),
+      profileId: z.string(),
+      cwd: z.string(),
+      title: z.string(),
+      unread: z.number().int().min(0),
+    }),
+  },
   /** Ends the fork. The transcript stays in the log. */
   'aside:close': {
     request: z.object({ asideId: z.string() }),
@@ -1064,6 +1089,9 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'handoff:send'>>
   readonly openAside: (request: IpcRequest<'aside:open'>) => Promise<IpcResponse<'aside:open'>>
   readonly askAside: (request: IpcRequest<'aside:ask'>) => Promise<IpcResponse<'aside:ask'>>
+  readonly promoteAside: (
+    request: IpcRequest<'aside:promote'>
+  ) => Promise<IpcResponse<'aside:promote'>>
   readonly closeAside: (request: IpcRequest<'aside:close'>) => Promise<IpcResponse<'aside:close'>>
   readonly listAsides: (request: IpcRequest<'aside:list'>) => Promise<IpcResponse<'aside:list'>>
   /** Returns an unsubscribe function. */

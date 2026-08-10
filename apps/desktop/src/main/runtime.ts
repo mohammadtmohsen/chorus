@@ -112,6 +112,16 @@ interface Participant {
   commands?: readonly SlashCommandInfo[]
 }
 
+/** What the renderer needs to draw a promoted aside as a tab. */
+export interface PromotedConversation {
+  readonly conversationId: string
+  readonly participants: AgentId[]
+  readonly profileId: string
+  readonly cwd: string
+  readonly title: string
+  readonly unread: number
+}
+
 interface ActiveConversation {
   readonly conversationId: string
   readonly participants: Map<AgentId, Participant>
@@ -859,7 +869,7 @@ export class ChorusRuntime {
    * caller should get the same answer as the first, not a refusal and not a
    * second provider session on disk.
    */
-  private readonly promoting = new Map<string, Promise<{ conversationId: string }>>()
+  private readonly promoting = new Map<string, Promise<PromotedConversation>>()
 
   /**
    * Turns an aside into a conversation of its own.
@@ -874,7 +884,7 @@ export class ChorusRuntime {
    * fork. The parent is on disk, and forking it is what already gives an aside
    * its context — this one is simply kept.
    */
-  async promoteAside(asideId: string, profileId: string): Promise<{ conversationId: string }> {
+  async promoteAside(asideId: string, profileId: string): Promise<PromotedConversation> {
     const inFlight = this.promoting.get(asideId)
     if (inFlight !== undefined) return inFlight
 
@@ -885,10 +895,7 @@ export class ChorusRuntime {
     return run
   }
 
-  private async runPromotion(
-    asideId: string,
-    profileId: string
-  ): Promise<{ conversationId: string }> {
+  private async runPromotion(asideId: string, profileId: string): Promise<PromotedConversation> {
     const aside = this.asides.get(asideId)
     if (aside === undefined) throw new Error('That aside has ended — ask again to start a new one')
     if (this.active.has(asideId)) throw new Error('That aside is already a conversation')
@@ -994,7 +1001,14 @@ export class ChorusRuntime {
     this.active.set(asideId, conversation)
     this.rememberOpen()
     this.log.info('aside promoted', { asideId, parentId: aside.parentId, agentId, profileId })
-    return { conversationId: asideId }
+    return {
+      conversationId: asideId,
+      participants: [agentId],
+      profileId: profile.id,
+      cwd: conversation.cwd,
+      title: conversation.title,
+      unread: 0,
+    }
   }
 
   /**

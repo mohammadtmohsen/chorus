@@ -503,6 +503,29 @@ export function App(): React.JSX.Element {
     setPanelRequest({ conversationId, panel })
   }, [])
 
+  /**
+   * An aside stops being a footnote and becomes a room.
+   *
+   * The list is refreshed from main rather than assembled here: promotion gives
+   * the conversation a profile, a title and a cwd, and guessing any of them in
+   * the renderer is how a tab ends up describing something other than what was
+   * opened.
+   */
+  const promoteAside = useCallback(
+    (asideId: string, profileId: string) => {
+      void (async () => {
+        try {
+          const promoted = await window.chorus.promoteAside({ asideId, profileId })
+          updateSessions((current) => [...current, promoted])
+          useWorkspaceStore.getState().openSession(promoted.conversationId)
+        } catch (error) {
+          fail(setError)(error)
+        }
+      })()
+    },
+    [updateSessions]
+  )
+
   /** What a conversation may do, changed from wherever the profile is shown. */
   const applyProfile = useCallback(
     async (conversationId: string, profileId: string) => {
@@ -761,6 +784,7 @@ export function App(): React.JSX.Element {
             }}
             carry={carries.current.get(session.conversationId)}
             onCarry={keepCarry}
+            onPromoteAside={promoteAside}
           />
         )}
       />

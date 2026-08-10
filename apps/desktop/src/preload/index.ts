@@ -87,6 +87,7 @@ const api: ChorusApi = {
   sendHandoff: invoke('handoff:send'),
   openAside: invoke('aside:open'),
   askAside: invoke('aside:ask'),
+  promoteAside: invoke('aside:promote'),
   closeAside: invoke('aside:close'),
   listAsides: invoke('aside:list'),
 

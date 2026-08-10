@@ -89,6 +89,8 @@ export interface SessionCarry {
  */
 export function Session(props: {
   session: SessionInfo
+  /** Turns an aside into a conversation and brings it up as a tab. */
+  onPromoteAside: (asideId: string, profileId: string) => void
   /** Set when the sidenav asked for a panel this pane owns. */
   panelRequest?: 'review' | 'summary' | undefined
   onPanelOpened: () => void
@@ -1048,8 +1050,18 @@ export function Session(props: {
             closeCard(askingAbout)
             setAskingAbout(null)
           }}
+          profileId={props.session.profileId}
           onStage={(text) => {
             composer.current?.insert(text)
+          }}
+          onPromote={(asideId, profileId) => {
+            /*
+             * The card is dropped without closing the aside, because promotion
+             * has already taken its fork — `closeCard` would end a session the
+             * new conversation is now built on.
+             */
+            setAskingAbout(null)
+            props.onPromoteAside(asideId, profileId)
           }}
           onError={setError}
         />

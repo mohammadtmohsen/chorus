@@ -3858,6 +3858,39 @@ input::placeholder {
  * a number that shifts the header every second draws the eye away from the
  * question, which is the opposite of the point.
  */
+/*
+ * The promote row, set apart from the two staging buttons above it.
+ *
+ * Those put text in a composer; this one changes what the thing is allowed to
+ * do. A rule and its own row, so the profile select is read before the button
+ * rather than beside two actions that cost nothing.
+ */
+.quick-promote {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
+/*
+ * Styled here because select styling is scoped, not global — `.sheet select`
+ * and `.settings-models select` each carry their own, and the card is neither.
+ * Without this it rendered as a native light control in a dark card.
+ */
+.quick-promote select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--sunken);
+  color: var(--bone);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .card-deadline {
   margin-left: auto;
   display: inline-flex;

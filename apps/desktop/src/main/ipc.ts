@@ -542,6 +542,9 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       return { ok: true as const }
     },
 
+    'aside:promote': (request: { asideId: string; profileId: string }) =>
+      runtime.promoteAside(request.asideId, request.profileId),
+
     'aside:close': async (request: { asideId: string }) => {
       await runtime.closeAside(request.asideId)
       return { ok: true as const }
