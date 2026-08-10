@@ -225,7 +225,12 @@ the delegation rather than appearing from nowhere; and a reviewer that never
 answers, or a pair that ping-pongs, is bounded — with the bound written down and
 visible to the user rather than implicit.
 
-### C-017 · An aside that can act
+### C-017 · An aside that can act — Part B
+
+**Part A is done** (`77bb246`, via C-020) and verified in the running app: an
+aside can now run the read it was refused, because repairing the permission
+matcher also put `sed` on the safe-read list. What is left is the half that
+actually needs building.
 
 The side chat should be able to edit files and run tools — everything the CLI can
 do — inside the aside, so something noticed mid-reply can be fixed there without
@@ -253,6 +258,13 @@ Each part has a reason, and they are the actual work:
 So this is not a flag to flip. Granting the power to act without solving the
 first two turns the aside into the one place where a dangerous action is
 auto-approved and invisible.
+
+Planned in `docs/plans/aside-that-acts-2026-08-10/plan.md`, whose review found
+three contracts Part B must satisfy: promotion needs a durable `aside.promoted`
+event rather than a projection flip; the existing service cannot be moved,
+because `neverAsks` and `grants` are readonly and the branch is non-persistent;
+and the trigger must be an explicit user action, because the aside prompt stops a
+compliant agent from ever attempting to act.
 
 **Done when:** an aside can change files and run tools with the user seeing and
 deciding — the card hosts its own approval or hands it to the pane that can;
