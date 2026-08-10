@@ -354,48 +354,6 @@ identifiers, paths and code survive unchanged in their own script; a passage
 already in that language says so rather than paraphrasing; and the action is
 absent when no language is set, as Explain is.
 
-### C-024 · "That passage is not part of that reply" — asides refuse most selections
-
-Reported from the 0.9.0 build and reproduced twice on the first attempt. Not a
-regression: it has been there since asides shipped in 0.8.0.
-
-`openAside` checks `said.includes(excerpt)`, where `said` is the **markdown
-source** from the log and `excerpt` is what `selection.toString()` returned —
-which is the **rendered** text. The two disagree whenever markdown changes
-anything on the way to the DOM:
-
-```
-source   : `docs/plan.md` — created in my last turn.
-selection: docs/plan.md — created in my last turn.        ← backticks gone
-
-source   : The projection lags behind the log and\nthat is the whole problem here.
-selection: The projection lags behind the log and that is the whole problem here.
-                                                  ↑ newline rendered as a space
-```
-
-Both were refused with the reported error. So any selection containing inline
-code, bold, italics or a link — or crossing a line break inside a paragraph —
-cannot open an aside. Agents write inline code constantly, which is why this
-reads as "the side chat does not work" rather than as an edge case.
-
-**The guard is right and must stay.** It exists because the renderer is the least
-trustworthy thing in the process tree: a caller that could name any event and any
-excerpt could put words in an agent's mouth and have them quoted back as its own.
-The fault is that it compares two things that were never the same shape.
-
-**The fix is to compare like with like.** `markdown.ts` is a pure parser already
-exported for tests, so main can project the stored source into the same plain
-text the DOM produces — inline markup removed, paragraph newlines collapsed to
-spaces — and check the excerpt against that. Rejected alternatives: stripping
-markdown with a second ad-hoc regex (a parser that disagrees with the real one is
-worse than none), and having the renderer send source offsets (it would have to
-map a DOM selection back to source positions, which is harder and no safer).
-
-**Done when:** a selection spanning inline code, emphasis, a link, or a
-paragraph's internal line break opens an aside; the guard still refuses an
-excerpt that is not in the reply at all; and both are pinned by tests that fail
-against today's check.
-
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets

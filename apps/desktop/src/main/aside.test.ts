@@ -686,3 +686,78 @@ describe('promoting an aside into a conversation', () => {
     expect(runtime.listAsides(conversationId).map((a) => a.id)).not.toContain(asideId)
   })
 })
+
+describe('a selection is matched as the transcript reads, not as markdown', () => {
+  /*
+   * C-024, reported from a shipped build and reproduced twice on the first
+   * attempt. The renderer sends what `selection.toString()` gave — the rendered
+   * text — and the log holds markdown. Comparing only the source refused any
+   * selection containing inline code, emphasis or a link, and any one crossing
+   * a line break inside a paragraph.
+   */
+  it('accepts a selection that spanned inline code', async () => {
+    const sourceEventId = reply('`docs/plan.md` — created in my last turn.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      // Exactly what the app returned in the reproduction: no backticks.
+      excerpt: 'docs/plan.md — created in my last turn.',
+    })
+    expect(asideId).not.toBe('')
+  })
+
+  it('accepts a selection that crossed a line break inside a paragraph', async () => {
+    const sourceEventId = reply('The projection lags behind the log and\nthat is the problem.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'behind the log and that is the problem.',
+    })
+    expect(asideId).not.toBe('')
+  })
+
+  it('still accepts a selection taken from a fenced code block', async () => {
+    // Matches the source exactly; it worked before the fix and must keep working.
+    const sourceEventId = reply('```\nconst a = 1\nconst b = 2\n```')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'const a = 1\nconst b = 2',
+    })
+    expect(asideId).not.toBe('')
+  })
+
+  it('still refuses words that are not in the reply at all', async () => {
+    /*
+     * The guard's reason for existing, unweakened: a caller that could name any
+     * event and any excerpt could put words in an agent's mouth and have them
+     * quoted back as its own.
+     */
+    const sourceEventId = reply('`docs/plan.md` — created in my last turn.')
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'delete the production database',
+      })
+    ).rejects.toThrow(/not part of that reply/)
+  })
+
+  it('accepts a link target, because the agent did write it', () => {
+    /*
+     * Written down because it looks like a hole and is not, and because the
+     * first version of this test asserted the opposite and failed.
+     *
+     * A link's href is in the source but never on screen, so it cannot be
+     * *selected* — yet the source check accepts it, exactly as it did before
+     * this fix. That is right: the guard's question is "did this agent say
+     * this", and the agent wrote the URL. Tightening it would mean refusing
+     * text genuinely present in the reply, and would break the code-block case
+     * above, which also matches only the source.
+     */
+    const sourceEventId = reply('see [the plan](https://example.com/some-path)')
+    return expect(
+      runtime.openAside({ conversationId, sourceEventId, excerpt: 'some-path' })
+    ).resolves.toBeDefined()
+  })
+})

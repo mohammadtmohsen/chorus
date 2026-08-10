@@ -1,6 +1,12 @@
 import { CodeRun } from './CodeRun.js'
 import { memo, useMemo } from 'react'
-import { parseMarkdown, splitBlocks, type Align, type Block, type Inline } from './markdown.js'
+import {
+  parseMarkdown,
+  splitBlocks,
+  type Align,
+  type Block,
+  type Inline,
+} from '../../shared/markdown.js'
 
 /**
  * Renders parsed markdown as React elements.
