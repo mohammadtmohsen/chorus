@@ -3850,6 +3850,38 @@ input::placeholder {
 
 /* ----------------------------------------------------------- workspace shell */
 
+/*
+ * The last-minute warning on a blocking card.
+ *
+ * Pushed to the end of the header so it reads as a status rather than a label,
+ * and tabular figures so the width does not jump as the seconds count down —
+ * a number that shifts the header every second draws the eye away from the
+ * question, which is the opposite of the point.
+ */
+.card-deadline {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.card-deadline-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85em;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.25rem;
+  /*
+   * `--alert`, the existing alarm token, rather than a new colour.
+   *
+   * It is defined for both themes; an invented one with a hex fallback would
+   * have resolved to that fallback every time and carried the dark value into
+   * the light theme, where it does not have the contrast.
+   */
+  color: var(--alert);
+  border: 1px solid color-mix(in srgb, var(--alert) 45%, transparent);
+  background: color-mix(in srgb, var(--alert) 12%, transparent);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
