@@ -15,6 +15,14 @@ export interface RuleMatch {
   readonly kind?: ApprovalKind | readonly ApprovalKind[]
   /** Anchored against the whole command line, joined by spaces. */
   readonly commandPattern?: string
+  /**
+   * Disqualifies the rule when it matches, checked against the same line.
+   *
+   * For the arguments that turn a reader into a writer. `find` is a safe read
+   * until `-delete`, `git branch` until `-D`, and a rule that can only say what
+   * a command *starts with* cannot tell those apart.
+   */
+  readonly commandExcludePattern?: string
   /** Matched against every path a file change touches. */
   readonly pathPattern?: string
   /** Matches only when the request asks for network access. */
@@ -128,7 +136,26 @@ const SAFE_READS: Rule = {
   describe: 'Read-only inspection',
   match: {
     kind: 'command',
-    commandPattern: String.raw`^(git\s+(status|diff|log|show|branch)|ls|pwd|cat|head|tail|wc|file|which|grep|rg|find)\b`,
+    /*
+     * `sed`, `echo`, `sort` and `uniq` earn their place from the log rather
+     * than from taste: the commonest shape by far is
+     * `cat a; echo "=== b ==="; sed -n '1,40p' c`, and without them a reader
+     * asks. `sed` is also the command C-017's one real refusal tripped on.
+     *
+     * `awk` is deliberately absent — it writes files from inside its own
+     * program text, where no rule here can see it. So is `xargs`, which runs
+     * whatever it is given.
+     */
+    commandPattern: String.raw`^(git\s+(status|diff|log|show|branch)|ls|pwd|cat|head|tail|wc|file|which|grep|rg|find|sed|echo|sort|uniq)\b`,
+    /*
+     * The arguments that turn these readers into writers.
+     *
+     * `find` runs arbitrary commands (`-exec`, `-ok`), deletes (`-delete`) and
+     * writes files (`-fprint`); `git branch` deletes and renames. Without this
+     * the rule allowed `find . -delete` outright, because it only ever read the
+     * first word (C-020).
+     */
+    commandExcludePattern: String.raw`(\s-(delete|exec|execdir|ok|okdir|fls|fprint|fprintf)\b)|(^git\s+branch\b.*(-D|-d|-m|-M|--delete|--move|--force)\b)|(^sed\b.*(\s-[a-zA-Z]*i|--in-place))`,
   },
   effect: 'allow',
   scope: 'session',
@@ -258,6 +285,28 @@ export function matches(rule: Rule, request: ApprovalRequest): boolean {
 
   if (match.commandPattern !== undefined) {
     if (command === '' || !safeTest(match.commandPattern, command)) return false
+    if (
+      match.commandExcludePattern !== undefined &&
+      safeTest(match.commandExcludePattern, command)
+    ) {
+      return false
+    }
+    /*
+     * An `allow` may never match a command line that is more than one command.
+     *
+     * `commandPattern` is anchored at the start of the *whole line* — Claude's
+     * Bash tool hands over one shell string — so `^cat\b` matched
+     * `cat evil > ~/.zshrc`, and the read-only profile allowed an arbitrary
+     * write. Measured against the real engine, `find . -delete`,
+     * `git branch -D`, `cat a > b` and `rg x . | xargs touch y` were all
+     * allowed outright, with no card and no record of a person deciding (C-020).
+     *
+     * Only for `allow`. A deny must still match inside a composition — the whole
+     * point of `rm -rf` being universal is that hiding it behind `&&` does not
+     * help — and an `ask` that stops matching would silently become an allow
+     * from some later rule.
+     */
+    if (rule.effect === 'allow' && !everySegmentMatches(match, command)) return false
   }
 
   if (match.pathPattern !== undefined) {
@@ -268,6 +317,46 @@ export function matches(rule: Rule, request: ApprovalRequest): boolean {
   // A rule that matches on nothing would apply to everything, which is never
   // what someone meant to write.
   return Object.keys(match).length > 0
+}
+
+/**
+ * Redirections that discard output rather than writing a file.
+ *
+ * `2>/dev/null` and `2>&1` are how a reader stays quiet, and they are all over
+ * the log. Removing them first lets the redirect check below be absolute about
+ * everything that remains.
+ */
+const DISCARDS = /\d?>\s*&?\s*(\/dev\/null|\d)/g
+
+/**
+ * Whether an `allow` rule covers every command on the line.
+ *
+ * Substitution and file redirection are refused outright: `$(…)` and backticks
+ * run something the rule never sees, and `>` writes. What is left is split on
+ * the sequencing operators, and each part must satisfy the same rule — so a
+ * pipeline of readers is still a read, and one whose second half is `curl` is
+ * not.
+ *
+ * Splitting on operators without parsing quotes is deliberately naive, and it
+ * fails **closed**: `cat "a|b"` splits into parts that do not both match and so
+ * asks, and `cat "; anything"` asks for the same reason. A card nobody needed is
+ * the acceptable error here; a silent allow is not.
+ */
+function everySegmentMatches(match: RuleMatch, command: string): boolean {
+  const withoutDiscards = command.replace(DISCARDS, ' ')
+  if (/[`<>]|\$\(/.test(withoutDiscards)) return false
+
+  const segments = withoutDiscards
+    .split(/\|\||&&|[|;&\n]/)
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+  if (segments.length === 0) return false
+
+  return segments.every(
+    (segment) =>
+      safeTest(match.commandPattern ?? '', segment) &&
+      (match.commandExcludePattern === undefined || !safeTest(match.commandExcludePattern, segment))
+  )
 }
 
 function safeTest(pattern: string, value: string): boolean {
