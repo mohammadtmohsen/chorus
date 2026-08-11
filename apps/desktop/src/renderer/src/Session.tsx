@@ -5,6 +5,7 @@ import { fitCard, type AsidePurpose } from './aside.js'
 import { deadlineState, formatCountdown, type DeadlineState } from './deadline.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
+import { focusedNow, mayTakeCaret } from './focus.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import { QuickQuestion } from './QuickQuestion.js'
 import {
@@ -751,9 +752,16 @@ export function Session(props: {
     }
     if (!hadApprovals.current) return
     hadApprovals.current = false
-    // Only where you are working. In a background pane this used to reach across
-    // and pull the caret out of the sentence you were typing.
-    if (props.active) composer.current?.focus()
+    /*
+     * Only where you are working. In a background pane this used to reach across
+     * and pull the caret out of the sentence you were typing.
+     *
+     * And only when there is a sentence to come back to. Normally the caret is
+     * on the Allow button that is about to unmount, so bringing it here is the
+     * whole point — but if the card never took the caret, because someone was
+     * writing, then the aside they were writing in is where it still belongs.
+     */
+    if (props.active && mayTakeCaret(focusedNow())) composer.current?.focus()
   }, [queued, props.active])
 
   /**
@@ -1463,9 +1471,14 @@ function QuestionCard({
    * The first control takes focus as the card appears, so the keyboard can
    * answer without reaching for the mouse — the same bargain the approval card
    * makes, for the same reason: the agent is stopped until this is answered.
+   *
+   * And the same exception, for the same reason: not out of a sentence already
+   * being typed. A question card lands on a radio, where the words that follow
+   * are swallowed and the arrow keys change an answer instead of moving a caret.
    */
   useEffect(() => {
     if (!active) return
+    if (!mayTakeCaret(focusedNow())) return
     first.current?.focus()
   }, [request.userInputId, active])
 
@@ -1707,9 +1720,15 @@ function ApprovalCard({
    * on the one interaction that is always blocking. Keyed on the approval id as
    * well as mount, so the next request in a queue claims focus too even if
    * React reuses this instance.
+   *
+   * Never out of a sentence someone is part-way through, though. The card
+   * arrives when the *agent* decides, not when the user does, and it used to
+   * land on Allow mid-word — scattering the rest of the typing across a button
+   * and leaving the next Enter to approve a command nobody had read.
    */
   useEffect(() => {
     if (!active) return
+    if (!mayTakeCaret(focusedNow())) return
     allow.current?.focus()
   }, [approval.approvalId, active])
 
