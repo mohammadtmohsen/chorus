@@ -146,10 +146,19 @@ Chorus _sent_ an answer, not that Claude took it, and for part of that period it
 did not (C-018). **10 of 25 is the optimistic reading**, and the figures are worth
 re-taking now that answers land.
 
+**"Holds focus" has since become a weaker signal than it was when this was
+written, and the change came from the other direction.** A card no longer takes
+the caret when someone is part-way through a sentence (C-028), because landing on
+**Allow** mid-word meant the next Enter approved an unread command. The
+consequence here is that a card can now be on screen, with a person plainly
+working, and never hold focus at all — so a deadline keyed to focus would expire
+on exactly the user it was meant to protect. A partial answer, or any input to
+the card, survives that change; focus does not.
+
 **Done when:** ~~the log has been read back to confirm which outcome actually
 fired~~; a question the user is demonstrably engaged with cannot expire under
-them — the deadline held while the card holds focus or a partial answer, or reset
-on input — and ~~a card genuinely about to expire says so while it can still be
+them — the deadline held while the card holds a partial answer, or reset on
+input — and ~~a card genuinely about to expire says so while it can still be
 answered~~.
 
 ### C-015 · An agent cannot address another agent
@@ -373,6 +382,47 @@ someone occasionally reads to a place nobody reads at all.
 **Done when:** a spec that skips is reported as skipped and counted separately
 from one that passed, so `all N passed` means N specs actually ran — and the
 remaining legitimate skips say so in the output rather than printing a tick.
+
+### C-028 · The blocking cards are only ever tested away from the app
+
+Three focus defects were fixed in one session and **not one of them can fail the
+suite**. `e2e/specs.mjs` drives an agent, a transcript, tabs, the sidenav and the
+composer; it never raises an approval or a question, because raising one means an
+agent deciding to ask. So the two cards that stop a turn are the two surfaces
+nothing exercises.
+
+What was fixed, and what each was actually verified against:
+
+- **A card took the caret mid-sentence.** An approval or question arriving while
+  you typed moved focus to **Allow** — the rest of the words went nowhere and the
+  next Enter approved a command nobody had read. Verified by a pure predicate
+  (`focus.ts`) and a Chromium read of `document.activeElement` over real
+  controls.
+- **`useDialog` re-focused on every parent render.** Every caller passes an
+  inline `onClose`, so a `Session` re-rendering on each streamed delta tore the
+  effect down and set it up again, throwing the caret out of the handoff's brief
+  box and back onto its `Ask them to` select. Verified by bundling the real hook
+  with React 19 and driving re-renders: the old one jumped to the select after
+  one, the new one held through five.
+- **A long approval put its own buttons off the pane.** Measured against the real
+  stylesheet in an 800px pane: the dock stood at **1529px** and Allow sat **684px
+  below the bottom of the pane**, unreachable — at every pane height tried.
+
+Every number there came from a harness holding the app's real stylesheet or its
+real hook. The harnesses were temporary; the regressions they would catch are
+not.
+
+**Why it matters:** this is the most expensive place in the product to be wrong —
+approving an unread command is the worst outcome it has — and two of the three
+fixes are one careless dependency array from coming back. It is C-027 seen from
+the other side: that entry is about a suite reporting green while testing
+nothing, and this is a suite that cannot go red for these at all.
+
+**Done when:** a spec provokes a real approval and asserts three things — the
+caret stays in a half-typed composer, the buttons are inside the pane for a long
+command, and a handoff sheet keeps focus across a parent re-render — or it is
+written down that these are covered by unit and harness only, with the reason a
+real approval cannot be provoked on demand.
 
 ## Parked, with reasons
 
