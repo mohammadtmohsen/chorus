@@ -88,22 +88,56 @@ parsed **no mention at all**.
 So this was never about the list arriving — the list was there. Everything the
 decision depends on was correct and the decision still came out null.
 
-**That leaves exactly two, and no third.** `refreshMention` runs _synchronously_
-in the textarea's `onChange`, and `findCommandQuery('/', 1)` cannot return null —
-its only rejections are a non-whitespace prefix and a non-matching query charset,
-and `/` with an empty query is neither. So either:
+**Both were wrong, and the third was on the original list all along.** The next
+failure carried them:
 
-1. **`onChange` never fired**, and nothing re-read the box. React's `draft` would
-   still hold the previous text — the spec types `look at src/foo` first, so a
-   length of 15 rather than 1 gives it away.
-2. **`dismissed` held `/0:`**, the one branch that nulls a mention that _was_
-   found. Nothing in the spec presses Escape, so that would be a defect in how
-   `dismissed` is set or cleared.
+```json
+{
+  "mention": "none",
+  "draftLen": "1",
+  "dismissed": "none",
+  "commands": "50",
+  "value": "/",
+  "caret": 1,
+  "focused": true,
+  "rows": 0
+}
+```
 
-`data-draft-len` and `data-dismissed` now ride on the composer to separate them,
-and the wait reports both. **Do not remove them when this closes** — the original
-bug was solved by instrumenting `refreshMention`, that instrumentation was taken
-out, and this entry is what it cost.
+`draftLen: 1` says React's `draft` **is** `/`, so `onChange` fired. `dismissed:
+none` says nothing was swallowed. Which leaves the one path the first
+investigation named and never eliminated — _"the only paths that null it are a
+blur and `dismissed`"_ — and it is **the blur**.
+
+`onBlur` cleared the mention unconditionally, and **nothing ever undid it**.
+`refreshMention` runs on change, on select and on keydown; focus returning is
+none of those, so the box kept `/` and the menu stayed shut until another
+character was typed. Reproduced on demand — blur the box and refocus it, and the
+record comes back identical field for field, `rows` 49 → 0.
+
+**A first fix was tried, measured, and rejected.** `onFocus={refreshMention}` —
+re-read the box when the caret returns — looked obviously right and made things
+**much worse**, back to back on the same machine:
+
+|                | menu specs                   |
+| -------------- | ---------------------------- |
+| with `onFocus` | **2 passed / 3 failed of 5** |
+| without it     | **5 passed / 0 failed of 5** |
+
+The likely reason, and the thing any fix here has to handle: **at the moment a
+focus event fires, the caret can still be at 0**. `findCommandQuery` slices
+`text.slice(0, caret)`, so with caret 0 it sees an empty string, finds no `/`,
+returns null — and nulls a perfectly good mention. Restoring on focus is right in
+principle and cannot be done by reading the caret _during_ the focus event.
+
+**So the cause is known and the fix is not written.** Whatever it is, it must
+re-derive the mention after the caret has been restored, not while it is being.
+
+**Do not remove the instrumentation** — `data-mention`, `data-commands`,
+`data-draft-len`, `data-dismissed` and the menu's status row are what turned this
+from a shrug into three lines. The original bug was solved by instrumenting
+`refreshMention`, that instrumentation was taken out, and this entry is what it
+cost.
 
 **It is not only the slash menu.** During the 0.10.0 release gate, `an @ offers
 the cast, then the project's files` failed on `typing a name found files` in one

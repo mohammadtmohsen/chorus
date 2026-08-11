@@ -332,3 +332,83 @@ query is neither. So:
 value as of the last render rather than live. That is sound here because the only
 writer outside `refreshMention` is the Escape handler, which calls `setMention`
 in the same breath — but it is a real limit and worth knowing before trusting it.
+
+## Phase 0b, third pass — C-003 has a named, reproduced cause
+
+**It is the blur.** Both candidates from the second pass were wrong, and the
+answer was on the _original_ investigation's list of two — _"the only paths that
+null it are a blur and `dismissed`"_ — never eliminated.
+
+The failure that settled it:
+
+```json
+{
+  "mention": "none",
+  "draftLen": "1",
+  "dismissed": "none",
+  "commands": "50",
+  "value": "/",
+  "caret": 1,
+  "focused": true,
+  "rows": 0
+}
+```
+
+| field               | what it kills                                                   |
+| ------------------- | --------------------------------------------------------------- |
+| `draftLen: "1"`     | React's `draft` is `/` — **`onChange` fired**, candidate 1 dead |
+| `dismissed: "none"` | nothing was swallowed — candidate 2 dead                        |
+| `commands: "50"`    | the list was loaded, so no lookup was pending                   |
+
+`onBlur` cleared the mention **unconditionally**, and nothing undid it.
+`refreshMention` runs on change, select and keydown; focus coming back is none of
+those. So the box kept `/`, the menu stayed shut, and only another keystroke
+could reopen it — the same never-recovers shape as the defect in `58907f1`, in a
+different place.
+
+### Reproduced, then fixed
+
+Type `/`, blur the box, refocus it:
+
+|                               | after `/`      | blurred + refocused | with `onFocus` |
+| ----------------------------- | -------------- | ------------------- | -------------- |
+| `mention`                     | `/0:`          | **`none`**          | `/0:`          |
+| `rows`                        | 49             | **0**               | **49**         |
+| `value` / `caret` / `focused` | `/` / 1 / true | `/` / 1 / true      | `/` / 1 / true |
+
+The middle column is the real failure record, field for field.
+
+**The fix is `onFocus={refreshMention}`** — not "stop clearing on blur", which is
+right: a menu should not outlive the box being left. What was missing is that
+returning re-reads what is there.
+
+**Escape still wins.** Dismiss with Escape, blur, refocus: `rows` 0 and
+`dismissed` `/0:`. That is exactly what `dismissed` exists for, and it is checked
+on the path `onFocus` now runs.
+
+**Rates:** 20 of 20 alone; **3 failures in 13 full suite runs**. Something must
+take the caret and give it back, which a busy app does and an idle one does not.
+
+### The fix was wrong, and the measurement is why that is known
+
+`onFocus={refreshMention}` passed the harness — blur, refocus, menu returns — and
+then failed the only test that matters:
+
+|                | menu specs, same machine, back to back |
+| -------------- | -------------------------------------- |
+| with `onFocus` | **2 passed / 3 failed of 5**           |
+| without it     | **5 passed / 0 failed of 5**           |
+
+It is not a fix. It is a second way to produce the same record, and the failures
+it caused carry the same fields — `mention: none`, `value: "/"`, `caret: 1`,
+`dismissed: none`.
+
+**Why, and what it means for the real fix:** a focus event can fire while the
+caret is still at 0. `findCommandQuery` reads `text.slice(0, caret)`, so caret 0
+is an empty string, no `/` is found, and a valid mention is nulled. The harness
+missed it because `ta().focus()` there restores the caret synchronously; a real
+window regaining focus does not.
+
+**Reverted.** The instrumentation stays, the cause stands, the fix is open — and
+it has a constraint it did not have this morning: it must re-derive the mention
+_after_ the caret is restored, never during the event that restores it.

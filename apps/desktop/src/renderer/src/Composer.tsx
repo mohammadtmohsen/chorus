@@ -773,6 +773,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             onBlur={() => {
               setMention(null)
             }}
+            /*
+             * And re-read the box when the caret comes back. This is C-003.
+             *
+             * Closing the menu on blur is right — it floats over the transcript
+             * and should not outlive the box being left. What was wrong is that
+             * **nothing ever undid it**: `refreshMention` runs on change, on
+             * select and on keydown, so a menu closed by a blur stayed closed
+             * with its query still sitting in the box, until another character
+             * was typed. Focus returning is not a change, so it re-read nothing.
+             *
+             * Caught in a real failing run rather than reasoned about. The
+             * record read `mention: none` with `value: "/"`, `caret: 1`,
+             * `focused: true`, `commands: 50`, `draftLen: 1`, `dismissed: none`
+             * — every input to the decision correct, the decision null, and
+             * `onChange` provably fired. Blurring and refocusing reproduces that
+             * record field for field.
+             *
+             * Why a suite makes it likely and a lone run does not: something has
+             * to take the caret away and give it back, and a busy app does that
+             * far more often than an idle one.
+             */
             onKeyDown={(e) => {
               /*
                * The menu takes the keys it needs first — Enter in particular.
