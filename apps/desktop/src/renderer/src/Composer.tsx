@@ -774,25 +774,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
               setMention(null)
             }}
             /*
-             * And re-read the box when the caret comes back. This is C-003.
+             * There is deliberately no `onFocus` here, and this is C-003.
              *
-             * Closing the menu on blur is right — it floats over the transcript
-             * and should not outlive the box being left. What was wrong is that
-             * **nothing ever undid it**: `refreshMention` runs on change, on
-             * select and on keydown, so a menu closed by a blur stayed closed
-             * with its query still sitting in the box, until another character
-             * was typed. Focus returning is not a change, so it re-read nothing.
+             * The blur above is half of that bug. Closing the menu on blur is
+             * right — it floats over the transcript and should not outlive the
+             * box being left — but **nothing ever undoes it**: `refreshMention`
+             * runs on change, on select and on keydown, and focus returning is
+             * none of those. So a menu closed by a stray blur stays closed with
+             * its query still in the box, until another character is typed.
+             * Caught in a real failing run: `mention: none` beside `value: "/"`,
+             * `caret: 1`, `focused: true`, `commands: 50`, `dismissed: none`.
              *
-             * Caught in a real failing run rather than reasoned about. The
-             * record read `mention: none` with `value: "/"`, `caret: 1`,
-             * `focused: true`, `commands: 50`, `draftLen: 1`, `dismissed: none`
-             * — every input to the decision correct, the decision null, and
-             * `onChange` provably fired. Blurring and refocusing reproduces that
-             * record field for field.
+             * **`onFocus={refreshMention}` is the obvious repair and it is
+             * measured wrong** — 2 of 5 menu-spec runs against 5 of 5 without
+             * it, back to back. A focus event can fire while the caret is still
+             * at 0, and `findCommandQuery` reads `text.slice(0, caret)`: caret 0
+             * is an empty string, no slash is found, and a good mention is
+             * nulled. A programmatic `.focus()` restores the caret
+             * synchronously, which is why a harness says it works and the app
+             * says it does not.
              *
-             * Why a suite makes it likely and a lone run does not: something has
-             * to take the caret away and give it back, and a busy app does that
-             * far more often than an idle one.
+             * Whatever fixes this has to re-derive the mention *after* the caret
+             * is restored, never inside the event that restores it.
              */
             onKeyDown={(e) => {
               /*
