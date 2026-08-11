@@ -681,7 +681,7 @@ export const IPC_CONTRACT = {
        * builds the prompt, because prompt content from the renderer is the same
        * class of problem as an unverified source event.
        */
-      purpose: z.enum(['question', 'explanation']).optional(),
+      purpose: z.enum(['question', 'explanation', 'translation']).optional(),
     }),
     /**
      * The language main actually used, echoed back.

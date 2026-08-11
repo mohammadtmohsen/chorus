@@ -1,6 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { asideState, EMPTY_ASIDE, fitCard, promotion, type AsideState } from './aside.js'
+import {
+  asideHeading,
+  asideState,
+  EMPTY_ASIDE,
+  fitCard,
+  opensWithATurn,
+  promotion,
+  type AsidePurpose,
+  type AsideState,
+} from './aside.js'
 import type { SelectionAnchor } from './quote.js'
 import { MarkdownView } from './MarkdownView.js'
 import { EMPTY_VIEW, reduceEvents, type TranscriptView } from './transcript.js'
@@ -56,8 +65,8 @@ export function QuickQuestion(props: {
    * that happens once per click.
    */
   opening: Promise<string>
-  /** An explanation asks itself; a question waits for one to be typed. */
-  purpose: 'question' | 'explanation'
+  /** An explanation or translation asks itself; a question waits to be typed. */
+  purpose: AsidePurpose
   /**
    * The language main used, resolved once it has opened.
    *
@@ -140,7 +149,7 @@ export function QuickQuestion(props: {
      */
     if (at === null || focused.current) return
     focused.current = true
-    if (props.purpose === 'explanation') card.current?.focus()
+    if (opensWithATurn(props.purpose)) card.current?.focus()
     else input.current?.focus()
   }, [props.purpose, at])
 
@@ -307,33 +316,24 @@ export function QuickQuestion(props: {
       })
   }
 
-  /**
-   * Whether there is an answer region at all.
-   *
-   * An explanation has one from the first frame: it asked itself, so a card with
-   * nothing in it would be a card that appears to have done nothing.
-   */
   /*
    * The language belongs here rather than on the button. A constant label keeps
    * the offer a constant width — the pill already overflowed a narrow pane once
    * — and this is the moment the language actually matters.
    */
-  const heading =
-    props.purpose !== 'explanation'
-      ? t('aside.heading', { agent: props.agent })
-      : /*
-         * A whole sentence while the language is still resolving, rather than
-         * "Explaining in " with a hole where the answer goes. Main is
-         * authoritative about which language was used and takes a moment to say
-         * so; naming the renderer's own copy in the meantime would be the exact
-         * staleness this indirection exists to prevent, just briefer.
-         */
-        language === ''
-        ? t('aside.explainingPending')
-        : t('aside.explaining', { language })
+  const title = asideHeading(props.purpose, language, props.agent)
+  const heading = t(title.key, title.vars)
 
+  /**
+   * Whether there is an answer region at all.
+   *
+   * A card that asked itself has one from the first frame: there is already a
+   * turn in flight, so an empty card would be one that appears to have done
+   * nothing. (This comment described `started` and sat above `heading`, two
+   * declarations away from what it explained.)
+   */
   const started =
-    props.purpose === 'explanation' ||
+    opensWithATurn(props.purpose) ||
     asking ||
     state.answer !== '' ||
     state.failed !== null ||
@@ -405,7 +405,7 @@ export function QuickQuestion(props: {
            * turn, which can be seconds after the last word — long enough for the
            * box to look like it is never coming.
            */
-          hidden={props.purpose === 'explanation' && state.answer === '' && state.failed === null}
+          hidden={opensWithATurn(props.purpose) && state.answer === '' && state.failed === null}
           className="quick-input"
           rows={2}
           value={question}

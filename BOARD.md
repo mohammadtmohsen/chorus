@@ -354,6 +354,36 @@ identifiers, paths and code survive unchanged in their own script; a passage
 already in that language says so rather than paraphrasing; and the action is
 absent when no language is set, as Explain is.
 
+### C-025 · The selection offer never appears on a narrow pane
+
+Found while verifying Phase 0 of `docs/plans/translate-a-passage-2026-08-10`.
+
+At a 460px window the pane measures **160px**, and selecting text inside a
+complete agent reply offers **nothing** — no `.quote-offer` at all. The selection
+itself is fine: not collapsed, real text, a range rect of 84×62. Every guard in
+`readSelection` (`Session.tsx:392`) passes on those facts, so the offer should
+render and does not.
+
+Narrowing an _already open_ offer kills it too, and not only by re-render: an
+inline `width` on `.pane`, which React never sees, is enough to make it vanish.
+That points at the reflow collapsing the DOM selection — `selectionchange` fires,
+`onChange` sees `isCollapsed` and clears — rather than at the layout code.
+
+**Why it matters:** quoting, asking and explaining are all reached only through
+that bar, so on a narrow pane three features are silently unavailable. Silently is
+the problem — nothing says the passage cannot be acted on, and the pane widths
+where it happens are ordinary: a four-way split, or any window near the 360px
+floor `main/index.ts:35` allows.
+
+**Not caused by the divider work**, and not fixed by it. The Phase 0 change was
+verified against injected bars for exactly this reason, which is a weaker check
+than driving the real offer and is called out as such in that plan's STATUS.
+
+**Done when:** selecting inside a reply on a 160px pane offers the same actions it
+offers on a wide one — or, if a selection genuinely cannot survive the reflow,
+the offer is re-derived rather than dropped, so the bar returns instead of
+disappearing for good.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets

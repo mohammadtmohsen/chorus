@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ChorusRuntime, explainPrompt } from './runtime.js'
+import { ChorusRuntime, explainPrompt, translatePrompt } from './runtime.js'
 import { DEFAULT_SETTINGS, writeSettings } from './settings.js'
 
 /**
@@ -442,6 +442,138 @@ describe('opening an explanation', () => {
   })
 })
 
+describe('opening a translation', () => {
+  const withLanguage = (language: string): void => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: language })
+  }
+  const created = (asideId: string): Record<string, unknown> => {
+    const event = runtime.store.read(asideId).find((e) => e.payload.type === 'conversation.created')
+    return (event?.payload as unknown as { aside: Record<string, unknown> }).aside
+  }
+
+  it('refuses before forking when no language is set', async () => {
+    const sourceEventId = reply('The projection lags behind the log.')
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'The projection lags',
+        purpose: 'translation',
+      })
+    ).rejects.toThrow(/No language is set to translate into/)
+    // Before, not after: a refusal past the fork leaves a CLI running that
+    // nobody holds a handle to.
+    expect(adapter.forked).toHaveLength(0)
+  })
+
+  it('sends exactly one turn, and it is the translation', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'translation',
+    })
+    const sent = adapter.forked[0]?.session.sent ?? []
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.text).toContain('> The projection lags')
+    expect(sent[0]?.text).toContain('standard written form')
+    // The branch above it in the same if/else chain.
+    expect(sent[0]?.text).not.toContain('Do not restate the passage')
+  })
+
+  it('logs the intent in the user’s words, not the instruction', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'translation',
+    })
+    const said = runtime.store
+      .read(asideId)
+      .filter((e) => e.payload.type === 'user.message')
+      .map((e) => (e.payload as unknown as { text: string }).text)
+    expect(said).toEqual(['Translate this into Arabic.'])
+  })
+
+  it('records the purpose and the language as they were', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'translation',
+    })
+    withLanguage('French')
+    expect(created(asideId)).toMatchObject({ purpose: 'translation', language: 'Arabic' })
+  })
+
+  it('echoes back the language main actually used', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    const opened = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'translation',
+    })
+    expect(opened.language).toBe('Arabic')
+  })
+
+  /*
+   * A third arm on a shared chain is a chance to change the other two, and the
+   * language read and the turn dispatch are both shared. These are the
+   * regression, not the feature.
+   */
+  it('leaves an explanation alone', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'explanation',
+    })
+    const sent = adapter.forked[0]?.session.sent ?? []
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.text).toContain('Do not restate the passage')
+    expect(created(asideId)).toMatchObject({ purpose: 'explanation', language: 'Arabic' })
+  })
+
+  it('leaves a question alone, and still reads no purpose as one', async () => {
+    withLanguage('Arabic')
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      question: 'why?',
+    })
+    const sent = adapter.forked[0]?.session.sent ?? []
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.text).toContain('short side question')
+    expect(created(asideId)['purpose']).toBe('question')
+  })
+
+  it('does not read the language for a question, which has no use for one', async () => {
+    // The read is shared; only two of the three purposes want it. A question
+    // must not start refusing because a preference is empty.
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: '' })
+    const sourceEventId = reply('The projection lags behind the log.')
+    const opened = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      question: 'why?',
+    })
+    expect(opened.language).toBe('')
+  })
+})
+
 describe('a reply from a session that has since been replaced', () => {
   it('refuses, even for Claude whose session ref starts empty', async () => {
     const sourceEventId = reply('The projection lags behind the log.')
@@ -759,5 +891,73 @@ describe('a selection is matched as the transcript reads, not as markdown', () =
     return expect(
       runtime.openAside({ conversationId, sourceEventId, excerpt: 'some-path' })
     ).resolves.toBeDefined()
+  })
+})
+
+/**
+ * A translation is the opposite of an explanation, so the assertions are too.
+ *
+ * `explainPrompt` above is asserted on for what it refuses to produce; this is
+ * asserted on for producing the passage itself. The two prompts sharing a string
+ * would mean one of these suites fixing a bad answer by breaking the other.
+ */
+describe('translatePrompt', () => {
+  const prompt = translatePrompt('The projection lags behind the log.', 'Arabic')
+
+  it('quotes the passage, so the fork is anchored to it', () => {
+    expect(prompt).toContain('> The projection lags behind the log.')
+  })
+
+  it('names the language more than once', () => {
+    // Same measured failure as explaining: one mention is a suggestion, and the
+    // drift back to the source language happens after the first sentence.
+    expect(prompt.match(/Arabic/g)?.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('asks for the passage rather than an account of it', () => {
+    // The line explain gets its value from — "Do not restate the passage" — is
+    // exactly the job here, so its absence is the assertion.
+    expect(prompt).not.toContain('Do not restate the passage')
+    expect(prompt).toContain('Your reply is the passage itself, in another language')
+    expect(prompt).toContain('Do not explain it, summarise it, expand it')
+  })
+
+  it('asks for the standard written form, not a dialect or a reading level', () => {
+    // The shared setting accepts "Lebanese Arabic" and "simple Arabic". Asked
+    // for as "standard arabic translation", so the prompt says which it wants
+    // rather than inheriting whichever qualifier was typed for explanations.
+    expect(prompt).toContain('standard written form')
+    expect(prompt).toContain('not a regional dialect and not a simplified reading level')
+  })
+
+  it('takes its register from the passage', () => {
+    expect(prompt).toContain('terse stays terse')
+  })
+
+  it('separates code from prose, because "keep code exactly" would forbid both', () => {
+    // Comments are part of a code block, so one rule cannot both preserve code
+    // and translate comments. Two rules can.
+    expect(prompt).toContain('translate natural-language comments and docstrings')
+    expect(prompt).toContain('reproduce identifiers, keywords, file names, paths, string literals')
+    expect(prompt).toContain('so the code still runs')
+  })
+
+  it('refuses a paraphrase when the passage is already in the language', () => {
+    // Otherwise it comes back reworded, which looks like a translation and is
+    // the one output that cannot be told apart from a correct one.
+    expect(prompt).toContain('If the passage is already in Arabic')
+    expect(prompt).toContain('Do not paraphrase it.')
+  })
+
+  it('carries the do-not-work clause every aside prompt carries', () => {
+    // Not explanation-specific tuning: without it a fork treats the request as
+    // the next turn of the work and starts doing things, which no permission
+    // rule catches because reading files is allowed. A translation request looks
+    // more like a task than a question does.
+    expect(prompt).toContain('Do not continue the work or change anything. Answer this and stop.')
+  })
+
+  it('leaves no room for a preamble', () => {
+    expect(prompt).toContain('No preamble')
   })
 })

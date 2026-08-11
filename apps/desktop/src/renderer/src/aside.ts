@@ -135,3 +135,59 @@ export function promotion(agent: string, excerpt: string, answer: string): strin
     '',
   ].join('\n')
 }
+
+/** Why an aside was opened. Widened here, and exhaustively switched on below. */
+export type AsidePurpose = 'question' | 'explanation' | 'translation'
+
+/**
+ * What the card calls itself, as a key the renderer can translate.
+ *
+ * A key and its variables rather than a sentence, because the judgement is
+ * testable and the words are not: this file has no translator, and composing a
+ * heading here would put English in a reducer.
+ *
+ * **A switch, not a ternary chain.** The shape it replaced read
+ * `purpose !== 'explanation' ? ask : …`, which quietly meant "everything that is
+ * not an explanation is a question" — true while there were two purposes and
+ * wrong the moment there were three. Written this way the compiler and
+ * `switch-exhaustiveness-check` both refuse a fourth purpose that nobody
+ * considered.
+ *
+ * Two of the three name a language, and each needs a whole sentence while that
+ * language is still resolving rather than "Translating into " with a hole where
+ * the answer goes. Main is authoritative about which language was used and takes
+ * a moment to say so; naming the renderer's own copy meanwhile would be the
+ * staleness that indirection exists to prevent, just briefer.
+ */
+export function asideHeading(
+  purpose: AsidePurpose,
+  language: string,
+  agent: string
+): { key: string; vars: Record<string, string> } {
+  switch (purpose) {
+    case 'question':
+      return { key: 'aside.heading', vars: { agent } }
+    case 'explanation':
+      return language === ''
+        ? { key: 'aside.explainingPending', vars: {} }
+        : { key: 'aside.explaining', vars: { language } }
+    case 'translation':
+      return language === ''
+        ? { key: 'aside.translatingPending', vars: {} }
+        : { key: 'aside.translating', vars: { language } }
+  }
+}
+
+/**
+ * Whether the card opened with its first turn already sent.
+ *
+ * The distinction the UI actually turns on, and the one the old checks kept
+ * spelling as `=== 'explanation'`: a question waits for you to type, while an
+ * explanation and a translation are already running by the time the card
+ * appears. So the answer region shows from the first frame, focus goes to the
+ * card rather than the input, and the follow-up box stays hidden until there is
+ * something to follow up on.
+ */
+export function opensWithATurn(purpose: AsidePurpose): boolean {
+  return purpose !== 'question'
+}

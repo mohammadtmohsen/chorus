@@ -47,7 +47,8 @@
     "cancel": "Cancel",
     "waiting": "waiting",
     "askAboutThis": "Ask about this",
-    "explainSimply": "Explain simply"
+    "explainSimply": "Explain simply",
+    "translateThis": "Translate"
   },
   "workspace": {
     "sessions": "Sessions",
@@ -97,10 +98,10 @@
     "effort": "Reasoning effort",
     "providerDefault": "The provider's default",
     "newSessionsNote": "Applies to sessions started from now on. The two agents do not share a model, so each has its own. A conversation already open keeps what it started with.",
-    "explainHeading": "Explaining a passage",
+    "explainHeading": "Your language",
     "explainLanguage": "Answer in",
     "explainPlaceholder": "Arabic",
-    "explainNote": "When you select part of a reply, an agent can explain it plainly in this language. Write it however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. Leave it empty and the option is not offered. This does not change Chorus's own language.",
+    "explainNote": "When you select part of a reply, an agent can explain it plainly in this language, or translate the passage into it. Write it however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. An explanation follows what you write; a translation uses the standard written form of the language. Leave it empty and neither is offered. This does not change Chorus's own language.",
     "catalogue": {
       "unqueried": "Its models are read from a running session — start one to choose.",
       "loading": "Reading its models…",
@@ -370,6 +371,8 @@
     "profileLabel": "What this conversation may do",
     "reopened": "This aside has ended. Ask again to start a new one.",
     "explaining": "Explaining in {{language}}",
-    "explainingPending": "Explaining this"
+    "explainingPending": "Explaining this",
+    "translating": "Translating into {{language}}",
+    "translatingPending": "Translating this"
   }
 }

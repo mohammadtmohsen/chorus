@@ -255,6 +255,77 @@ export function explainPrompt(excerpt: string, language: string): string {
   ].join('\n')
 }
 
+/**
+ * What a fork is asked when someone wants a passage in their own language.
+ *
+ * **Not `explainPrompt` with the language moved up.** The two are opposites.
+ * Explain answers _what does this mean_ and its output is deliberately not the
+ * passage — "Do not restate the passage" is its sharpest rule, and restating the
+ * passage is precisely this job. Sharing a prompt would mean one string holding
+ * two contradictory instructions, and the first bad answer would be fixed in a
+ * direction that damaged the other feature.
+ *
+ * **The standard written form**, because the field it reads was built to accept
+ * more than a language name — `ipc.ts` calls "Lebanese Arabic" and "simple
+ * Arabic" the answers a locale list cannot express. Those are different kinds of
+ * modifier: one names a variety, the other a reading level, and a reading level
+ * fights the register rule below. Asked for as "standard arabic translation", so
+ * the rule is stated rather than left to the model: take the language, render it
+ * standard, and let the passage decide the register.
+ *
+ * **Code and prose are separated explicitly** because "keep code exactly" and
+ * "translate the comments" contradict each other if comments count as code, and
+ * a model handed both picks one per selection.
+ *
+ * The do-not-work clause is the same one `asideQuestion` and `explainPrompt`
+ * carry, for the same measured reason: without it a fork treats the request as
+ * the next turn of the work and starts doing things, which no permission rule
+ * catches because reading files is allowed. A translation request looks more
+ * like a task than a question does, not less.
+ */
+export function translatePrompt(excerpt: string, language: string): string {
+  return [
+    `Translate the passage below into ${language}.`,
+    '',
+    // Lead position: the first clause is the one a model commits to, and the
+    // failure this guards against is an answer that explains instead.
+    'Your reply is the passage itself, in another language. Nothing else.',
+    'Do not explain it, summarise it, expand it, or comment on what it means.',
+    '',
+    `Use standard, professional ${language} — the standard written form of the`,
+    'language, not a regional dialect and not a simplified reading level.',
+    '',
+    // Register belongs to the passage, which is what makes this a translation
+    // rather than a rewrite.
+    'Match the passage: terse stays terse, formal stays formal, a heading stays a',
+    'heading, a list stays a list. Same length, same tone, same structure.',
+    '',
+    'Inside code, translate the prose and nothing else:',
+    '- reproduce identifiers, keywords, file names, paths, string literals,',
+    '  punctuation, delimiters and indentation exactly as written, in their own',
+    '  script — never translated, never transliterated;',
+    '- translate natural-language comments and docstrings;',
+    '- change nothing else, so the code still runs.',
+    '',
+    'Identifiers, file names and paths in ordinary prose keep their own script too.',
+    '',
+    'No preamble, no "here is the translation", no notes about the choices you',
+    'made, no alternatives in brackets.',
+    '',
+    // Otherwise a passage already in the target language comes back paraphrased,
+    // which looks like a translation and is not one.
+    `If the passage is already in ${language}, say so in one short line and stop.`,
+    'Do not paraphrase it.',
+    '',
+    'Do not continue the work or change anything. Answer this and stop.',
+    '',
+    excerpt
+      .split('\n')
+      .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+      .join('\n'),
+  ].join('\n')
+}
+
 /** Long enough for a cold provider start, short enough not to look like a hang. */
 const REOPEN_TIMEOUT_MS = 20_000
 
@@ -652,7 +723,7 @@ export class ChorusRuntime {
      * `explanation` carries its own first turn: there is nothing for the user to
      * type, so opening and asking are one act. `question` opens empty and waits.
      */
-    purpose?: 'question' | 'explanation'
+    purpose?: 'question' | 'explanation' | 'translation'
     /**
      * Optional, and usually absent.
      *
@@ -774,10 +845,22 @@ export class ChorusRuntime {
      * running that nobody has a handle to.
      */
     const purpose = request.purpose ?? 'question'
-    const language =
-      purpose === 'explanation' ? readSettings(this.userDataPath).explainLanguage : ''
-    if (purpose === 'explanation' && language === '') {
-      throw new Error('No language is set to explain in')
+    /*
+     * Both language-bearing purposes read the same setting, and read it here.
+     *
+     * They use it differently — an explanation is written *in* it however the
+     * user qualified it, a translation takes the language and renders its
+     * standard form — but that distinction belongs in the prompts, not in which
+     * value is fetched. One field, one read, two documented readings.
+     */
+    const needsLanguage = purpose === 'explanation' || purpose === 'translation'
+    const language = needsLanguage ? readSettings(this.userDataPath).explainLanguage : ''
+    if (needsLanguage && language === '') {
+      throw new Error(
+        purpose === 'translation'
+          ? 'No language is set to translate into'
+          : 'No language is set to explain in'
+      )
     }
 
     const opts: SessionOpts = {
@@ -853,6 +936,14 @@ export class ChorusRuntime {
           await service.sendUserMessage(
             `Explain this in ${language}.`,
             explainPrompt(excerpt, language)
+          )
+        } else if (purpose === 'translation') {
+          // Two arguments, as above: the log keeps the short line, the model
+          // gets the prompt. What is read back later should be what was asked
+          // for, not the instructions that carried it.
+          await service.sendUserMessage(
+            `Translate this into ${language}.`,
+            translatePrompt(excerpt, language)
           )
         } else if (request.question !== undefined && request.question !== '') {
           await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))

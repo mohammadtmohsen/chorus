@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asideState, fitCard, promotion } from './aside.js'
+import { asideHeading, asideState, fitCard, opensWithATurn, promotion } from './aside.js'
 import { EMPTY_VIEW, type TranscriptMessage, type TranscriptView } from './transcript.js'
 
 const said = (over: Partial<TranscriptMessage>): TranscriptMessage => ({
@@ -162,5 +162,56 @@ describe('fitCard', () => {
     const at = fitCard(passage(500), pane, { width: 240, height: 30 })
     expect(at.top).toBe(500 - 30 - 8)
     expect(at.left).toBe(400 - 120)
+  })
+})
+
+describe('asideHeading', () => {
+  it('names the agent for a question, which has no language', () => {
+    expect(asideHeading('question', '', 'claude')).toEqual({
+      key: 'aside.heading',
+      vars: { agent: 'claude' },
+    })
+  })
+
+  it('says a whole sentence while the language is still resolving', () => {
+    // Main is authoritative about which language was used and takes a moment to
+    // say so. "Translating into " with a hole in it would be the staleness the
+    // indirection exists to prevent, just briefer.
+    expect(asideHeading('explanation', '', 'claude').key).toBe('aside.explainingPending')
+    expect(asideHeading('translation', '', 'claude').key).toBe('aside.translatingPending')
+  })
+
+  it('names the language once main has said which it was', () => {
+    expect(asideHeading('explanation', 'Arabic', 'claude')).toEqual({
+      key: 'aside.explaining',
+      vars: { language: 'Arabic' },
+    })
+    expect(asideHeading('translation', 'Arabic', 'claude')).toEqual({
+      key: 'aside.translating',
+      vars: { language: 'Arabic' },
+    })
+  })
+
+  it('gives a translation its own heading, not the explanation one', () => {
+    // The regression this pins: the shape it replaced was
+    // `purpose !== 'explanation' ? ask : explain`, which read every new purpose
+    // as a question and would have labelled a translation "Ask claude about
+    // this".
+    expect(asideHeading('translation', 'Arabic', 'claude').key).not.toBe('aside.heading')
+    expect(asideHeading('translation', 'Arabic', 'claude').key).not.toBe('aside.explaining')
+  })
+
+  it('returns keys, never words — the reducer has no translator', () => {
+    for (const purpose of ['question', 'explanation', 'translation'] as const) {
+      expect(asideHeading(purpose, 'Arabic', 'claude').key).toMatch(/^aside\./)
+    }
+  })
+})
+
+describe('opensWithATurn', () => {
+  it('is false only for a question, which waits to be typed', () => {
+    expect(opensWithATurn('question')).toBe(false)
+    expect(opensWithATurn('explanation')).toBe(true)
+    expect(opensWithATurn('translation')).toBe(true)
   })
 })

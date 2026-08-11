@@ -64,7 +64,7 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
          * before explanations existed read correctly rather than needing a
          * backfill the log cannot take.
          */
-        purpose: z.enum(['question', 'explanation']).default('question'),
+        purpose: z.enum(['question', 'explanation', 'translation']).default('question'),
         /**
          * For an explanation, the language as it was **at the time**.
          *
@@ -342,7 +342,7 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
 export interface AsideMeta {
   readonly parentId: string
   readonly sourceEventId: string
-  readonly purpose: 'question' | 'explanation'
+  readonly purpose: 'question' | 'explanation' | 'translation'
   readonly language?: string | undefined
 }
 

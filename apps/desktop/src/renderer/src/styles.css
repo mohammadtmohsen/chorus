@@ -492,7 +492,18 @@ body {
   z-index: 4;
   padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
   border: 1px solid color-mix(in srgb, var(--bone) 22%, var(--line));
-  border-radius: 999px;
+  /*
+   * Half a row's height, not `999px`, and on one row the two are the same
+   * thing: a radius clamps to half the box, so a single-row pill still renders
+   * with semicircular ends and nothing about the common case changes.
+   *
+   * They stop being the same once the bar wraps. `999px` on a three-row box
+   * clamps to half of *that* height, turning the pill into a blob whose curve
+   * eats the ends of its own top and bottom rows — measured at a 200px pane,
+   * where "Explain simply" lost its E. A stack of rows wants a rounded
+   * rectangle; only a single row wants a pill.
+   */
+  border-radius: 14px;
   background: var(--raised);
   box-shadow: 0 4px 14px rgb(0 0 0 / 45%);
   font-family: var(--mono);
@@ -532,17 +543,37 @@ body {
   max-width: calc(100% - 8px);
   padding: 0;
   overflow: hidden;
-}
-
-/* Once wrapped, the divider belongs above rather than beside. */
-.quote-offer-action + .quote-offer-action {
-  border-left: 1px solid color-mix(in srgb, var(--bone) 18%, var(--line));
+  /*
+   * The dividers are the gaps, not a border on the buttons.
+   *
+   * This was `border-left` on `.quote-offer-action + .quote-offer-action`, under
+   * a comment saying the divider belongs above once wrapped — which it never
+   * did, because **CSS cannot tell whether a flex item wrapped**. `+` matches the
+   * second button whether it began a new row or not, so a left border is wrong
+   * on a wrapped row and a top border would be wrong on every unwrapped one.
+   * There is no selector that distinguishes them.
+   *
+   * Colouring the container and letting it show through one-pixel gaps needs no
+   * selector at all: the gap between two buttons in a row is a vertical hairline
+   * and the gap between two rows is a horizontal one, for free and always.
+   */
+  gap: 1px;
+  background: color-mix(in srgb, var(--bone) 18%, var(--line));
 }
 
 .quote-offer-action {
+  /*
+   * Grows, so a wrapped row fills the pill. Left at its natural width, a short
+   * last row would be centred and the container's hairline colour would show
+   * beside it as a block — the divider leaking out of the one place it belongs.
+   * With one row this changes nothing: the offer is absolutely positioned and
+   * shrink-wraps, so there is no free space to distribute.
+   */
+  flex: 1 1 auto;
   padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
   border: 0;
-  background: transparent;
+  /* Opaque, or the container's hairline colour floods the button. */
+  background: var(--raised);
   font-family: var(--mono);
   font-size: 11px;
   color: var(--bone);
@@ -550,12 +581,9 @@ body {
   cursor: pointer;
 }
 
-.quote-offer-action + .quote-offer-action {
-  border-left: 1px solid color-mix(in srgb, var(--bone) 18%, var(--line));
-}
-
+/* Mixed over `--raised` rather than `transparent`, for the same reason. */
 .quote-offer-action:hover {
-  background: color-mix(in srgb, var(--bone) 8%, transparent);
+  background: color-mix(in srgb, var(--bone) 8%, var(--raised));
 }
 
 /*

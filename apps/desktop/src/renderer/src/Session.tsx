@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
-import { fitCard } from './aside.js'
+import { fitCard, type AsidePurpose } from './aside.js'
 import { deadlineState, formatCountdown, type DeadlineState } from './deadline.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
@@ -172,7 +172,7 @@ export function Session(props: {
     text: string
     anchor: SelectionAnchor
     source: SourceEntry
-    purpose: 'question' | 'explanation'
+    purpose: AsidePurpose
     /** Started by the click, because a mount effect runs twice and can send twice. */
     opening: Promise<string>
     /** Whatever main decided, so the card cannot name a stale language. */
@@ -494,7 +494,7 @@ export function Session(props: {
    * log before any cleanup could run. A click happens once.
    */
   const openCard = useCallback(
-    (purpose: 'question' | 'explanation') => {
+    (purpose: AsidePurpose) => {
       const passage = selected
       const source = passage?.source ?? null
       if (passage === null || source === null) return
@@ -1033,6 +1033,29 @@ export function Session(props: {
               }}
             >
               {t('conversation.explainSimply')}
+            </button>
+          )}
+          {/*
+            Gated on a language for the same reason Explain is, and on the same
+            value: an action that cannot say which language it would produce is
+            worse than an absent one.
+
+            A word, not an icon, though the request said "translate icon". The
+            other three are labelled, and one icon among three labels reads as an
+            accident rather than a decision — while an unlabelled icon is the
+            least legible thing on a bar people meet rarely. Icons for all four
+            is defensible and is a different change; mixing is the only option
+            that is not.
+          */}
+          {selected.source !== null && explainLanguage !== '' && (
+            <button
+              type="button"
+              className="quote-offer-action"
+              onClick={() => {
+                openCard('translation')
+              }}
+            >
+              {t('conversation.translateThis')}
             </button>
           )}
         </div>

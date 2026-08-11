@@ -113,6 +113,39 @@ const say = (page, text) =>
     return true
   })()`)
 
+/**
+ * Selects the first substantial run of text inside an entry and tells the pane.
+ *
+ * A real `mouseup` on `.score` rather than a call into React: the offer is
+ * decided by `readSelection`, and driving anything else would test a path no
+ * user takes. Dispatched so it bubbles, since React delegates from the root.
+ */
+const selectInside = (page, selector) =>
+  page.evaluate(`(() => {
+    const entry = document.querySelector(${'`'}${'$'}{${JSON.stringify(selector)}}${'`'})
+    if (entry === null) return ''
+    const walk = document.createTreeWalker(entry, NodeFilter.SHOW_TEXT)
+    let node = null
+    while (walk.nextNode()) {
+      if (walk.currentNode.textContent.trim().length > 8) { node = walk.currentNode; break }
+    }
+    if (node === null) return ''
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, node.textContent.length)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    document.querySelector('.score').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    return sel.toString()
+  })()`)
+
+/** What the offer is showing, in order. */
+const offerLabels = (page) =>
+  page.evaluate(
+    `Array.from(document.querySelectorAll('.quote-offer-action')).map((b) => b.textContent.trim())`
+  )
+
 export const specs = [
   {
     name: 'opens straight into a session',
@@ -2278,6 +2311,120 @@ export const specs = [
 
         const messages = await app.evaluate(`document.querySelectorAll('.entry').length`)
         assert(messages > 0, `and brought its transcript with it, ${String(messages)} entries`)
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+  {
+    name: 'offers only the actions a passage can actually take',
+    /*
+     * The selection toolbar had no test at all until this one, while growing to
+     * four actions gated on two different conditions — whether the passage has a
+     * single finished agent author, and whether a language is set. Both gates
+     * are invisible until they are wrong, and being wrong means either an action
+     * that fails when clicked or one that is silently missing.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        await app.until(`document.querySelector('.composer textarea') !== null`)
+        const id = (await tabIds(app))[0]
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify('__ID__')}, cwd: ${JSON.stringify(process.cwd())} }).then(() => true)`.replace(
+            '__ID__',
+            id
+          )
+        )
+        // Start with no language, so the two language-gated actions are absent
+        // for a reason the spec sets rather than inherits from the machine.
+        await app.evaluate(
+          `window.chorus.readSettings().then((s) => window.chorus.writeSettings({ ...s, explainLanguage: '' })).then(() => true)`
+        )
+        await app.settle()
+
+        await say(
+          app,
+          'Reply with exactly this sentence and nothing else: The parser reads the header.'
+        )
+        await app.until(
+          `document.querySelector('.entry[data-kind="message"][data-actor="claude"][data-status="complete"]') !== null`,
+          { timeout: 180_000, label: 'the reply landed' }
+        )
+        await app.settle()
+
+        // A passage of your own message has no agent author to fork.
+        const own = await selectInside(app, '.entry[data-actor="user"]')
+        assert(own !== '', 'a passage of your own message can be selected')
+        await app.until(`document.querySelector('.quote-offer') !== null`, {
+          label: 'the offer appears for your own words',
+        })
+        assert(
+          JSON.stringify(await offerLabels(app)) === JSON.stringify(['Quote in message']),
+          'and offers only quoting, because there is nobody to ask'
+        )
+        assert(
+          (await app.evaluate(`document.querySelector('.quote-offer').dataset.askable ?? null`)) ===
+            null,
+          'and says so in the DOM, so a wrong answer is assertable'
+        )
+
+        // A finished agent reply can be asked about, but not explained or
+        // translated while no language is set.
+        await selectInside(
+          app,
+          '.entry[data-kind="message"][data-actor="claude"][data-status="complete"]'
+        )
+        await app.until(`document.querySelector('.quote-offer[data-askable="true"]') !== null`, {
+          label: 'a finished reply is askable',
+        })
+        assert(
+          JSON.stringify(await offerLabels(app)) ===
+            JSON.stringify(['Quote in message', 'Ask about this']),
+          'and explaining and translating stay away until a language is set'
+        )
+
+        await app.evaluate(
+          `window.chorus.readSettings().then((s) => window.chorus.writeSettings({ ...s, explainLanguage: 'Arabic' })).then(() => true)`
+        )
+        // Re-selected rather than waited on: the language is read per selection,
+        // which is the behaviour being asserted.
+        await selectInside(
+          app,
+          '.entry[data-kind="message"][data-actor="claude"][data-status="complete"]'
+        )
+        await app.until(`document.querySelectorAll('.quote-offer-action').length === 4`, {
+          label: 'setting a language offers both language actions',
+        })
+        assert(
+          JSON.stringify(await offerLabels(app)) ===
+            JSON.stringify(['Quote in message', 'Ask about this', 'Explain simply', 'Translate']),
+          'all four, in the order they were added'
+        )
+
+        /*
+         * One row, and the dividers between them.
+         *
+         * The hairlines are the container showing through one-pixel gaps, which
+         * is what makes them work when the bar wraps — a border on the buttons
+         * cannot, because CSS cannot tell a wrapped flex item from an unwrapped
+         * one. If someone reinstates one, this is what notices.
+         */
+        const bar = await app.evaluate(`(() => {
+          const el = document.querySelector('.quote-offer')
+          const btns = [...el.querySelectorAll('.quote-offer-action')]
+          const cs = getComputedStyle(el)
+          return {
+            rows: new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+            gap: cs.columnGap,
+            borders: btns.some((b) => getComputedStyle(b).borderLeftWidth !== '0px'),
+            opaque: btns.every((b) => getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)'),
+          }
+        })()`)
+        assert(bar.rows === 1, 'four actions still fit one row on a wide pane')
+        assert(bar.gap === '1px' && !bar.borders, 'divided by gaps, not by borders on the buttons')
+        assert(bar.opaque, 'and the buttons are opaque, or the divider colour floods them')
       } finally {
         await app.quit()
       }
