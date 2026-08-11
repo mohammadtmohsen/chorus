@@ -348,7 +348,13 @@ export function QuickQuestion(props: {
   return (
     <div
       ref={card}
-      className="quick-question"
+      /*
+       * `started` sizes the card as well as filling it. Until there is an answer
+       * the card fits its content; from the first frame there is one it stands at
+       * its full height, so the answer arrives into a box that has already
+       * finished moving. The `ResizeObserver` above re-fits it on that one step.
+       */
+      className={started ? 'quick-question quick-question--answering' : 'quick-question'}
       tabIndex={-1}
       /*
        * Hidden until it has been measured, so the first paint is not the card

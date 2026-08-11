@@ -129,6 +129,17 @@ enforces this (`UNIVERSAL_DENIES` may not carry a `pathPattern`).
 - **Pure reducers, exported for tests.** `transcript.ts`'s `reduceEvents`,
   `store.ts`'s `reducePulse`, `notify.ts`'s `noticesFrom`. The judgement lives in
   the pure function; the component is plumbing.
+- **Unless the bug _is_ the lifecycle**, in which case mount it. `useDialog`
+  re-ran its effect on every render of the caller, and there is no pure part to
+  extract because the defect was the dependency array itself. Such a test opts
+  into a DOM with `@vitest-environment jsdom` at the top of the file; `node`
+  stays the project default, so this is an exception that has to be asked for
+  rather than a second way of writing tests. Two traps, both hit while writing
+  the first one: jsdom does no layout, so `offsetParent` is `null` and anything
+  filtering on it finds nothing focusable; and a `.click()` that calls
+  `setState` is not wrapped in `act`, so the re-render has not happened when the
+  assertion runs — that one passed with the bug reinstated. Drive a re-render
+  with `rerender`, and prove the test fails without the fix.
 - **Only the active tab of each pane is mounted** (max 4). Everything a session
   needs to survive unmounting rides in `SessionCarry`; background conversations
   stay live in the main process and report through the pulse.
