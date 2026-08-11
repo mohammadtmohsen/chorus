@@ -163,10 +163,36 @@ const untilMenu = async (page, expression, options) => {
   try {
     await page.until(expression, options)
   } catch (error) {
-    const state = await page.evaluate(
-      `document.querySelector('.mention-status')?.dataset.lookup ?? 'no status row'`
-    )
-    throw new Error(`${error.message} — the menu reported: ${state}`, { cause: error })
+    /*
+     * Everything the failure could turn on, read at the moment it gives up.
+     *
+     * The first version of this reported only the menu's own status, which on
+     * the first real failure came back `no status row` — nothing in flight and
+     * nothing given up. That ruled out waiting and left the composer's own view
+     * of what was typed, which nothing here could see. So: what the box holds,
+     * where the caret is, what the composer parsed it as, and how many commands
+     * it had to offer.
+     *
+     * `commands: 0` with `mention: /0:` would mean the list never arrived and
+     * the re-ask gave up silently. `mention: none` with the box holding `/`
+     * would mean the query was never recognised at all — a different bug, and
+     * the one the evidence currently points at.
+     */
+    const at = await page.evaluate(`(() => {
+      const form = document.querySelector('.composer')
+      const box = document.querySelector('.composer textarea')
+      return JSON.stringify({
+        lookup: document.querySelector('.mention-status')?.dataset.lookup ?? 'no status row',
+        mention: form?.dataset.mention ?? 'no composer',
+        commands: form?.dataset.commands ?? '?',
+        value: box?.value ?? null,
+        caret: box?.selectionStart ?? null,
+        focused: document.activeElement === box,
+        composers: document.querySelectorAll('.composer').length,
+        rows: document.querySelectorAll('.mention-menu .mention-name').length,
+      })
+    })()`)
+    throw new Error(`${error.message} — composer at failure: ${at}`, { cause: error })
   }
 }
 

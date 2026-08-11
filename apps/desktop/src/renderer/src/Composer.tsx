@@ -603,6 +603,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     return (
       <form
         className="composer"
+        /*
+         * What the composer believes, where a failing run can read it.
+         *
+         * The menu's own status row says whether a lookup is running, and on the
+         * first real failure after that shipped it said `no status row` —
+         * nothing in flight, nothing given up. Which is genuinely useful and
+         * also the end of what the menu can tell anyone: if nobody was waiting,
+         * the question is what the *composer* thought was being typed, and that
+         * lives in state no spec can reach (C-003).
+         *
+         * Two attributes rather than a debug channel, because the alternative is
+         * the shape that already failed here: instrumentation added during an
+         * investigation, removed when it ended, and absent the next time the bug
+         * appears. These cost two strings per render and are the difference
+         * between a named cause and another afternoon.
+         */
+        data-mention={
+          mention === null ? 'none' : `${mention.trigger}${String(mention.start)}:${mention.query}`
+        }
+        data-commands={commands.length}
         onSubmit={(e) => {
           e.preventDefault()
           send()
