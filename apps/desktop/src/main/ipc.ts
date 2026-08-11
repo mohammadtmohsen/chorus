@@ -221,9 +221,8 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         })),
       }),
 
-    'files:complete': async (request: { conversationId: string; query: string }) => ({
-      files: await completeFiles(runtime.projectDirectory(request.conversationId), request.query),
-    }),
+    'files:complete': (request: { conversationId: string; query: string }) =>
+      completeFiles(runtime.projectDirectory(request.conversationId), request.query),
 
     'conversation:commands': async (request: { conversationId: string }) => ({
       commands: await runtime.listCommands(request.conversationId),
