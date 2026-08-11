@@ -7,6 +7,62 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.11.0
+
+### Chorus has an icon
+
+Every build so far shipped the generic Electron icon, in the Dock, in the DMG
+window and in ⌘-Tab. The mark is the O from the wordmark, walked through OKLCH so
+both agents' colours survive at 16px rather than going olive across the middle.
+
+### Asking about a passage works on the passages you actually select
+
+The selection you highlighted had to match the reply **byte for byte**, and the
+transcript shows markdown rendered — so a selection containing inline code, a
+link, a bold word, or one crossing a line break inside a paragraph was refused
+with "That passage is not part of that reply". Agents write inline code
+constantly, so that was most of them.
+
+It is now matched as the transcript reads, whitespace and all. Dragging across
+two paragraphs works, which is what selecting an answer normally is. The check
+that stops a passage being put in an agent's mouth is unchanged.
+
+### The caret stays where you are typing
+
+An approval or a question arriving used to take the caret out of a half-written
+sentence and put it on **Allow** — so the rest of what you typed went nowhere,
+and the next Enter approved a command you had not read. A card still takes focus
+when the box is empty, which is what makes it answerable with one key; it no
+longer takes it out of a message in progress.
+
+The handoff sheet had a sharper version of the same thing: it threw the caret
+back to the "Ask them to" dropdown on every re-render, which while an agent was
+streaming was several times a second.
+
+### Nothing that blocks you ends up off-screen
+
+A long command in an approval grew the card until Allow, Always and Deny were
+below the bottom of the pane, with no way to scroll to them — measured at 684px
+past the edge. The card is now bounded against the pane, the request scrolls
+inside it, and the buttons and the header stay put.
+
+The side chat also fits its content before an answer starts, then steps to full
+height once one does, instead of reserving a blank region for something that has
+not arrived.
+
+### The `/` and `@` menus keep asking
+
+Both could stop asking while you were still looking at them. Typing `/` before an
+agent had finished starting gave an empty menu that stayed empty however long you
+waited, and one more keystroke filled it instantly; a single failed file lookup
+did the same to `@`. They now keep asking while the menu is open and unanswered,
+and say which they are — looking, nothing found, or no file search in this folder
+because it is not a git repository.
+
+**One known gap.** A menu closed by the window losing focus still stays closed
+until you type another character. The cause is understood and the obvious fix
+made it worse under test, so it is recorded rather than guessed at.
+
 ## 0.10.0
 
 ### You can see what an agent changed
