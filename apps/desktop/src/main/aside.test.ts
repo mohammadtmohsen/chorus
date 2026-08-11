@@ -314,7 +314,7 @@ describe('explainPrompt', () => {
 
   it('names the padding that actually arrived, rather than asking for brevity', () => {
     // Every line of this list is something a real answer volunteered and that
-    // pushed the useful part off a 190px card.
+    // pushed the useful part off the bottom of a card this size.
     for (const banned of ['one by one', 'is *not*', 'already says, restated', 'earlier messages']) {
       expect(prompt).toContain(banned)
     }

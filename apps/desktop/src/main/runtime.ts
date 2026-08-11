@@ -190,7 +190,8 @@ function asideQuestion(excerpt: string, question: string): string {
  * understood every word but one, so the reader is named as what they are — a
  * developer on this project who has not met this particular thing. And
  * **length**: a model asked to explain will keep explaining, while the card is
- * 190px tall and a passage of one sentence deserves an answer of three.
+ * a few hundred pixels at its largest and a passage of one sentence deserves an
+ * answer of three.
  *
  * The do-not-work clause is the same one `asideQuestion` carries, and for the
  * same measured reason: without it a fork treats the request as the next turn of

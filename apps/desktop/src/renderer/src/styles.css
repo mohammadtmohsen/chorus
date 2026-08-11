@@ -603,8 +603,14 @@ body {
    * the top of the pane. Without this the header, the excerpt and the first half
    * of the answer were clipped off — the card was taller than the thing holding
    * it and nothing said so.
+   *
+   * Named because two rules need the same number: this cap, and the height the
+   * card takes the moment an answer starts. Written twice they could drift, and
+   * a card whose `height` exceeded its `max-height` would silently be the
+   * smaller of the two with nothing saying which won.
    */
-  max-height: min(440px, calc(100% - 16px));
+  --quick-max: min(440px, calc(100% - 16px));
+  max-height: var(--quick-max);
   display: flex;
   flex-direction: column;
   gap: calc(var(--step) * 2);
@@ -613,6 +619,27 @@ body {
   border-radius: 10px;
   background: var(--raised);
   box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
+}
+
+/*
+ * Two heights, and the switch between them is the whole behaviour.
+ *
+ * **Before an answer starts the card fits.** It is a header, the passage and the
+ * controls, and it takes exactly that much room — no region is reserved for
+ * something that has not arrived, so an empty card does not sit on the
+ * transcript claiming space it is not using.
+ *
+ * **The moment an answer exists it goes to its full height, in one step.** The
+ * answer streams for four to eight seconds, and a card that grew line by line
+ * was hard to read and impossible to click into. Growing once, immediately, is
+ * the only change of size the user sees; after that the words arrive inside a
+ * box that has stopped moving.
+ *
+ * `height` rather than `min-height`, and the same `--quick-max` the cap uses, so
+ * the card lands exactly on its maximum instead of somewhere between the two.
+ */
+.quick-question--answering {
+  height: var(--quick-max);
 }
 
 /*
@@ -663,7 +690,8 @@ body {
 }
 
 /*
- * A fixed height, not a maximum.
+ * The answer takes whatever the card has left, and it is the only thing that
+ * scrolls.
  *
  * `min-height: 0` is the load-bearing line and the reason this did not scroll at
  * all: a flex item defaults to `min-height: auto`, which refuses to shrink below
@@ -671,9 +699,12 @@ body {
  * instead of scrolling inside it. Setting it is the standard fix and it is
  * invisible until you know.
  *
- * Fixed rather than `max-height` so the card stops resizing under the pointer
- * while the answer streams in. A box that grows for eight seconds is hard to
- * read and impossible to click into.
+ * It used to carry a fixed `190px`, which stopped the card resizing while the
+ * answer streamed — but it also made the card the same height whether the
+ * passage was one line or five, and it left the last two thirds of a 440px card
+ * unused. `.quick-question--answering` now fixes the *card*, which stops the
+ * resizing for the same reason and gives the answer every pixel the header, the
+ * excerpt and the controls did not take.
  */
 /*
  * Direction comes from the text, not from a setting.
@@ -715,7 +746,6 @@ body {
 .quick-answer {
   flex: 1 1 auto;
   min-height: 0;
-  height: 190px;
   overflow-y: auto;
   font-size: 13px;
 }
@@ -2251,8 +2281,24 @@ body {
   border-top: 1px solid var(--line);
   background: var(--raised);
   display: flex;
-  /* Never stretches and never shrinks: it is the floor of the pane. */
-  flex: none;
+  /*
+   * Never stretches. It may shrink, and it stops at two thirds of the pane.
+   *
+   * `flex: none` meant a card could be any height at all, and the summary of an
+   * approval is whatever command the agent chose to run — a long one, or one
+   * carrying a pasted image path, grew the dock until the Allow, Always and Deny
+   * buttons sat below the bottom of the pane, with no way to scroll to them. A
+   * blocking card whose answer is off-screen is the worst version of this card.
+   *
+   * The cap is pane-relative rather than a pixel count because the failure is
+   * relative: what fits a tall window hides the buttons in a short one.
+   */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 66%;
+  /* The last resort. The card shrinks its own body first, so this should never
+     engage — but nothing here may ever be unreachable. */
+  overflow-y: auto;
   flex-direction: column;
   gap: calc(var(--step) * 2);
 }
@@ -2268,8 +2314,32 @@ body {
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--alert) 7%, var(--raised));
   display: flex;
+  /* So the body below can shrink inside it rather than pushing the card past
+     the dock's cap. A flex item will not go under its content without this. */
+  min-height: 0;
   flex-direction: column;
   gap: calc(var(--step) * 2);
+}
+
+/*
+ * What gives when there is not enough room, and what never does.
+ *
+ * A card's header says who is asking and how long is left; its actions are the
+ * entire point of a blocking card. And the composer is in this dock too — it is
+ * what the user is typing into, and squeezing it to answer a question about
+ * something else is the wrong trade. None of those may shrink, so the request
+ * being read is the only part that yields.
+ *
+ * That is also the only part a scrollbar is honest about: you can scroll to read
+ * the rest of a long command, but you cannot scroll to a button that was never
+ * given a height.
+ */
+.approval-head,
+.approval-actions,
+.question-head,
+.question-actions,
+.dock > .composer {
+  flex: 0 0 auto;
 }
 
 .approval-head {
@@ -2295,16 +2365,25 @@ body {
   letter-spacing: 0;
 }
 
+/*
+ * The two that yield. `min-height: 0` is what lets them, and `overflow-y` is
+ * what makes yielding readable instead of clipped.
+ *
+ * The summary had no bound at all — it is the command the agent wants to run,
+ * and its length is the agent's choice, not the layout's.
+ */
 .approval-summary,
 .approval-detail {
   margin: 0;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .approval-detail {
   max-height: 180px;
-  overflow-y: auto;
   color: var(--muted);
 }
 
@@ -2321,6 +2400,9 @@ body {
   /* Falls back to the bone tone when an agent has no hue of its own, so the
      card is never left asking with an unset colour. */
   --voice: var(--bone);
+  /* The same bargain the approval makes, because it shares the same dock: a set
+     of long questions must not put its own Send button below the pane either. */
+  min-height: 0;
   padding: calc(var(--step) * 3);
   border: 1px solid color-mix(in srgb, var(--bone) 22%, var(--line));
   border-radius: var(--radius);
@@ -2358,9 +2440,13 @@ body {
   letter-spacing: 0;
 }
 
-/* One question of the set, whichever step you are on. */
+/* One question of the set, whichever step you are on — and the part that gives
+   when the card will not fit, for the same reason the approval's summary does. */
 .question-item {
   display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   flex-direction: column;
   gap: var(--step);
 }
