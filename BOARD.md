@@ -60,19 +60,50 @@ said:
 never became true: a leading slash opened the menu — the menu reported: no status row
 ```
 
-`no status row` means **nothing was in flight and nothing had given up**. A `/`
-menu waiting on an empty command list would have said `asking`; one out of
-attempts would have said `exhausted`. So at the moment of failure the composer
-was not waiting for anything, which leaves two candidates and no third:
+`no status row` means **nothing was in flight and nothing had given up**, which
+ruled out waiting and pointed at the composer rather than the menu.
 
-1. **`mention` was null** — the `/` never registered as a command query at all.
-2. **`commands` was non-empty but `commandOptions` matched nothing**, which for an
-   empty query should be impossible and would be its own bug.
+**Caught, with the composer's own state.** Seven full suite runs on
+`fix/the-menu-that-asks-once`; the slash spec failed **2 of 7**, and **20 of 20
+alone** — it needs the suite's load, not repetition. The second failure carried
+this:
 
-**What the next attempt needs** is what the _composer_ was doing, not what the
-menu was: `el.value`, `el.selectionStart`, `mention` and `commands.length`
-captured at the moment the wait gives up. That is the instrumentation that solved
-the original bug, kept this time rather than removed.
+```json
+{
+  "lookup": "no status row",
+  "mention": "none",
+  "commands": "50",
+  "value": "/",
+  "caret": 1,
+  "focused": true,
+  "composers": 1,
+  "rows": 0
+}
+```
+
+**Read what that says.** The slash is in the box. The caret is after it. The box
+has focus. **Fifty commands are loaded.** There is one composer. And the composer
+parsed **no mention at all**.
+
+So this was never about the list arriving — the list was there. Everything the
+decision depends on was correct and the decision still came out null.
+
+**That leaves exactly two, and no third.** `refreshMention` runs _synchronously_
+in the textarea's `onChange`, and `findCommandQuery('/', 1)` cannot return null —
+its only rejections are a non-whitespace prefix and a non-matching query charset,
+and `/` with an empty query is neither. So either:
+
+1. **`onChange` never fired**, and nothing re-read the box. React's `draft` would
+   still hold the previous text — the spec types `look at src/foo` first, so a
+   length of 15 rather than 1 gives it away.
+2. **`dismissed` held `/0:`**, the one branch that nulls a mention that _was_
+   found. Nothing in the spec presses Escape, so that would be a defect in how
+   `dismissed` is set or cleared.
+
+`data-draft-len` and `data-dismissed` now ride on the composer to separate them,
+and the wait reports both. **Do not remove them when this closes** — the original
+bug was solved by instrumenting `refreshMention`, that instrumentation was taken
+out, and this entry is what it cost.
 
 **It is not only the slash menu.** During the 0.10.0 release gate, `an @ offers
 the cast, then the project's files` failed on `typing a name found files` in one

@@ -279,3 +279,56 @@ run 2.
 **The branch.** Off `origin/main` as `fix/the-menu-that-asks-once`. The focus and
 card-sizing work stays on `fix/cards-that-stay-answerable`; the BOARD.md edit for
 C-028 belongs to that branch and is stashed, not carried here.
+
+## Phase 0b, second pass — the composer's own state, and the failure caught in it
+
+**Seven full suite runs on this branch.** The slash spec failed **2 of 7**, and
+**20 of 20 alone** — so it needs the suite's load rather than repetition, which
+matches every note on the entry.
+
+The second failure, with the record `9824e4d` added:
+
+```json
+{
+  "lookup": "no status row",
+  "mention": "none",
+  "commands": "50",
+  "value": "/",
+  "caret": 1,
+  "focused": true,
+  "composers": 1,
+  "rows": 0
+}
+```
+
+| what it says             | reading                                     |
+| ------------------------ | ------------------------------------------- |
+| `value: "/"`, `caret: 1` | the slash is in the box, caret after it     |
+| `focused: true`          | the textarea has the caret                  |
+| **`commands: "50"`**     | **the list was fully loaded**               |
+| `composers: 1`           | one composer, so no wrong-element confusion |
+| **`mention: "none"`**    | **and the composer parsed no query at all** |
+
+**This was never about the list arriving.** Every input to the decision was
+correct, and the decision still came out null — which also retires the last
+version of the "slow CLI" story that has framed this entry from the start.
+
+### Two candidates, and no third
+
+`refreshMention` runs **synchronously** in `onChange`, and
+`findCommandQuery('/', 1)` cannot return null: its only rejections are a
+non-whitespace prefix and a query outside `[a-z0-9:_-]*`, and `/` with an empty
+query is neither. So:
+
+1. **`onChange` never fired.** React's `draft` would still hold the previous
+   text — the spec types `look at src/foo` first, so `draftLen` 15 rather than 1.
+2. **`dismissed` held `/0:`** — the one branch that nulls a mention that _was_
+   found. Nothing in the spec presses Escape, so that would be a defect in how
+   `dismissed` is set or cleared.
+
+`data-draft-len` and `data-dismissed` now separate them on the next occurrence.
+
+**A caveat on `data-dismissed`:** it reads a ref during render, so it shows the
+value as of the last render rather than live. That is sound here because the only
+writer outside `refreshMention` is the Escape handler, which calls `setMention`
+in the same breath — but it is a real limit and worth knowing before trusting it.

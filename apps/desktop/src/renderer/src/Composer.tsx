@@ -623,6 +623,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
           mention === null ? 'none' : `${mention.trigger}${String(mention.start)}:${mention.query}`
         }
         data-commands={commands.length}
+        /*
+         * The two that separate the last pair of candidates.
+         *
+         * A real failure was caught with `value: "/"`, `caret: 1`,
+         * `focused: true`, `commands: 50` — and `mention: none`. Since
+         * `refreshMention` runs synchronously in `onChange`, and
+         * `findCommandQuery('/', 1)` cannot return null, exactly two things can
+         * produce that:
+         *
+         * - **`onChange` never fired**, so nothing re-read the box. Then React's
+         *   `draft` is still the previous text and its length gives it away —
+         *   the spec types `look at src/foo` first, so 15 rather than 1.
+         * - **`dismissed` held `/0:`**, which is the one branch that nulls a
+         *   mention that was found. Nothing in the spec presses Escape, so this
+         *   would be a defect in how it is set or cleared.
+         *
+         * The length rather than the draft: the textarea already carries the
+         * text, and duplicating it into an attribute would put what someone is
+         * typing in a second place for no gain.
+         */
+        data-draft-len={draft.length}
+        data-dismissed={dismissed.current ?? 'none'}
         onSubmit={(e) => {
           e.preventDefault()
           send()

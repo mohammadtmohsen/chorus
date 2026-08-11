@@ -185,6 +185,8 @@ const untilMenu = async (page, expression, options) => {
         lookup: document.querySelector('.mention-status')?.dataset.lookup ?? 'no status row',
         mention: form?.dataset.mention ?? 'no composer',
         commands: form?.dataset.commands ?? '?',
+        draftLen: form?.dataset.draftLen ?? '?',
+        dismissed: form?.dataset.dismissed ?? '?',
         value: box?.value ?? null,
         caret: box?.selectionStart ?? null,
         focused: document.activeElement === box,
