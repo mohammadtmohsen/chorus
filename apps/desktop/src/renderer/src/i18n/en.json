@@ -48,7 +48,10 @@
     "waiting": "waiting",
     "askAboutThis": "Ask about this",
     "explainSimply": "Explain simply",
-    "translateThis": "Translate"
+    "translateThis": "Translate",
+    "lookingUp": "Looking…",
+    "noneFound": "Nothing to offer yet",
+    "lookupUnavailable": "No file search here — this folder is not a git repository"
   },
   "workspace": {
     "sessions": "Sessions",

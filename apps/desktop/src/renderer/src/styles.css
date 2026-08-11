@@ -2742,6 +2742,19 @@ body {
   flex: none;
 }
 
+/*
+ * The menu with nothing in it yet, which used not to be drawn at all.
+ *
+ * Quiet on purpose: it reports rather than offers, so it takes the muted tone
+ * and no hover, no pointer and no selected state. Nothing here is choosable, and
+ * a row that looked choosable would be a worse lie than the blank it replaced.
+ */
+.mention-status {
+  padding: 6px calc(var(--step) * 2);
+  color: var(--faint);
+  font-size: 11px;
+}
+
 .mention-detail {
   flex: 1 1 auto;
   min-width: 0;

@@ -100,6 +100,30 @@ export interface ComposerProps {
   readonly onSendFailed: () => void
 }
 
+/**
+ * How often an open, unanswered menu may ask again, and how long it keeps that
+ * up.
+ *
+ * Both menus used to ask a bounded number of times and then stop *while the
+ * question was still open* — the slash list five times over nine seconds, the
+ * file list exactly once — after which no amount of waiting produced anything
+ * and one more keystroke produced everything (C-003). The person looking at an
+ * empty menu is the signal that the answer still matters, so that is what the
+ * asking is tied to now.
+ *
+ * **The floor is a rate limit and the gap grows past it.** 800ms is the closest
+ * two asks may ever be, which is what stops an open menu spawning `git ls-files`
+ * in a loop; the gap then widens by that much each time, so eight attempts span
+ * about twenty-two seconds rather than six. Both numbers matter: the first
+ * bounds the cost per second, the second bounds how long a genuinely stuck CLI
+ * is waited on.
+ *
+ * Measured against the reproduction: a CLI reporting its commands at twelve
+ * seconds is inside this and outside the old nine.
+ */
+const ASK_FLOOR_MS = 800
+const ASK_CEILING = 8
+
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(
   function Composer(props, ref): React.JSX.Element {
     const { t } = useTranslation()
@@ -126,6 +150,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * worth spawning `git ls-files` for on its own.
      */
     const [files, setFiles] = useState<string[]>([])
+    /**
+     * Whether the menu is still waiting on an answer, and if not, why it has
+     * none.
+     *
+     * An empty menu used to be one thing on screen and three things underneath:
+     * a lookup still running, a lookup that ran out of attempts, and a directory
+     * that can never answer. They rendered identically — as nothing at all,
+     * because the menu only opened when it had rows — so neither a person nor a
+     * spec could tell "not yet" from "never" (C-003). A spec in particular could
+     * only wait, and then time out saying nothing about which it had hit.
+     *
+     * One field rather than one per surface: a `/` menu and an `@` menu cannot
+     * be open at the same time, because `refreshMention` resolves to a single
+     * query.
+     */
+    const [lookup, setLookup] = useState<'asking' | 'exhausted' | 'unavailable' | null>(null)
     /**
      * How far back through what was said we are, counting from the end.
      *
@@ -157,92 +197,100 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
 
     useEffect(() => {
       /*
-       * Asked again while the answer is empty, because the first one often is.
+       * One warm-up ask, so the first `/` shows a list rather than a pause.
        *
        * A pane mounts the moment its conversation exists, which is before the
-       * session has finished starting — and a CLI that has not started yet
-       * reports no commands. A single fetch therefore kept that empty answer for
-       * the life of the pane, and `/` opened nothing, forever, while the CLI had
-       * forty-nine commands to offer a second later.
+       * session has finished starting, so this answer is often empty — and that
+       * is now fine. It used to carry its own retry, four tries over about nine
+       * seconds, because it was the only thing asking; a CLI slower than that
+       * budget left the menu empty for the life of the pane.
        *
-       * This is half of a fix. The other half is in `runtime.listCommands`,
-       * which cached the empty answer with `??=` — an empty array is not
-       * nullish, so it was kept and every retry from here would have been
-       * answered from that cache with the same nothing. Neither half works
-       * alone, which is exactly why an earlier attempt at this retry looked
-       * useless and was thrown away.
-       *
-       * Found by instrumenting `refreshMention`: at the moment of failure the
-       * query was detected correctly — `found: "/::0"` — so `mention` was set
-       * and the menu still did not open, which leaves only an empty
-       * `commands`.
-       *
-       * Four tries over about ten seconds, which is a judgement rather than a
-       * measurement. Eight tries over forty seconds was tried and the spec that
-       * catches this failed three runs in twelve against one in twelve — the
-       * difference is noise at that sample size, and tuning the constant against
-       * it would be fitting to randomness. A conversation whose agents really
-       * have no commands answers empty each time and then stops being asked,
-       * which is an ordinary outcome rather than something to retry at forever.
+       * **It is no longer what correctness rests on.** The menu asks for itself
+       * while it is open and unanswered (`ASK_FLOOR_MS` below), which is bounded
+       * by someone actually waiting rather than by a guess at how long a CLI
+       * takes to start. Two independent retry loops asked the same question at
+       * overlapping times — measured at 243ms apart, under the floor one of them
+       * was enforcing — so this went back to being what its comment always said
+       * it was: a warm-up, not a guarantee.
        */
       let live = true
-      let attempt = 0
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const ask = (): void => {
-        const again = (): void => {
-          attempt += 1
-          if (attempt < 4) timer = setTimeout(ask, attempt * 1_500)
-        }
-        window.chorus
-          .listCommands({ conversationId })
-          .then((result) => {
-            if (!live) return
-            if (result.commands.length === 0) {
-              again()
-              return
-            }
-            setCommands(result.commands)
-          })
-          .catch(() => {
-            // No session to ask yet, or a CLI too old to be asked. Both look the
-            // same from here, and both are worth asking again.
-            if (live) again()
-          })
-      }
-      ask()
+      window.chorus
+        .listCommands({ conversationId })
+        .then((result) => {
+          if (live && result.commands.length > 0) setCommands(result.commands)
+        })
+        .catch(() => {
+          // No session to ask yet, or a CLI too old to be asked. Either way the
+          // menu will ask again for itself when someone opens it.
+        })
       return () => {
         live = false
-        // A closed pane asks nothing more.
-        if (timer !== undefined) clearTimeout(timer)
       }
     }, [conversationId])
 
+    /*
+     * The query itself, not the object carrying it — the same reason as
+     * `wantsCommands`, and here it is also literally what is being asked. Null
+     * until there is an `@` with something after it: a bare `@` means the cast,
+     * and offering the whole repository beside two agent names is not a menu.
+     */
+    const fileQuery = mention?.trigger === '@' && mention.query !== '' ? mention.query : null
     useEffect(() => {
-      // Nothing to search for until there is an `@` with something after it: a
-      // bare `@` means the cast, and offering the whole repository beside two
-      // agent names is not a menu.
-      if (mention?.trigger !== '@' || mention.query === '') {
+      if (fileQuery === null) {
         setFiles([])
         return
       }
       let live = true
-      const timer = setTimeout(() => {
+      let attempts = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      setLookup('asking')
+      const again = (): void => {
+        if (attempts >= ASK_CEILING) {
+          setLookup('exhausted')
+          return
+        }
+        timer = setTimeout(ask, attempts * ASK_FLOOR_MS)
+      }
+      const ask = (): void => {
+        attempts += 1
         window.chorus
-          .completeFiles({ conversationId, query: mention.query })
+          .completeFiles({ conversationId, query: fileQuery })
           .then((result) => {
-            if (live) setFiles(result.files)
+            if (!live) return
+            /*
+             * Where the three states pay for themselves.
+             *
+             * `ready` is an answer even when it is empty — git looked and found
+             * nothing, and asking a second time is asking the same question.
+             * `unavailable` is a directory with no git or no repository in it,
+             * where every retry would spawn a process to be told the same thing.
+             * Only `retryable` is a question that never got put, and only that
+             * one is worth putting again.
+             *
+             * All three used to arrive as `[]`, which is why one failed lookup
+             * emptied this menu for as long as the query stayed the same.
+             */
+            if (result.state === 'retryable') {
+              again()
+              return
+            }
+            setLookup(result.state === 'unavailable' ? 'unavailable' : null)
+            setFiles(result.files)
           })
           .catch(() => {
-            // A directory that is not a repository offers no completion. Saying
-            // so in the menu would be noise about a feature nobody invoked.
-            if (live) setFiles([])
+            // The IPC call itself failed, which says nothing about git — the one
+            // thing it cannot be is an answer.
+            if (live) again()
           })
-      }, 90)
+      }
+      // Debounced: a keystroke is not a question worth spawning `git ls-files`
+      // for on its own.
+      timer = setTimeout(ask, 90)
       return () => {
         live = false
-        clearTimeout(timer)
+        if (timer !== undefined) clearTimeout(timer)
       }
-    }, [conversationId, mention])
+    }, [conversationId, fileQuery])
 
     useEffect(() => {
       /*
@@ -317,22 +365,64 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * keystroke, and only for `/`: the cast and the files have their own
      * sources.
      */
-    const asking = useRef(false)
+    /*
+     * A boolean rather than the `mention` object, and that is the fix.
+     *
+     * `refreshMention` builds a new object on every keystroke *and* every
+     * selection change, so an effect depending on `mention` restarts constantly
+     * — which would reset the attempt count and defeat the rate limit. What this
+     * question actually turns on is whether a slash menu is open at all; the
+     * query it carries never changes the answer, because the list is the
+     * conversation's rather than the query's.
+     */
+    const wantsCommands = mention?.trigger === '/'
     useEffect(() => {
-      if (mention?.trigger !== '/' || commands.length > 0 || asking.current) return
-      asking.current = true
-      window.chorus
-        .listCommands({ conversationId })
-        .then((result) => {
-          if (result.commands.length > 0) setCommands(result.commands)
-        })
-        .catch(() => {
-          // Still nothing to offer, which the menu already renders as nothing.
-        })
-        .finally(() => {
-          asking.current = false
-        })
-    }, [mention, commands.length, conversationId])
+      if (!wantsCommands || commands.length > 0) return
+      let live = true
+      let attempts = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      setLookup('asking')
+      const again = (): void => {
+        // Widening, so eight attempts cover a CLI that is slow rather than only
+        // one that is late. Never closer together than the floor.
+        if (attempts >= ASK_CEILING) {
+          setLookup('exhausted')
+          return
+        }
+        timer = setTimeout(ask, attempts * ASK_FLOOR_MS)
+      }
+      const ask = (): void => {
+        attempts += 1
+        window.chorus
+          .listCommands({ conversationId })
+          .then((result) => {
+            if (!live) return
+            /*
+             * An empty answer is asked about again rather than accepted, and
+             * this is the ambiguity the plan takes on knowingly: the adapter
+             * folds "no capability", "the request threw" and "this project has
+             * no commands" into the same `[]`, so the renderer cannot tell them
+             * apart. Both terminal cases short-circuit inside the adapter
+             * without reaching a CLI, so asking again costs an IPC round trip
+             * and nothing else — bounded by the ceiling above.
+             */
+            if (result.commands.length === 0) {
+              again()
+              return
+            }
+            setLookup(null)
+            setCommands(result.commands)
+          })
+          .catch(() => {
+            if (live) again()
+          })
+      }
+      ask()
+      return () => {
+        live = false
+        if (timer !== undefined) clearTimeout(timer)
+      }
+    }, [wantsCommands, commands.length, conversationId])
 
     /*
      * Agents first, then files.
@@ -342,13 +432,37 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * files on a substring, which means a bare `@` shows the cast and typing
      * anything past a name starts finding files.
      */
+    /*
+     * Nobody is asking, so there is nothing to report.
+     *
+     * Each lookup sets its own state while it runs; this is what clears it when
+     * the menu closes, so a `/` that gave up does not leave `exhausted` showing
+     * under the `@` typed after it.
+     */
+    useEffect(() => {
+      if (!wantsCommands && fileQuery === null) setLookup(null)
+    }, [wantsCommands, fileQuery])
+
     const options =
       mention === null
         ? []
         : mention.trigger === '/'
           ? commandOptions(commands, mention.query)
           : [...mentionOptions(participants as never, mention.query), ...fileOptions(files)]
-    const menuOpen = options.length > 0
+    /*
+     * The menu opens for a state as well as for rows.
+     *
+     * `options.length > 0` alone is what made an unanswered question invisible:
+     * there was nothing to draw, so nothing was drawn, so waiting looked exactly
+     * like having nothing to offer. A menu carrying one status line says which of
+     * the two it is — and gives a spec something to assert against other than a
+     * timeout (C-003).
+     *
+     * Only when there are no rows. An `@` that already matches an agent is not
+     * improved by a "looking…" line under it while git answers in thirty
+     * milliseconds.
+     */
+    const menuOpen = options.length > 0 || (mention !== null && lookup !== null)
 
     const choose = useCallback(
       (index: number) => {
@@ -558,6 +672,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                 </button>
               </li>
             ))}
+            {options.length === 0 && lookup !== null && (
+              /*
+               * `data-lookup` is not decoration. A spec asserting on the visible
+               * words would be asserting on a translation, and the point of this
+               * row is that a run can say *which* state it ended in rather than
+               * timing out with nothing to report.
+               */
+              <li className="mention-status" data-lookup={lookup} aria-live="polite">
+                {lookup === 'asking' && t('conversation.lookingUp')}
+                {lookup === 'exhausted' && t('conversation.noneFound')}
+                {lookup === 'unavailable' && t('conversation.lookupUnavailable')}
+              </li>
+            )}
           </ul>
         )}
         <Attachments
@@ -610,7 +737,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                * Sending the message when the user meant to pick a name is the
                * failure this whole feature exists to prevent.
                */
-              if (menuOpen) {
+              /*
+               * Rows, not `menuOpen` — and the difference is now load-bearing.
+               *
+               * The menu also opens to say it is still looking, and that menu has
+               * nothing to choose. Keeping this on `menuOpen` would make
+               * `% options.length` a division by zero, and worse: Enter would be
+               * swallowed by `preventDefault` and choose nothing, so a message
+               * beginning with `/` could not be sent at all while the list was
+               * still arriving. Caught by asking what an open-but-empty menu does
+               * to the keyboard, not by a test.
+               */
+              if (options.length > 0) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                   e.preventDefault()
                   const step = e.key === 'ArrowDown' ? 1 : options.length - 1
@@ -622,12 +760,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                   choose(highlighted)
                   return
                 }
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  dismissed.current = queryKey.current
-                  setMention(null)
-                  return
-                }
+              }
+              /*
+               * Escape closes whatever is open, rows or not.
+               *
+               * Deliberately outside the block above: a menu saying "looking…"
+               * is still a menu in your way, and one you could not dismiss would
+               * be worse than the silence it replaced.
+               */
+              if (menuOpen && e.key === 'Escape') {
+                e.preventDefault()
+                dismissed.current = queryKey.current
+                setMention(null)
+                return
               }
               /*
                * Up brings back what was said, but only from an empty box.

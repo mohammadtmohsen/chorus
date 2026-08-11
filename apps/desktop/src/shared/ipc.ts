@@ -457,9 +457,19 @@ export const IPC_CONTRACT = {
    * CLI's own matcher, so the search happens here. Asked per keystroke, which
    * is why it is a query rather than a list handed over once.
    */
+  /*
+   * `state` travels beside the list because an empty list is two different
+   * answers. Git saying "nothing matches" is a result; git not running at all is
+   * a question still outstanding, and folding both into `[]` is what let a menu
+   * go empty and stay empty (C-003). `files` is always present and always empty
+   * unless the state is `ready`.
+   */
   'files:complete': {
     request: z.object({ conversationId: z.string(), query: z.string() }),
-    response: z.object({ files: z.array(z.string()) }),
+    response: z.object({
+      state: z.enum(['ready', 'retryable', 'unavailable']),
+      files: z.array(z.string()),
+    }),
   },
 
   /**

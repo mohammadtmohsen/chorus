@@ -141,6 +141,35 @@ const selectInside = (page, selector) =>
   })()`)
 
 /** What the offer is showing, in order. */
+/**
+ * A menu wait that says which state it timed out in.
+ *
+ * These two specs used to fail as `never became true: a leading slash opened the
+ * menu`, which is every possible cause at once — a list still arriving, a list
+ * that gave up, a directory git cannot search, or a genuine bug in the menu. The
+ * composer now reports which, on `.mention-status[data-lookup]`, and a run that
+ * fails is the only chance anyone gets to read it (C-003).
+ *
+ * **The assertion is unchanged.** This does not accept `asking` as an outcome —
+ * it fails exactly as before and adds a word to the message. A spec that passed
+ * because a menu said "looking…" would be worse than one that timed out.
+ *
+ * Its callers wait on `.mention-menu .mention-name` rather than `.mention-menu`,
+ * and that is not a tidy-up. The menu now opens to carry the status row, so the
+ * old selector would be satisfied by a menu that had found **nothing** — turning
+ * the exact failure these specs exist to catch into a pass.
+ */
+const untilMenu = async (page, expression, options) => {
+  try {
+    await page.until(expression, options)
+  } catch (error) {
+    const state = await page.evaluate(
+      `document.querySelector('.mention-status')?.dataset.lookup ?? 'no status row'`
+    )
+    throw new Error(`${error.message} — the menu reported: ${state}`, { cause: error })
+  }
+}
+
 const offerLabels = (page) =>
   page.evaluate(
     `Array.from(document.querySelectorAll('.quote-offer-action')).map((b) => b.textContent.trim())`
@@ -2034,7 +2063,7 @@ export const specs = [
         )
 
         await draft(app, '/')
-        await app.until(`document.querySelector('.mention-menu') !== null`, {
+        await untilMenu(app, `document.querySelector('.mention-menu .mention-name') !== null`, {
           timeout: 60_000,
           label: 'a leading slash opened the menu',
         })
@@ -2100,7 +2129,7 @@ export const specs = [
         await app.settle()
 
         await draft(app, '@')
-        await app.until(`document.querySelector('.mention-menu') !== null`, {
+        await untilMenu(app, `document.querySelector('.mention-menu .mention-name') !== null`, {
           label: 'a bare @ opened the menu',
         })
         const cast = await app.evaluate(
@@ -2114,7 +2143,8 @@ export const specs = [
         // `mention-menu` is the app's own source file, so the repository is
         // guaranteed to contain it — no fixture, and it must come from git.
         await draft(app, '@mention-menu')
-        await app.until(
+        await untilMenu(
+          app,
           `Array.from(document.querySelectorAll('.mention-menu .mention-detail')).some(n => n.textContent === 'file')`,
           { timeout: 30_000, label: 'typing a name found files' }
         )
