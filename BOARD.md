@@ -341,6 +341,39 @@ count before and after stated, over the same stimulus — or this is closed as
 acceptable, with the 38 written down so nobody re-derives the alarm from the
 same observation.
 
+### C-027 · Nothing stops a spec passing without testing anything
+
+Found while trying to get a two-agent room for an unrelated check. `an agent can
+ask a question and get an answer back` waited on `.voices--pane .voice` — a class
+**nothing in the renderer has carried for some time**, surviving only as an
+orphaned CSS rule. It timed out after 60 seconds, hit a `catch` that read every
+possible failure as "claude is not installed", and **passed**. On a machine with
+claude 2.1.226 installed.
+
+The spec's own comment had predicted it exactly: _"the spec then skips itself and
+reports green, which is the one outcome worse than failing."_ It then did that,
+for as long as nobody looked.
+
+The instance is fixed — the preflight is gone entirely, since a fresh session
+already has claude, and what remains is an assertion that fails rather than a
+wait that skips. Unfixed is the **class**: the runner has no notion of "skipped".
+A spec that returns early after `assert(true, …)` is indistinguishable, in the
+output and in the exit code, from one that did its job. `all 28 passed` is
+therefore a claim nobody can check.
+
+Two conditional skips remain and both are legitimate — spec 5 twice, for an
+account with no plan window, guarded by a data check rather than a swallowed
+failure. So the answer is not to ban the shape; it is to make it visible.
+
+**Why it matters more now:** C-006 is about putting specs in CI precisely so a
+green build means something. A suite that can report green while testing nothing
+makes that worse rather than better — it would move a false negative from a place
+someone occasionally reads to a place nobody reads at all.
+
+**Done when:** a spec that skips is reported as skipped and counted separately
+from one that passed, so `all N passed` means N specs actually ran — and the
+remaining legitimate skips say so in the output rather than printing a tick.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
