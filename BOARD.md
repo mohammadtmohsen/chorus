@@ -44,6 +44,36 @@ like load rather than a second bug.
 Eight hypotheses are dead and written down in the plan's `STATUS.md`, along with
 the instrumentation that killed them. That list is the head start.
 
+**A ninth is now dead too, and it is the one that looked most like the answer.**
+`58907f1` found and fixed a real defect with an identical symptom: both menus
+could reach a state from which they **never asked again** — the slash list after
+five asks in nine seconds, the file list after one — so waiting could not help
+and one more keystroke fixed it instantly. Reproduced on demand against the real
+`Composer`, and fixed. See
+[`docs/plans/the-menu-that-asks-once-2026-08-11/`](docs/plans/the-menu-that-asks-once-2026-08-11/).
+
+**It is not the cause of this entry.** Three full suite runs after the fix, and
+the slash spec still failed once — but the menu now reports its own state, and it
+said:
+
+```
+never became true: a leading slash opened the menu — the menu reported: no status row
+```
+
+`no status row` means **nothing was in flight and nothing had given up**. A `/`
+menu waiting on an empty command list would have said `asking`; one out of
+attempts would have said `exhausted`. So at the moment of failure the composer
+was not waiting for anything, which leaves two candidates and no third:
+
+1. **`mention` was null** — the `/` never registered as a command query at all.
+2. **`commands` was non-empty but `commandOptions` matched nothing**, which for an
+   empty query should be impossible and would be its own bug.
+
+**What the next attempt needs** is what the _composer_ was doing, not what the
+menu was: `el.value`, `el.selectionStart`, `mention` and `commands.length`
+captured at the moment the wait gives up. That is the instrumentation that solved
+the original bug, kept this time rather than removed.
+
 **It is not only the slash menu.** During the 0.10.0 release gate, `an @ offers
 the cast, then the project's files` failed on `typing a name found files` in one
 full-suite run, passed in the run before it, and passed alone in 6s immediately

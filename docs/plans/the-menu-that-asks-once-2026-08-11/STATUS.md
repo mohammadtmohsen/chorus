@@ -1,5 +1,10 @@
 # Status
 
+**Phases 0–3 shipped in `58907f1`** on `fix/the-menu-that-asks-once`, off
+`origin/main`. Typecheck, lint and format clean; **1,250 unit tests**; the full
+e2e suite run three times (see Phase 0b — it is not a clean sweep, and that is
+the finding).
+
 ## Phase 0 — the defect reproduced, deterministically
 
 **Done.** The mechanism in the plan is real, and it is worse than the plan
