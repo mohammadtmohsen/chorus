@@ -28,27 +28,7 @@ read, which is how the status summary went stale a day after it was written.
 
 Nothing here can be finished by me alone.
 
-### C-001 · An application icon
-
-`electron-builder.yml` sets `buildResources: build`, so the packager looks for
-`apps/desktop/build/icon.icns`. That file does not exist, and the build says so
-every time:
-
-```
-• default Electron icon is used  reason=application icon is not set
-```
-
-So every DMG so far — `Chorus-0.8.1-arm64.dmg` included — ships the generic
-Electron icon: in the DMG window,
-in the Dock, in the Applications folder, and in ⌘-Tab. It is the first thing
-anyone sees of the product and currently says "an Electron app".
-
-**Why it is here and not done:** wiring it is a one-line change once the artwork
-exists. Inventing a logo and committing it as the product's identity is a design
-decision, not a packaging one.
-
-**Done when:** `apps/desktop/build/icon.icns` exists (1024×1024 source, macOS
-iconset) and `pnpm package` no longer prints that line.
+_Empty. C-001 was the only entry and it shipped._
 
 ---
 

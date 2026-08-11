@@ -12,6 +12,7 @@
     "test": "vitest run --config vitest.config.mts",
     "clean": "rm -rf out dist *.tsbuildinfo",
     "e2e": "node e2e/run.mjs",
+    "icon": "node build/make-icon.mjs",
     "package": "electron-vite build && electron-builder --config electron-builder.yml",
     "package:dir": "electron-vite build && electron-builder --config electron-builder.yml --dir",
     "app:install": "pnpm run package:dir && node build/install-local.mjs",
