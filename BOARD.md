@@ -384,6 +384,36 @@ offers on a wide one — or, if a selection genuinely cannot survive the reflow,
 the offer is re-derived rather than dropped, so the bar returns instead of
 disappearing for good.
 
+### C-026 · A narrow pane never stops resizing itself
+
+Found by Phase 0 of `docs/plans/the-offer-that-scrolls-away-2026-08-11`, while
+instrumenting something else.
+
+On a **138–159px pane**, the transcript's follow logic does not converge. With
+`clientHeight` and `scrollHeight` constant at 730 and 903 — nothing growing, no
+agent typing — the `ResizeObserver` fired **fourteen times in 107ms, roughly
+every 8ms, and was still firing when the measurement ended**. Each callback finds
+`scrollTop` has drifted to 151–159 and writes it back to 173.
+
+`makeRoom()` (`Session.tsx:280`–`:306`) writes a spacer height, the content
+resizes, the observer wakes, `makeRoom()` runs again. The pane width was measured
+at **138, then 141, then 159** in the same supposedly settled state, which points
+at the scrollbar appearing and disappearing as the loop's pivot.
+
+**Why it matters:** it costs a layout, an observer callback and a scroll write
+every few frames for as long as a narrow pane is open, on the main thread, beside
+a `better-sqlite3` that is already synchronous there. It is invisible unless
+something else breaks — which is how it was found, since each scroll write is
+what destroys the selection offer (C-025).
+
+**Not the same bug as C-025**, and not fixed by fixing it. C-025 is an offer that
+cannot survive a scroll; this is a pane that manufactures scrolls forever. Fixing
+the offer's coordinate space hides this one again.
+
+**Done when:** a pane at 140px reaches a state where the observer stops firing
+with nothing on screen changing — with the count over a fixed window stated,
+since "settles" is exactly the claim that was wrong here.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets

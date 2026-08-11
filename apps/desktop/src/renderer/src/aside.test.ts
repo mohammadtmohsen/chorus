@@ -106,10 +106,12 @@ describe('promotion', () => {
 })
 
 describe('fitCard', () => {
-  const pane = { width: 800, height: 600 }
+  /** A band starting at zero — what a box positioned in the pane sees. */
+  const pane = { width: 800, top: 0, bottom: 600 }
   const card = { width: 400, height: 350 }
   /** A passage 22px tall, centred horizontally, with its top at `top`. */
-  const passage = (top: number, centreX = 400) => ({ centreX, top, height: 22 })
+  const passage = (top: number, centreX = 400) =>
+    ({ space: 'pane', centreX, top, height: 22 }) as const
 
   it('hangs above the passage when there is room', () => {
     const at = fitCard(passage(500), pane, card)
@@ -130,7 +132,7 @@ describe('fitCard', () => {
 
   it('never leaves it hanging off the bottom', () => {
     const at = fitCard(passage(590), pane, card)
-    expect(at.top + card.height).toBeLessThanOrEqual(pane.height)
+    expect(at.top + card.height).toBeLessThanOrEqual(pane.bottom)
   })
 
   it('clamps to the left edge', () => {
@@ -145,15 +147,44 @@ describe('fitCard', () => {
     // Measured once at a 200px pane: clamping the left edge on screen pushed a
     // 237px offer off the right. Centring is the only placement symmetric about
     // an overflow that cannot be removed.
-    const at = fitCard(passage(400, 100), { width: 300, height: 600 }, card)
+    const at = fitCard(passage(400, 100), { width: 300, top: 0, bottom: 600 }, card)
     expect(at.left).toBe((300 - 400) / 2)
   })
 
   it('is fully visible even when it fits neither above nor below', () => {
-    const tight = { width: 800, height: 400 }
+    const tight = { width: 800, top: 0, bottom: 400 }
     const at = fitCard(passage(200), tight, card)
     expect(at.top).toBeGreaterThanOrEqual(4)
-    expect(at.top + card.height).toBeLessThanOrEqual(tight.height)
+    expect(at.top + card.height).toBeLessThanOrEqual(tight.bottom)
+  })
+
+  /*
+   * The case that could not happen before the offer moved into the scroller,
+   * and the one the whole coordinate change turns on: what is visible is a
+   * window partway down a much taller box, so the band does not start at zero.
+   * Reading it as a height would park the offer at the top of the transcript.
+   */
+  describe('a band that does not start at zero', () => {
+    // Scrolled 1000px down a long transcript; 15px of scroller padding means the
+    // visible band begins a little above the content box's own origin.
+    const scrolled = { width: 800, top: 985, bottom: 1585 }
+
+    it('hangs above a passage that is far down the content', () => {
+      const at = fitCard(passage(1400), scrolled, card)
+      expect(at.top).toBe(1400 - 350 - 8)
+    })
+
+    it('clamps to the top of what is visible, not to the top of the content', () => {
+      // The failure this pins: `Math.max(margin, …)` against a zero-based band
+      // returns 4, which is a thousand pixels above the scrollport.
+      const at = fitCard(passage(1000), scrolled, card)
+      expect(at.top).toBeGreaterThanOrEqual(scrolled.top + 4)
+    })
+
+    it('clamps to the bottom of what is visible', () => {
+      const at = fitCard(passage(1575), scrolled, card)
+      expect(at.top + card.height).toBeLessThanOrEqual(scrolled.bottom)
+    })
   })
 
   it('positions a small box from the same passage', () => {

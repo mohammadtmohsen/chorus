@@ -7,7 +7,14 @@ import { Composer, type ComposerHandle, type ComposerState } from './Composer.js
 import { Entry } from './Entry.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import { QuickQuestion } from './QuickQuestion.js'
-import { anchorOf, askableSource, type SelectionAnchor, type SourceEntry } from './quote.js'
+import {
+  anchorOf,
+  askableSource,
+  inPane,
+  type ContentAnchor,
+  type PaneAnchor,
+  type SourceEntry,
+} from './quote.js'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
@@ -153,7 +160,7 @@ export function Session(props: {
      * could measure what was actually rendered — so a wider offer could never be
      * placed correctly however carefully it was measured.
      */
-    anchor: SelectionAnchor
+    anchor: ContentAnchor
     /**
      * The entry it came out of, when the passage is one an agent could be asked
      * to expand on — `null` when it can only be quoted.
@@ -170,7 +177,8 @@ export function Session(props: {
    */
   const [askingAbout, setAskingAbout] = useState<{
     text: string
-    anchor: SelectionAnchor
+    /** Pane space: the card floats over the pane and does not scroll with it. */
+    anchor: PaneAnchor
     source: SourceEntry
     purpose: AsidePurpose
     /** Started by the click, because a mount effect runs twice and can send twice. */
@@ -392,8 +400,8 @@ export function Session(props: {
   const readSelection = useCallback(() => {
     const selection = window.getSelection()
     const scoreEl = score.current
-    const paneEl = pane.current
-    if (selection === null || selection.isCollapsed || scoreEl === null || paneEl === null) {
+    const contentEl = transcript.current
+    if (selection === null || selection.isCollapsed || scoreEl === null || contentEl === null) {
       setSelected(null)
       return
     }
@@ -407,7 +415,14 @@ export function Session(props: {
       setSelected(null)
       return
     }
-    const anchor = anchorOf(range.getBoundingClientRect(), paneEl.getBoundingClientRect())
+    /*
+     * Against the scrolling content, not the pane.
+     *
+     * The offer lives inside `.score-content` now, so it travels with the
+     * passage instead of being thrown away every time the transcript moves
+     * under it — which on a narrow pane was several times a second.
+     */
+    const anchor = anchorOf(range.getBoundingClientRect(), contentEl.getBoundingClientRect())
     /*
      * Both ends, not `commonAncestorContainer`: a range spanning two entries has
      * the scroller as its common ancestor, which carries none of the attributes
@@ -461,16 +476,29 @@ export function Session(props: {
 
   useLayoutEffect(() => {
     const el = offer.current
-    const paneEl = pane.current
-    if (selected === null || el === null || paneEl === null) {
+    const scoreEl = score.current
+    const contentEl = transcript.current
+    if (selected === null || el === null || scoreEl === null || contentEl === null) {
       setOfferAt(null)
       return
     }
     const place = (): void => {
+      const content = contentEl.getBoundingClientRect()
+      const scrollport = scoreEl.getBoundingClientRect()
       setOfferAt(
         fitCard(
           selected.anchor,
-          { width: paneEl.clientWidth, height: paneEl.clientHeight },
+          {
+            width: contentEl.clientWidth,
+            /*
+             * The scrollport, expressed in content coordinates. Derived from the
+             * two rectangles rather than from `scrollTop` and padding, which is
+             * the same number by a route with two things to forget — and the
+             * scroller has 15px of top padding to forget.
+             */
+            top: scrollport.top - content.top,
+            bottom: scrollport.bottom - content.top,
+          },
           { width: el.offsetWidth, height: el.offsetHeight }
         )
       )
@@ -506,8 +534,27 @@ export function Session(props: {
         purpose,
       })
 
+      /*
+       * Into pane space, once, here.
+       *
+       * The offer's anchor is relative to the scrolling content, because the
+       * offer scrolls with the passage. The card does not — it floats over the
+       * pane — so handing it the same numbers would place it correctly at the
+       * top of a transcript and further out the more you had scrolled. The
+       * compiler refuses the mix-up now; this is the conversion it is asking
+       * for.
+       */
+      const contentEl = transcript.current
+      const paneEl = pane.current
+      if (contentEl === null || paneEl === null) return
+
       setAskingAbout({
         ...passage,
+        anchor: inPane(
+          passage.anchor,
+          contentEl.getBoundingClientRect(),
+          paneEl.getBoundingClientRect()
+        ),
         source,
         purpose,
         opening: opened.then((result) => result.asideId),
@@ -908,10 +955,20 @@ export function Session(props: {
            */
           if (atBottom) following.current = true
           else if (wentUp) following.current = false
-          // The offer is anchored to a rectangle that just moved. Re-reading it
-          // on every scroll frame would fight the scroll; dropping it is honest
-          // and the selection itself survives, so it can be re-made.
-          if (selected !== null) setSelected(null)
+          /*
+           * The offer is not dropped here any more.
+           *
+           * It used to be, because it was positioned against the pane while the
+           * passage moved with the scroller, so any scroll left the two
+           * disagreeing. Now it is inside the scroller and moves with what it
+           * points at, and there is nothing for a scroll to correct.
+           *
+           * Dropping it was also worse than it looked. Scroll events are
+           * delivered a few milliseconds after the write that caused them, so an
+           * offer made *between* the two was destroyed by the echo of a scroll
+           * that preceded it — measured at 7152 write, 7155 offer, 7160 drop,
+           * with `scrollTop` unchanged either side (C-025).
+           */
         }}
       >
         <div className="score-content" ref={transcript}>
@@ -966,100 +1023,99 @@ export function Session(props: {
               <div className="turn-tail" ref={tail} aria-hidden="true" />
             </div>
           )}
+          {/*
+            Offered where the passage is, not in a toolbar.
+
+            `onMouseDown` with `preventDefault` rather than `onClick` alone: a
+            mousedown on a button clears the selection before the click lands, so by
+            the time the handler ran there would be nothing left to quote.
+          */}
+          {selected !== null && askingAbout === null && (
+            <div
+              className="quote-offer"
+
+              /*
+               * The classifier's answer, visible in the DOM as well as in the
+               * buttons, so a wrong one is assertable rather than only lookable-at.
+               */
+              data-askable={selected.source === null ? undefined : 'true'}
+              ref={offer}
+              /*
+               * Hidden for the frame before it has been measured, so the first paint
+               * is not the offer in the wrong place followed by a jump.
+               */
+              style={
+                offerAt === null
+                  ? { visibility: 'hidden' }
+                  : { left: `${String(offerAt.left)}px`, top: `${String(offerAt.top)}px` }
+              }
+              onMouseDown={(e) => {
+                e.preventDefault()
+              }}
+            >
+              <button type="button" className="quote-offer-action" onClick={quoteSelection}>
+                {t('conversation.quoteInMessage')}
+              </button>
+              {/*
+                Offered only where an aside can actually be answered. A passage that
+                crosses two replies has no single author, and one still streaming
+                cannot be seen by a fork at all — so the button is absent rather than
+                present-and-failing.
+              */}
+              {selected.source !== null && (
+                <button
+                  type="button"
+                  className="quote-offer-action"
+                  onClick={() => {
+                    openCard('question')
+                  }}
+                >
+                  {t('conversation.askAboutThis')}
+                </button>
+              )}
+              {/*
+                Offered only when a language has been set. There is no honest guess
+                at someone's own language, and an action that cannot say which one it
+                would answer in is worse than an absent one.
+              */}
+              {selected.source !== null && explainLanguage !== '' && (
+                <button
+                  type="button"
+                  className="quote-offer-action"
+                  onClick={() => {
+                    openCard('explanation')
+                  }}
+                >
+                  {t('conversation.explainSimply')}
+                </button>
+              )}
+              {/*
+                Gated on a language for the same reason Explain is, and on the same
+                value: an action that cannot say which language it would produce is
+                worse than an absent one.
+
+                A word, not an icon, though the request said "translate icon". The
+                other three are labelled, and one icon among three labels reads as an
+                accident rather than a decision — while an unlabelled icon is the
+                least legible thing on a bar people meet rarely. Icons for all four
+                is defensible and is a different change; mixing is the only option
+                that is not.
+              */}
+              {selected.source !== null && explainLanguage !== '' && (
+                <button
+                  type="button"
+                  className="quote-offer-action"
+                  onClick={() => {
+                    openCard('translation')
+                  }}
+                >
+                  {t('conversation.translateThis')}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
-
-      {/*
-        Offered where the passage is, not in a toolbar.
-
-        `onMouseDown` with `preventDefault` rather than `onClick` alone: a
-        mousedown on a button clears the selection before the click lands, so by
-        the time the handler ran there would be nothing left to quote.
-      */}
-      {selected !== null && askingAbout === null && (
-        <div
-          className="quote-offer"
-
-          /*
-           * The classifier's answer, visible in the DOM as well as in the
-           * buttons, so a wrong one is assertable rather than only lookable-at.
-           */
-          data-askable={selected.source === null ? undefined : 'true'}
-          ref={offer}
-          /*
-           * Hidden for the frame before it has been measured, so the first paint
-           * is not the offer in the wrong place followed by a jump.
-           */
-          style={
-            offerAt === null
-              ? { visibility: 'hidden' }
-              : { left: `${String(offerAt.left)}px`, top: `${String(offerAt.top)}px` }
-          }
-          onMouseDown={(e) => {
-            e.preventDefault()
-          }}
-        >
-          <button type="button" className="quote-offer-action" onClick={quoteSelection}>
-            {t('conversation.quoteInMessage')}
-          </button>
-          {/*
-            Offered only where an aside can actually be answered. A passage that
-            crosses two replies has no single author, and one still streaming
-            cannot be seen by a fork at all — so the button is absent rather than
-            present-and-failing.
-          */}
-          {selected.source !== null && (
-            <button
-              type="button"
-              className="quote-offer-action"
-              onClick={() => {
-                openCard('question')
-              }}
-            >
-              {t('conversation.askAboutThis')}
-            </button>
-          )}
-          {/*
-            Offered only when a language has been set. There is no honest guess
-            at someone's own language, and an action that cannot say which one it
-            would answer in is worse than an absent one.
-          */}
-          {selected.source !== null && explainLanguage !== '' && (
-            <button
-              type="button"
-              className="quote-offer-action"
-              onClick={() => {
-                openCard('explanation')
-              }}
-            >
-              {t('conversation.explainSimply')}
-            </button>
-          )}
-          {/*
-            Gated on a language for the same reason Explain is, and on the same
-            value: an action that cannot say which language it would produce is
-            worse than an absent one.
-
-            A word, not an icon, though the request said "translate icon". The
-            other three are labelled, and one icon among three labels reads as an
-            accident rather than a decision — while an unlabelled icon is the
-            least legible thing on a bar people meet rarely. Icons for all four
-            is defensible and is a different change; mixing is the only option
-            that is not.
-          */}
-          {selected.source !== null && explainLanguage !== '' && (
-            <button
-              type="button"
-              className="quote-offer-action"
-              onClick={() => {
-                openCard('translation')
-              }}
-            >
-              {t('conversation.translateThis')}
-            </button>
-          )}
-        </div>
-      )}
 
       {askingAbout !== null && (
         <QuickQuestion

@@ -73,14 +73,27 @@ export function asideState(view: TranscriptView): AsideState {
  * that could not fit above landed squarely on the passage it was quoting.
  *
  * Everything is measured now. Prefers above, drops below when it does not fit
- * there, and is pushed inside the pane when it fits in neither: entirely visible
- * in the wrong place beats half visible in the right one. A box wider than its
- * pane is centred, because that is the only placement symmetric about an
- * overflow no arithmetic can remove.
+ * there, and is pushed inside the visible band when it fits in neither: entirely
+ * visible in the wrong place beats half visible in the right one. A box wider
+ * than that band is centred, because that is the only placement symmetric about
+ * an overflow no arithmetic can remove.
+ *
+ * **`view` is a band, not a height**, and that is the part worth reading twice.
+ * A box positioned inside the *pane* has a band starting at zero; one positioned
+ * inside the *scrolling content* does not — there, what is on screen is a window
+ * partway down a much taller box. Taking a height and assuming it began at zero
+ * is what would park the offer at the top of the whole transcript.
+ *
+ * Both edges are the caller's to supply, in the same space as `anchor`, and the
+ * honest way to get them is to subtract the origin's rect from the scroller's
+ * rather than to reach for `scrollTop` and padding separately:
+ *
+ *     top    = scoreRect.top    - contentRect.top
+ *     bottom = scoreRect.bottom - contentRect.top
  */
 export function fitCard(
   anchor: SelectionAnchor,
-  pane: { readonly width: number; readonly height: number },
+  view: { readonly width: number; readonly top: number; readonly bottom: number },
   box: { readonly width: number; readonly height: number },
   gap = 8
 ): { left: number; top: number } {
@@ -88,15 +101,15 @@ export function fitCard(
 
   const centred = anchor.centreX - box.width / 2
   const left =
-    pane.width < box.width + margin * 2
-      ? (pane.width - box.width) / 2
-      : Math.max(margin, Math.min(centred, pane.width - box.width - margin))
+    view.width < box.width + margin * 2
+      ? (view.width - box.width) / 2
+      : Math.max(margin, Math.min(centred, view.width - box.width - margin))
 
   const above = anchor.top - box.height - gap
   const below = anchor.top + anchor.height + gap
-  const wanted = above >= margin ? above : below
+  const wanted = above >= view.top + margin ? above : below
 
-  const top = Math.max(margin, Math.min(wanted, pane.height - box.height - margin))
+  const top = Math.max(view.top + margin, Math.min(wanted, view.bottom - box.height - margin))
   return { left, top }
 }
 

@@ -10,7 +10,7 @@ import {
   type AsidePurpose,
   type AsideState,
 } from './aside.js'
-import type { SelectionAnchor } from './quote.js'
+import type { PaneAnchor } from './quote.js'
 import { MarkdownView } from './MarkdownView.js'
 import { EMPTY_VIEW, reduceEvents, type TranscriptView } from './transcript.js'
 import type { TranscriptEvent } from '../../shared/ipc.js'
@@ -78,8 +78,12 @@ export function QuickQuestion(props: {
   language: Promise<string>
   agent: string
   excerpt: string
-  /** The passage, unclamped — the card measures itself and fits from it. */
-  anchor: SelectionAnchor
+  /**
+   * The passage, unclamped, in **pane** coordinates — the card measures itself
+   * and fits from it. Not the offer's anchor, which is relative to the scrolling
+   * content; `openCard` converts.
+   */
+  anchor: PaneAnchor
   /** The parent's profile, offered as the promoted room's starting point. */
   profileId: string
   onClose: () => void
@@ -206,7 +210,9 @@ export function QuickQuestion(props: {
       setAt(
         fitCard(
           props.anchor,
-          { width: pane.clientWidth, height: pane.clientHeight },
+          // The card floats over the pane and does not scroll with the
+          // transcript, so its visible band is the pane, top to bottom.
+          { width: pane.clientWidth, top: 0, bottom: pane.clientHeight },
           { width: el.offsetWidth, height: el.offsetHeight }
         )
       )

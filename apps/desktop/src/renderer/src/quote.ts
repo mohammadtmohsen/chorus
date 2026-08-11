@@ -103,8 +103,40 @@ export function withQuote(draft: string, selection: string): string {
   return `${draft.replace(/\s+$/, '')}\n\n${quote}\n\n`
 }
 
+/** The geometry every anchor carries, whichever box it is measured against. */
+interface Anchor {
+  /** The horizontal centre of the passage. */
+  readonly centreX: number
+  /** Its top edge. */
+  readonly top: number
+  /** How tall it is, so anything dropping below it can clear it. */
+  readonly height: number
+}
+
 /**
- * The passage, in the pane's own coordinates, and nothing decided yet.
+ * Which box an anchor's numbers are relative to.
+ *
+ * Two spaces exist and they used to be one, which is how the offer came to be
+ * measured against a passage that scrolls and placed against a pane that does
+ * not. They are named rather than commented because the same object is handed to
+ * two consumers — the offer, which lives in the scrolling content, and the card,
+ * which floats over the pane — and mixing them is invisible until someone
+ * scrolls. A type error is cheaper than that.
+ */
+export interface ContentAnchor extends Anchor {
+  readonly space: 'content'
+}
+
+export interface PaneAnchor extends Anchor {
+  readonly space: 'pane'
+}
+
+/** Either, for the positioner, which does not care which box it is placing in. */
+export type SelectionAnchor = ContentAnchor | PaneAnchor
+
+/**
+ * The passage, in the coordinates of whatever box it will be positioned inside,
+ * and nothing decided yet.
  *
  * This used to be `anchorFor`, which also chose above-or-below and clamped using
  * a hand-written guess at how wide the offer was. Two things went wrong with
@@ -122,21 +154,34 @@ export function withQuote(draft: string, selection: string): string {
  *
  * `null` when the selection has no rectangle: a collapsed range, or one scrolled
  * entirely out of view.
+ *
+ * `origin` is the box the result is relative to — the scrolling content for the
+ * offer. Subtracting its rect is the whole conversion: `.score-content` moves
+ * with the scroller, so its rect already falls by the scroll amount and adding
+ * `scrollTop` on top would count it twice.
  */
-export interface SelectionAnchor {
-  /** The horizontal centre of the passage. */
-  readonly centreX: number
-  /** Its top edge. */
-  readonly top: number
-  /** How tall it is, so anything dropping below it can clear it. */
-  readonly height: number
-}
-
-export function anchorOf(selection: DOMRect, pane: DOMRect): SelectionAnchor | null {
+export function anchorOf(selection: DOMRect, origin: DOMRect): ContentAnchor | null {
   if (selection.width === 0 && selection.height === 0) return null
   return {
-    centreX: selection.left + selection.width / 2 - pane.left,
-    top: selection.top - pane.top,
+    space: 'content',
+    centreX: selection.left + selection.width / 2 - origin.left,
+    top: selection.top - origin.top,
     height: selection.height,
+  }
+}
+
+/**
+ * The same passage, relative to the pane instead.
+ *
+ * The card is absolutely positioned in the pane and does not scroll with the
+ * transcript, so it needs the passage where it is *now* rather than where it is
+ * in the document. Converted once, at the click, rather than storing both.
+ */
+export function inPane(anchor: ContentAnchor, origin: DOMRect, pane: DOMRect): PaneAnchor {
+  return {
+    space: 'pane',
+    centreX: anchor.centreX + (origin.left - pane.left),
+    top: anchor.top + (origin.top - pane.top),
+    height: anchor.height,
   }
 }

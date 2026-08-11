@@ -2430,4 +2430,103 @@ export const specs = [
       }
     },
   },
+  {
+    name: 'keeps the offer when the transcript scrolls under it',
+    /*
+     * C-025. The offer used to be positioned against the pane while the passage
+     * moved with the scroller, so any scroll left the two disagreeing and the
+     * handler threw the offer away. On a narrow pane that happened several times
+     * a second — the follow logic never settles there — so three shipped actions
+     * and one new one were unreachable, silently.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+        await app.until(`document.querySelector('.composer textarea') !== null`)
+        const id = (await tabIds(app))[0]
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify('__ID__')}, cwd: ${JSON.stringify(process.cwd())} }).then(() => true)`.replace(
+            '__ID__',
+            id
+          )
+        )
+        await app.evaluate(
+          `window.chorus.readSettings().then((s) => window.chorus.writeSettings({ ...s, explainLanguage: 'Arabic' })).then(() => true)`
+        )
+        await app.settle()
+
+        await say(
+          app,
+          'Reply with exactly this sentence and nothing else: The parser reads the header before it reads the body of the message.'
+        )
+        await app.until(
+          `document.querySelector('.entry[data-kind="message"][data-actor="claude"][data-status="complete"]') !== null`,
+          { timeout: 180_000, label: 'the reply landed' }
+        )
+        await app.settle()
+
+        await selectInside(
+          app,
+          '.entry[data-kind="message"][data-actor="claude"][data-status="complete"]'
+        )
+        await app.until(`document.querySelector('.quote-offer') !== null`, {
+          label: 'the offer appears',
+        })
+
+        await app.evaluate(
+          `(() => { document.querySelector('.score').scrollTop -= 40; return true })()`
+        )
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelector('.quote-offer') !== null`)) === true,
+          'scrolling no longer destroys it'
+        )
+
+        // Narrow enough that the bar wraps and the follow logic churns, which is
+        // where this was not merely annoying but total.
+        await app.viewport(460, 900)
+        for (let i = 0; i < 4; i += 1) await app.settle()
+        await selectInside(
+          app,
+          '.entry[data-kind="message"][data-actor="claude"][data-status="complete"]'
+        )
+        for (let i = 0; i < 6; i += 1) await app.settle()
+
+        const narrow = await app.evaluate(`(() => {
+          const bar = document.querySelector('.quote-offer')
+          if (bar === null) return { offer: false }
+          const r = bar.getBoundingClientRect()
+          const score = document.querySelector('.score').getBoundingClientRect()
+          const btns = [...bar.querySelectorAll('.quote-offer-action')]
+          return {
+            offer: true,
+            count: btns.length,
+            rows: new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+            inside: r.top >= score.top - 1 && r.bottom <= score.bottom + 1,
+            hits: btns.every((b) => {
+              const q = b.getBoundingClientRect()
+              const el = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2)
+              return el !== null && b.contains(el)
+            }),
+          }
+        })()`)
+        assert(narrow.offer === true, 'a narrow pane still offers something at all')
+        assert(narrow.inside === true, 'and keeps it inside the scrollport')
+        /*
+         * Clickable, not merely present. Asserting the element exists would pass
+         * with an offer sitting outside the scrollport or under something else,
+         * which is the failure this whole plan is about.
+         */
+        assert(narrow.hits === true, 'and every action is where it is drawn')
+        assert(
+          narrow.rows > 1,
+          `and the bar wrapped, as it must at this width (${String(narrow.rows)} rows)`
+        )
+        await app.viewport()
+      } finally {
+        await app.quit()
+      }
+    },
+  },
 ]

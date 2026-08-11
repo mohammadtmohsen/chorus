@@ -211,6 +211,12 @@ only as injected markup, and now asserted only in the one-row case. The spec is
 written so that the wrapped assertions are a viewport change away once the offer
 survives a narrow pane.
 
+**Since resolved.** `docs/plans/the-offer-that-scrolls-away-2026-08-11` fixed
+C-025, and the four-button bar has now been seen wrapping to four rows on a 160px
+pane in the real app — rounded rectangle, horizontal hairlines, no clipped
+labels, every action hit-testing where it is drawn. The Phase 0 mechanism above
+is no longer verified only against injected markup.
+
 **The full e2e suite has not been run.** This spec was run in isolation, and the
 reasoning for not running the other 26 is written above rather than assumed: they
 do not touch the offer. That is an argument, not a green suite.

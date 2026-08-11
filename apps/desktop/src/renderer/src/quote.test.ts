@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_EXCERPT_CHARS,
   anchorOf,
   asQuote,
   askableSource,
-  MAX_EXCERPT_CHARS,
-  withQuote,
+  inPane,
   type SourceEntry,
+  withQuote,
 } from './quote.js'
 
 /** A completed Claude message — the one shape an aside may be asked about. */
@@ -83,12 +84,12 @@ describe('withQuote', () => {
 describe('anchorOf', () => {
   const pane = rect(100, 50, 400, 600)
 
-  it('reports the passage in the pane’s own coordinates, unclamped', () => {
+  it('reports the passage in the origin box’s own coordinates, unclamped', () => {
     // Deliberately raw. The previous version clamped here against a guess at how
     // wide the offer was, which threw away the geometry anything measuring the
     // real width would have needed.
     const at = anchorOf(rect(200, 300, 100, 20), pane)
-    expect(at).toEqual({ centreX: 150, top: 250, height: 20 })
+    expect(at).toEqual({ space: 'content', centreX: 150, top: 250, height: 20 })
   })
 
   it('keeps a centre outside the pane rather than pulling it in', () => {
@@ -163,5 +164,59 @@ describe('askableSource', () => {
   it('measures the limit after trimming', () => {
     const padded = `  ${'x'.repeat(MAX_EXCERPT_CHARS)}  `
     expect(askableSource(said(), said(), padded)).toEqual(said())
+  })
+})
+
+describe('anchorOf', () => {
+  it('measures the passage against the box it will be placed in', () => {
+    const at = anchorOf(rect(120, 400, 60, 20), rect(20, 100, 500, 900))
+    expect(at).toMatchObject({ space: 'content', centreX: 130, top: 300, height: 20 })
+  })
+
+  it('does not add the scroll a second time', () => {
+    /*
+     * The mistake this pins, which a draft of the plan made: `.score-content`
+     * moves with the scroller, so its rect has already fallen by the scroll
+     * amount. Adding `scrollTop` on top would push the offer down the page by
+     * however far you had scrolled.
+     *
+     * Scrolled 500px: the content's origin is 500px above the scrollport, and
+     * the same passage keeps the same content coordinate.
+     */
+    const unscrolled = anchorOf(rect(0, 300, 100, 20), rect(0, 100, 500, 900))
+    const scrolled = anchorOf(rect(0, -200, 100, 20), rect(0, -400, 500, 900))
+    expect(scrolled?.top).toBe(unscrolled?.top)
+  })
+
+  it('has no anchor for a collapsed selection', () => {
+    expect(anchorOf(rect(0, 0, 0, 0), rect(0, 0, 500, 900))).toBeNull()
+  })
+})
+
+describe('inPane', () => {
+  it('converts to where the passage is now, not where it is in the document', () => {
+    // Content scrolled 500px up inside a pane at y=100: a passage 300px down the
+    // content is 200px below the top of the scroller's own box.
+    const content = anchorOf(rect(40, -200, 100, 20), rect(20, -400, 500, 900))
+    expect(content).not.toBeNull()
+    const at = inPane(content!, rect(20, -400, 500, 900), rect(0, 100, 520, 800))
+    expect(at).toMatchObject({ space: 'pane', centreX: 90, top: -300 })
+  })
+
+  it('is the identity when the two boxes share an origin', () => {
+    const content = anchorOf(rect(40, 300, 100, 20), rect(0, 0, 500, 900))
+    const at = inPane(content!, rect(0, 0, 500, 900), rect(0, 0, 520, 800))
+    expect(at.centreX).toBe(content?.centreX)
+    expect(at.top).toBe(content?.top)
+  })
+
+  it('round-trips a passage back to the rectangle it came from', () => {
+    // Both conversions together land where the browser said the passage was.
+    const selection = rect(140, 620, 80, 24)
+    const contentBox = rect(20, -380, 500, 1400)
+    const paneBox = rect(0, 100, 520, 800)
+    const at = inPane(anchorOf(selection, contentBox)!, contentBox, paneBox)
+    expect(at.top).toBe(selection.top - paneBox.top)
+    expect(at.centreX).toBe(selection.left + selection.width / 2 - paneBox.left)
   })
 })
