@@ -255,6 +255,13 @@ tool read — including the contents of files the permission engine treats as
 secret, which the answer-redaction path deliberately keeps out of the log. Size
 is the lesser problem; deciding what may be written down is the real one.
 
+**One slice has since landed.** `tool.completed` now carries a `patch` for file
+edits, so what an agent _changed_ is in the log in full. That was tractable
+because the secrets question had an existing answer — the field is a string named
+`patch`, so `redactPayload` scrubs it on the way to disk. Nothing about what an
+agent _read_ has changed, which is the harder half and the one this entry is
+about.
+
 **Done when:** either the log carries enough tool output that a conversation can
 be reconstructed from it — with a stated rule about secrets — or it is written
 down that the log records the conversation and not the agent's working set, so the
@@ -316,103 +323,35 @@ case Chorus cannot see: an answer the _provider_ rejects for a reason of its own
 one it accepted, or this is closed with the reason the log deliberately records
 what Chorus did rather than what the provider made of it.
 
-### C-023 · Translate a passage into your own language
+### C-026 · A resize costs two seconds of settling — **measured, and much smaller than filed**
 
-A fourth action on the selection toolbar: render the selected text in the
-reader's own language, faithfully. Asked for as _"english => my language,
-professional translation for the selected text"_.
+Filed as "a narrow pane never stops resizing itself", from an observation that
+the `ResizeObserver` fired fourteen times in 107ms and was "still firing" when
+the measurement ended.
 
-Planned in `docs/plans/translate-a-passage-2026-08-10/plan.md`.
+**That was wrong.** Measured properly in
+`docs/plans/the-pane-that-never-settles-2026-08-11`: a quiet narrow pane costs
+**zero** callbacks over ten seconds, and so does a selection. The 107ms had
+landed inside a settling burst that follows a _resize_, and the burst had simply
+not finished yet. Extrapolating it to "forever" was the error.
 
-**It is not "Explain simply" with a different prompt** — the two are opposites,
-and that is the finding worth keeping. Explain answers _what does this mean_ and
-its output is deliberately **not** the passage: `explainPrompt` says "do not
-restate the passage", caps at about a hundred words and forbids headings, and
-every line of its "leave out" list was earned from a real answer that went wrong.
-Translation's output **is** the passage, in another language. Sharing one prompt
-would mean a single string holding two contradictory instructions, and the first
-bad answer would be edited in a direction that damages the other feature.
+The scrollbar and the spacer were both eliminated by measurement rather than
+argument: `clientWidth` and `offsetWidth` never moved across any callback, and
+`spare` converged monotonically instead of alternating.
 
-So: a third `purpose` on the aside path, with its own prompt. Everything else is
-reuse — the fork, the card, the lifecycle, the language setting, and RTL already
-works from the `unicode-bidi: plaintext` handling.
+**What is actually left:** a resize takes about **38 layout-and-observer cycles
+over roughly two seconds** to converge, where a settle might reasonably take two
+or three. It terminates on its own, nothing is visibly wrong, and it costs
+nothing when the pane is not being resized.
 
-**Three decisions come before any code**, two of them the user's:
+**Why it stays on the board at all:** a resize is a user action, and two seconds
+of churn behind it is perceptible on a slow machine. It is a performance nicety
+now, not a defect.
 
-- **One language setting or two?** `explainLanguage` is free text whose own
-  placeholder suggests _"simple Arabic"_ — a good instruction for an explanation
-  and a strange one for a professional translation.
-- **Icon or label?** The request says "translate icon"; the toolbar is text-only
-  today (`Quote in message`, `Ask about this`, `Explain simply`). One icon among
-  three labels reads as an accident. All four or none.
-- **Does a fourth button fit?** The offer is a small bar anchored to the
-  selection, and four labels may be wider than the passage on a narrow pane.
-
-**Done when:** selecting a passage offers a translation in the language from
-Settings; it reads as a translation rather than a paraphrase or an explanation;
-identifiers, paths and code survive unchanged in their own script; a passage
-already in that language says so rather than paraphrasing; and the action is
-absent when no language is set, as Explain is.
-
-### C-025 · The selection offer never appears on a narrow pane
-
-Found while verifying Phase 0 of `docs/plans/translate-a-passage-2026-08-10`.
-
-At a 460px window the pane measures **160px**, and selecting text inside a
-complete agent reply offers **nothing** — no `.quote-offer` at all. The selection
-itself is fine: not collapsed, real text, a range rect of 84×62. Every guard in
-`readSelection` (`Session.tsx:392`) passes on those facts, so the offer should
-render and does not.
-
-Narrowing an _already open_ offer kills it too, and not only by re-render: an
-inline `width` on `.pane`, which React never sees, is enough to make it vanish.
-That points at the reflow collapsing the DOM selection — `selectionchange` fires,
-`onChange` sees `isCollapsed` and clears — rather than at the layout code.
-
-**Why it matters:** quoting, asking and explaining are all reached only through
-that bar, so on a narrow pane three features are silently unavailable. Silently is
-the problem — nothing says the passage cannot be acted on, and the pane widths
-where it happens are ordinary: a four-way split, or any window near the 360px
-floor `main/index.ts:35` allows.
-
-**Not caused by the divider work**, and not fixed by it. The Phase 0 change was
-verified against injected bars for exactly this reason, which is a weaker check
-than driving the real offer and is called out as such in that plan's STATUS.
-
-**Done when:** selecting inside a reply on a 160px pane offers the same actions it
-offers on a wide one — or, if a selection genuinely cannot survive the reflow,
-the offer is re-derived rather than dropped, so the bar returns instead of
-disappearing for good.
-
-### C-026 · A narrow pane never stops resizing itself
-
-Found by Phase 0 of `docs/plans/the-offer-that-scrolls-away-2026-08-11`, while
-instrumenting something else.
-
-On a **138–159px pane**, the transcript's follow logic does not converge. With
-`clientHeight` and `scrollHeight` constant at 730 and 903 — nothing growing, no
-agent typing — the `ResizeObserver` fired **fourteen times in 107ms, roughly
-every 8ms, and was still firing when the measurement ended**. Each callback finds
-`scrollTop` has drifted to 151–159 and writes it back to 173.
-
-`makeRoom()` (`Session.tsx:280`–`:306`) writes a spacer height, the content
-resizes, the observer wakes, `makeRoom()` runs again. The pane width was measured
-at **138, then 141, then 159** in the same supposedly settled state, which points
-at the scrollbar appearing and disappearing as the loop's pivot.
-
-**Why it matters:** it costs a layout, an observer callback and a scroll write
-every few frames for as long as a narrow pane is open, on the main thread, beside
-a `better-sqlite3` that is already synchronous there. It is invisible unless
-something else breaks — which is how it was found, since each scroll write is
-what destroys the selection offer (C-025).
-
-**Not the same bug as C-025**, and not fixed by fixing it. C-025 is an offer that
-cannot survive a scroll; this is a pane that manufactures scrolls forever. Fixing
-the offer's coordinate space hides this one again.
-
-**Done when:** a pane at 140px reaches a state where the observer stops firing
-with nothing on screen changing — with the count over a fixed window stated,
-since "settles" is exactly the claim that was wrong here.
+**Done when:** either a resize converges in materially fewer cycles — with the
+count before and after stated, over the same stimulus — or this is closed as
+acceptable, with the 38 written down so nobody re-derives the alarm from the
+same observation.
 
 ## Parked, with reasons
 
