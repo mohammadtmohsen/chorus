@@ -7,6 +7,68 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.10.0
+
+### You can see what an agent changed
+
+An `Edit` used to say only which file it touched. To find out what actually
+changed you left Chorus — for the editor, for `git diff`, for the Review panel,
+which can tell you a file changed but not which of the four edits in a turn did
+it, or which agent made it.
+
+Now the diff is drawn under the row, open, with line numbers on both sides and
+the changed lines marked — the same view the Review panel has always used, in the
+place where the work happened. It is the passage of the file that changed plus a
+few lines of context, so a turn with a dozen small edits still reads as a turn
+rather than a wall.
+
+**Only edits made from now on.** The record of a conversation is append-only, so
+edits from before this update have no diff to show and never will. A conversation
+you had yesterday will keep looking the way it did.
+
+A newly created file shows its first dozen lines and says how many it is not
+showing. That number was forty in testing and it buried everything else in the
+turn; what you usually want from a new file is that it appeared and roughly what
+it is.
+
+Codex's edits are not shown this way yet.
+
+### Translate a passage
+
+Select part of a reply and there is a fourth action beside _Quote in message_,
+_Ask about this_ and _Explain simply_: **Translate**. It renders the passage in
+your own language — the passage itself, not an account of it — and leaves
+identifiers, paths and code exactly as written so the result still means the same
+thing.
+
+It uses the same language setting as _Explain simply_, in **Settings → Your
+language**, and the two read it differently on purpose. An explanation follows
+what you wrote, so "simple Arabic" gets you a simpler explanation. A translation
+uses the standard written form of the language, because a professional
+translation takes its register from the passage rather than from a preference.
+Right-to-left languages are laid out properly, with code left-to-right inside
+them.
+
+Like _Explain simply_, the action is absent until a language is set: an action
+that cannot say which language it would answer in is worse than one that is not
+there.
+
+### The actions came back on a narrow pane
+
+On a narrow pane — a small window with the sidebar open is enough — selecting a
+passage offered nothing at all. Not quoting, not asking, not explaining. Nothing
+said why, because nothing was wrong: the offer appeared and was destroyed a few
+milliseconds later, every time.
+
+The offer was positioned against the pane while the passage it points at moves
+with the transcript, so anything that scrolled left the two disagreeing, and the
+offer was thrown away rather than shown in the wrong place. A narrow pane scrolls
+itself while it settles, so it was thrown away faster than it could be made.
+
+It now travels with the passage. As well as fixing the narrow pane, this means
+scrolling a few lines while you decide whether to ask about something no longer
+loses the offer.
+
 ## 0.9.1
 
 ### Asking about a passage works again
