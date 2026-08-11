@@ -64,6 +64,14 @@ like load rather than a second bug.
 Eight hypotheses are dead and written down in the plan's `STATUS.md`, along with
 the instrumentation that killed them. That list is the head start.
 
+**It is not only the slash menu.** During the 0.10.0 release gate, `an @ offers
+the cast, then the project's files` failed on `typing a name found files` in one
+full-suite run, passed in the run before it, and passed alone in 6s immediately
+after. Same shape: a menu that populates over IPC, timing out only under the load
+of a long suite. Whatever this is, it is about the menus rather than about slash
+commands, which widens the search and makes "environmental" the more likely
+answer.
+
 **Done when:** either it is reproduced with a named cause, or it survives a long
 quiet run often enough to call the earlier failures environmental — with the
 number of runs stated rather than implied.

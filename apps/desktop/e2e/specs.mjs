@@ -146,6 +146,32 @@ const offerLabels = (page) =>
     `Array.from(document.querySelectorAll('.quote-offer-action')).map((b) => b.textContent.trim())`
   )
 
+/**
+ * Waits until the transcript has stopped moving.
+ *
+ * A selection is a DOM Range over text nodes, so a re-render that replaces them
+ * collapses it and the offer goes with it. `data-status="complete"` means the
+ * message is finished, not that the pane has stopped settling — under a loaded
+ * machine the tail of a turn is still arriving, which is how a spec that passed
+ * alone failed in the suite.
+ *
+ * Waits for a stable content height rather than for an event, because it is the
+ * layout that has to be still, and that is what can be observed from out here.
+ */
+const settled = async (page, { timeout = 15_000 } = {}) => {
+  const height = () => page.evaluate(`document.querySelector('.score-content').offsetHeight`)
+  const deadline = Date.now() + timeout
+  let last = await height()
+  let stable = 0
+  while (Date.now() < deadline) {
+    await wait(150)
+    const now = await height()
+    stable = now === last ? stable + 1 : 0
+    last = now
+    if (stable >= 3) return
+  }
+}
+
 export const specs = [
   {
     name: 'opens straight into a session',
@@ -2352,9 +2378,7 @@ export const specs = [
           `document.querySelector('.entry[data-kind="message"][data-actor="claude"][data-status="complete"]') !== null`,
           { timeout: 180_000, label: 'the reply landed' }
         )
-        await app.settle()
-
-        // A passage of your own message has no agent author to fork.
+        await settled(app)
         const own = await selectInside(app, '.entry[data-actor="user"]')
         assert(own !== '', 'a passage of your own message can be selected')
         await app.until(`document.querySelector('.quote-offer') !== null`, {
@@ -2464,7 +2488,7 @@ export const specs = [
           `document.querySelector('.entry[data-kind="message"][data-actor="claude"][data-status="complete"]') !== null`,
           { timeout: 180_000, label: 'the reply landed' }
         )
-        await app.settle()
+        await settled(app)
 
         await selectInside(
           app,
