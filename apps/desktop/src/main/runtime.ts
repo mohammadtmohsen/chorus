@@ -43,7 +43,7 @@ import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/work
 import type { ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
-import { plainTextOf } from '../shared/plain-text.js'
+import { containsPassage } from '../shared/plain-text.js'
 import { readRemembered, writeRemembered } from './remembered.js'
 import { readSettings } from './settings.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
@@ -755,25 +755,16 @@ export class ChorusRuntime {
     const said = source.payload.text
     const excerpt = request.excerpt.trim()
     /*
-     * Checked against both the source and the text it renders as.
+     * Checked against the reply as the transcript reads, not as the log stores
+     * it — `containsPassage` carries both the projection and why the comparison
+     * ignores serialization-only spacing, measured against the running app.
      *
-     * The renderer sends what `selection.toString()` gave it, which is what the
-     * DOM **shows**; the log holds **markdown**. Comparing only the source
-     * refused any selection containing inline code, emphasis or a link, and any
-     * one crossing a line break inside a paragraph — which is most of them,
-     * because agents write inline code constantly (C-024).
-     *
-     * Both, not just the projection: a selection taken from a fenced code block
-     * matches the source exactly, and that path worked before this and should
-     * keep working whatever the projection does with block code.
-     *
-     * The guard itself stays. It is here because the renderer is the least
-     * trustworthy thing in the process tree — a caller that could name any event
-     * and any excerpt could put words in an agent's mouth and have them quoted
-     * back as its own. Widening it to a second faithful rendering of the *same
-     * reply* does not weaken that.
+     * The guard stays what it was for: the renderer is the least trustworthy
+     * thing in the process tree, and a caller that could name any event and any
+     * excerpt could put words in an agent's mouth and have them quoted back as
+     * its own.
      */
-    if (excerpt === '' || !(said.includes(excerpt) || plainTextOf(said).includes(excerpt))) {
+    if (!containsPassage({ said, excerpt })) {
       throw new Error('That passage is not part of that reply')
     }
 

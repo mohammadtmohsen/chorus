@@ -1299,6 +1299,27 @@ body {
   --voice: var(--faint);
 }
 
+/*
+ * The chrome inside an entry is not part of what was said.
+ *
+ * `.entry` is the element a selection is attributed to, and it holds the
+ * speaker's name, the rail's dot, the handoff button and a code block's language
+ * label alongside `.said`. A drag that starts a few pixels above the first line
+ * takes them with it: measured in Chromium, `selection.toString()` came back as
+ * "\nCLAUDE\nHand off\nFirst paragraph…", and a fenced block selected whole came
+ * back as "TSconst a = 1". `openAside` re-checks the selection against the reply
+ * and refused both, because the agent never said either of those words.
+ *
+ * `user-select: none` takes them out of the serialization entirely — which is
+ * also what you want when copying a passage to paste somewhere else.
+ */
+.tick,
+.speaker,
+.handoff-action,
+.md-lang {
+  user-select: none;
+}
+
 /* The note on the rail. */
 .tick {
   position: absolute;

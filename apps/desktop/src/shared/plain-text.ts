@@ -26,6 +26,50 @@ export function plainTextOf(markdown: string): string {
 }
 
 /**
+ * Whether an excerpt is genuinely part of a reply — compared as the transcript
+ * *reads*, not byte for byte.
+ *
+ * `plainTextOf` closed the gap between the markdown and the DOM's words. It did
+ * not close the gap between the DOM's words and the DOM's **whitespace**, and
+ * that gap refused most real selections. Measured in Chromium against the
+ * entry's own markup rather than reasoned about (C-024 follow-up):
+ *
+ * | Selection | `selection.toString()` | this file projected |
+ * |---|---|---|
+ * | across two paragraphs | `…two.\n\nSecond…` | `…two.\nSecond…` |
+ * | a heading | `A HEADING` | `A heading` |
+ * | a table | `Col A\tCol B` | `Col A Col B` |
+ *
+ * Every one of those was refused, and the first is *any* drag over more than one
+ * paragraph — which is what selecting an answer normally is.
+ *
+ * None of the three is a disagreement about what was said. Block boundaries and
+ * table cells serialize with different whitespace, while the heading's capitals
+ * come from `text-transform: uppercase` on `.md-h`. `blockText` projects that
+ * visible case, and both sides are collapsed to one space per run of whitespace.
+ *
+ * **The guard itself is unchanged in what it is for.** It exists because the
+ * renderer is the least trustworthy thing in the process tree: a caller that
+ * could name any event and any excerpt could put words in an agent's mouth and
+ * have them quoted back as its own. Case stays significant because it can change
+ * a code identifier, path or command even when every letter is otherwise the
+ * same.
+ *
+ * The reply's own source is still tried first, because a selection inside a
+ * fenced code block matches it exactly and that path predates all of this.
+ */
+export function containsPassage({ said, excerpt }: { said: string; excerpt: string }): boolean {
+  const passage = asRead(excerpt)
+  if (passage === '') return false
+  return asRead(said).includes(passage) || asRead(plainTextOf(said)).includes(passage)
+}
+
+/** One space per run of whitespace — the only shape neither side agreed on. */
+function asRead(text: string): string {
+  return collapse(text)
+}
+
+/**
  * A paragraph's newlines become spaces; a code block's do not.
  *
  * That is not a detail — it is the whole reason this cannot be one rule.
@@ -36,8 +80,10 @@ export function plainTextOf(markdown: string): string {
 function blockText(block: Block): string {
   switch (block.kind) {
     case 'paragraph':
-    case 'heading':
       return collapse(inlineText(block.content))
+    case 'heading':
+      // `.md-h` uses `text-transform: uppercase`; selections carry what is shown.
+      return collapse(inlineText(block.content)).toUpperCase()
     case 'code':
       return block.text
     case 'list':
