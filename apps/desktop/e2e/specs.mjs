@@ -1573,42 +1573,37 @@ export const specs = [
         await started(app)
 
         /*
-         * Claude is the agent whose AskUserQuestion tool this path serves.
+         * Claude is the agent whose AskUserQuestion tool this path serves, and a
+         * fresh session already has it: the default roster is `['claude']`, and
+         * `startConversation` refuses to open a room with nobody in it. There is
+         * nothing to switch on.
          *
-         * Waited for rather than sampled. The chip is disabled until the probe
-         * that finds the CLIs comes back, so reading `disabled` on the first
-         * frame calls an installed agent missing — and the spec then skips
-         * itself and reports green, which is the one outcome worse than failing.
+         * There used to be a preflight here that waited for a chip and clicked
+         * it, and it failed in the worst available way. Its selector
+         * (`.voices--pane .voice`) had stopped matching anything — nothing in
+         * the renderer has carried `voices--pane` for some time, and only the
+         * orphaned CSS rule survives — so it timed out after 60s, hit a `catch`
+         * that read every possible failure as "claude is not installed", and
+         * passed. The spec reported green while testing none of its own subject,
+         * on a machine with claude installed, and cost a minute a run to do it.
+         * That is precisely the outcome the comment here used to warn about.
+         *
+         * So it is an assertion now, not a wait: a room without claude fails on
+         * this line, rather than further down where `@claude` goes unanswered
+         * and the timeout blames the question path.
          */
-        const chip = `Array.from(document.querySelectorAll('.voices--pane .voice'))
-          .find(b => b.textContent.trim() === 'claude')`
-        let usable = true
-        try {
-          await app.until(`(() => { const b = ${chip}; return !!b && !b.disabled })()`, {
-            timeout: 60_000,
-            label: 'the claude chip settled',
-          })
-        } catch {
-          usable = false
-        }
-        if (!usable) {
-          assert(true, 'claude is not installed on this machine, and nothing is claimed')
-          return
-        }
-        await app.evaluate(`(() => {
-          const btn = ${chip}
-          if (btn.dataset.on !== 'true') btn.click()
-          return true
-        })()`)
-        await app.until(
-          `Array.from(document.querySelectorAll('.voices--pane .voice'))
-             .some(b => b.textContent.trim() === 'claude' && b.dataset.on === 'true')`,
-          { timeout: 120_000, label: 'claude joined the conversation' }
+        const inTheRoom = await app.evaluate(
+          `Array.from(document.querySelectorAll('.workspace-session-agents .voice'))
+             .some(b => b.textContent.trim() === 'claude' && b.dataset.on === 'true')`
         )
+        assert(inTheRoom, 'claude is in the room, as a fresh session gives it')
 
         await say(
           app,
-          '@claude Use your AskUserQuestion tool right now to ask me one question: "Which colour?" with options Red and Blue. Do not answer it yourself, just ask.'
+          '@claude Use your AskUserQuestion tool right now to ask me one question: "Which colour?" ' +
+            'with options Red and Blue. Do not answer it yourself, just ask. ' +
+            'Once I have answered, reply with exactly GOT-<my choice in capitals> and nothing else, ' +
+            'for example GOT-GREEN if I had chosen green.'
         )
 
         await app.until(`!!document.querySelector('.question')`, {
@@ -1642,6 +1637,11 @@ export const specs = [
           `the keyboard can answer it without reaching for the mouse (focus: ${card.focused})`
         )
 
+        // Read before clicking, so the acknowledgement below is checked against
+        // the option actually chosen rather than one this spec assumed.
+        const chosen = await app.evaluate(
+          `document.querySelectorAll('.question-option')[0].querySelector('.question-option-label').textContent.trim()`
+        )
         await app.evaluate(`(document.querySelectorAll('.question-option')[0].click(), true)`)
         await wait(400)
         assert(
@@ -1657,16 +1657,37 @@ export const specs = [
         assert(true, 'answering clears the card')
 
         /*
-         * The point of the whole path: the agent is unblocked, and it was the
-         * answer that unblocked it.
+         * The point of the whole path: the agent got the answer — the words of
+         * it, not merely the absence of a deadline.
          *
-         * Asserted as "the turn finished and nothing expired" rather than by
-         * looking for the chosen word in the reply. An agent is free to
-         * acknowledge a choice without repeating it, and a spec that requires it
-         * to fails on a turn of phrase — which says nothing about whether the
-         * answer arrived. The deadline is the thing being ruled out, and it
-         * writes itself into the transcript when it fires.
+         * This used to assert "the turn finished and nothing expired", on the
+         * reasoning that an agent may acknowledge a choice without repeating it
+         * and a spec demanding the word would fail on a turn of phrase. The
+         * reasoning was sound and the conclusion was still too weak, because of
+         * C-019: `userinput.answered` is written when *Chorus sends* the answer,
+         * not when the provider takes it (`conversation-service.ts`). So the
+         * card clearing and no timeout notice are both satisfied by an answer
+         * the provider rejected — which is exactly the state this spec existed
+         * to rule out, and for a while the state the app was actually in.
+         *
+         * The turn-of-phrase objection is answered by *asking* for the format
+         * rather than hoping for it, and by checking the option that was really
+         * clicked instead of one assumed here. If the answer does not arrive,
+         * the agent has nothing to put after `GOT-` and this fails.
          */
+        const token = new RegExp(`GOT-${chosen.toUpperCase()}`, 'i')
+        await app.until(
+          `Array.from(document.querySelectorAll('.entry--claude')).some(e => ${String(token)}.test(e.innerText))`,
+          {
+            timeout: 180_000,
+            label: `claude acknowledged the answer as GOT-${chosen.toUpperCase()}`,
+          }
+        )
+        assert(
+          true,
+          `the agent received the answer itself, and said so: GOT-${chosen.toUpperCase()}`
+        )
+
         await app.until(`!document.querySelector('.send--stop')`, {
           timeout: 180_000,
           label: 'the agent finished its turn',
@@ -1674,7 +1695,7 @@ export const specs = [
         const expired = await app.evaluate(
           `Array.from(document.querySelectorAll('.entry--system')).some(e => /unanswered in time/.test(e.innerText))`
         )
-        assert(expired === false, 'the answer reached the agent rather than the deadline')
+        assert(expired === false, 'and the deadline never fired')
       } finally {
         await app.quit()
       }
