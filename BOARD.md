@@ -519,6 +519,39 @@ command, and a handoff sheet keeps focus across a parent re-render — or it is
 written down that these are covered by unit and harness only, with the reason a
 real approval cannot be provoked on demand.
 
+### C-029 · Four specs fail under the suite that pass on their own
+
+A full run fails 2-3 specs, and **a different subset each time**. Measured across
+several runs while releasing 0.11.0:
+
+| spec                                                       | alone | in a full run   |
+| ---------------------------------------------------------- | ----- | --------------- |
+| `the question stays at the top of the answer it asked for` | 2/3   | fails often     |
+| `offers only the actions a passage can actually take`      | 3/4   | fails sometimes |
+| `an @ offers the cast, then the project's files`           | 3/3   | fails sometimes |
+| `keeps the offer when the transcript scrolls under it`     | 3/3   | fails sometimes |
+
+**None of them is broken.** Each passes in isolation; what they share is failing
+only under the load of twenty-eight specs launching real Electrons and real CLIs
+back to back. `the question stays at the top` was checked against clean
+`origin/main` and fails there too, so this is not from any recent branch.
+
+**Why it matters more than four flaky tests.** `all 28 passed` is currently a
+coin toss, so nobody can use a red run as evidence of anything — which is the
+exact failure C-027 describes from the other side, and it makes C-006's "put
+specs in CI" actively harmful until it is fixed. It also cost real time this
+week: a genuine C-003 failure had to be separated from three innocent ones by
+hand, run by run.
+
+**One of the four is understood.** The `@` spec fails through C-003's blur, and
+that entry has the record. The other three have no diagnosis, and it is worth
+knowing whether they share a mechanism — three different specs going wrong only
+under load is either one environmental cause or three coincidences.
+
+**Done when:** a full run's failures are reproducible enough to name a cause for
+each, or the suite is made to tolerate the load — with the pass rate stated over a
+specific number of runs, before and after.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
