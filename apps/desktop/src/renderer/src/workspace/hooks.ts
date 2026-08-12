@@ -1,5 +1,13 @@
 import { useShallow } from 'zustand/react/shallow'
-import type { WorkspaceLayoutNode, WorkspacePane } from '../../../shared/workspace-layout.js'
+import {
+  TERMINAL_HEIGHT,
+  type TerminalPanelState,
+  type WorkspaceLayoutNode,
+  type WorkspacePane,
+} from '../../../shared/workspace-layout.js'
+
+/** Stable identity, so a selector returning it compares equal to itself. */
+const CLOSED_PANEL: TerminalPanelState = { open: false, height: TERMINAL_HEIGHT.default }
 import { tabLocation } from './layout.js'
 import {
   useWorkspaceStore,
@@ -50,6 +58,11 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     removeSession,
     setSidebarHidden,
     setSidebarWidth,
+    toggleGlobalTerminal,
+    setGlobalTerminalOpen,
+    setGlobalTerminalHeight,
+    toggleSessionTerminal,
+    setSessionTerminalHeight,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -70,6 +83,11 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     removeSession,
     setSidebarHidden,
     setSidebarWidth,
+    toggleGlobalTerminal,
+    setGlobalTerminalOpen,
+    setGlobalTerminalHeight,
+    toggleSessionTerminal,
+    setSessionTerminalHeight,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -104,6 +122,28 @@ export function useWorkspaceLayout(): WorkspaceLayoutView {
  */
 export function usePane(paneId: string): WorkspacePane | undefined {
   return useWorkspaceStore((state) => state.panes[paneId])
+}
+
+/**
+ * The global terminal panel's visibility and height.
+ *
+ * A narrow selector like every other hook here: subscribing to the whole store
+ * would re-render the workspace on every transcript delta, which is the reason
+ * this file exists at all.
+ */
+export function useGlobalTerminal(): TerminalPanelState {
+  return useWorkspaceStore((state) => state.globalTerminal)
+}
+
+/**
+ * One conversation's panel.
+ *
+ * `CLOSED_PANEL` is a module constant rather than an object literal in the
+ * selector: returning a fresh object each call would make the selector never
+ * equal itself and re-render the pane on every store change.
+ */
+export function useSessionTerminal(conversationId: string): TerminalPanelState {
+  return useWorkspaceStore((state) => state.terminals[conversationId] ?? CLOSED_PANEL)
 }
 
 export function useSidebarHidden(): boolean {

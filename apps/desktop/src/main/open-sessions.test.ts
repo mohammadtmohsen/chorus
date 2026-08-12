@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SIDEBAR_WIDTH } from '../shared/workspace-layout.js'
+import { SIDEBAR_WIDTH, TERMINAL_HEIGHT } from '../shared/workspace-layout.js'
 import { parseOpenSessions } from './open-sessions.js'
 
 const session = {
@@ -37,11 +37,71 @@ describe('open session persistence', () => {
     }
     expect(parseOpenSessions({ version: 2, sessions: [session], workspace })).toEqual({
       sessions: [{ ...session, lastSeenSeq: 0, draft: '' }],
-      // The width is defaulted in, not required: this envelope was written
-      // before the sidebar could be resized, and it must still open — at the
-      // width it always had rather than at zero.
-      workspace: { ...workspace, sidebarWidth: SIDEBAR_WIDTH.default },
+      // Everything added since is defaulted in, not required: this envelope was
+      // written before the sidebar could be resized and before terminals
+      // existed, and it must still open — at the width it always had rather
+      // than at zero, with no panels rather than none at all.
+      workspace: {
+        ...workspace,
+        sidebarWidth: SIDEBAR_WIDTH.default,
+        terminals: {},
+        globalTerminal: { open: false, height: TERMINAL_HEIGHT.default },
+      },
     })
+  })
+
+  /*
+   * The failure this guards is silent and total.
+   *
+   * `parseOpenSessions` falls through to a legacy bare-array parse when the v2
+   * schema fails, and that fails too — so a required field added to
+   * `WorkspaceSnapshot` returns `{ sessions: [] }` and **every open conversation
+   * is lost**, not merely the layout, with no error anywhere. A fixture written
+   * before terminals existed is the only thing that catches it.
+   */
+  it('still restores the sessions from a workspace written before terminals existed', () => {
+    const beforeTerminals = {
+      version: 2,
+      sessions: [session],
+      workspace: {
+        layout: { kind: 'leaf' as const, paneId: 'pane-1' },
+        panes: {
+          'pane-1': { id: 'pane-1', tabs: ['conversation-1'], activeTabId: 'conversation-1' },
+        },
+        focusedPaneId: 'pane-1',
+        sidebarHidden: false,
+        sidebarWidth: 400,
+      },
+    }
+    const parsed = parseOpenSessions(beforeTerminals)
+    expect(parsed.sessions).toHaveLength(1)
+    expect(parsed.workspace).not.toBeNull()
+    expect(parsed.workspace?.sidebarWidth).toBe(400)
+    expect(parsed.workspace?.globalTerminal).toEqual({
+      open: false,
+      height: TERMINAL_HEIGHT.default,
+    })
+    expect(parsed.workspace?.terminals).toEqual({})
+  })
+
+  it('keeps a stored panel rather than defaulting over it', () => {
+    const parsed = parseOpenSessions({
+      version: 2,
+      sessions: [session],
+      workspace: {
+        layout: { kind: 'leaf' as const, paneId: 'pane-1' },
+        panes: {
+          'pane-1': { id: 'pane-1', tabs: ['conversation-1'], activeTabId: 'conversation-1' },
+        },
+        focusedPaneId: 'pane-1',
+        sidebarHidden: false,
+        sidebarWidth: 336,
+        terminals: { 'conversation-1': { open: true, height: 310 } },
+        globalTerminal: { open: true, height: 180 },
+      },
+    })
+    expect(parsed.workspace?.terminals['conversation-1']).toEqual({ open: true, height: 310 })
+    expect(parsed.workspace?.globalTerminal).toEqual({ open: true, height: 180 })
   })
 
   it('keeps a draft that was never sent', () => {

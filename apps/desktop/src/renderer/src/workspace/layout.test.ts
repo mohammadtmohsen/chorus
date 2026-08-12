@@ -18,6 +18,7 @@ import {
 
 function onePane(...tabs: string[]): WorkspaceSnapshot {
   return {
+    ...EMPTY_WORKSPACE,
     layout: { kind: 'leaf', paneId: 'pane-1' },
     panes: { 'pane-1': { id: 'pane-1', tabs, activeTabId: tabs[0] ?? null } },
     focusedPaneId: 'pane-1',
@@ -29,6 +30,7 @@ function onePane(...tabs: string[]): WorkspaceSnapshot {
 /** Same pane, but able to say which tab holds the caret. */
 function withActive(tabs: string[], activeTabId: string | null): WorkspaceSnapshot {
   return {
+    ...EMPTY_WORKSPACE,
     layout: { kind: 'leaf', paneId: 'pane-1' },
     panes: { 'pane-1': { id: 'pane-1', tabs, activeTabId } },
     focusedPaneId: 'pane-1',
@@ -185,6 +187,7 @@ describe('workspace layout', () => {
   it('reconciles duplicates and unknown tabs without reopening closed sessions', () => {
     const result = reconcileWorkspace(
       {
+        ...EMPTY_WORKSPACE,
         layout: {
           kind: 'branch',
           orientation: 'row',
@@ -232,5 +235,61 @@ describe('workspace layout', () => {
     const workspace = splitTab(onePane('a', 'b'), 'b', 'pane-1', 'right', 'pane-2')
     const resized = setBranchSizes(workspace, [], [3, 1])
     expect(resized.layout).toMatchObject({ sizes: [0.75, 0.25] })
+  })
+})
+
+describe('terminal panels across a restore', () => {
+  const withPanels = (terminals: Record<string, { open: boolean; height: number }>) => ({
+    ...EMPTY_WORKSPACE,
+    layout: { kind: 'leaf' as const, paneId: 'pane-1' },
+    panes: { 'pane-1': { id: 'pane-1', tabs: ['a'], activeTabId: 'a' } },
+    focusedPaneId: 'pane-1',
+    terminals,
+  })
+
+  it('keeps a panel whose conversation is still open', () => {
+    const restored = reconcileWorkspace(withPanels({ a: { open: true, height: 300 } }), ['a'])
+    expect(restored.terminals['a']).toEqual({ open: true, height: 300 })
+  })
+
+  /*
+   * Without this the map grows forever — every conversation ever ended leaves an
+   * entry behind — and an id that came round again would inherit a panel someone
+   * opened for something else.
+   */
+  it('drops a panel whose conversation is gone', () => {
+    const restored = reconcileWorkspace(
+      withPanels({ a: { open: true, height: 300 }, ghost: { open: true, height: 300 } }),
+      ['a']
+    )
+    expect(restored.terminals['ghost']).toBeUndefined()
+    expect(restored.terminals['a']).toBeDefined()
+  })
+
+  /*
+   * The global panel is its own field precisely so that pruning by conversation
+   * cannot reach it. A keyed map would lose it the first time anything tidied up.
+   */
+  it('never prunes the global panel, whatever happens to conversations', () => {
+    const saved = { ...withPanels({ ghost: { open: true, height: 300 } }) }
+    const restored = reconcileWorkspace(
+      { ...saved, globalTerminal: { open: true, height: 200 } },
+      []
+    )
+    expect(restored.globalTerminal).toEqual({ open: true, height: 200 })
+  })
+
+  it('clamps a stored height that could not be dragged to', () => {
+    const restored = normalizeWorkspace({
+      ...EMPTY_WORKSPACE,
+      globalTerminal: { open: true, height: 99_999 },
+    })
+    expect(restored.globalTerminal.height).toBeLessThanOrEqual(720)
+  })
+
+  it('survives a workspace that never had panels', () => {
+    const restored = reconcileWorkspace(null, ['a'])
+    expect(restored.terminals).toEqual({})
+    expect(restored.globalTerminal.open).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { launch } from './harness.mjs'
 
@@ -27,6 +27,36 @@ import { launch } from './harness.mjs'
 
 const APP = new URL('..', import.meta.url).pathname
 const BUNDLE = join(APP, 'release/mac-arm64/Chorus.app/Contents/MacOS/Chorus')
+const UNPACKED = join(APP, 'release/mac-arm64/Chorus.app/Contents/Resources/app.asar.unpacked')
+
+/**
+ * node-pty's `spawn-helper` ships mode 0644 and electron-builder copies the mode
+ * through verbatim, so without the repair in `build/sign-adhoc.cjs` the packaged
+ * terminal dies with a bare `posix_spawnp failed.` — measured on 2026-08-12, not
+ * inferred.
+ *
+ * Checked as a file rather than by driving a terminal because the failure is in
+ * the packaging arrangement, and a file check catches it before the app boots. A
+ * node-pty bump that reorganises `prebuilds/` fails here too, which is the point:
+ * the repair hard-codes a path, and a silent miss would restore the bug.
+ */
+function checkSpawnHelper(check) {
+  const helper = join(
+    UNPACKED,
+    'node_modules/node-pty/prebuilds',
+    `darwin-${process.arch}`,
+    'spawn-helper'
+  )
+  if (!existsSync(helper)) {
+    check(false, `spawn-helper is in the bundle (looked in ${helper})`)
+    return
+  }
+  check(true, 'spawn-helper is in the bundle, outside the asar')
+  check(
+    (statSync(helper).mode & 0o111) !== 0,
+    'spawn-helper is executable, so a PTY can actually spawn'
+  )
+}
 
 async function main() {
   if (!existsSync(BUNDLE)) {
@@ -39,6 +69,10 @@ async function main() {
     checks.push({ ok, label })
     console.log(`  ${ok ? '✓' : '✗'} ${label}`)
   }
+
+  // Before the app boots: nothing here needs a window, and a bad bundle should
+  // say so in milliseconds rather than after a three-minute agent handshake.
+  checkSpawnHelper(check)
 
   const app = await launch({ executable: BUNDLE })
   try {

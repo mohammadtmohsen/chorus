@@ -377,5 +377,18 @@
     "explainingPending": "Explaining this",
     "translating": "Translating into {{language}}",
     "translatingPending": "Translating this"
+  },
+  "terminal": {
+    "sessionTitle": "Terminal — {{project}}",
+    "globalTitle": "Terminal",
+    "toggle": "Toggle terminal",
+    "openGlobal": "Open a terminal",
+    "closeGlobal": "Close the terminal",
+    "hide": "Hide",
+    "resize": "Resize the terminal",
+    "exited": "exited with code {{code}}",
+    "toggleHint": "Toggle this terminal",
+    "shortcutSession": "⌘J",
+    "shortcutGlobal": "⌘⇧J"
   }
 }

@@ -2,10 +2,15 @@ import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type { ContextUsagePush, TasksPush, TranscriptEvent } from '../../../shared/ipc.js'
 import { countsAsUnread } from '../../../shared/unread.js'
-import type { WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
+import type { TerminalPanelState, WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
+import { TERMINAL_HEIGHT } from '../../../shared/workspace-layout.js'
+
+/** A panel nobody has opened yet. */
+const CLOSED_PANEL: TerminalPanelState = { open: false, height: TERMINAL_HEIGHT.default }
 import {
   activateTab,
   clampSidebarWidth,
+  clampTerminalHeight,
   closePane,
   closeTab,
   EMPTY_WORKSPACE,
@@ -74,11 +79,12 @@ export interface BackgroundTaskView {
 }
 
 /** Drops one key without `delete`, which the lint rules forbid on a computed key. */
-function without(
-  pulses: Readonly<Record<string, SessionPulse>>,
+/** Drop one conversation's entry from a by-conversation map, whatever it holds. */
+function without<T>(
+  entries: Readonly<Record<string, T>>,
   conversationId: string
-): Record<string, SessionPulse> {
-  return Object.fromEntries(Object.entries(pulses).filter(([id]) => id !== conversationId))
+): Record<string, T> {
+  return Object.fromEntries(Object.entries(entries).filter(([id]) => id !== conversationId))
 }
 
 const EMPTY_PULSE: SessionPulse = {
@@ -125,6 +131,13 @@ export interface WorkspaceActions {
   replaceSession: (previousId: string, nextId: string) => void
   removeSession: (conversationId: string) => void
   setSidebarHidden: (hidden: boolean) => void
+  toggleGlobalTerminal: () => void
+  setGlobalTerminalOpen: (open: boolean) => void
+  /** Committed on release, not per frame — same trade as the sidebar's width. */
+  setGlobalTerminalHeight: (height: number) => void
+  /** Toggles one conversation's panel, leaving every other one alone. */
+  toggleSessionTerminal: (conversationId: string) => void
+  setSessionTerminalHeight: (conversationId: string, height: number) => void
   /** Committed on drop, not on every pointer move; see `useSidebarResize`. */
   setSidebarWidth: (width: number) => void
   ingestEvents: (events: readonly TranscriptEvent[]) => void
@@ -142,6 +155,8 @@ function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
     focusedPaneId: state.focusedPaneId,
     sidebarHidden: state.sidebarHidden,
     sidebarWidth: state.sidebarWidth,
+    terminals: state.terminals,
+    globalTerminal: state.globalTerminal,
   }
 }
 
@@ -316,7 +331,51 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           const location = tabLocation(state, conversationId)
           const next =
             location === null ? snapshot(state) : closeTab(state, location.paneId, conversationId)
-          return { ...next, pulses: without(state.pulses, conversationId) }
+          /*
+           * Its panel's visibility goes too. A conversation that ends and is
+           * later replaced by one that reuses nothing should not inherit a panel
+           * someone opened for the old one.
+           */
+          return {
+            ...next,
+            pulses: without(state.pulses, conversationId),
+            terminals: without(state.terminals, conversationId),
+          }
+        })
+      },
+      toggleGlobalTerminal: () => {
+        set((state) => ({
+          globalTerminal: { ...state.globalTerminal, open: !state.globalTerminal.open },
+        }))
+      },
+      setGlobalTerminalOpen: (open) => {
+        set((state) => ({ globalTerminal: { ...state.globalTerminal, open } }))
+      },
+      setGlobalTerminalHeight: (height) => {
+        set((state) => ({
+          globalTerminal: { ...state.globalTerminal, height: clampTerminalHeight(height) },
+        }))
+      },
+      toggleSessionTerminal: (conversationId) => {
+        set((state) => {
+          const current = state.terminals[conversationId] ?? CLOSED_PANEL
+          return {
+            terminals: {
+              ...state.terminals,
+              [conversationId]: { ...current, open: !current.open },
+            },
+          }
+        })
+      },
+      setSessionTerminalHeight: (conversationId, height) => {
+        set((state) => {
+          const current = state.terminals[conversationId] ?? CLOSED_PANEL
+          return {
+            terminals: {
+              ...state.terminals,
+              [conversationId]: { ...current, height: clampTerminalHeight(height) },
+            },
+          }
         })
       },
       setSidebarHidden: (sidebarHidden) => {

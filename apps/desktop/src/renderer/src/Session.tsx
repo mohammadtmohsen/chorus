@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
 import { fitCard, type AsidePurpose } from './aside.js'
@@ -16,7 +16,9 @@ import {
   type PaneAnchor,
   type SourceEntry,
 } from './quote.js'
-import type { IdeContextPush } from '../../shared/ipc.js'
+import type { IdeContextPush, TerminalRefShape } from '../../shared/ipc.js'
+import { TerminalPanel } from './TerminalPanel.js'
+import { useSessionTerminal, useWorkspaceActions } from './workspace/hooks.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
@@ -37,9 +39,16 @@ import {
  * cards are the sharp case: they focus a control so Enter can answer them, and
  * a click landing anywhere inside one would hand the caret straight back to the
  * composer and undo that.
+ *
+ * `.terminal-panel` is here for a reason the tag list cannot cover: xterm types
+ * into a hidden `<textarea>` that is a *sibling* of the rendered rows rather
+ * than an ancestor, so a click on the terminal's own output matched none of the
+ * tags above and the composer took the caret. Typing into the shell then went
+ * into the message box — observed, with the characters landing under the
+ * transcript.
  */
 const FOCUS_KEEPS_ITS_OWN =
-  'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question'
+  'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question, .terminal-panel'
 
 /**
  * The transcript entry a DOM node sits inside, in the shape `askableSource`
@@ -131,6 +140,21 @@ export function Session(props: {
     ideIncluded: props.carry?.ideIncluded ?? true,
   })
   const [error, setError] = useState<string | null>(null)
+
+  /*
+   * This session's terminal panel.
+   *
+   * Both live in the workspace store rather than here, because `⌘J` is handled
+   * by a document-level listener in `Workspace` and this component may not even
+   * be mounted when it fires — and because the store is what gets persisted, so
+   * a panel is where you left it after a relaunch.
+   */
+  const terminal = useSessionTerminal(conversationId)
+  const { toggleSessionTerminal, setSessionTerminalHeight } = useWorkspaceActions()
+  const terminalRef = useMemo<TerminalRefShape>(
+    () => ({ scope: 'session', conversationId }),
+    [conversationId]
+  )
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const [summarising, setSummarising] = useState(false)
@@ -1193,6 +1217,47 @@ export function Session(props: {
             setHandoff(null)
           }}
           onError={setError}
+        />
+      )}
+
+      {/*
+       * This session's terminal, between the transcript and the dock.
+       *
+       * `.pane` is a flex column whose only stretching child is `.score`, so a
+       * fixed-height row lands here without touching an existing rule. Above the
+       * composer rather than below it: the composer is where you talk to an
+       * agent and stays adjacent to the approvals it answers.
+       *
+       * Mounted only while open. The shell is in main and outlives this, so
+       * closing the panel detaches a view and kills nothing.
+       */}
+      {terminal.open && (
+        <TerminalPanel
+          terminal={terminalRef}
+          title={t('terminal.sessionTitle', { project: shortenPath(props.session.cwd) })}
+          height={terminal.height}
+          onHeightChange={(height) => {
+            /*
+             * No `commitLayout` bypass here, unlike the sash and the sidebar.
+             * Those fire per frame and need the debounce skipped on release;
+             * this fires *once*, on release already, so the 180ms window in
+             * `App` is exactly what it is for.
+             */
+            setSessionTerminalHeight(conversationId, height)
+          }}
+          onClose={() => {
+            toggleSessionTerminal(conversationId)
+          }}
+          onFocusAway={() => {
+            /*
+             * Put the caret back where someone would expect it. Queried from the
+             * pane rather than held as a ref because the composer is several
+             * components down and this is the only thing that ever asks.
+             */
+            pane.current?.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()
+          }}
+          variant="session"
+          shortcut={t('terminal.shortcutSession')}
         />
       )}
 

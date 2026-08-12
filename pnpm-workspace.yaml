@@ -9,6 +9,11 @@ allowBuilds:
   esbuild: true
   electron: true
   better-sqlite3: true
+  # The terminal's PTY. Its `install` script only *checks* that a prebuild for
+  # this platform exists and exits 0 — it compiles nothing on a supported
+  # target — so this entry is belt and braces rather than what produces the
+  # binding. See docs/plans/a-terminal-in-every-session-2026-08-12/plan.md §3.
+  node-pty: true
   # A Windows installer builder pulled in by electron-builder. macOS only for
   # v1.0 (plan §10), so it has nothing to do here.
   electron-winstaller: false

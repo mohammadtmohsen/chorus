@@ -8,10 +8,12 @@ import {
   IDE_PUSH_CHANNEL,
   CONTEXT_PUSH_CHANNEL,
   TASKS_PUSH_CHANNEL,
+  TERMINAL_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   IPC_CONTRACT,
   type IdeContextPush,
   type IpcChannel,
+  type IpcRequest,
   type IpcResponse,
   type TranscriptEvent,
 } from '../shared/ipc.js'
@@ -118,6 +120,47 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       await runtime.refreshLimits()
       return OK
     },
+
+    'terminal:attach': async (request: IpcRequest<'terminal:attach'>) => {
+      const size =
+        request.cols === undefined || request.rows === undefined
+          ? undefined
+          : { cols: request.cols, rows: request.rows }
+      return await runtime.attachTerminal(request.ref, size)
+    },
+
+    'terminal:detach': (request: IpcRequest<'terminal:detach'>) => {
+      runtime.detachTerminal(request.ref, request.epoch)
+      return Promise.resolve(OK)
+    },
+
+    'terminal:dispose': (request: IpcRequest<'terminal:dispose'>) => {
+      runtime.disposeTerminal(request.ref, request.epoch)
+      return Promise.resolve(OK)
+    },
+
+    'terminal:write': (request: IpcRequest<'terminal:write'>) => {
+      runtime.writeTerminal(request.ref, request.epoch, request.data)
+      return Promise.resolve(OK)
+    },
+
+    'terminal:resize': (request: IpcRequest<'terminal:resize'>) => {
+      runtime.resizeTerminal(request.ref, request.epoch, request.cols, request.rows)
+      return Promise.resolve(OK)
+    },
+
+    'terminal:ack': (request: IpcRequest<'terminal:ack'>) => {
+      runtime.ackTerminal(request.ref, request.epoch, request.seq)
+      return Promise.resolve(OK)
+    },
+
+    'terminal:clear': (request: IpcRequest<'terminal:clear'>) => {
+      runtime.clearTerminal(request.ref, request.epoch)
+      return Promise.resolve(OK)
+    },
+
+    'terminal:describe': (request: IpcRequest<'terminal:describe'>) =>
+      Promise.resolve(runtime.describeTerminal(request.ref)),
 
     'app:setBadge': (request: { count: number }) => {
       // macOS shows the number; other platforms show a dot or nothing, which is
@@ -653,6 +696,21 @@ export function forwardTasksToRenderer(runtime: ChorusRuntime): void {
   runtime.onTasksReported((push) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(TASKS_PUSH_CHANNEL, push)
+    }
+  })
+}
+
+/**
+ * Push terminal output to the renderer.
+ *
+ * Broadcast to every window rather than routed, like the other pushes here: the
+ * `ref` and `epoch` on each payload are what a view filters on, and a window
+ * with no terminal attached simply has no listener that cares.
+ */
+export function forwardTerminalToRenderer(runtime: ChorusRuntime): () => void {
+  return runtime.onTerminalOutput((push) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(TERMINAL_PUSH_CHANNEL, push)
     }
   })
 }

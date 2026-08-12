@@ -200,6 +200,21 @@ export const IdeSnapshotResult = z.discriminatedUnion('outcome', [
 ])
 export type IdeSnapshotResult = z.infer<typeof IdeSnapshotResult>
 
+/**
+ * Which terminal — a discriminated union, never a nullable conversation id.
+ *
+ * The global terminal belongs to no conversation. Flattening that to a nullable
+ * field, or to a `'global'` sentinel sharing a namespace with real ids, is how
+ * it ends up deleted by something iterating conversations. As a union an unknown
+ * scope is a parse failure at this boundary rather than a lookup miss three
+ * layers in.
+ */
+export const TerminalRefShape = z.discriminatedUnion('scope', [
+  z.object({ scope: z.literal('global') }),
+  z.object({ scope: z.literal('session'), conversationId: z.string() }),
+])
+export type TerminalRefShape = z.infer<typeof TerminalRefShape>
+
 export const IPC_CONTRACT = {
   'app:getInfo': { request: z.void(), response: AppInfo },
   /**
@@ -907,6 +922,97 @@ export const IPC_CONTRACT = {
     request: z.object({ conversationId: z.string() }),
     response: IdeSnapshotResult,
   },
+
+  /**
+   * Mount a terminal view, spawning its shell if nothing has yet.
+   *
+   * Returns the screen as escape sequences rather than a suffix of raw output,
+   * because VT state is cumulative and a trimmed byte ring loses the
+   * alternate-screen entry and the colour that came before it — `vim` remounts
+   * blank. The `epoch` supersedes any previous attachment and stamps everything
+   * after it.
+   */
+  'terminal:attach': {
+    request: z.object({
+      ref: TerminalRefShape,
+      cols: z.number().int().min(1).optional(),
+      rows: z.number().int().min(1).optional(),
+    }),
+    response: z.object({
+      epoch: z.number().int(),
+      snapshot: z.string(),
+      seq: z.number().int(),
+      cols: z.number().int(),
+      rows: z.number().int(),
+    }),
+  },
+
+  /**
+   * Unmount a view. **This is not a kill** — the shell keeps running.
+   *
+   * React effect cleanup calls this, and only this. If it disposed, backgrounding
+   * a tab would kill a running build, which is the whole reason the PTY lives in
+   * main rather than beside the component.
+   */
+  'terminal:detach': {
+    request: z.object({ ref: TerminalRefShape, epoch: z.number().int() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /** Kill the shell. A conversation ending, or the user asking explicitly. */
+  'terminal:dispose': {
+    request: z.object({ ref: TerminalRefShape, epoch: z.number().int() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  'terminal:write': {
+    request: z.object({ ref: TerminalRefShape, epoch: z.number().int(), data: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /** New geometry, so `SIGWINCH` fires and `vim` reflows. */
+  'terminal:resize': {
+    request: z.object({
+      ref: TerminalRefShape,
+      epoch: z.number().int(),
+      cols: z.number().int().min(1),
+      rows: z.number().int().min(1),
+    }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /**
+   * The view has consumed output up to `seq`.
+   *
+   * The wire half of flow control. Without it the watermark can only see the
+   * headless mirror in main, and a renderer that cannot keep up accumulates an
+   * unbounded queue in the process that must not stall.
+   */
+  'terminal:ack': {
+    request: z.object({ ref: TerminalRefShape, epoch: z.number().int(), seq: z.number().int() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /**
+   * Throw away the scrollback, as `⌘K` does in Terminal.app.
+   *
+   * Goes through main because the snapshot a remount restores from lives there:
+   * clearing only the view would put every cleared line back on the next tab
+   * switch. The shell is not told — `⌘K` is a display action, and a half-typed
+   * command survives it.
+   */
+  'terminal:clear': {
+    request: z.object({ ref: TerminalRefShape, epoch: z.number().int() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /** Whether killing this would lose work, for a confirmation to decide on. */
+  'terminal:describe': {
+    request: z.object({ ref: TerminalRefShape }),
+    response: z
+      .object({ running: z.boolean(), foreground: z.string(), busy: z.boolean() })
+      .nullable(),
+  },
 } as const
 
 /**
@@ -1001,6 +1107,39 @@ export const TasksPush = z.object({
 })
 export type TasksPush = z.infer<typeof TasksPush>
 
+/**
+ * Terminal output, and the shell's exit.
+ *
+ * A push and **never a log event**. The log records the conversation, a shell is
+ * a second stream that happens to share a pane, and the global terminal has no
+ * `conversationId` to file one under at all. It is also the sharpest instance of
+ * the unsolved half of C-021 — `cat .env`, `env`, a pasted token — and nothing
+ * scrubs a shell.
+ *
+ * `seq` is monotonic per terminal so a view can align a snapshot against the
+ * live stream; `epoch` lets main's pushes be ignored by a view that has since
+ * been superseded. One push carries a frame's worth of chunks, so `seq` is the
+ * last one it contains.
+ */
+export const TERMINAL_PUSH_CHANNEL = 'terminal:output'
+
+export const TerminalPush = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('data'),
+    ref: TerminalRefShape,
+    epoch: z.number().int(),
+    seq: z.number().int(),
+    data: z.string(),
+  }),
+  z.object({
+    kind: z.literal('exit'),
+    ref: TerminalRefShape,
+    epoch: z.number().int(),
+    code: z.number().int(),
+  }),
+])
+export type TerminalPush = z.infer<typeof TerminalPush>
+
 export const EventsPush = z.array(TranscriptEvent)
 export type EventsPush = z.infer<typeof EventsPush>
 
@@ -1083,6 +1222,43 @@ export interface ChorusApi {
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly onTasks: (listener: (tasks: TasksPush) => void) => () => void
+
+  /**
+   * Subscribe **before** attaching, not after.
+   *
+   * `attach` returns a snapshot taken at a sequence number; anything the shell
+   * writes between that snapshot being taken and a subscription going live would
+   * otherwise be lost. Subscribing first and discarding pushes at or below the
+   * snapshot's `seq` closes it from this side — the alternative, buffering
+   * per-attachment in main, puts an unbounded queue in the process that must not
+   * stall.
+   */
+  readonly onTerminalOutput: (listener: (push: TerminalPush) => void) => () => void
+  readonly attachTerminal: (
+    request: IpcRequest<'terminal:attach'>
+  ) => Promise<IpcResponse<'terminal:attach'>>
+  readonly detachTerminal: (
+    request: IpcRequest<'terminal:detach'>
+  ) => Promise<IpcResponse<'terminal:detach'>>
+  readonly disposeTerminal: (
+    request: IpcRequest<'terminal:dispose'>
+  ) => Promise<IpcResponse<'terminal:dispose'>>
+  readonly writeTerminal: (
+    request: IpcRequest<'terminal:write'>
+  ) => Promise<IpcResponse<'terminal:write'>>
+  readonly resizeTerminal: (
+    request: IpcRequest<'terminal:resize'>
+  ) => Promise<IpcResponse<'terminal:resize'>>
+  readonly ackTerminal: (
+    request: IpcRequest<'terminal:ack'>
+  ) => Promise<IpcResponse<'terminal:ack'>>
+  readonly clearTerminal: (
+    request: IpcRequest<'terminal:clear'>
+  ) => Promise<IpcResponse<'terminal:clear'>>
+  readonly describeTerminal: (
+    request: IpcRequest<'terminal:describe'>
+  ) => Promise<IpcResponse<'terminal:describe'>>
+
   readonly knownModels: () => Promise<IpcResponse<'agents:models'>>
   readonly mcpServers: () => Promise<IpcResponse<'agents:mcp'>>
   readonly accounts: () => Promise<IpcResponse<'agents:account'>>

@@ -10,7 +10,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "pnpm --filter @chorus/desktop dev",
+    "postinstall": "node scripts/fix-spawn-helper.mjs",
+    "dev": "node scripts/fix-spawn-helper.mjs && pnpm --filter @chorus/desktop dev",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",

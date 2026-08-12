@@ -57,6 +57,35 @@
   --tok-removed: #ef7f92;
 
   /*
+   * The terminal's sixteen.
+   *
+   * Tokens rather than a palette handed to xterm, because a hardcoded ANSI set
+   * would be the first thing in this file to ignore the light block below —
+   * every other rule in the app reads a variable, and a terminal drawing #ef7f92
+   * on white would be the one surface that never got the memo.
+   *
+   * Drawn from the syntax hues above wherever a hue exists, so a red in a diff
+   * and a red from `git status` are the same red. The eight "bright" slots are
+   * the same hues lifted, not eight more decisions.
+   */
+  --ansi-black: #3a3552;
+  --ansi-red: #ef7f92;
+  --ansi-green: #9fd39f;
+  --ansi-yellow: #e9a05c;
+  --ansi-blue: #8fb4ef;
+  --ansi-magenta: #c39aef;
+  --ansi-cyan: #7fd1c1;
+  --ansi-white: #ede8df;
+  --ansi-bright-black: #6f6890;
+  --ansi-bright-red: #ff9aab;
+  --ansi-bright-green: #b8e3b8;
+  --ansi-bright-yellow: #ffbb80;
+  --ansi-bright-blue: #aecbff;
+  --ansi-bright-magenta: #d9b8ff;
+  --ansi-bright-cyan: #a3e5d9;
+  --ansi-bright-white: #ffffff;
+
+  /*
    * SF Mono first: it is what Terminal.app draws with on this machine, so the
    * app reads as the same class of tool. The coding faces after it are picked up
    * only if they are installed, and every fallback is still a grid.
@@ -105,6 +134,31 @@
     --tok-property: #2a5fa8;
     --tok-added: #1f7a3a;
     --tok-removed: #b32740;
+
+    /*
+     * The same sixteen, re-decided for a light ground.
+     *
+     * `white` and `bright-white` invert rather than staying pale: a program that
+     * prints white text is asking for its *most prominent* colour, and on a
+     * light background pale is invisible. Every light terminal theme makes this
+     * trade; naming it here stops someone "fixing" it back.
+     */
+    --ansi-black: #2a2640;
+    --ansi-red: #b32740;
+    --ansi-green: #1f7a3a;
+    --ansi-yellow: #a75d15;
+    --ansi-blue: #2a5fa8;
+    --ansi-magenta: #7b3fbf;
+    --ansi-cyan: #10716a;
+    --ansi-white: #5f5975;
+    --ansi-bright-black: #7a7392;
+    --ansi-bright-red: #8e1b30;
+    --ansi-bright-green: #15612c;
+    --ansi-bright-yellow: #82460f;
+    --ansi-bright-blue: #1d4784;
+    --ansi-bright-magenta: #5f2f96;
+    --ansi-bright-cyan: #0a5a54;
+    --ansi-bright-white: #1b1826;
     --ground: #efedf4;
     --raised: #ffffff;
     --sunken: #e5e2ee;
@@ -5643,4 +5697,169 @@ input::placeholder {
        matters more than the rounded shape. */
     border-radius: 8px;
   }
+}
+
+/*
+ * The terminal panels.
+ *
+ * One set of rules for both scopes: a session's terminal sits inside `.pane`
+ * between the transcript and the dock, the global one sits inside
+ * `.workspace-editor` below every pane. Neither needs its own styling, because
+ * what differs is where it is mounted, not what it looks like.
+ *
+ * `.pane` was already a flex column whose only stretching child is `.score`, so
+ * a `flex: 0 0 auto` row drops in without touching a single existing rule —
+ * which is what the comment at the top of `.pane` was rewritten to allow.
+ */
+.terminal-panel {
+  --terminal-height: 240px;
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  height: var(--terminal-height);
+  min-height: 0;
+  background: var(--sunken);
+  border-top: 1px solid var(--line);
+}
+
+/*
+ * The drag handle, sitting *above* the panel's own top edge.
+ *
+ * Absolutely positioned and three pixels tall in each direction rather than
+ * taking a row of its own: a one-pixel border is the right thing to see and the
+ * wrong thing to have to hit. Same trick as `.workspace-sash::after`.
+ */
+.terminal-grip {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: row-resize;
+  z-index: 2;
+}
+
+.terminal-grip:hover,
+.terminal-grip:focus-visible {
+  background: linear-gradient(
+    to bottom,
+    transparent 2px,
+    var(--bone) 2px,
+    var(--bone) 5px,
+    transparent 5px
+  );
+  outline: none;
+}
+
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.terminal-title {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-exited {
+  color: var(--alert);
+  font-size: 11px;
+}
+
+.terminal-action {
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--faint);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 calc(var(--step) * 2);
+  cursor: pointer;
+}
+
+.terminal-action:hover {
+  color: var(--bone);
+  border-color: var(--line);
+}
+
+/*
+ * The emulator's own element. It measures its container, so the container has to
+ * have a size before anything is fitted to it — hence `min-height: 0` on every
+ * ancestor and the zero-size guard in `TerminalView`.
+ */
+.terminal-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: calc(var(--step)) calc(var(--step) * 2);
+  overflow: hidden;
+}
+
+.terminal-surface .xterm {
+  height: 100%;
+}
+
+/*
+ * The editor area becomes a column when the global terminal is open.
+ *
+ * A column rather than the shell's row, so the terminal spans the panes and
+ * stops at the sidebar — which is where VS Code puts it, and the only
+ * arrangement in which the sidebar keeps its full height.
+ */
+.workspace-editor {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-editor > .workspace-layout,
+.workspace-editor > .split-branch,
+.workspace-editor > .workspace-pane,
+.workspace-editor > .workspace-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/*
+ * Let the themed background show through.
+ *
+ * xterm.css sets `.xterm .xterm-viewport { background-color: #000 }` as a
+ * default, and the viewport is absolutely positioned over the whole surface —
+ * so the theme colour that lands on `.xterm` itself is covered, and the terminal
+ * renders on pure black whatever the app's ground is. Measured: `.xterm` carried
+ * `rgb(16, 14, 26)` while the viewport in front of it stayed `rgb(0, 0, 0)`, in
+ * both colour schemes.
+ *
+ * Specificity beats it without `!important` — three classes to xterm's two.
+ */
+.terminal-surface .xterm .xterm-viewport {
+  background-color: transparent;
+}
+
+/*
+ * The shortcut in a terminal's header.
+ *
+ * A key cap rather than plain text, because it is an instruction about the
+ * keyboard sitting next to a button that does the same thing — the shape is what
+ * says "press this" without a sentence explaining it.
+ */
+.terminal-shortcut {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 10px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px calc(var(--step) * 1.5);
+  line-height: 1.5;
+  white-space: nowrap;
 }

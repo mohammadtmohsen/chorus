@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
 import { ALL_AGENTS, shortenPath, type AgentId, type SessionInfo } from '../Session.js'
 import { ActivityBar } from './ActivityBar.js'
+import { TerminalPanel } from '../TerminalPanel.js'
+import type { TerminalRefShape } from '../../../shared/ipc.js'
 import { compactTokens, money } from '../format.js'
 import { SIDEBAR_WIDTH } from '../../../shared/workspace-layout.js'
 import { clampSidebarWidth, leafPaneIds, type SplitDirection } from './layout.js'
@@ -13,6 +15,7 @@ import {
   useAllPulses,
   usePane,
   useSessionPulse,
+  useGlobalTerminal,
   useSidebarHidden,
   useSidebarWidth,
   useTabPaneId,
@@ -99,9 +102,24 @@ function directionalPane(paneId: string, direction: SplitDirection): string | nu
   return candidates[0]?.id ?? null
 }
 
+/** Stable, so `TerminalView`'s effect does not tear down on every render. */
+const GLOBAL_TERMINAL: TerminalRefShape = { scope: 'global' }
+
 export function Workspace(props: WorkspaceProps): React.JSX.Element {
+  const { t } = useTranslation()
   const { layout, focusedPaneId } = useWorkspaceLayout()
-  const { moveTab, splitTab, closeTab, activateTab, focusPane, reorderTab } = useWorkspaceActions()
+  const {
+    moveTab,
+    splitTab,
+    closeTab,
+    activateTab,
+    focusPane,
+    reorderTab,
+    setGlobalTerminalOpen,
+    toggleGlobalTerminal,
+    setGlobalTerminalHeight,
+  } = useWorkspaceActions()
+  const globalTerminal = useGlobalTerminal()
   const sessions = useMemo(
     () => new Map(props.sessions.map((session) => [session.conversationId, session])),
     [props.sessions]
@@ -140,14 +158,68 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       const pane = paneId === null ? undefined : state.panes[paneId]
       const activeId = pane?.activeTabId ?? null
 
-      if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+      /*
+       * Where the caret is, which two of the rules below depend on.
+       *
+       * The handler is `document`-level and in the capture phase, so it sees
+       * every key before the element under the caret does. That is deliberate
+       * for split and pane-focus, and wrong for a terminal: arrows are how you
+       * reach shell history.
+       */
+      const inTerminal = document.activeElement?.closest('.terminal-panel') != null
+
+      /*
+       * `⌘⇧J` toggles the global terminal, from anywhere — including from
+       * inside a terminal, where `⌘J` below is deliberately inert.
+       *
+       * The asymmetry is the design. This one names its target outright, so
+       * there is nothing to resolve and a person standing in the global panel
+       * can close it with the key that opened it.
+       */
+      if (event.metaKey && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'j') {
+        event.preventDefault()
+        state.toggleGlobalTerminal()
+        return
+      }
+
+      /*
+       * `⌘J` toggles the focused pane's session terminal, and goes quiet where
+       * it cannot know which one that is.
+       *
+       * It resolves the session from `focusedPaneId`, which still points at
+       * whatever pane was focused last — so with the caret in the global panel,
+       * acting would toggle a panel somewhere else entirely.
+       */
+      if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'j') {
+        event.preventDefault()
+        if (document.activeElement?.closest('.terminal-panel--global') != null) return
+        if (activeId === null) return
+        state.toggleSessionTerminal(activeId)
+        return
+      }
+
+      /*
+       * The chord does not arm while a terminal has the caret, *and* an armed
+       * chord does not consume an arrow there either.
+       *
+       * Guarding only the arming leaves the real case open: arm it from the
+       * composer, click into the terminal, press ↑ — the window is still live
+       * and the keystroke is still swallowed 1.5 seconds later.
+       */
+      if (
+        event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 'k' &&
+        !inTerminal
+      ) {
         event.preventDefault()
         chordUntil.current = performance.now() + 1_500
         return
       }
 
       const direction = directionFromKey(event.key)
-      if (direction !== null && performance.now() <= chordUntil.current) {
+      if (direction !== null && performance.now() <= chordUntil.current && !inTerminal) {
         event.preventDefault()
         chordUntil.current = 0
         if (paneId === null || activeId === null) return
@@ -247,6 +319,8 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         starting={props.starting}
         onNewSession={props.onNewSession}
         onOpenSettings={props.onOpenSettings}
+        terminalOpen={globalTerminal.open}
+        onToggleTerminal={toggleGlobalTerminal}
       />
       <WorkspaceSidebar
         onOpenHistory={props.onOpenHistory}
@@ -288,6 +362,31 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
             onEnd={props.onEnd}
             onCommitLayout={props.onCommitLayout}
             renderSession={props.renderSession}
+          />
+        )}
+        {/*
+         * The global terminal, inside the editor area rather than the shell.
+         *
+         * Below every pane and beside the sidebar, which is where VS Code puts
+         * it and the only arrangement where the sidebar keeps its full height.
+         * It belongs to no conversation, so it is mounted here and not inside a
+         * `Session` — nothing about a conversation ending should reach it.
+         */}
+        {globalTerminal.open && (
+          <TerminalPanel
+            terminal={GLOBAL_TERMINAL}
+            title={t('terminal.globalTitle')}
+            height={globalTerminal.height}
+            onHeightChange={(height) => {
+              setGlobalTerminalHeight(height)
+              props.onCommitLayout()
+            }}
+            onClose={() => {
+              setGlobalTerminalOpen(false)
+            }}
+            onFocusAway={() => undefined}
+            variant="global"
+            shortcut={t('terminal.shortcutGlobal')}
           />
         )}
       </main>

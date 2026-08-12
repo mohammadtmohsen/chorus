@@ -13,6 +13,7 @@ const focused = (over: Partial<Focused>): Focused => ({
   value: '',
   editable: false,
   inModal: false,
+  inTerminal: false,
   ...over,
 })
 
@@ -109,5 +110,30 @@ describe('nothing behind a modal may take the caret out of it', () => {
     // next — the one case where a card taking the caret from a card is right.
     expect(mayTakeCaret(focused({ tag: 'SELECT', value: 'codex' }))).toBe(true)
     expect(mayTakeCaret(focused({ tag: 'BUTTON', value: 'Allow' }))).toBe(true)
+  })
+})
+
+describe('a terminal keeps its caret', () => {
+  /*
+   * The reported bug: typing into the shell and watching the characters land in
+   * the message box instead.
+   *
+   * xterm types into a hidden textarea it clears after every keystroke, so the
+   * box is empty *by design, permanently*. Every other rule in this file reads
+   * that as an idle box — "nothing in it costs nothing to leave" — which is
+   * exactly backwards for someone mid-command. Emptiness cannot mean idle here.
+   */
+  it('even though its box is empty, which normally means idle', () => {
+    expect(mayTakeCaret(focused({ tag: 'TEXTAREA', value: '', inTerminal: true }))).toBe(false)
+  })
+
+  it('and the same box outside a terminal is still fair game', () => {
+    // The composer on mount, which is the case the emptiness rule exists for.
+    expect(mayTakeCaret(focused({ tag: 'TEXTAREA', value: '' }))).toBe(true)
+  })
+
+  it('however the caret got there — a click, a shortcut, or a tab', () => {
+    // Not keyed on the tag: xterm has moved its input proxy before now.
+    expect(mayTakeCaret(focused({ tag: 'DIV', inTerminal: true }))).toBe(false)
   })
 })
