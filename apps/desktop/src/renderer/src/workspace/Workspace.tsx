@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { WorkspaceLayoutNode } from '../../../shared/workspace-layout.js'
 import { ALL_AGENTS, shortenPath, type AgentId, type SessionInfo } from '../Session.js'
 import { ActivityBar } from './ActivityBar.js'
-import { TERMINAL_HEIGHT, TerminalPanel } from '../TerminalPanel.js'
+import { TerminalPanel } from '../TerminalPanel.js'
 import type { TerminalRefShape } from '../../../shared/ipc.js'
 import { compactTokens, money } from '../format.js'
 import { SIDEBAR_WIDTH } from '../../../shared/workspace-layout.js'
@@ -15,7 +15,7 @@ import {
   useAllPulses,
   usePane,
   useSessionPulse,
-  useGlobalTerminalOpen,
+  useGlobalTerminal,
   useSidebarHidden,
   useSidebarWidth,
   useTabPaneId,
@@ -109,9 +109,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
   const { t } = useTranslation()
   const { layout, focusedPaneId } = useWorkspaceLayout()
   const { moveTab, splitTab, closeTab, activateTab, focusPane, reorderTab } = useWorkspaceActions()
-  const globalTerminalOpen = useGlobalTerminalOpen()
-  const { setGlobalTerminalOpen, toggleGlobalTerminal } = useWorkspaceActions()
-  const [globalTerminalHeight, setGlobalTerminalHeight] = useState<number>(TERMINAL_HEIGHT.default)
+  const globalTerminal = useGlobalTerminal()
+  const { setGlobalTerminalOpen, toggleGlobalTerminal, setGlobalTerminalHeight } =
+    useWorkspaceActions()
   const sessions = useMemo(
     () => new Map(props.sessions.map((session) => [session.conversationId, session])),
     [props.sessions]
@@ -297,7 +297,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         starting={props.starting}
         onNewSession={props.onNewSession}
         onOpenSettings={props.onOpenSettings}
-        terminalOpen={globalTerminalOpen}
+        terminalOpen={globalTerminal.open}
         onToggleTerminal={toggleGlobalTerminal}
       />
       <WorkspaceSidebar
@@ -350,12 +350,15 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
          * It belongs to no conversation, so it is mounted here and not inside a
          * `Session` — nothing about a conversation ending should reach it.
          */}
-        {globalTerminalOpen && (
+        {globalTerminal.open && (
           <TerminalPanel
             terminal={GLOBAL_TERMINAL}
             title={t('terminal.globalTitle')}
-            height={globalTerminalHeight}
-            onHeightChange={setGlobalTerminalHeight}
+            height={globalTerminal.height}
+            onHeightChange={(height) => {
+              setGlobalTerminalHeight(height)
+              props.onCommitLayout()
+            }}
             onClose={() => {
               setGlobalTerminalOpen(false)
             }}

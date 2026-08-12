@@ -17,8 +17,8 @@ import {
   type SourceEntry,
 } from './quote.js'
 import type { IdeContextPush, TerminalRefShape } from '../../shared/ipc.js'
-import { TERMINAL_HEIGHT, TerminalPanel } from './TerminalPanel.js'
-import { useSessionTerminalOpen, useWorkspaceActions } from './workspace/hooks.js'
+import { TerminalPanel } from './TerminalPanel.js'
+import { useSessionTerminal, useWorkspaceActions } from './workspace/hooks.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
@@ -142,9 +142,8 @@ export function Session(props: {
    * not even be mounted when it fires. The height is local for now; Phase 4
    * moves it into the persisted snapshot alongside the layout.
    */
-  const terminalOpen = useSessionTerminalOpen(conversationId)
-  const { toggleSessionTerminal } = useWorkspaceActions()
-  const [terminalHeight, setTerminalHeight] = useState<number>(TERMINAL_HEIGHT.default)
+  const terminal = useSessionTerminal(conversationId)
+  const { toggleSessionTerminal, setSessionTerminalHeight } = useWorkspaceActions()
   const terminalRef = useMemo<TerminalRefShape>(
     () => ({ scope: 'session', conversationId }),
     [conversationId]
@@ -1225,12 +1224,20 @@ export function Session(props: {
        * Mounted only while open. The shell is in main and outlives this, so
        * closing the panel detaches a view and kills nothing.
        */}
-      {terminalOpen && (
+      {terminal.open && (
         <TerminalPanel
           terminal={terminalRef}
           title={t('terminal.sessionTitle', { project: shortenPath(props.session.cwd) })}
-          height={terminalHeight}
-          onHeightChange={setTerminalHeight}
+          height={terminal.height}
+          onHeightChange={(height) => {
+            /*
+             * No `commitLayout` bypass here, unlike the sash and the sidebar.
+             * Those fire per frame and need the debounce skipped on release;
+             * this fires *once*, on release already, so the 180ms window in
+             * `App` is exactly what it is for.
+             */
+            setSessionTerminalHeight(conversationId, height)
+          }}
           onClose={() => {
             toggleSessionTerminal(conversationId)
           }}

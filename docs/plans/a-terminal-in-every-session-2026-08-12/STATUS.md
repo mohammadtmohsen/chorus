@@ -5,8 +5,8 @@
 | 0 — prove it packages                | **shipped**, strategy A chosen | `88668c4` |
 | 1 — the terminal service in main     | **shipped**                    | `f249043` |
 | 2 — IPC and flow control             | **shipped**                    | `5eedd6c` |
-| 3 — the two panels, `⌘J`, the button | **shipped**                    | —         |
-| 4 — persistence                      | not started                    | —         |
+| 3 — the two panels, `⌘J`, the button | **shipped**                    | `9037919` |
+| 4 — persistence                      | **shipped**                    | —         |
 
 On `feat/a-terminal-in-every-session`, branched from `main` rather than from
 `fix/a-suite-that-can-go-red`. The plan's §8.3 asked whether the terminal work
@@ -400,3 +400,84 @@ alternative is threading focus state back through the store.
 - **The probe is not in `specs.mjs`.** It is a throwaway driving the dev build,
   and folding it into the suite waits on C-029 for the reason the plan's §8.3
   gives.
+
+## Phase 4 — shipped
+
+Both panels' visibility and height ride in `WorkspaceSnapshot`, so quitting and
+coming back puts them where you left them.
+
+### The trap, and proof it is closed
+
+The plan called this the sharpest trap in the phase and it was right.
+`parseOpenSessions` falls through to a legacy bare-array parse when the v2 schema
+fails — and that fails too, so it returns `{ sessions: [] }`. **A required field
+here loses every open conversation**, not merely the layout, once, silently, for
+everyone who upgraded.
+
+Both fields are `.default(...)`, and the guard is a fixture written as a
+pre-terminal file. Making `terminals` required turns it red with exactly the
+described failure:
+
+```
+AssertionError: expected { sessions: [], workspace: null } to deeply equal { sessions: [ … ] }
+-   "sessions": [
++   "sessions": [],
+```
+
+That is the whole phase in one assertion.
+
+### Shape
+
+`terminals: Record<conversationId, TerminalPanelState>` plus a separate
+`globalTerminal` — the same two-field split as `TerminalService` in main and the
+store in the renderer, now in the persisted file as well. Three layers, one
+reason: the global panel belongs to no conversation, and nothing that walks
+sessions may reach it. A test asserts pruning cannot touch it.
+
+`reconcileWorkspace` drops panels for conversations that no longer exist, or the
+map grows forever and a reused id inherits a stranger's panel.
+`normalizeWorkspace` clamps a stored height, so a hand-edited file cannot open a
+panel taller than the window.
+
+### What the type system did
+
+Adding two required fields to the `WorkspaceSnapshot` _type_ — while defaulting
+them in the _schema_ — turned every place that builds a snapshot into a compile
+error: `App.tsx`'s write, `normalizeWorkspace`'s return, `EMPTY_WORKSPACE`, and
+four test fixtures. That is the arrangement working as intended: required in
+code so nothing forgets to persist them, optional on disk so nothing breaks
+reading them.
+
+### Verified by doing it
+
+`build/terminal-persist-probe.mjs` launches, opens both panels, drags the global
+one, quits, and launches again against the same user data:
+
+```
+✓ both panels open in the first run
+✓ the global panel can be dragged taller — 330px
+✓ the global panel is open again after a relaunch
+✓ and so is the session's
+✓ at the height it was dragged to, not the default — 330px
+✓ and it is a working shell, not a restored screenshot
+```
+
+The last line is the one worth having: a restored panel re-attaches to a shell
+main started fresh, so it is live rather than a picture.
+
+### Decisions taken here
+
+**No `commitLayout` bypass on a height change.** The sash and the sidebar skip
+the 180ms debounce on release because they fire per _frame_; the terminal grip
+fires once, on release already, so the debounce is exactly what it is for. The
+global panel does commit, matching its neighbours in `Workspace`.
+
+### Not verified
+
+- **The mid-build tab switch was not driven.** Re-attach restoring a snapshot is
+  covered by the IPC probe and by unit tests, but "switch away while a build
+  runs, come back, find it still going" needs two tabs and a long command, and
+  nobody has watched it.
+- **C-026 still not re-measured**, and it is now the oldest outstanding item in
+  this plan.
+- **No frame timings** for an agent streaming beside a live terminal.

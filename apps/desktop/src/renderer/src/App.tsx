@@ -268,6 +268,8 @@ export function App(): React.JSX.Element {
                 focusedPaneId: next.focusedPaneId,
                 sidebarHidden: next.sidebarHidden,
                 sidebarWidth: next.sidebarWidth,
+                terminals: next.terminals,
+                globalTerminal: next.globalTerminal,
               },
             })
             .catch(fail(setError))

@@ -2,10 +2,15 @@ import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type { ContextUsagePush, TasksPush, TranscriptEvent } from '../../../shared/ipc.js'
 import { countsAsUnread } from '../../../shared/unread.js'
-import type { WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
+import type { TerminalPanelState, WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
+import { TERMINAL_HEIGHT } from '../../../shared/workspace-layout.js'
+
+/** A panel nobody has opened yet. */
+const CLOSED_PANEL: TerminalPanelState = { open: false, height: TERMINAL_HEIGHT.default }
 import {
   activateTab,
   clampSidebarWidth,
+  clampTerminalHeight,
   closePane,
   closeTab,
   EMPTY_WORKSPACE,
@@ -104,20 +109,6 @@ const EMPTY_PULSE: SessionPulse = {
 export interface WorkspaceRuntime {
   readonly hydrated: boolean
   readonly pulses: Readonly<Record<string, SessionPulse>>
-  /**
-   * Which terminal panels are on screen.
-   *
-   * Two fields rather than one keyed map, matching `TerminalService` in main and
-   * for the same reason: the global terminal belongs to no conversation, and
-   * anything that iterates sessions must be incapable of reaching it. A
-   * `Record<string, boolean>` with `'global'` as a key would close every
-   * terminal the first time something tidied up after a closed conversation.
-   *
-   * Visibility only. The shell itself lives in main and outlives all of this —
-   * hiding a panel detaches a view, it does not kill anything.
-   */
-  readonly globalTerminalOpen: boolean
-  readonly sessionTerminalsOpen: Readonly<Record<string, boolean>>
 }
 
 export interface WorkspaceActions {
@@ -142,8 +133,11 @@ export interface WorkspaceActions {
   setSidebarHidden: (hidden: boolean) => void
   toggleGlobalTerminal: () => void
   setGlobalTerminalOpen: (open: boolean) => void
+  /** Committed on release, not per frame — same trade as the sidebar's width. */
+  setGlobalTerminalHeight: (height: number) => void
   /** Toggles one conversation's panel, leaving every other one alone. */
   toggleSessionTerminal: (conversationId: string) => void
+  setSessionTerminalHeight: (conversationId: string, height: number) => void
   /** Committed on drop, not on every pointer move; see `useSidebarResize`. */
   setSidebarWidth: (width: number) => void
   ingestEvents: (events: readonly TranscriptEvent[]) => void
@@ -161,6 +155,8 @@ function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
     focusedPaneId: state.focusedPaneId,
     sidebarHidden: state.sidebarHidden,
     sidebarWidth: state.sidebarWidth,
+    terminals: state.terminals,
+    globalTerminal: state.globalTerminal,
   }
 }
 
@@ -262,8 +258,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       ...EMPTY_WORKSPACE,
       hydrated: false,
       pulses: {},
-      globalTerminalOpen: false,
-      sessionTerminalsOpen: {},
       hydrate: (saved, conversationIds, unreadByConversation = {}) => {
         const repaired = reconcileWorkspace(saved, conversationIds)
         set({
@@ -345,23 +339,44 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           return {
             ...next,
             pulses: without(state.pulses, conversationId),
-            sessionTerminalsOpen: without(state.sessionTerminalsOpen, conversationId),
+            terminals: without(state.terminals, conversationId),
           }
         })
       },
       toggleGlobalTerminal: () => {
-        set((state) => ({ globalTerminalOpen: !state.globalTerminalOpen }))
+        set((state) => ({
+          globalTerminal: { ...state.globalTerminal, open: !state.globalTerminal.open },
+        }))
       },
-      setGlobalTerminalOpen: (globalTerminalOpen) => {
-        set({ globalTerminalOpen })
+      setGlobalTerminalOpen: (open) => {
+        set((state) => ({ globalTerminal: { ...state.globalTerminal, open } }))
+      },
+      setGlobalTerminalHeight: (height) => {
+        set((state) => ({
+          globalTerminal: { ...state.globalTerminal, height: clampTerminalHeight(height) },
+        }))
       },
       toggleSessionTerminal: (conversationId) => {
-        set((state) => ({
-          sessionTerminalsOpen: {
-            ...state.sessionTerminalsOpen,
-            [conversationId]: state.sessionTerminalsOpen[conversationId] !== true,
-          },
-        }))
+        set((state) => {
+          const current = state.terminals[conversationId] ?? CLOSED_PANEL
+          return {
+            terminals: {
+              ...state.terminals,
+              [conversationId]: { ...current, open: !current.open },
+            },
+          }
+        })
+      },
+      setSessionTerminalHeight: (conversationId, height) => {
+        set((state) => {
+          const current = state.terminals[conversationId] ?? CLOSED_PANEL
+          return {
+            terminals: {
+              ...state.terminals,
+              [conversationId]: { ...current, height: clampTerminalHeight(height) },
+            },
+          }
+        })
       },
       setSidebarHidden: (sidebarHidden) => {
         set({ sidebarHidden })

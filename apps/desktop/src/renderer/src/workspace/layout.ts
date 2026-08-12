@@ -1,9 +1,16 @@
 import {
   SIDEBAR_WIDTH,
+  TERMINAL_HEIGHT,
   type WorkspaceLayoutNode,
   type WorkspacePane,
   type WorkspaceSnapshot,
 } from '../../../shared/workspace-layout.js'
+
+/** Matches the panel grip's own clamp, so a stored height cannot open absurd. */
+export function clampTerminalHeight(height: number): number {
+  if (!Number.isFinite(height)) return TERMINAL_HEIGHT.default
+  return Math.round(Math.min(TERMINAL_HEIGHT.max, Math.max(TERMINAL_HEIGHT.min, height)))
+}
 
 /** Keeps a persisted or dragged width inside what the shell can actually show. */
 export function clampSidebarWidth(width: number): number {
@@ -22,6 +29,8 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   focusedPaneId: null,
   sidebarHidden: false,
   sidebarWidth: SIDEBAR_WIDTH.default,
+  terminals: {},
+  globalTerminal: { open: false, height: TERMINAL_HEIGHT.default },
 }
 
 interface NormalizedNode {
@@ -141,6 +150,14 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
     focusedPaneId,
     sidebarHidden: workspace.sidebarHidden,
     sidebarWidth: clampSidebarWidth(workspace.sidebarWidth),
+    // Carried through untouched: normalising is about panes and tabs, and a
+    // terminal panel is neither. Pruning by conversation happens in
+    // `reconcileWorkspace`, which is the only place that knows what still exists.
+    terminals: workspace.terminals,
+    globalTerminal: {
+      ...workspace.globalTerminal,
+      height: clampTerminalHeight(workspace.globalTerminal.height),
+    },
   }
 }
 
@@ -457,6 +474,20 @@ export function reconcileWorkspace(
       ])
     ),
   })
+  /*
+   * Panels for conversations that no longer exist go too.
+   *
+   * Without this the map grows forever — every conversation ever ended leaves an
+   * entry — and a new conversation that happened to reuse an id would inherit a
+   * panel someone opened for a different one. The global panel is untouched by
+   * any of this, which is the point of it being its own field.
+   */
+  workspace = {
+    ...workspace,
+    terminals: Object.fromEntries(
+      Object.entries(workspace.terminals).filter(([conversationId]) => allowed.has(conversationId))
+    ),
+  }
   // A legacy file has no opinion about tabs, so preserve the old app's visible
   // launch by opening everything into one group. A v2 workspace does have an
   // opinion: a missing id is a deliberately closed view that must stay closed.
