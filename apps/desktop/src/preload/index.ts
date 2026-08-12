@@ -7,6 +7,8 @@ import {
   ContextUsagePush,
   TasksPush,
   TASKS_PUSH_CHANNEL,
+  TerminalPush,
+  TERMINAL_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   LimitsPush,
   SCALE_PUSH_CHANNEL,
@@ -64,6 +66,13 @@ const api: ChorusApi = {
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   writeConversationLayout: invoke('conversation:layout'),
   refreshLimits: invoke('limits:refresh'),
+  attachTerminal: invoke('terminal:attach'),
+  detachTerminal: invoke('terminal:detach'),
+  disposeTerminal: invoke('terminal:dispose'),
+  writeTerminal: invoke('terminal:write'),
+  resizeTerminal: invoke('terminal:resize'),
+  ackTerminal: invoke('terminal:ack'),
+  describeTerminal: invoke('terminal:describe'),
   setBadge: invoke('app:setBadge'),
   focusWindow: invoke('app:focus'),
   renameConversation: invoke('conversation:rename'),
@@ -144,6 +153,16 @@ const api: ChorusApi = {
     ipcRenderer.on(TASKS_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(TASKS_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onTerminalOutput: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = TerminalPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(TERMINAL_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(TERMINAL_PUSH_CHANNEL, wrapped)
     }
   },
   onScale: (listener) => {

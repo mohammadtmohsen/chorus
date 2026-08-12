@@ -108,6 +108,7 @@ export interface TerminalServiceOptions {
   readonly spawn?: PtySpawner
   readonly env?: NodeJS.ProcessEnv
   readonly scrollback?: number
+  readonly frame?: Frame
 }
 
 /** Lines of history the headless mirror keeps. The bound on memory per shell. */
@@ -128,6 +129,21 @@ const DEFAULT_ROWS = 24
 const PENDING_HIGH = 64
 const PENDING_LOW = 16
 
+/**
+ * Run something on the next frame, returning a cancel.
+ *
+ * Injected so coalescing is testable without waiting on real timers — and so a
+ * test can flush deterministically rather than sleeping and hoping.
+ */
+export type Frame = (run: () => void) => () => void
+
+const timerFrame: Frame = (run) => {
+  const handle = setTimeout(run, 8)
+  return () => {
+    clearTimeout(handle)
+  }
+}
+
 interface Session {
   readonly ref: TerminalRef
   readonly pty: Pty
@@ -137,7 +153,15 @@ interface Session {
   epoch: number
   attached: boolean
   seq: number
+  /** The highest seq the attached view says it has consumed. */
+  ackedSeq: number
   pending: number
+  /** Output waiting for the next frame, so one push carries many chunks. */
+  readonly outbox: string[]
+  /** Cancels the pending flush, or null when none is scheduled. */
+  flush: (() => void) | null
+  /** Waiters for the mirror to have no writes outstanding. See `settled`. */
+  readonly drained: (() => void)[]
   paused: boolean
   exited: boolean
   cols: number
@@ -165,12 +189,14 @@ export class TerminalService {
   private readonly spawner: PtySpawner
   private readonly env: NodeJS.ProcessEnv
   private readonly scrollback: number
+  private readonly frame: Frame
 
   constructor(options: TerminalServiceOptions) {
     this.cwdFor = options.cwdFor
     this.spawner = options.spawn ?? nodePty
     this.env = options.env ?? process.env
     this.scrollback = options.scrollback ?? SCROLLBACK
+    this.frame = options.frame ?? timerFrame
   }
 
   subscribe(listener: (push: TerminalPush) => void): () => void {
@@ -188,11 +214,41 @@ export class TerminalService {
    * attachment — so a `detach` from a view that is unmounting cannot tear down
    * the subscription of the view that replaced it.
    */
-  attach(ref: TerminalRef, size?: { cols: number; rows: number }): TerminalAttachment {
+  async attach(
+    ref: TerminalRef,
+    size?: { cols: number; rows: number }
+  ): Promise<TerminalAttachment> {
     const session = this.find(ref) ?? this.open(ref, size)
+    if (size !== undefined) this.applySize(session, size.cols, size.rows)
+
+    /*
+     * Wait for the mirror before serializing, or the snapshot is behind `seq`.
+     *
+     * `mirror.write` is asynchronous, so serializing with writes outstanding
+     * returns a screen missing the most recent output while `seq` claims to
+     * include it — and the view would then discard the pushes that would have
+     * filled the gap, as being at or below a sequence number it had.
+     *
+     * Everything after the await runs in the same microtask, so no further
+     * output can interleave between the drain and the two reads below: pty data
+     * arrives as I/O, which is a later macrotask. That is what makes the pair
+     * atomic without pausing the shell.
+     */
+    await this.settled(session)
+
+    /*
+     * Anything queued for the previous view is already in the mirror, so it is
+     * already in the snapshot. Sending it too would duplicate it.
+     */
+    session.outbox.length = 0
+    if (session.flush !== null) {
+      session.flush()
+      session.flush = null
+    }
+
     session.epoch += 1
     session.attached = true
-    if (size !== undefined) this.applySize(session, size.cols, size.rows)
+    session.ackedSeq = session.seq
     return {
       epoch: session.epoch,
       snapshot: session.serializer.serialize(),
@@ -200,6 +256,28 @@ export class TerminalService {
       cols: session.cols,
       rows: session.rows,
     }
+  }
+
+  /**
+   * The view has consumed everything up to `seq`.
+   *
+   * This is the other half of `pace`: without it the watermark can only see the
+   * mirror, and a renderer that cannot keep up accumulates an unbounded queue in
+   * a process that must not stall.
+   */
+  ack(ref: TerminalRef, epoch: number, seq: number): void {
+    const session = this.live(ref, epoch)
+    if (session === null) return
+    session.ackedSeq = Math.min(Math.max(seq, session.ackedSeq), session.seq)
+    this.pace(session)
+  }
+
+  /** Resolves when the mirror has no writes outstanding. */
+  private settled(session: Session): Promise<void> {
+    if (session.pending === 0) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      session.drained.push(resolve)
+    })
   }
 
   /** Unmount a view. The shell keeps running; this is not a kill. */
@@ -247,6 +325,19 @@ export class TerminalService {
     this.forget(ref)
     session.mirror.dispose()
     if (!session.exited) session.pty.kill()
+  }
+
+  /**
+   * Kill, but only on behalf of the view that is currently mounted.
+   *
+   * A `dispose` carrying a superseded epoch is a stale click from a view that
+   * has already been replaced, and killing a shell is the least recoverable
+   * thing this surface does. The unguarded `dispose` above stays for the callers
+   * that are not a user gesture — a conversation ending, and quitting.
+   */
+  disposeIfCurrent(ref: TerminalRef, epoch: number): void {
+    if (this.live(ref, epoch) === null) return
+    this.dispose(ref)
   }
 
   /**
@@ -328,7 +419,11 @@ export class TerminalService {
       epoch: 0,
       attached: false,
       seq: 0,
+      ackedSeq: 0,
       pending: 0,
+      outbox: [],
+      flush: null,
+      drained: [],
       paused: false,
       exited: false,
       cols,
@@ -340,6 +435,9 @@ export class TerminalService {
     })
     pty.onExit(({ exitCode }) => {
       session.exited = true
+      // Whatever it wrote on the way out goes first, or the last line of a
+      // failing command is lost behind the notice that it failed.
+      this.drain(session)
       this.emit({ kind: 'exit', ref, epoch: session.epoch, code: exitCode })
     })
 
@@ -349,29 +447,88 @@ export class TerminalService {
   }
 
   /**
-   * One chunk of output: into the mirror, out to whoever is attached.
+   * One chunk of output: into the mirror, and queued for whoever is attached.
    *
    * The mirror is written to unconditionally — that is what makes a snapshot
-   * possible for a panel nobody is looking at — and its callback is what paces
-   * the PTY.
+   * possible for a panel nobody is looking at.
    */
   private absorb(session: Session, data: string): void {
     session.seq += 1
     session.pending += 1
-    if (!session.paused && session.pending >= PENDING_HIGH) {
-      session.paused = true
-      session.pty.pause()
-    }
     session.mirror.write(data, () => {
       session.pending -= 1
-      if (session.paused && session.pending <= PENDING_LOW) {
-        session.paused = false
-        session.pty.resume()
+      if (session.pending === 0) {
+        const waiting = session.drained.splice(0)
+        for (const resolve of waiting) resolve()
       }
+      this.pace(session)
     })
     if (session.attached) {
-      this.emit({ kind: 'data', ref: session.ref, epoch: session.epoch, seq: session.seq, data })
+      session.outbox.push(data)
+      this.schedule(session)
     }
+    this.pace(session)
+  }
+
+  /**
+   * Pause or resume the shell, on the **slower** of its two consumers.
+   *
+   * Two, and revision 2 of the plan counted only one. Waiting on the renderer
+   * alone leaves the headless mirror unthrottled — and when the panel is hidden
+   * there is no renderer attached at all, so nothing would throttle anything and
+   * a firehose corrupts the snapshot the panel exists to restore. Waiting on the
+   * mirror alone lets a renderer that cannot keep up accumulate an unbounded
+   * queue in a process that must not stall.
+   *
+   * Unacked output only counts while something is attached; a detached terminal
+   * is paced by the mirror alone, which is the point.
+   */
+  private pace(session: Session): void {
+    const unacked = session.attached ? session.seq - session.ackedSeq : 0
+    const behind = Math.max(session.pending, unacked)
+    if (!session.paused && behind >= PENDING_HIGH) {
+      session.paused = true
+      session.pty.pause()
+      return
+    }
+    if (session.paused && behind <= PENDING_LOW) {
+      session.paused = false
+      session.pty.resume()
+    }
+  }
+
+  /**
+   * Coalesce a frame's worth of output into one push.
+   *
+   * An optimisation on top of the pacing above, not a substitute for it: it
+   * reduces call count across the bridge, which matters because better-sqlite3
+   * is synchronous on this thread and every agent delta passes through it. It
+   * does not reduce bytes, so it is not flow control — that is `pace`.
+   */
+  private schedule(session: Session): void {
+    if (session.flush !== null) return
+    session.flush = this.frame(() => {
+      session.flush = null
+      this.drain(session)
+    })
+  }
+
+  /** Send whatever has accumulated, as one push carrying the latest seq. */
+  private drain(session: Session): void {
+    if (session.flush !== null) {
+      session.flush()
+      session.flush = null
+    }
+    if (session.outbox.length === 0) return
+    const data = session.outbox.join('')
+    session.outbox.length = 0
+    this.emit({
+      kind: 'data',
+      ref: session.ref,
+      epoch: session.epoch,
+      seq: session.seq,
+      data,
+    })
   }
 
   private emit(push: TerminalPush): void {

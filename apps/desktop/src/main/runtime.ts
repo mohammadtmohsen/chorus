@@ -46,7 +46,13 @@ import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-se
 import { containsPassage } from '../shared/plain-text.js'
 import { readRemembered, writeRemembered } from './remembered.js'
 import { readSettings } from './settings.js'
-import { TerminalService } from './terminal.js'
+import {
+  TerminalService,
+  type TerminalAttachment,
+  type TerminalDescription,
+  type TerminalPush,
+  type TerminalRef,
+} from './terminal.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { findExecutable } from './which.js'
 
@@ -2208,6 +2214,55 @@ export class ChorusRuntime {
   /** Replays a conversation from the log — the only complete record (S3). */
   history(conversationId: string, afterSeq?: number): StoredEvent[] {
     return this.store.read(conversationId, afterSeq === undefined ? {} : { afterSeq })
+  }
+
+  /**
+   * The terminal panels, delegated straight through.
+   *
+   * Thin on purpose: the runtime owns the service's lifetime and knows where a
+   * shell should open, and that is all it contributes. Everything else is the
+   * service's, and putting logic here would be the second place to look for it.
+   */
+  onTerminalOutput(listener: (push: TerminalPush) => void): () => void {
+    return this.terminals.subscribe(listener)
+  }
+
+  async attachTerminal(
+    ref: TerminalRef,
+    size?: { cols: number; rows: number }
+  ): Promise<TerminalAttachment> {
+    return await this.terminals.attach(ref, size)
+  }
+
+  detachTerminal(ref: TerminalRef, epoch: number): void {
+    this.terminals.detach(ref, epoch)
+  }
+
+  /**
+   * Kill a terminal on request.
+   *
+   * Guarded by the epoch like every other write: a `dispose` from a view that
+   * has already been superseded is a stale click, and killing a shell is the
+   * least recoverable thing this surface can do.
+   */
+  disposeTerminal(ref: TerminalRef, epoch: number): void {
+    this.terminals.disposeIfCurrent(ref, epoch)
+  }
+
+  writeTerminal(ref: TerminalRef, epoch: number, data: string): void {
+    this.terminals.write(ref, epoch, data)
+  }
+
+  resizeTerminal(ref: TerminalRef, epoch: number, cols: number, rows: number): void {
+    this.terminals.resize(ref, epoch, cols, rows)
+  }
+
+  ackTerminal(ref: TerminalRef, epoch: number, seq: number): void {
+    this.terminals.ack(ref, epoch, seq)
+  }
+
+  describeTerminal(ref: TerminalRef): TerminalDescription | null {
+    return this.terminals.describe(ref)
   }
 
   async close(): Promise<void> {

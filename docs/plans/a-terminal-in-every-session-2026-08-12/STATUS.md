@@ -3,8 +3,8 @@
 | Phase                                | State                          | Commit    |
 | ------------------------------------ | ------------------------------ | --------- |
 | 0 — prove it packages                | **shipped**, strategy A chosen | `88668c4` |
-| 1 — the terminal service in main     | **shipped**                    | —         |
-| 2 — IPC and flow control             | not started                    | —         |
+| 1 — the terminal service in main     | **shipped**                    | `f249043` |
+| 2 — IPC and flow control             | **shipped**                    | —         |
 | 3 — the two panels, `⌘J`, the button | not started                    | —         |
 | 4 — persistence                      | not started                    | —         |
 
@@ -211,3 +211,101 @@ and a bare shell name defeats it.
   the interactive checks were not re-run there.
 - **Sizes are forwarded, not observed.** `resize` reaches the PTY and the mirror,
   but nothing has yet watched a real `vim` reflow — that needs the panel.
+
+## Phase 2 — shipped
+
+Seven channels, one push channel, and the flow control §4.5 describes. Still no
+UI: the renderer surface is `window.chorus`, and that is what was driven to prove
+it.
+
+### `ack` was a mechanism with no wire
+
+Revision 2 described watermark backpressure driven by renderer acknowledgement
+and then listed an IPC surface with nothing to carry one. `terminal:ack` is that
+wire, and adding it changed the service too: `pace()` now pauses on the **slower
+of** the headless mirror and the attached view, where Phase 1 could only see the
+mirror.
+
+Both halves are load-bearing. Removing the renderer half turns three tests red —
+including "stays paused while an attached view never acknowledges", which is
+exactly the case that would otherwise have shipped broken because the mirror
+happens to keep up.
+
+### The race `attach` closes
+
+Phase 1's `attach` was synchronous and serialized the mirror immediately. But
+`mirror.write` is asynchronous, so a snapshot taken with writes outstanding is
+**behind its own `seq`** — and the view would then discard the pushes that would
+have filled the gap, as being at or below a sequence number it thought it had.
+
+`attach` is now async and awaits the mirror. Everything after the await runs in
+the same microtask, so no further output can interleave between the drain and the
+two reads: pty data arrives as I/O, a later macrotask. That is what makes
+`{ epoch, snapshot, seq }` atomic without pausing the shell. The guard is
+"includes output written immediately before it, with no sleep", and it fails
+against the synchronous version.
+
+### Coalescing, and the exit that would have eaten the last line
+
+One push per frame rather than one per chunk, injected as a `Frame` so tests
+flush deterministically instead of sleeping. It is an optimisation on top of
+`pace`, not a substitute: it reduces call count, not bytes, and mistaking one for
+the other is how a 50MB test passes while dropping output.
+
+The exit path drains the outbox first. Without it a command's last line is lost
+behind the notice that the shell exited.
+
+### The exit criterion that was wrong in both earlier revisions
+
+Revision 1's "does not stall" could pass while silently dropping output. Revision
+2 replaced it with a byte-exact comparison against **the terminal's contents**,
+which cannot hold: a bounded scrollback discards old rows by design, and raising
+it to hold 50MB recreates the memory problem the bound exists to prevent.
+
+Split in two: transport completeness at a fake sink (2,000 chunks reassemble
+byte-for-byte, sequence numbers monotonic), and VT fidelity through
+serialize-and-remount on a small stateful sequence.
+
+### Driven against the real app
+
+`build/terminal-ipc-probe.mjs` launches the built app and exercises the path from
+the renderer, because that is the only honest place: preload → main → service → a
+real PTY → push back.
+
+```
+✓ attach mints an epoch — epoch 1
+✓ output comes back over the push channel
+✓ and a sequence number to align on — seq 1
+✓ the stream is a tty, not a pipe
+✓ the shell is described as running — foreground zsh
+✓ detaching leaves the shell running
+✓ re-attaching supersedes the old epoch — 1 → 2
+✓ the snapshot restores what the previous view saw
+✓ a write on a superseded epoch is ignored
+all 12 passed
+```
+
+The first run failed on `onTerminalOutput is not a function` — a stale `out/`,
+not a defect. Recorded because it is the shape the project's own note warns
+about: suspect the driver before the code.
+
+### Decisions taken here
+
+**`dispose` from the renderer is epoch-guarded; `dispose` from main is not.**
+Killing a shell is the least recoverable thing this surface does, and a `dispose`
+carrying a superseded epoch is a stale click from a view already replaced. The
+unguarded path stays for the two callers that are not a user gesture — a
+conversation ending, and quitting.
+
+**Subscribe-before-attach is documented on the API rather than left to
+discipline.** The alternative — buffering per-attachment in main — puts an
+unbounded queue in the process that must not stall.
+
+### Not verified
+
+- **No frame timings.** The plan asks that an agent streaming in another pane is
+  not stalled, with numbers. That needs two panes and a terminal on screen.
+- **50MB was not pushed across the real bridge.** Completeness is asserted at a
+  fake sink in-process; what that volume costs crossing IPC is a Phase 3
+  measurement.
+- **The probe is dev-build only**, not run against a packaged app.
