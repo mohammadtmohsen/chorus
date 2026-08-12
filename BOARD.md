@@ -392,39 +392,83 @@ command, and a handoff sheet keeps focus across a parent re-render — or it is
 written down that these are covered by unit and harness only, with the reason a
 real approval cannot be provoked on demand.
 
-### C-029 · Four specs fail under the suite that pass on their own — **one down, and the premise was wrong**
+### C-029 · A slow run fails, and load is not why — **measured over 20 runs**
 
-The entry's original prose claimed none of the four was broken and all failed only
-under cumulative load. **Both halves were false**, and its own table said so: two
-of the four are recorded at 2/3 and 3/4 _alone_.
+Filed as "four specs fail under the suite that pass on their own". After twenty
+full-suite runs the shape is different in every particular except the symptom.
 
-**CPU load is eliminated as the cause.** Five full suites passed 28/28 on a
-machine carrying more than twice its core count — the opposite of what "they fail
-under load" predicts.
+**The rate: 6 of 10 clean**, in two separate ten-run batches that agreed exactly.
 
-**The real mechanism was caught in the act.** A debug run watching one window
-recorded `document.hasFocus()` going from true to false **with nothing driving
-it**, ten seconds after a menu opened. The trigger is focus-stealing, not
-contention, which is why an unattended-but-busy machine looks clean and a person
-working the machine sees failures.
+| batch                                  | clean | failing |
+| -------------------------------------- | ----- | ------- |
+| first (contended — other work running) | 6/10  | 4/10    |
+| second (nothing else on the machine)   | 6/10  | 4/10    |
 
-**One of the four is fixed.** `typing a slash offers the commands this project
-actually has` went from **7/10 to 10/10** back to back, via C-003's blur. The `@`
-spec fails through the same mechanism and should be re-measured.
+The second batch exists because the first was taken while a merge and a full
+`pnpm check` ran alongside it, and that had to be ruled out rather than argued
+about. It was not the cause.
 
-A caution learned expensively here: an early five-run baseline came back clean and
-was reported as "does not reproduce". That was withdrawn — the slash spec fails
-about 30% of the time, and five runs have better than a one-in-three chance of
-showing nothing. **Ten runs is the floor for a per-spec rate, and a straight A/B
-beats a remembered baseline**, because the machine drifts between measurements.
+**Duration predicts failure perfectly. Load does not predict duration.**
 
-Still undiagnosed: `the question stays at the top of the answer it asked for` and
-`offers only the actions a passage can actually take`. Neither builds a mention,
-so neither is C-003.
+| run      | wall     | load before → after | result            |
+| -------- | -------- | ------------------- | ----------------- |
+| clean ×6 | 285–324s | —                   | 28/28             |
+| slow ×4  | 400–665s | —                   | 2–3 failures each |
 
-**Done when:** the two remaining specs have a named cause each, or the suite is
-made to tolerate whatever this is — with before/after rates over a stated number
-of runs.
+Every clean run finished in **285–324s**; every failing run took **400–665s**.
+But the load average says the obvious explanation is wrong:
+
+- run 3 started at load **12.19** and passed; run 8 started at **19.11**, the
+  highest in the batch, and passed;
+- run 5 failed while load **fell**, 7.22 → 4.23; run 9, the worst at 665s, sat at
+  a mild 7.75 → 8.52.
+
+**So "they fail under load" is dead**, and so is the focus-stealing story that
+replaced it — that was inferred from a single unprompted window blur (now C-030)
+and never survived a measurement. Something makes a run take twice as long, and
+whatever that is, it is not CPU contention and it is not the machine being busy.
+
+**Which specs, over the clean ten:**
+
+| spec                                                       | rate |
+| ---------------------------------------------------------- | ---- |
+| `keeps the offer when the transcript scrolls under it`     | 4/10 |
+| `offers only the actions a passage can actually take`      | 3/10 |
+| `the question stays at the top of the answer it asked for` | 2/10 |
+
+**The population is not stable and that is a finding, not noise.** The first
+batch had two _sidenav_ specs failing 2/10 each — layout specs that were never on
+this entry's list — and they did not fail once in the second. The worst offender
+swapped places between batches. What survives across both is the quote-offer
+family plus the question spec.
+
+**Two of the original four are fixed and gone from this list.** `typing a slash
+offers the commands this project actually has` and `an @ offers the cast` failed
+**0 times in 20 runs — 560 spec-executions** — after C-003. That is the strongest
+evidence available that the blur fix holds.
+
+**What is known about the survivors.** All three wait on something that appears
+after a selection or a turn completes. The quote offer is built synchronously on
+mouse-up and then _cleared_ by a later `selectionchange` when the selection
+collapses — and a selection is a Range over text nodes, so a re-render that
+replaces them collapses it. That is a hypothesis with a mechanism, not a
+diagnosis: it was never instrumented, because the fix for C-003 landed first and
+this was left.
+
+**Two cautions this entry paid for, worth keeping:**
+
+- **Five runs cannot see a 30% flake.** A five-run baseline came back clean and
+  was reported as "does not reproduce"; it was withdrawn. Ten is the floor for a
+  per-spec rate.
+- **A remembered baseline is worth less than a back-to-back A/B**, because the
+  machine drifts between measurements — identical work took 274s and 665s in one
+  day.
+
+**Done when:** the three surviving specs have a named cause — the obvious next
+move is to instrument _why_ `setSelected(null)` fires, the same "record the
+decision, not the outcome" move that broke C-003 open — or the suite is made to
+tolerate whatever doubles a run's wall clock, with the rate restated over ten
+runs.
 
 ### C-030 · Something blurs this machine's windows unprompted
 
@@ -435,9 +479,15 @@ ten seconds after a menu opened.
 
 **Why it matters:** it is the reason C-003 was reachable at all. A blur that
 nobody asks for is what turns "the menu never comes back" from a theoretical bug
-into one a user meets, and it is the best current explanation for C-029's
-remaining flakes. It also means any future measurement here has a hidden
-variable in it.
+into one a user meets, and it means any measurement of window behaviour here has
+a hidden variable in it.
+
+**It is not the explanation for C-029, and this entry used to claim it was.**
+That claim came from one observation and was never measured. Twenty full-suite
+runs since then put every C-003 spec at 0 failures and leave three specs failing
+that have nothing to do with focus — and the load evidence there kills the wider
+"the machine was busy" story too. This stays open on its own merits, not as
+another entry's cause.
 
 Candidates never eliminated: `mediaanalysisd` (seen at 171% CPU), Spotlight
 indexing, a notification, or something in the window server. Whether it happens
