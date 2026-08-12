@@ -108,10 +108,18 @@ const GLOBAL_TERMINAL: TerminalRefShape = { scope: 'global' }
 export function Workspace(props: WorkspaceProps): React.JSX.Element {
   const { t } = useTranslation()
   const { layout, focusedPaneId } = useWorkspaceLayout()
-  const { moveTab, splitTab, closeTab, activateTab, focusPane, reorderTab } = useWorkspaceActions()
+  const {
+    moveTab,
+    splitTab,
+    closeTab,
+    activateTab,
+    focusPane,
+    reorderTab,
+    setGlobalTerminalOpen,
+    toggleGlobalTerminal,
+    setGlobalTerminalHeight,
+  } = useWorkspaceActions()
   const globalTerminal = useGlobalTerminal()
-  const { setGlobalTerminalOpen, toggleGlobalTerminal, setGlobalTerminalHeight } =
-    useWorkspaceActions()
   const sessions = useMemo(
     () => new Map(props.sessions.map((session) => [session.conversationId, session])),
     [props.sessions]
@@ -161,20 +169,11 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       const inTerminal = document.activeElement?.closest('.terminal-panel') != null
 
       /*
-       * `⌘J` toggles the focused pane's session terminal.
+       * `⌘⇧J` toggles the global terminal, from anywhere — including from
+       * inside a terminal, where `⌘J` below is deliberately inert.
        *
-       * Inert while the caret is in the global terminal. The handler resolves
-       * "which session" from `focusedPaneId`, which still points at whatever
-       * pane was focused last — so without this, typing `⌘J` in the global panel
-       * would toggle a panel somewhere else entirely.
-       */
-      /*
-       * `⌘⇧J` toggles the global terminal, and unlike `⌘J` it works from
-       * anywhere — including from inside a terminal.
-       *
-       * There is nothing to resolve: `⌘J` has to answer "which session", which
-       * is why it goes inert when the caret is somewhere that cannot answer.
-       * This one names its target outright, so a person in the global terminal
+       * The asymmetry is the design. This one names its target outright, so
+       * there is nothing to resolve and a person standing in the global panel
        * can close it with the key that opened it.
        */
       if (event.metaKey && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'j') {
@@ -183,6 +182,14 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         return
       }
 
+      /*
+       * `⌘J` toggles the focused pane's session terminal, and goes quiet where
+       * it cannot know which one that is.
+       *
+       * It resolves the session from `focusedPaneId`, which still points at
+       * whatever pane was focused last — so with the caret in the global panel,
+       * acting would toggle a panel somewhere else entirely.
+       */
       if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'j') {
         event.preventDefault()
         if (document.activeElement?.closest('.terminal-panel--global') != null) return

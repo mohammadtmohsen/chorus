@@ -39,15 +39,12 @@ import {
  * cards are the sharp case: they focus a control so Enter can answer them, and
  * a click landing anywhere inside one would hand the caret straight back to the
  * composer and undo that.
- */
-/*
- * Clicking one of these does not hand the caret to the composer.
  *
  * `.terminal-panel` is here for a reason the tag list cannot cover: xterm types
- * into a hidden `<textarea>` that is a *sibling* of the rendered rows, not an
- * ancestor, so a click on the terminal's own output matches none of the tags
- * above and the composer took the caret. Typing into the shell then went into
- * the message box instead — observed, with the characters landing under the
+ * into a hidden `<textarea>` that is a *sibling* of the rendered rows rather
+ * than an ancestor, so a click on the terminal's own output matched none of the
+ * tags above and the composer took the caret. Typing into the shell then went
+ * into the message box — observed, with the characters landing under the
  * transcript.
  */
 const FOCUS_KEEPS_ITS_OWN =
@@ -147,10 +144,10 @@ export function Session(props: {
   /*
    * This session's terminal panel.
    *
-   * Visibility lives in the workspace store rather than here, because `⌘J` is
-   * handled by a document-level listener in `Workspace` and this component may
-   * not even be mounted when it fires. The height is local for now; Phase 4
-   * moves it into the persisted snapshot alongside the layout.
+   * Both live in the workspace store rather than here, because `⌘J` is handled
+   * by a document-level listener in `Workspace` and this component may not even
+   * be mounted when it fires — and because the store is what gets persisted, so
+   * a panel is where you left it after a relaunch.
    */
   const terminal = useSessionTerminal(conversationId)
   const { toggleSessionTerminal, setSessionTerminalHeight } = useWorkspaceActions()
