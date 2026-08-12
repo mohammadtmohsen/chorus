@@ -34,59 +34,6 @@ _Empty. C-001 was the only entry and it shipped._
 
 ## Open
 
-### C-003 · The residual menu failure — **cause named, fixed, awaiting merge**
-
-**Fixed on `fix/a-suite-that-can-go-red`, not yet on `main`.** Kept here rather
-than moved out because nothing has merged and no person has driven the built app
-yet; it leaves the board when both are true.
-
-**The cause was the blur, and it took three attempts to fix.** `onBlur` cleared
-the mention unconditionally and nothing undid it — `refreshMention` runs on
-change, select and keydown, and focus returning is none of those. Reproduced on
-demand at the OS level: steal the window's focus with another application and
-give it back, and the record returns `mention: none`, `rows: 0`, `value: "/"`,
-`caret: 1` — the failing run above, field for field.
-
-That also explains the `focused: true` in the original record, which had looked
-impossible: **a window losing focus fires `blur` on the element while
-`document.activeElement` still points at it.**
-
-The three attempts, because two of them measured _worse_ than doing nothing and
-only the suite caught them:
-
-| attempt                                     | slash spec  |
-| ------------------------------------------- | ----------- |
-| `focused`, defaulting to false              | 2 / 5 runs  |
-| `leftBox`, cleared by typing                | 9 / 10      |
-| **a window blur is not the box being left** | **10 / 10** |
-
-The first died on something worth knowing: **Chromium defers a focus event while
-the document itself is unfocused**, so an Electron launched behind another window
-takes `el.focus()`, sets `activeElement`, and dispatches nothing. A gate keyed on
-a focus event that never arrives can never open.
-
-What finally worked was a distinction nobody had drawn: alt-tabbing away is not
-leaving the box — the caret is still in it, and still in it on return — so a blur
-arriving with `document.hasFocus()` false is ignored.
-
-**Measured back to back on one machine: 7/10 without, 10/10 with. Five full
-suites, 28/28 each.**
-
-Two defects were found and fixed alongside it, neither of which needed a
-reproduction because both are readable in the code: an **invisible menu could
-still swallow a keystroke** (interception was gated on row count, which C-003's
-fix made able to disagree with visibility), and the mention's validity check was
-**text equality alone**, which let a stale mention reactivate whenever the same
-text returned and let `choose` splice a stamped offset against a live caret.
-
-**One limit is recorded rather than fixed:** while the window lacks OS focus,
-moving focus between controls inside it does not close the menu either. Close to
-unreachable — clicking inside a window focuses it.
-
-**Done when:** merged to `main`, and `@c` typed by hand in the installed build
-with `data-mention-live` read to confirm which state it is in — because `@c` with
-no menu looks identical whether the box was left or the mention went.
-
 ### C-004 · Measure what catch-up actually costs
 
 In a shared room each agent is fed what the other said, up to 12,000 characters a
@@ -386,29 +333,23 @@ nothing when the pane is not being resized.
 of churn behind it is perceptible on a slow machine. It is a performance nicety
 now, not a defect.
 
+**A second resize path now exists, and the obvious instrument does not work.**
+The terminal panel resizes `.score` on every toggle and every drag, so this is
+slightly more reachable than it was. Measuring it was attempted and abandoned:
+counting frames until `.score`'s geometry stops moving is **not valid in a driven
+window**, because Electron throttles `requestAnimationFrame` when the window is
+not frontmost — it produced 0, then 1, then hung. That is C-031's problem wearing
+different clothes.
+
+The original 38 came from wrapping the app's own `ResizeObserver`, which has to be
+installed **before the renderer's scripts run**. The harness attaches after load,
+so re-measuring needs a harness change rather than another probe. That is the
+next step, and it is the same change C-031 would want.
+
 **Done when:** either a resize converges in materially fewer cycles — with the
 count before and after stated, over the same stimulus — or this is closed as
 acceptable, with the 38 written down so nobody re-derives the alarm from the
 same observation.
-
-### C-027 · Nothing stops a spec passing without testing anything — **fixed, awaiting merge**
-
-**Fixed on `fix/a-suite-that-can-go-red` (`294d910`), not yet on `main`.**
-
-The runner had two outcomes and now has three. `skip(reason)` throws a sentinel
-the runner counts separately, spec 5's two `assert(true, …)` sites use it, and
-`all N passed` is now reserved for the case that earns it — nothing skipped and
-nothing failed. A spec finishing with **zero** assertions is a failure.
-
-Verified against four fake specs rather than against this machine's account: the
-only real skips fire on an account with no plan window, and a criterion that
-depends on the tester's billing plan is not a criterion. Both new guards were
-mutated to confirm the tests fail without them.
-
-Two sites, at most one skip — they are mutually exclusive branches, so a run
-reports `28 passed` or `27 passed, 1 skipped`, never two.
-
-**Done when:** merged to `main`.
 
 ### C-028 · The blocking cards are only ever tested away from the app
 
@@ -528,6 +469,52 @@ a second display, a headless window, or a `WebContents`-level blur that does not
 touch the window server — or the suite states plainly that these specs need an
 idle machine and skips with a reason when it cannot get one, which C-027's
 mechanism now makes possible.
+
+### C-032 · The terminal is covered by seven throwaway probes and no specs
+
+`apps/desktop/build/*-probe.mjs` and `pty-smoke.cjs` drive the real app and cover
+things nothing else does: a shell surviving its own view, `⌘K` clearing both the
+screen and main's mirror, the caret staying in the terminal on a click, panels
+returning at the right height after a relaunch, and the packaged bundle spawning
+a PTY at all.
+
+They are not run by anything. `pnpm e2e` does not know about them, CI cannot run
+them, and each has to be remembered by name.
+
+**Why they were not written as specs:** C-029. A suite whose result needs two
+runs to interpret is a poor home for coverage of a feature nobody has used for
+long, and the plan said so rather than adding to the pile.
+
+**Why it matters anyway:** every one of them found something. Two found defects
+that four earlier probes had missed, and one — the `⌘K` chord check — passed with
+the guard removed until it was rewritten to measure `defaultPrevented`. That is
+C-027's failure mode in new code, caught only because someone mutated the guard.
+
+**Done when:** the coverage lives somewhere that runs on its own, or the files are
+deleted with a note saying what was given up. Sitting in `build/` as neither is
+the outcome to avoid.
+
+### C-033 · Nothing decides whether killing a terminal loses work
+
+`TerminalService.describe()` reports `{ running, foreground, busy }`, and nothing
+consumes it. Ending a conversation kills its shell without asking, and quitting
+kills the global one — mid-`ssh`, mid-`psql`, mid-migration, with no confirmation.
+
+The plan deliberately built the _answer_ without choosing the _policy_, so that
+all three candidates — never ask, ask when busy, ask only on quit — sit on top
+without changing a signature.
+
+**One measurement that constrains the choice.** `busy` is an instantaneous
+sample, not a claim about the next second. A probe asserting it stayed true
+failed with foreground `zsh` while a `for … echo … sleep` loop was demonstrably
+still running, because between sleeps the foreground _is_ the shell. **A
+confirmation keyed on `busy` alone would say "nothing running" mid-loop and kill
+the work it exists to protect.** Whatever ships needs either a window rather than
+a sample, or a different signal.
+
+**Done when:** a terminal with live work either cannot be killed silently, or it
+can and that is written down as a decision with the reason — and if it asks, the
+signal it asks on is not a single sample of `busy`.
 
 ## Parked, with reasons
 
