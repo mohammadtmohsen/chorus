@@ -69,6 +69,29 @@ export function menuVisible(
   return rows > 0 || (mention !== null && lookup !== null)
 }
 
+/**
+ * Whether the menu may take a keystroke before the composer sees it.
+ *
+ * **Both halves, and each one was learned separately.**
+ *
+ * `rows > 0` alone was the original rule, and its reason still stands: the menu
+ * also opens with no rows to say a lookup is running, and letting that menu take
+ * keys makes `% rows` a division by zero and — worse — swallows Enter, so a
+ * message beginning with `/` could not be sent while the list was arriving.
+ *
+ * `visible` is the half added with C-003's fix, because that fix made the two
+ * able to disagree. Visibility is now gated on the box not having been left,
+ * while `rows` is derived from the mention alone — so a menu can be off screen
+ * with fifty rows behind it. Keying off `rows` there means an **invisible menu
+ * swallowing an arrow key**: the caret does not move, history recall does not
+ * run, and nothing on screen explains why.
+ *
+ * A listbox nobody can see is not a listbox. It should not hold the keyboard.
+ */
+export function menuTakesKeys(visible: boolean, rows: number): boolean {
+  return visible && rows > 0
+}
+
 export interface MentionOption {
   /** What is inserted, without the leading trigger. */
   readonly insert: string

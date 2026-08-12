@@ -163,14 +163,53 @@ reactivate when the same text returns, and one that a moved caret cannot splice.
 **Exit:** the branch installed via `pnpm app:install`, and `@c` typed by hand,
 then alt-tab away and back.
 
-## Needs a decision before Phase 3
+## Decided — an intra-app blur keeps closing the menu
 
-**Should an intra-app blur close the menu at all?** Today clicking the transcript
-closes it and returning to the box reopens it. The screenshot that reopened this
-cannot distinguish that from the bug, and Phase 4's alt-tab check does not answer
-it either — alt-tab is a _window_ blur, which is now deliberately ignored. This
-is a product decision and it changes what Phase 3 is allowed to do, so it is
-wanted before the fix rather than after.
+**Kept, and the second reason is the stronger one.**
+
+The menu floats over the transcript, and clicking into the transcript is almost
+always to select a passage — that is the quote-offer path. A fifty-row command
+list sitting on top of the text being reached for obstructs the exact thing that
+was clicked. Getting out of the way is the point of the handler.
+
+More decisive: **the menu is an interactive listbox.** Arrow keys, Enter and Tab
+are intercepted, and those keys only arrive when the box has the caret. A menu
+drawn while focus is elsewhere is a control that looks driveable and is not, and
+`aria-expanded` would be advertising an expanded combobox that nothing is
+focused on.
+
+Closing on intra-app blur was never the bug. The bug was that closing **destroyed
+the mention**, so nothing could bring it back — and splitting visibility from
+derivation already fixed that. Reopening on return is now automatic, because the
+mention was never discarded.
+
+**So `leftBox` stays, and Phase 3 may not remove it.**
+
+### What the decision exposed, and it shipped with it
+
+The keyboard interception was gated on `options.length > 0` — rows alone. That
+was right when rows and visibility could not disagree. C-003's fix made them able
+to: rows derive from the mention, visibility now also depends on the box not
+having been left, so **a menu hidden by an intra-app blur still had fifty rows
+behind it and would still swallow an arrow key** — the caret would not move,
+history recall would not run, and nothing on screen would explain it.
+
+Now `menuTakesKeys(visible, rows)`, needing both. Neither half may be dropped:
+without `visible` an invisible menu eats keys; without `rows > 0` an open
+"still looking" menu makes `% rows` a division by zero and swallows Enter, so a
+message beginning with `/` could not be sent while the list arrived.
+
+### The screenshot still cannot settle anything
+
+Worth keeping in view now the behaviour is decided: `@c` with no menu is exactly
+what a correct intra-app blur looks like, and also exactly what the bug looks
+like. Phase 4's alt-tab check does not separate them either, because alt-tab is a
+_window_ blur and those are now deliberately ignored.
+
+Only the Phase 1 attributes tell them apart — `data-left-box` says the menu is
+hidden because the box was left, `data-mention-live` says the mention itself went.
+Which is why a person driving the installed build in Phase 4 has to read them
+rather than describe what they saw.
 
 ## What this deliberately does not do
 

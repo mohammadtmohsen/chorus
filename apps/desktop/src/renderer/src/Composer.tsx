@@ -12,6 +12,7 @@ import {
   findMentionQuery,
   liveMention,
   mentionOptions,
+  menuTakesKeys,
   menuVisible,
   type CommandInfo,
   type MentionQuery,
@@ -960,17 +961,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                * failure this whole feature exists to prevent.
                */
               /*
-               * Rows, not `menuOpen` — and the difference is now load-bearing.
-               *
-               * The menu also opens to say it is still looking, and that menu has
-               * nothing to choose. Keeping this on `menuOpen` would make
-               * `% options.length` a division by zero, and worse: Enter would be
-               * swallowed by `preventDefault` and choose nothing, so a message
-               * beginning with `/` could not be sent at all while the list was
-               * still arriving. Caught by asking what an open-but-empty menu does
-               * to the keyboard, not by a test.
+               * Visible *and* holding rows — see `menuTakesKeys` for why neither
+               * half may be dropped. It was rows alone until C-003's fix made
+               * visibility and rows able to disagree, at which point an
+               * off-screen menu could still swallow an arrow key.
                */
-              if (options.length > 0) {
+              if (menuTakesKeys(menuOpen, options.length)) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                   e.preventDefault()
                   const step = e.key === 'ArrowDown' ? 1 : options.length - 1

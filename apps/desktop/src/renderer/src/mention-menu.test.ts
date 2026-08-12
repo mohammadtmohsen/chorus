@@ -6,6 +6,7 @@ import {
   findMentionQuery,
   liveMention,
   mentionOptions,
+  menuTakesKeys,
   menuVisible,
 } from './mention-menu.js'
 
@@ -222,5 +223,37 @@ describe('liveMention', () => {
 
   it('is nothing after send clears the draft', () => {
     expect(liveMention({ query: slash, from: '/re' }, '')).toBeNull()
+  })
+})
+
+/*
+ * The keyboard half of C-003, and the reason it is its own predicate.
+ *
+ * Splitting visibility from derivation let `menuOpen` and `options.length`
+ * disagree for the first time, so the old `rows > 0` gate could hand a keystroke
+ * to a menu nobody could see.
+ */
+describe('menuTakesKeys', () => {
+  it('takes keys when the menu is on screen with rows in it', () => {
+    expect(menuTakesKeys(true, 50)).toBe(true)
+  })
+
+  /*
+   * The defect this predicate exists for. A menu hidden because the box was
+   * left still derives its rows from the mention, so keying off rows alone means
+   * an arrow key vanishes: the caret does not move, history recall does not run,
+   * and nothing on screen explains it.
+   */
+  it('does not take keys while the menu is off screen, however many rows it has', () => {
+    expect(menuTakesKeys(false, 50)).toBe(false)
+  })
+
+  /*
+   * And the older half, which predates C-003: the menu opens with no rows to say
+   * a lookup is running. Letting that take Enter means a message beginning with
+   * `/` cannot be sent while the list is still arriving.
+   */
+  it('does not take keys from an open menu that has nothing to choose', () => {
+    expect(menuTakesKeys(true, 0)).toBe(false)
   })
 })

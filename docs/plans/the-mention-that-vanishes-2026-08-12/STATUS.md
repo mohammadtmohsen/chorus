@@ -61,3 +61,50 @@ same text returns, and `choose` mixes a stamped offset with a live caret — is
 untouched. It is a real defect and it is Phase 3's, because the plan's rule is
 that no fix is written before the failing record is in hand. This work has
 already produced two fixes that were obviously right and measured worse.
+
+## The intra-app blur decision — kept, and one thing shipped with it
+
+**Decided: an intra-app blur keeps closing the menu.** The menu floats over the
+transcript and clicking into the transcript is usually to select a passage, so a
+fifty-row list obstructs the thing that was clicked. More decisively, the menu is
+an interactive listbox — arrows, Enter and Tab are intercepted, and those keys
+only arrive when the box has the caret, so a menu drawn while focus is elsewhere
+is a control that looks driveable and is not.
+
+Closing was never the bug. The bug was that closing **destroyed the mention**.
+
+Verified in the real app rather than argued, with the Phase 1 attributes:
+
+| step                      | `leftBox` | rows | mention        |
+| ------------------------- | --------- | ---- | -------------- |
+| menu open                 | false     | 50   | `/0:` live     |
+| focus moved elsewhere     | **true**  | 0    | `/0:` **live** |
+| focus returned to the box | false     | 50   | `/0:` live     |
+
+The middle row is the fix working: the menu is gone and the mention is not.
+
+### The keyboard half, which the decision exposed
+
+Interception was gated on `options.length > 0`. That was sound while rows and
+visibility could not disagree; C-003's fix made them able to, so a menu hidden by
+an intra-app blur still had fifty rows behind it and **would still swallow an
+arrow key** — caret unmoved, history recall skipped, nothing on screen to explain
+it. Now `menuTakesKeys(visible, rows)`, needing both halves.
+
+Proved by mutation: reverting the predicate to the old `rows > 0` fails exactly
+the new off-screen test and nothing else.
+
+### A limit found by the probe lying first
+
+The first run of the blur-cycle probe reported `leftBox: false` with focus
+plainly on another control — the intra-app blur had not closed the menu at all.
+
+The probe was at fault, and the reason is worth keeping: it had launched Electron
+**without OS focus**, so `document.hasFocus()` was `false`, and the `onBlur`
+guard that exists to ignore window-level blurs swallowed an intra-app one too.
+
+That is a real limit of the guard, not just a probe artifact: **while the window
+lacks OS focus, moving focus between controls inside it does not close the
+menu.** It is close to unreachable in use — clicking inside a window focuses it —
+but it is the second time a measurement here was invalid because the window's
+focus state was assumed rather than established. Establish it first, always.
