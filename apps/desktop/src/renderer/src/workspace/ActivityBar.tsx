@@ -25,6 +25,8 @@ export function ActivityBar(props: {
   readonly starting: boolean
   readonly onNewSession: () => void
   readonly onOpenSettings: () => void
+  readonly terminalOpen: boolean
+  readonly onToggleTerminal: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const usage = useUsage()
@@ -89,6 +91,28 @@ export function ActivityBar(props: {
           >
             <PlusIcon />
             <span className="sr-only">{t('conversation.newSession')}</span>
+          </button>
+        </li>
+        {/*
+          The global terminal.
+        
+          In the top group with "toggle sidebar" and "new session" because it is
+          app-level like they are — it belongs to no conversation and survives
+          every one of them. The foot group is for the account and settings,
+          which is a different kind of thing.
+        */}
+        <li>
+          <button
+            type="button"
+            className="activity-item"
+            aria-pressed={props.terminalOpen}
+            title={props.terminalOpen ? t('terminal.closeGlobal') : t('terminal.openGlobal')}
+            onClick={props.onToggleTerminal}
+          >
+            <TerminalIcon />
+            <span className="sr-only">
+              {props.terminalOpen ? t('terminal.closeGlobal') : t('terminal.openGlobal')}
+            </span>
           </button>
         </li>
       </ul>
@@ -277,6 +301,15 @@ function PlusIcon(): React.JSX.Element {
   return (
     <svg className="activity-icon" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+function TerminalIcon(): React.JSX.Element {
+  return (
+    <svg className="activity-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {/* A prompt: the chevron and the line you type on. */}
+      <path d="M5 7l4 4-4 4M12 15h7" />
     </svg>
   )
 }

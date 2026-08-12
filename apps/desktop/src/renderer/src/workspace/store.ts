@@ -74,11 +74,12 @@ export interface BackgroundTaskView {
 }
 
 /** Drops one key without `delete`, which the lint rules forbid on a computed key. */
-function without(
-  pulses: Readonly<Record<string, SessionPulse>>,
+/** Drop one conversation's entry from a by-conversation map, whatever it holds. */
+function without<T>(
+  entries: Readonly<Record<string, T>>,
   conversationId: string
-): Record<string, SessionPulse> {
-  return Object.fromEntries(Object.entries(pulses).filter(([id]) => id !== conversationId))
+): Record<string, T> {
+  return Object.fromEntries(Object.entries(entries).filter(([id]) => id !== conversationId))
 }
 
 const EMPTY_PULSE: SessionPulse = {
@@ -103,6 +104,20 @@ const EMPTY_PULSE: SessionPulse = {
 export interface WorkspaceRuntime {
   readonly hydrated: boolean
   readonly pulses: Readonly<Record<string, SessionPulse>>
+  /**
+   * Which terminal panels are on screen.
+   *
+   * Two fields rather than one keyed map, matching `TerminalService` in main and
+   * for the same reason: the global terminal belongs to no conversation, and
+   * anything that iterates sessions must be incapable of reaching it. A
+   * `Record<string, boolean>` with `'global'` as a key would close every
+   * terminal the first time something tidied up after a closed conversation.
+   *
+   * Visibility only. The shell itself lives in main and outlives all of this —
+   * hiding a panel detaches a view, it does not kill anything.
+   */
+  readonly globalTerminalOpen: boolean
+  readonly sessionTerminalsOpen: Readonly<Record<string, boolean>>
 }
 
 export interface WorkspaceActions {
@@ -125,6 +140,10 @@ export interface WorkspaceActions {
   replaceSession: (previousId: string, nextId: string) => void
   removeSession: (conversationId: string) => void
   setSidebarHidden: (hidden: boolean) => void
+  toggleGlobalTerminal: () => void
+  setGlobalTerminalOpen: (open: boolean) => void
+  /** Toggles one conversation's panel, leaving every other one alone. */
+  toggleSessionTerminal: (conversationId: string) => void
   /** Committed on drop, not on every pointer move; see `useSidebarResize`. */
   setSidebarWidth: (width: number) => void
   ingestEvents: (events: readonly TranscriptEvent[]) => void
@@ -243,6 +262,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       ...EMPTY_WORKSPACE,
       hydrated: false,
       pulses: {},
+      globalTerminalOpen: false,
+      sessionTerminalsOpen: {},
       hydrate: (saved, conversationIds, unreadByConversation = {}) => {
         const repaired = reconcileWorkspace(saved, conversationIds)
         set({
@@ -316,8 +337,31 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           const location = tabLocation(state, conversationId)
           const next =
             location === null ? snapshot(state) : closeTab(state, location.paneId, conversationId)
-          return { ...next, pulses: without(state.pulses, conversationId) }
+          /*
+           * Its panel's visibility goes too. A conversation that ends and is
+           * later replaced by one that reuses nothing should not inherit a panel
+           * someone opened for the old one.
+           */
+          return {
+            ...next,
+            pulses: without(state.pulses, conversationId),
+            sessionTerminalsOpen: without(state.sessionTerminalsOpen, conversationId),
+          }
         })
+      },
+      toggleGlobalTerminal: () => {
+        set((state) => ({ globalTerminalOpen: !state.globalTerminalOpen }))
+      },
+      setGlobalTerminalOpen: (globalTerminalOpen) => {
+        set({ globalTerminalOpen })
+      },
+      toggleSessionTerminal: (conversationId) => {
+        set((state) => ({
+          sessionTerminalsOpen: {
+            ...state.sessionTerminalsOpen,
+            [conversationId]: state.sessionTerminalsOpen[conversationId] !== true,
+          },
+        }))
       },
       setSidebarHidden: (sidebarHidden) => {
         set({ sidebarHidden })

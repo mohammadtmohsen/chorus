@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
 import { fitCard, type AsidePurpose } from './aside.js'
@@ -16,7 +16,9 @@ import {
   type PaneAnchor,
   type SourceEntry,
 } from './quote.js'
-import type { IdeContextPush } from '../../shared/ipc.js'
+import type { IdeContextPush, TerminalRefShape } from '../../shared/ipc.js'
+import { TERMINAL_HEIGHT, TerminalPanel } from './TerminalPanel.js'
+import { useSessionTerminalOpen, useWorkspaceActions } from './workspace/hooks.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
@@ -131,6 +133,22 @@ export function Session(props: {
     ideIncluded: props.carry?.ideIncluded ?? true,
   })
   const [error, setError] = useState<string | null>(null)
+
+  /*
+   * This session's terminal panel.
+   *
+   * Visibility lives in the workspace store rather than here, because `⌘J` is
+   * handled by a document-level listener in `Workspace` and this component may
+   * not even be mounted when it fires. The height is local for now; Phase 4
+   * moves it into the persisted snapshot alongside the layout.
+   */
+  const terminalOpen = useSessionTerminalOpen(conversationId)
+  const { toggleSessionTerminal } = useWorkspaceActions()
+  const [terminalHeight, setTerminalHeight] = useState<number>(TERMINAL_HEIGHT.default)
+  const terminalRef = useMemo<TerminalRefShape>(
+    () => ({ scope: 'session', conversationId }),
+    [conversationId]
+  )
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
   const [reviewing, setReviewing] = useState(false)
   const [summarising, setSummarising] = useState(false)
@@ -1193,6 +1211,38 @@ export function Session(props: {
             setHandoff(null)
           }}
           onError={setError}
+        />
+      )}
+
+      {/*
+       * This session's terminal, between the transcript and the dock.
+       *
+       * `.pane` is a flex column whose only stretching child is `.score`, so a
+       * fixed-height row lands here without touching an existing rule. Above the
+       * composer rather than below it: the composer is where you talk to an
+       * agent and stays adjacent to the approvals it answers.
+       *
+       * Mounted only while open. The shell is in main and outlives this, so
+       * closing the panel detaches a view and kills nothing.
+       */}
+      {terminalOpen && (
+        <TerminalPanel
+          terminal={terminalRef}
+          title={t('terminal.sessionTitle', { project: shortenPath(props.session.cwd) })}
+          height={terminalHeight}
+          onHeightChange={setTerminalHeight}
+          onClose={() => {
+            toggleSessionTerminal(conversationId)
+          }}
+          onFocusAway={() => {
+            /*
+             * Put the caret back where someone would expect it. Queried from the
+             * pane rather than held as a ref because the composer is several
+             * components down and this is the only thing that ever asks.
+             */
+            pane.current?.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()
+          }}
+          variant="session"
         />
       )}
 

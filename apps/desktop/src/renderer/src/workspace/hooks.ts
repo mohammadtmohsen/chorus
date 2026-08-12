@@ -50,6 +50,9 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     removeSession,
     setSidebarHidden,
     setSidebarWidth,
+    toggleGlobalTerminal,
+    setGlobalTerminalOpen,
+    toggleSessionTerminal,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -70,6 +73,9 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     removeSession,
     setSidebarHidden,
     setSidebarWidth,
+    toggleGlobalTerminal,
+    setGlobalTerminalOpen,
+    toggleSessionTerminal,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -104,6 +110,22 @@ export function useWorkspaceLayout(): WorkspaceLayoutView {
  */
 export function usePane(paneId: string): WorkspacePane | undefined {
   return useWorkspaceStore((state) => state.panes[paneId])
+}
+
+/**
+ * Whether the global terminal panel is on screen.
+ *
+ * A narrow selector like every other hook here: subscribing to the whole store
+ * would re-render the workspace on every transcript delta, which is the reason
+ * this file exists at all.
+ */
+export function useGlobalTerminalOpen(): boolean {
+  return useWorkspaceStore((state) => state.globalTerminalOpen)
+}
+
+/** Whether one conversation's terminal panel is on screen. */
+export function useSessionTerminalOpen(conversationId: string): boolean {
+  return useWorkspaceStore((state) => state.sessionTerminalsOpen[conversationId] === true)
 }
 
 export function useSidebarHidden(): boolean {

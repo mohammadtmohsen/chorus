@@ -4,8 +4,8 @@
 | ------------------------------------ | ------------------------------ | --------- |
 | 0 — prove it packages                | **shipped**, strategy A chosen | `88668c4` |
 | 1 — the terminal service in main     | **shipped**                    | `f249043` |
-| 2 — IPC and flow control             | **shipped**                    | —         |
-| 3 — the two panels, `⌘J`, the button | not started                    | —         |
+| 2 — IPC and flow control             | **shipped**                    | `5eedd6c` |
+| 3 — the two panels, `⌘J`, the button | **shipped**                    | —         |
 | 4 — persistence                      | not started                    | —         |
 
 On `feat/a-terminal-in-every-session`, branched from `main` rather than from
@@ -309,3 +309,94 @@ unbounded queue in the process that must not stall.
   fake sink in-process; what that volume costs crossing IPC is a Phase 3
   measurement.
 - **The probe is dev-build only**, not run against a packaged app.
+
+## Phase 3 — shipped
+
+Both panels, `⌘J`, the activity-bar button, and the first phase anyone can
+actually look at. Two real defects came out of looking rather than reasoning,
+and both are below.
+
+### What landed
+
+`TerminalView` mounts xterm and owns the IPC conversation; `TerminalPanel` is the
+resizable dock both scopes share; `terminal-stream.ts` is the pure part — which
+pushes belong to this view — with 13 tests and no DOM.
+
+The session panel sits at `Session.tsx`'s seam between `.score` and `.dock`; the
+global one inside `.workspace-editor`, below every pane and beside the sidebar.
+Measured in the running app: `["score", "terminal-panel", "dock"]`.
+
+Visibility lives in the workspace store as **two fields**, not one keyed map —
+same shape as `TerminalService` and for the same reason. `removeSession` clears
+a conversation's entry so a later conversation cannot inherit a panel someone
+opened for a dead one.
+
+### The check that proved nothing, and how it was caught
+
+The `⌘K` exemption was first asserted by counting panes before and after
+`⌘K` `→`. It passed. **It also passed with the guard removed** — because
+splitting a pane that holds its only tab is a legitimate no-op and this fixture
+has one session, so the count could never move.
+
+That is a C-027 test verbatim: green, and testing nothing. It now measures
+`defaultPrevented` on the arrow — the behaviour actually under test — and carries
+a **control** asserting that an armed chord _does_ consume the arrow in the
+composer, so the assertion cannot pass for an unrelated reason. With the guard
+removed the two terminal cases fail and the control still passes.
+
+Both branches are guarded, which was revision 3's correction: arming, and the
+arrow-handling branch. The second case — armed from the composer, then focus
+moves into the terminal — has its own check.
+
+### The terminal was rendering on black
+
+Found by emulating `prefers-color-scheme: light` and looking, rather than
+asserting the tokens existed and calling it done.
+
+xterm.css sets `.xterm .xterm-viewport { background-color: #000 }`, and the
+viewport is absolutely positioned over the whole surface. So the themed colour
+landed on `.xterm` — measured at `rgb(16, 14, 26)`, correct — and was covered.
+The terminal drew on pure black in **both** schemes.
+
+One rule fixes it, and specificity beats xterm's default without `!important`.
+After: `rgb(16, 14, 26)` in dark and `rgb(229, 226, 238)` in light, which are
+`--sunken`'s two values. The emulator repaints on the media change too, so the
+`matchMedia` listener in `TerminalView` is doing its job.
+
+Had the first probe only checked that `--ansi-*` resolved, this would have
+shipped.
+
+### Driven against the real app
+
+`build/terminal-ui-probe.mjs`, 18 checks, all passing — including a real shell
+prompt (`MT ~`) drawn into xterm, the panel spanning the editor area rather than
+the sidebar, `⌘J` opening and closing the focused session's panel, and `⌘J`
+staying inert while the caret is in the global one.
+
+### Decisions taken here
+
+**`⌘J` is inert in the global terminal, and that is visible now.** The handler
+resolves "which session" from `focusedPaneId`, which still points at the last
+focused pane — so acting would toggle a panel somewhere else. The first run of
+the UI probe failed on exactly this, because opening the global panel takes the
+caret. The probe was wrong; the behaviour is what §4.6 specifies. Whether silence
+is the right answer is now a question someone can actually judge, and it is in
+the plan's open questions rather than settled here.
+
+**The panel's scope is a class** (`terminal-panel--global`), because a
+`document`-level capture handler knows only `document.activeElement` and the
+alternative is threading focus state back through the store.
+
+### Not verified
+
+- **No frame timings, still.** Two panes with an agent streaming beside a
+  terminal under load is a measurement nobody has taken.
+- **C-026 was not re-measured.** The plan asks for the settle-cycle count before
+  and after, over the same stimulus. The resizer uses the CSS-variable technique
+  that keeps React out of the drag, but `.score` is still observed directly, so
+  the observer still runs per frame — as revision 3 says. The number is not
+  taken.
+- **Height is not persisted.** Local state; Phase 4.
+- **The probe is not in `specs.mjs`.** It is a throwaway driving the dev build,
+  and folding it into the suite waits on C-029 for the reason the plan's §8.3
+  gives.
