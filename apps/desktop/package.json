@@ -30,6 +30,7 @@
     "@chorus/workspace": "workspace:*",
     "better-sqlite3": "^13.0.2",
     "i18next": "^26.3.6",
+    "node-pty": "^1.1.0",
     "react-i18next": "^17.0.11",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"

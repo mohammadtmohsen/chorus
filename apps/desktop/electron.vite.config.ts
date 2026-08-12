@@ -32,9 +32,10 @@ export default defineConfig({
      * their sources sidesteps the question: they stop being dependencies and
      * become ordinary imports.
      *
-     * `electron` comes from the runtime, `better-sqlite3` is native and has to
-     * stay a real file, and the Claude SDK resolves its own files at runtime —
-     * so those three remain external and are shipped as themselves.
+     * `electron` comes from the runtime, `better-sqlite3` and `node-pty` are
+     * native and have to stay real files, and the Claude SDK resolves its own
+     * files at runtime — so those four remain external and are shipped as
+     * themselves.
      */
     resolve: {
       alias: Object.fromEntries(
@@ -54,7 +55,7 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        external: ['electron', 'better-sqlite3', '@anthropic-ai/claude-agent-sdk'],
+        external: ['electron', 'better-sqlite3', 'node-pty', '@anthropic-ai/claude-agent-sdk'],
       },
     },
   },

@@ -18,11 +18,22 @@ files:
   - out/**
   - package.json
   # Bundled into out/ by electron-vite, so node_modules is mostly dead weight.
-  # The two exceptions cannot be bundled: better-sqlite3 is native, and the
-  # Claude SDK resolves its own files at runtime.
+  # The three exceptions cannot be bundled: better-sqlite3 and node-pty are
+  # native, and the Claude SDK resolves its own files at runtime.
   - '!node_modules/**'
   - node_modules/better-sqlite3/**
+  - node_modules/node-pty/**
   - node_modules/@anthropic-ai/claude-agent-sdk/**
+
+# Do not let electron-builder rebuild native modules from source.
+#
+# Both native deps here ship N-API prebuilds that load in Electron unmodified,
+# so a rebuild buys nothing and costs a toolchain. It is off explicitly rather
+# than by luck: `@electron/rebuild` only recognises prebuilds published by
+# `prebuildify` or `prebuild-install`, and node-pty uses neither — so with the
+# default it would fall through to node-gyp and compile, silently making the
+# packaged app load a different binary from `pnpm dev`.
+npmRebuild: false
 
 # The companion VS Code extension, shipped with the app so the two always speak
 # the same protocol version. Outside the asar because `code --install-extension`
@@ -31,10 +42,16 @@ extraResources:
   - from: ../vscode-extension/chorus-vscode.vsix
     to: chorus-vscode.vsix
 
-# better-sqlite3 ships N-API prebuilds, so nothing is compiled at pack time —
-# but it must stay outside the asar to be loadable.
+# Both ship N-API prebuilds, so nothing is compiled at pack time — but a .node
+# cannot be dlopen'd from inside an asar, so they must stay outside it.
+#
+# node-pty additionally ships `spawn-helper`, a separate executable it execs at
+# runtime. It resolves its own path across the asar boundary
+# (`lib/unixTerminal.js` rewrites app.asar -> app.asar.unpacked), so unpacking is
+# all that is needed here — but see `afterPack` for its permissions.
 asarUnpack:
   - node_modules/better-sqlite3/**
+  - node_modules/node-pty/**
 
 mac:
   category: public.app-category.developer-tools

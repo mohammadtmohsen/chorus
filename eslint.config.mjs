@@ -172,6 +172,7 @@ export default tseslint.config(
       '**/*.setup.ts',
       'apps/vscode-extension/esbuild.mjs',
       'apps/vscode-extension/package.mjs',
+      'scripts/**/*.mjs',
     ],
     languageOptions: {
       parserOptions: { projectService: false, project: null },
