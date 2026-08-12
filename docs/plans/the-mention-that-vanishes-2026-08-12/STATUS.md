@@ -173,3 +173,75 @@ does, and it is a confirmed defect rather than an unexplained observation:** tex
 equality lets a stale mention reactivate whenever the same text returns, and
 `choose` splices a stamped offset against a live caret. Neither needs a flaky
 reproduction to be true — both are readable in the code.
+
+## Phase 3 — shipped: one snapshot, two tokens
+
+The residual did not survive Phase 2, so this phase is the stamp blocker alone —
+a defect readable in the code rather than an unexplained observation.
+
+### What changed
+
+**Every draft write goes through one place.** Six callers wrote `draft` — the
+parse's `onChange`, `choose`, `send`, `quote`, `insert` and history recall — and
+four of them from outside the textarea with no change event. All six now go
+through `writeDraft`, which bumps a revision counter first.
+
+**The stamp carries a whole snapshot**: the query, the text it was read from, the
+revision that text was, and the caret it was read at.
+
+**`choose` reads nothing live.** It was
+
+```ts
+applyMention(el.value, active, el.selectionStart, option) // three sources
+```
+
+and is now `applyMention(draft, liveStamp.query, liveStamp.caret, option)` — the
+validated snapshot and nothing else. A caret that moved since the query was
+parsed can no longer decide where the option lands.
+
+### Both tokens are load-bearing, and each was mutated to prove it
+
+| mutation                 | the test that goes red                                                   |
+| ------------------------ | ------------------------------------------------------------------------ |
+| text only — the old rule | `does not let a stale mention reactivate when the same text returns`     |
+| revision only            | `does not bless a mention read from text the draft has not caught up to` |
+
+The second is the one review predicted: a revision alone would pass in exactly
+the race this was built for, blessing offsets from newly-written DOM against the
+draft that had not caught up. Text alone lets `send` then recall bring a dead
+mention back carrying offsets from two writes ago. Neither is sufficient; both
+are cheap.
+
+### Measured
+
+- `pnpm check` green — **1293 passed**.
+- **Slash spec 10 / 10.**
+- **`choose` splices correctly in the running app**, which is the change most
+  able to corrupt a draft if it were wrong:
+
+  | typed                  | caret | result                       |
+  | ---------------------- | ----- | ---------------------------- |
+  | `@c`                   | 2     | `@claude `                   |
+  | `hello @c`             | 8     | `hello @claude `             |
+  | `@c and more after it` | 2     | `@claude  and more after it` |
+
+### Not measured, and why
+
+**The focus round-trip probe could not run.** Twelve attempts all failed at
+`never became true: window focus` — macOS would not hand the window OS focus,
+because the machine is in use and the probe steals focus to work. That is the
+probe being a bad citizen rather than a finding, and the right response is to
+wait rather than to keep taking focus from someone who is working.
+
+It is also not the gap it might look like: Phase 2 already established the
+residual does not live there, and every behaviour this phase changed is covered
+by unit tests with mutation proof plus the `choose` check above. What is still
+owed is Phase 4 — a person driving the installed build.
+
+### A test that was wrong before the code was
+
+The `choose` check first failed on `@c and more after it`, and the probe was at
+fault: setting `.value` leaves the caret at the end of the string, so the mention
+was read at the end, the word had ended, and there was correctly no menu. The
+caret has to be placed before the input event. Worth recording because it is the
+third measurement in this plan that reported a defect that was not there.

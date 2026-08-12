@@ -199,40 +199,63 @@ describe('menuVisible', () => {
 
 describe('liveMention', () => {
   const slash = { trigger: '/', start: 0, query: '' } as const
+  const stamp = (from: string, rev: number, caret = from.length) => ({
+    query: slash,
+    from,
+    rev,
+    caret,
+  })
 
-  it('is the mention while the draft is the text it was read from', () => {
-    expect(liveMention({ query: slash, from: '/' }, '/')).toBe(slash)
+  it('is the mention while the draft and the revision both still match', () => {
+    expect(liveMention(stamp('/', 1), '/', 1)?.query).toBe(slash)
   })
 
   it('is nothing when there is no mention', () => {
-    expect(liveMention(null, '/')).toBeNull()
+    expect(liveMention(null, '/', 1)).toBeNull()
   })
 
   /*
-   * The case that made the stamp necessary, and it is data loss rather than a
-   * cosmetic bug.
-   *
-   * `quote` and `insert` write the draft from a control outside the textarea and
-   * then refocus it, firing no change event on the way. Without the stamp the
-   * menu would reopen against rewritten text, and choosing a row would splice at
-   * an offset belonging to the old string — deleting whatever now sits there.
+   * The case the stamp was introduced for: `quote` and `insert` write the draft
+   * from a control outside the textarea and then refocus it, firing no change
+   * event. Without this the menu reopens against rewritten text and choosing a
+   * row splices at an offset belonging to the old string.
    */
   it('is nothing once something rewrote the draft from outside the box', () => {
-    expect(liveMention({ query: slash, from: '@ali' }, '> quoted passage\n\n@ali')).toBeNull()
+    expect(liveMention(stamp('@ali', 4), '> quoted passage\n\n@ali', 5)).toBeNull()
   })
 
-  it('is nothing after send clears the draft', () => {
-    expect(liveMention({ query: slash, from: '/re' }, '')).toBeNull()
+  /*
+   * And the case text equality cannot see, which is why there is a revision.
+   *
+   * Send clears the draft and recall brings the same string back. Nothing
+   * cleared the mention — invalidation was only ever inferred from the text — so
+   * on text alone it reactivates here, carrying offsets from an edit two writes
+   * ago.
+   */
+  it('does not let a stale mention reactivate when the same text returns', () => {
+    const before = stamp('/re', 7)
+    expect(liveMention(before, '/re', 7)?.query).toBe(slash) // the original
+    expect(liveMention(before, '/re', 9)).toBeNull() // sent, then recalled
+  })
+
+  /*
+   * The mirror of it, and the reason the revision is not enough on its own.
+   *
+   * `refreshMention` reads the DOM. If a value has been written that React has
+   * not rendered yet, the query describes newer text than `draft` holds while
+   * the revision still reads as the older one. Blessing that would put offsets
+   * from the new text against the old — exactly the splice the stamp exists to
+   * stop.
+   */
+  it('does not bless a mention read from text the draft has not caught up to', () => {
+    expect(liveMention(stamp('@cx', 3), '@c', 3)).toBeNull()
+  })
+
+  it('carries the caret it was read at, so a splice cannot use a moved one', () => {
+    expect(liveMention(stamp('@cla', 2, 4), '@cla', 2)?.caret).toBe(4)
   })
 })
 
-/*
- * The keyboard half of C-003, and the reason it is its own predicate.
- *
- * Splitting visibility from derivation let `menuOpen` and `options.length`
- * disagree for the first time, so the old `rows > 0` gate could hand a keystroke
- * to a menu nobody could see.
- */
 describe('menuTakesKeys', () => {
   it('takes keys when the menu is on screen with rows in it', () => {
     expect(menuTakesKeys(true, 50)).toBe(true)

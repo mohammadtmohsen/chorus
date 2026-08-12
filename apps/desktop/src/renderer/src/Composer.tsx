@@ -15,7 +15,7 @@ import {
   menuTakesKeys,
   menuVisible,
   type CommandInfo,
-  type MentionQuery,
+  type StampedMention,
 } from './mention-menu.js'
 import { withQuote } from './quote.js'
 
@@ -132,7 +132,33 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const { t } = useTranslation()
     const { conversationId, participants } = props
 
-    const [draft, setDraft] = useState(props.initial?.draft ?? '')
+    const [draft, setDraftState] = useState(props.initial?.draft ?? '')
+    /**
+     * How many times the draft has been written, ever.
+     *
+     * The mention carries the revision it was read from, and text equality is
+     * not enough on its own: two different edits produce the same string, so
+     * `send` then recall — or simply retyping the same word — would bring a
+     * stale mention back to life carrying offsets from an earlier edit. A
+     * counter cannot be forged that way.
+     *
+     * A ref, not state: it changes only alongside a `setDraftState` that is
+     * already causing the render, and a second state write would render twice.
+     */
+    const rev = useRef(0)
+    /**
+     * The only way the draft is written, so nothing can change it unnoticed.
+     *
+     * Six callers write the draft — the parse's own `onChange`, `choose`,
+     * `send`, `quote`, `insert` and history recall — and four of them do it from
+     * outside the textarea with no change event at all. Routing every one
+     * through here is what makes "the mention describes the current draft" a
+     * fact rather than a thing each caller has to remember.
+     */
+    const writeDraft = useCallback((next: string | ((current: string) => string)) => {
+      rev.current += 1
+      setDraftState(next)
+    }, [])
     const [attached, setAttached] = useState<Attachment[]>([...(props.initial?.attached ?? [])])
     const [ideIncluded, setIncluded] = useState(props.initial?.ideIncluded ?? true)
     /**
@@ -155,7 +181,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * programmatic write: re-deriving needs the caret, and the caret is the one
      * thing that cannot be trusted around a focus event.
      */
-    const [mention, setMention] = useState<{ query: MentionQuery; from: string } | null>(null)
+    const [mention, setMention] = useState<StampedMention | null>(null)
     /**
      * Whether the box has the caret, kept apart from what is in the box.
      *
@@ -251,7 +277,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * declaration throws a TDZ `ReferenceError` on first paint that typecheck
      * does not catch.
      */
-    const active = liveMention(mention, draft)
+    const liveStamp = liveMention(mention, draft, rev.current)
+    const active = liveStamp?.query ?? null
 
     const hasDraft = draft.trim() !== '' || attached.length > 0
     props.report.current = { draft, attached, ideIncluded }
@@ -455,9 +482,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       }
       dismissed.current = null
       why.current = found === null ? 'no-parse' : 'parsed'
-      // Stamped with the exact text it was read from, so a later render can tell
-      // whether it still describes the box. See the state declaration.
-      setMention(found === null ? null : { query: found, from: el.value })
+      /*
+       * One snapshot: the query, the text it came from, the revision that text
+       * was, and the caret it was read at. Everything `choose` needs later, so
+       * nothing has to be read again at click time and found to have moved.
+       */
+      setMention(
+        found === null
+          ? null
+          : { query: found, from: el.value, rev: rev.current, caret: el.selectionStart }
+      )
     }, [])
 
     /*
@@ -577,9 +611,24 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       (index: number) => {
         const el = input.current
         const option = options[index]
-        if (el === null || active === null || option === undefined) return
-        const next = applyMention(el.value, active, el.selectionStart, option)
-        setDraft(next.text)
+        if (el === null || liveStamp === null || option === undefined) return
+        /*
+         * **Every argument from the one validated snapshot.**
+         *
+         * This read `el.value` and `el.selectionStart` live, pairing them with a
+         * stamped query — three sources, and the caret in particular can have
+         * moved since the query was parsed. `findMentionQuery` derives the query
+         * from `text.slice(0, caret)`, so a caret that has moved makes the
+         * replaced region stop matching the rows on screen, and the option lands
+         * over text nobody was offering to replace.
+         *
+         * `liveStamp` being non-null already means `draft` is exactly the text
+         * the query was read from, at the revision it was read at. So the draft
+         * and the stamped caret are the consistent pair, and the DOM is not
+         * consulted at all.
+         */
+        const next = applyMention(draft, liveStamp.query, liveStamp.caret, option)
+        writeDraft(next.text)
         why.current = 'chosen'
         setMention(null)
         // After React has written the new value, or the caret lands wherever the
@@ -589,7 +638,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
           el.setSelectionRange(next.caret, next.caret)
         })
       },
-      [active, options]
+      [draft, liveStamp, options]
     )
 
     /**
@@ -677,7 +726,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         .then(async (body) => {
           // Cleared only once the context is in hand, so a failed snapshot leaves
           // the draft and its attachments exactly as they were.
-          setDraft('')
+          writeDraft('')
           setAttached([])
           await window.chorus.sendMessage({ conversationId, text: body })
         })
@@ -694,11 +743,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       () => ({
         focus: () => input.current?.focus(),
         quote: (passage: string) => {
-          setDraft((current) => withQuote(current, passage))
+          writeDraft((current) => withQuote(current, passage))
           input.current?.focus()
         },
         insert: (text: string) => {
-          setDraft((current) =>
+          writeDraft((current) =>
             current.trim() === '' ? text : `${current.replace(/\s+$/, '')}\n\n${text}`
           )
           input.current?.focus()
@@ -758,6 +807,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         data-mention-live={mention === null ? 'none' : active === null ? 'stale' : 'live'}
         data-mention-why={why.current}
         data-stamp-len={mention === null ? -1 : mention.from.length}
+        data-stamp-rev={mention === null ? -1 : mention.rev}
+        data-draft-rev={rev.current}
         data-left-box={leftBox}
         data-commands={commands.length}
         /*
@@ -897,7 +948,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             aria-controls={`mentions-${conversationId}`}
             aria-autocomplete="list"
             onChange={(e) => {
-              setDraft(e.target.value)
+              writeDraft(e.target.value)
               refreshMention()
             }}
             onSelect={refreshMention}
@@ -1011,7 +1062,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                 if (next === recalled.current) return
                 e.preventDefault()
                 recalled.current = next
-                setDraft(next === 0 ? '' : (props.history[props.history.length - next] ?? ''))
+                writeDraft(next === 0 ? '' : (props.history[props.history.length - next] ?? ''))
                 return
               }
 

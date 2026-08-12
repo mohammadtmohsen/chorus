@@ -21,10 +21,44 @@ export interface MentionQuery {
   readonly query: string
 }
 
-/** A mention together with the exact text it was read out of. */
+/**
+ * A mention together with everything needed to know it still describes the box.
+ *
+ * **One snapshot, three parts, and each part answers a different way of being
+ * wrong.** A `MentionQuery` is a pair of offsets into one particular string at
+ * one particular caret; on its own it cannot say whether that string is still
+ * what is in the box.
+ */
 export interface StampedMention {
   readonly query: MentionQuery
+  /**
+   * The exact text it was read out of.
+   *
+   * Catches the draft being rewritten from outside the textarea — `quote`,
+   * `insert` and `send` all do that and fire no change event — and catches the
+   * narrower case of `refreshMention` reading a DOM value React has not rendered
+   * yet, where the offsets would describe newer text than the draft holds.
+   */
   readonly from: string
+  /**
+   * Which revision of the draft that was.
+   *
+   * Text equality alone is forgeable: two different edits produce the same
+   * string. `send` then recall, `quote` then undo, or simply retyping the same
+   * word brings back text a stale mention matches, and it would come back to
+   * life carrying offsets from an earlier edit. A counter cannot be forged that
+   * way.
+   */
+  readonly rev: number
+  /**
+   * The caret it was read at.
+   *
+   * `findMentionQuery` derives the query from `text.slice(0, caret)`, so the
+   * caret *is* the end of the region the query describes. Splicing at a
+   * different one writes the option into the wrong place — which is why `choose`
+   * uses this rather than reading the caret again at click time.
+   */
+  readonly caret: number
 }
 
 /**
@@ -42,9 +76,22 @@ export interface StampedMention {
  * programmatic write — needs the caret, and the caret is exactly what cannot be
  * trusted around a focus event (C-003).
  */
-export function liveMention(mention: StampedMention | null, draft: string): MentionQuery | null {
+export function liveMention(
+  mention: StampedMention | null,
+  draft: string,
+  rev: number
+): StampedMention | null {
   if (mention === null) return null
-  return mention.from === draft ? mention.query : null
+  /*
+   * Both tokens, because each catches what the other cannot.
+   *
+   * Text alone lets a stale mention reactivate the moment the same string comes
+   * back — send then recall is enough. The revision alone would pass in the one
+   * race this was built for: a DOM value written but not yet rendered, stamped
+   * against the revision the *old* draft still holds, so offsets from the new
+   * text would be blessed against the old.
+   */
+  return mention.from === draft && mention.rev === rev ? mention : null
 }
 
 /**
