@@ -1,11 +1,11 @@
 # Status
 
-| Phase                                       | State           | Commit    |
-| ------------------------------------------- | --------------- | --------- |
-| 1 — the instrument tells the truth          | **shipped**     | `294d910` |
-| 2 — the baseline                            | **in progress** | —         |
-| 3 — C-003: split visibility from derivation | not started     | —         |
-| 4 — re-measure, then diagnose what is left  | not started     | —         |
+| Phase                                       | State                           | Commit    |
+| ------------------------------------------- | ------------------------------- | --------- |
+| 1 — the instrument tells the truth          | **shipped**                     | `294d910` |
+| 2 — the baseline                            | **measured, and under-powered** | `63c94ae` |
+| 3 — C-003: split visibility from derivation | **shipped**                     | —         |
+| 4 — re-measure, then diagnose what is left  | not started                     | —         |
 
 Board correction shipped separately as `c0cf208`, because it is true regardless
 of how the rest of this lands.
@@ -68,6 +68,12 @@ the comparison would have meant nothing.
   advance.
 
 ## Phase 2 — measured, and it does not reproduce
+
+> **Superseded — read "Phase 2, corrected" below before trusting anything here.**
+> The headline conclusion of this section is withdrawn: five runs could not see a
+> flake that a later A/B measured at 30%. The section is kept rather than edited
+> because the reasoning that led to a wrong confident answer is the useful part,
+> and rewriting it would hide exactly the mistake worth remembering.
 
 Five full-suite runs on an unmodified `Composer.tsx`, with Phase 1's runner.
 
@@ -147,3 +153,100 @@ guard that caught the last wrong fix is gone.
 C-003's cause is still reproducible on demand — blur the box, refocus it, `rows`
 49 → 0 — so the **fix** can be verified deterministically. What is lost is the
 **regression check**, and that is the half that mattered last time.
+
+## Phase 2, corrected — the baseline was under-powered, and its headline was wrong
+
+**Withdrawn: "C-029 does not reproduce."** Five clean runs were taken as evidence
+that the four specs no longer fail. They were not enough runs to say that. A
+straight A/B afterwards put the pre-fix slash spec at **7 of 10** — roughly a 30%
+failure rate, which has a better than one-in-three chance of showing nothing
+across five runs. C-029 was right and the measurement was too small to see it.
+
+What survives is narrower and still worth having:
+
+- **CPU load is eliminated.** 5/5 while carrying 2.4x the machine's core count.
+- **The mechanism was caught in the act.** A debug run watching a single window
+  recorded `hasFocus` going from `true` to `false` **with nothing driving it**,
+  ten seconds after the menu opened. The window blurs spontaneously on this
+  machine, which is why a loaded-but-unattended run looks clean and a person
+  working the machine sees failures.
+- **`settled()` never came close to its deadline** — 4 samples, ~458ms against
+  15,000ms, at all ten call sites.
+
+The lesson for Phase 4 is a number, not a mood: **five runs cannot see a 30%
+flake reliably.** Ten is the floor for a per-spec rate, and a straight A/B beats
+a remembered baseline, because the machine drifts between measurements — these
+same runs took 275-480s across the day for identical work.
+
+## Phase 3 — shipped, on the third attempt
+
+**The plan's exit criterion caught two wrong fixes before either could ship.**
+That is the whole reason this phase is worth reading.
+
+### Attempt 1 — `focused`, defaulting to false. 2 of 5 full runs.
+
+The same score as `onFocus={refreshMention}`, the fix this plan was written to
+avoid repeating. The record said why: `mention: "/0:"`, `commands: "50"`,
+`rows: 0` — everything the menu needed was present and it was still shut, so the
+gate was false.
+
+**Chromium defers a focus event while the document itself is unfocused.** An
+Electron launched behind another window takes `el.focus()`, sets
+`document.activeElement`, and dispatches nothing until the window is focused. So
+`focused` started `false` and had no way to become true. The shape was right and
+the _initial value_ was wrong.
+
+### Attempt 2 — `leftBox`, defaulting to false, cleared by typing. 9 of 10 alone.
+
+Better: nothing has been left at mount, which is true without an event saying so.
+And `refreshMention` clears it, because change, select and keydown all require
+the box to be where input is going — better evidence than a focus event, and it
+cannot fail to arrive.
+
+Still not right. A spontaneous window blur set `leftBox` _after_ typing, and
+while the window stayed unfocused no focus event ever came to clear it.
+
+### Attempt 3 — a window blur is not the box being left. 10 of 10.
+
+The question none of the first three passes asked: **alt-tabbing away is not
+leaving the box.** The caret is still in it, and still in it on return. Only an
+intra-app focus change means the user left. One line tells them apart:
+
+```ts
+onBlur={() => {
+  if (!document.hasFocus()) return
+  setLeftBox(true)
+}}
+```
+
+### Measured, back to back on one machine
+
+| slash spec  | rate        |
+| ----------- | ----------- |
+| without fix | **7 / 10**  |
+| with fix    | **10 / 10** |
+
+| full suite, final fix | result               |
+| --------------------- | -------------------- |
+| 5 runs                | **5x all 28 passed** |
+
+And the OS-level probe — steal the window's focus with another application, give
+it back — now shows `rows: 50` before, during _and_ after, where the unfixed
+build showed `50 -> 0 -> 0` and never recovered.
+
+### The probe lied three times before it told the truth
+
+Kept because each would have produced a confident wrong answer, and two of them
+did:
+
+1. It read `document.activeElement === ta` as "focused". That stays true while
+   the _window_ is away — which is why the board's original failure record
+   showed `focused: true` beside a shut menu and looked impossible.
+2. It restored focus with `Page.bringToFront`, which acts inside the browser and
+   never touches an Electron window's OS focus. It reported "not fixed" about a
+   thing it had not tested.
+3. It assumed the window had focus to begin with. A freshly launched Electron
+   often does not.
+
+It now waits on `document.hasFocus()` transitions and prints `INVALID` rather
+than a verdict when one did not happen. That refusal is what caught 2 and 3.

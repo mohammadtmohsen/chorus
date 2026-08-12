@@ -21,6 +21,54 @@ export interface MentionQuery {
   readonly query: string
 }
 
+/** A mention together with the exact text it was read out of. */
+export interface StampedMention {
+  readonly query: MentionQuery
+  readonly from: string
+}
+
+/**
+ * The mention, but only if it still describes the box.
+ *
+ * A `MentionQuery` is a pair of offsets into one particular string. `onChange`
+ * keeps them honest for anything a person types, but `quote`, `insert` and
+ * `send` write the draft from outside the textarea and fire no change event —
+ * and two of those refocus afterwards, which is precisely when a menu would
+ * reopen against text its offsets no longer fit. Choosing a row then splices at
+ * a stale offset and deletes whatever now sits there.
+ *
+ * Comparing the stamp makes that unrepresentable rather than merely unlikely,
+ * and costs one string compare. The alternative — re-deriving after every
+ * programmatic write — needs the caret, and the caret is exactly what cannot be
+ * trusted around a focus event (C-003).
+ */
+export function liveMention(mention: StampedMention | null, draft: string): MentionQuery | null {
+  if (mention === null) return null
+  return mention.from === draft ? mention.query : null
+}
+
+/**
+ * Whether the menu is on screen.
+ *
+ * Visibility depends on focus; what is being typed does not. Keeping them in one
+ * value is what made C-003: `onBlur` cleared the mention to close the menu, and
+ * nothing re-derived it when focus came back, so the box kept its `/` and the
+ * menu stayed shut until another key was pressed.
+ *
+ * The `lookup` arm is why this takes a status at all — a menu that says "still
+ * looking" has no rows, and without it an unanswered lookup was indistinguishable
+ * from having nothing to offer.
+ */
+export function menuVisible(
+  focused: boolean,
+  rows: number,
+  mention: MentionQuery | null,
+  lookup: string | null
+): boolean {
+  if (!focused) return false
+  return rows > 0 || (mention !== null && lookup !== null)
+}
+
 export interface MentionOption {
   /** What is inserted, without the leading trigger. */
   readonly insert: string

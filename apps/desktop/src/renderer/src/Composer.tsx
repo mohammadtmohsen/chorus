@@ -10,7 +10,9 @@ import {
   fileOptions,
   findCommandQuery,
   findMentionQuery,
+  liveMention,
   mentionOptions,
+  menuVisible,
   type CommandInfo,
   type MentionQuery,
 } from './mention-menu.js'
@@ -132,7 +134,69 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const [draft, setDraft] = useState(props.initial?.draft ?? '')
     const [attached, setAttached] = useState<Attachment[]>([...(props.initial?.attached ?? [])])
     const [ideIncluded, setIncluded] = useState(props.initial?.ideIncluded ?? true)
-    const [mention, setMention] = useState<MentionQuery | null>(null)
+    /**
+     * The mention being typed, stamped with the text it was read from.
+     *
+     * The stamp is what makes staleness impossible to represent, and it is
+     * needed because `leftBox` below stops the blur from clearing this (C-003).
+     * A mention is a pair of offsets into a particular string; the moment the
+     * string changes it describes a range in text that no longer exists, and
+     * `applyMention` would splice at the wrong place — deleting whatever now
+     * sits there.
+     *
+     * `onChange` covers what a person types. It does not cover `quote`,
+     * `insert` or `send`, which call `setDraft` from outside the box and fire no
+     * change event at all; `quote` and `insert` also refocus, which is exactly
+     * the sequence that would reopen a menu against rewritten text.
+     *
+     * Comparing the stamp costs a string compare per render and needs no caller
+     * to remember anything, which is why this rather than re-deriving on every
+     * programmatic write: re-deriving needs the caret, and the caret is the one
+     * thing that cannot be trusted around a focus event.
+     */
+    const [mention, setMention] = useState<{ query: MentionQuery; from: string } | null>(null)
+    /**
+     * Whether the box has the caret, kept apart from what is in the box.
+     *
+     * These were one value and that was C-003. `onBlur` cleared the mention to
+     * close the menu — right about the menu, wrong about the mention, and
+     * nothing ever undid it: `refreshMention` runs on change, select and
+     * keydown, and focus returning is none of those. So the box kept its `/`,
+     * the menu stayed shut, and only another keystroke could reopen it.
+     *
+     * Reproduced at the OS level rather than argued: steal focus with another
+     * app and give it back, and the record comes back `mention: none`,
+     * `rows: 0`, `value: "/"`, `caret: 1` — identical to the failing run on the
+     * board. Note `focused: true` throughout, which is what made that record
+     * look impossible: a window losing focus fires `blur` on the element while
+     * `document.activeElement` still points at it.
+     *
+     * The obvious repair — `onFocus={refreshMention}` — was tried and measured
+     * *worse than doing nothing*, 2 of 5 menu specs against 5 of 5, because a
+     * focus event can fire with the caret still at 0 and `findCommandQuery`
+     * reads `text.slice(0, caret)`. Nothing here reads the caret on focus, so
+     * that race has nowhere to happen.
+     *
+     * **"Has the box been left" rather than "does the box have the caret", and
+     * the difference is the whole correctness of this.** The first version of
+     * this fix held `focused`, defaulting to `false`, and it broke the slash
+     * menu in 2 of 5 full runs — the same score as the repair it replaced. The
+     * record said why: `mention: "/0:"`, `commands: "50"`, `rows: 0`. Everything
+     * needed was present and the menu was still shut, because `onFocus` had
+     * never fired.
+     *
+     * It had never fired because **Chromium defers a focus event while the
+     * document itself is unfocused**. A window that does not have the OS's focus
+     * — a freshly launched Electron, an app behind another — takes
+     * `el.focus()`, sets `document.activeElement`, and dispatches nothing until
+     * the window is focused. So `focused` stayed `false` and the menu could
+     * never open.
+     *
+     * Asking whether the box was *left* has no such hole: nothing has been left
+     * at mount, which is true without needing an event to say so, and a focus
+     * event that never arrives leaves the answer correct rather than stuck.
+     */
+    const [leftBox, setLeftBox] = useState(false)
     /**
      * What this conversation accepts, asked once and kept.
      *
@@ -177,6 +241,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const recalled = useRef(0)
     const [highlighted, setHighlighted] = useState(0)
     const input = useRef<HTMLTextAreaElement | null>(null)
+
+    /*
+     * Everything downstream reads this, never `mention` — that is the invariant.
+     *
+     * Declared here rather than beside its consumers because `useCallback`
+     * dependency arrays evaluate during render, and a value used above its own
+     * declaration throws a TDZ `ReferenceError` on first paint that typecheck
+     * does not catch.
+     */
+    const active = liveMention(mention, draft)
 
     const hasDraft = draft.trim() !== '' || attached.length > 0
     props.report.current = { draft, attached, ideIncluded }
@@ -234,7 +308,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * until there is an `@` with something after it: a bare `@` means the cast,
      * and offering the whole repository beside two agent names is not a menu.
      */
-    const fileQuery = mention?.trigger === '@' && mention.query !== '' ? mention.query : null
+    const fileQuery = active?.trigger === '@' && active.query !== '' ? active.query : null
     useEffect(() => {
       if (fileQuery === null) {
         setFiles([])
@@ -326,6 +400,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       const el = input.current
       if (el === null) return
       /*
+       * Typing in the box is proof the box has the caret.
+       *
+       * This runs on change, on select and on keydown — all of which require the
+       * box to be where input is going. So any of them is better evidence than a
+       * focus event, and unlike a focus event it cannot fail to arrive.
+       *
+       * Without this the fix for C-003 broke the very menu it was fixing, in 2
+       * of 5 full runs, with `mention: "/0:"`, `commands: "50"` and `rows: 0` —
+       * everything present and the menu still shut. A window that blurs
+       * spontaneously (this machine does, unprompted) sets `leftBox`, and while
+       * it stays unfocused **no focus event ever comes to clear it**, so typing
+       * set the mention and the menu stayed hidden behind a flag nothing could
+       * reset. Before the fix, typing always reopened the menu because there was
+       * no gate at all; that asymmetry is what this line removes.
+       */
+      setLeftBox(false)
+      /*
        * A command first, because its rule is the narrow one.
        *
        * `/` only counts leading the message, so at most one of these can match
@@ -348,7 +439,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         return
       }
       dismissed.current = null
-      setMention(found)
+      // Stamped with the exact text it was read from, so a later render can tell
+      // whether it still describes the box. See the state declaration.
+      setMention(found === null ? null : { query: found, from: el.value })
     }, [])
 
     /*
@@ -375,7 +468,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * query it carries never changes the answer, because the list is the
      * conversation's rather than the query's.
      */
-    const wantsCommands = mention?.trigger === '/'
+    const wantsCommands = active?.trigger === '/'
     useEffect(() => {
       if (!wantsCommands || commands.length > 0) return
       let live = true
@@ -444,11 +537,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     }, [wantsCommands, fileQuery])
 
     const options =
-      mention === null
+      active === null
         ? []
-        : mention.trigger === '/'
-          ? commandOptions(commands, mention.query)
-          : [...mentionOptions(participants as never, mention.query), ...fileOptions(files)]
+        : active.trigger === '/'
+          ? commandOptions(commands, active.query)
+          : [...mentionOptions(participants as never, active.query), ...fileOptions(files)]
     /*
      * The menu opens for a state as well as for rows.
      *
@@ -462,14 +555,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * improved by a "looking…" line under it while git answers in thirty
      * milliseconds.
      */
-    const menuOpen = options.length > 0 || (mention !== null && lookup !== null)
+    const menuOpen = menuVisible(!leftBox, options.length, active, lookup)
 
     const choose = useCallback(
       (index: number) => {
         const el = input.current
         const option = options[index]
-        if (el === null || mention === null || option === undefined) return
-        const next = applyMention(el.value, mention, el.selectionStart, option)
+        if (el === null || active === null || option === undefined) return
+        const next = applyMention(el.value, active, el.selectionStart, option)
         setDraft(next.text)
         setMention(null)
         // After React has written the new value, or the caret lands wherever the
@@ -479,7 +572,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
           el.setSelectionRange(next.caret, next.caret)
         })
       },
-      [mention, options]
+      [active, options]
     )
 
     /**
@@ -620,7 +713,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
          * between a named cause and another afternoon.
          */
         data-mention={
-          mention === null ? 'none' : `${mention.trigger}${String(mention.start)}:${mention.query}`
+          active === null ? 'none' : `${active.trigger}${String(active.start)}:${active.query}`
         }
         data-commands={commands.length}
         /*
@@ -707,7 +800,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                     {/* A bare option inserts no trigger, so it must not show
                         one: a file row reading "@src/a.ts" would promise a
                         mention it does not write. */}
-                    {option.bare === true ? '' : (mention?.trigger ?? '@')}
+                    {option.bare === true ? '' : (active?.trigger ?? '@')}
                     {option.label}
                   </span>
                   <span className="mention-detail">{option.detail}</span>
@@ -770,33 +863,53 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
               e.preventDefault()
               void attach(e.clipboardData)
             }}
-            onBlur={() => {
-              setMention(null)
-            }}
             /*
-             * There is deliberately no `onFocus` here, and this is C-003.
+             * These two say only where the caret is, and that is the fix for
+             * C-003.
              *
-             * The blur above is half of that bug. Closing the menu on blur is
-             * right — it floats over the transcript and should not outlive the
-             * box being left — but **nothing ever undoes it**: `refreshMention`
-             * runs on change, on select and on keydown, and focus returning is
-             * none of those. So a menu closed by a stray blur stays closed with
-             * its query still in the box, until another character is typed.
-             * Caught in a real failing run: `mention: none` beside `value: "/"`,
-             * `caret: 1`, `focused: true`, `commands: 50`, `dismissed: none`.
+             * `onBlur` used to call `setMention(null)`. Closing the menu on blur
+             * is right — it floats over the transcript and should not outlive
+             * the box being left — but expressing that by discarding *what is
+             * being typed* meant nothing could bring it back: `refreshMention`
+             * runs on change, select and keydown, and focus returning is none of
+             * those. The box kept its `/` and the menu stayed shut until another
+             * character was typed.
              *
-             * **`onFocus={refreshMention}` is the obvious repair and it is
-             * measured wrong** — 2 of 5 menu-spec runs against 5 of 5 without
-             * it, back to back. A focus event can fire while the caret is still
-             * at 0, and `findCommandQuery` reads `text.slice(0, caret)`: caret 0
-             * is an empty string, no slash is found, and a good mention is
-             * nulled. A programmatic `.focus()` restores the caret
-             * synchronously, which is why a harness says it works and the app
-             * says it does not.
+             * `onFocus={refreshMention}` was the obvious repair and it measured
+             * **worse than doing nothing** — 2 of 5 menu specs against 5 of 5 —
+             * because a focus event can fire with the caret still at 0, and
+             * `findCommandQuery` reads `text.slice(0, caret)`. Nothing here
+             * reads the caret, so there is no such race to lose: the mention was
+             * never discarded, so it does not need re-deriving.
              *
-             * Whatever fixes this has to re-derive the mention *after* the caret
-             * is restored, never inside the event that restores it.
+             * What keeps it honest across the gap is the stamp on `mention` —
+             * if anything rewrote the draft while the box was away, `liveMention`
+             * returns null and the menu stays shut.
              */
+            onFocus={() => {
+              setLeftBox(false)
+            }}
+            onBlur={() => {
+              /*
+               * **A window losing focus is not the box being left**, and telling
+               * the two apart is what finally made this correct.
+               *
+               * The menu should not outlive you clicking somewhere else in the
+               * app — that is what this handler is for. But alt-tabbing to
+               * another application is not leaving the box: the caret is still
+               * in it, and still in it when you come back. Treating the two the
+               * same is what made the first two attempts at this fix worse than
+               * no fix at all — the slash menu failed 2 of 5 full runs, then 1
+               * of 10 alone, every time with `mention: "/0:"`, `commands: "50"`
+               * and `rows: 0`, because this machine blurs its windows
+               * spontaneously and the menu went with them.
+               *
+               * `document.hasFocus()` is exactly the distinction: false here
+               * means the whole window went away, so there is nothing to close.
+               */
+              if (!document.hasFocus()) return
+              setLeftBox(true)
+            }}
             onKeyDown={(e) => {
               /*
                * The menu takes the keys it needs first — Enter in particular.
