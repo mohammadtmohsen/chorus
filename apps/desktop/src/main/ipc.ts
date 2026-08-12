@@ -154,6 +154,11 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       return Promise.resolve(OK)
     },
 
+    'terminal:clear': (request: IpcRequest<'terminal:clear'>) => {
+      runtime.clearTerminal(request.ref, request.epoch)
+      return Promise.resolve(OK)
+    },
+
     'terminal:describe': (request: IpcRequest<'terminal:describe'>) =>
       Promise.resolve(runtime.describeTerminal(request.ref)),
 

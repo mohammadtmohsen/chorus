@@ -511,3 +511,55 @@ describe('describe', () => {
     expect(service.describe(GLOBAL)).toMatchObject({ busy: true, foreground: 'ssh' })
   })
 })
+
+describe('clearing', () => {
+  /*
+   * `⌘K` in Terminal.app throws away the scrollback. Here it has to throw away
+   * *two* copies: the view's, and the headless mirror a remount restores from.
+   * Clearing only the view puts every cleared line back on the next tab switch.
+   */
+  it('empties the snapshot a remount would restore', async () => {
+    const { service, spawned } = build()
+    const { epoch } = await service.attach(GLOBAL)
+    spawned[0]?.emit('a line nobody wants to see again\r\n')
+    await settled()
+    expect((await service.attach(GLOBAL)).snapshot).toContain('nobody wants')
+
+    const current = await service.attach(GLOBAL)
+    service.clear(GLOBAL, current.epoch)
+    await settled()
+    expect((await service.attach(GLOBAL)).snapshot).not.toContain('nobody wants')
+    expect(epoch).toBeLessThan(current.epoch)
+  })
+
+  /*
+   * A display action, not an input one. Nothing is written to the shell, so a
+   * half-typed command survives it — anything else would be a different feature
+   * wearing this shortcut.
+   */
+  it('says nothing to the shell', async () => {
+    const { service, spawned } = build()
+    const { epoch } = await service.attach(GLOBAL)
+    service.clear(GLOBAL, epoch)
+    expect(spawned[0]?.written).toHaveLength(0)
+  })
+
+  it('does not kill anything', async () => {
+    const { service, spawned } = build()
+    const { epoch } = await service.attach(GLOBAL)
+    service.clear(GLOBAL, epoch)
+    expect(spawned[0]?.killed).toBe(false)
+    expect(service.describe(GLOBAL)?.running).toBe(true)
+  })
+
+  it('ignores a clear stamped with a superseded epoch', async () => {
+    const { service, spawned } = build()
+    const stale = await service.attach(GLOBAL)
+    await service.attach(GLOBAL)
+    spawned[0]?.emit('still wanted')
+    await settled()
+    service.clear(GLOBAL, stale.epoch)
+    await settled()
+    expect((await service.attach(GLOBAL)).snapshot).toContain('still wanted')
+  })
+})

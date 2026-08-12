@@ -522,3 +522,40 @@ even focuses the terminal — with `.focus()`, programmatically, which is the on
 route that skips the click handler entirely. It took a person clicking on the
 thing. That is the gate the workflow calls "UI verify", and it earned its place
 here on the first use.
+
+## After Phase 4 — `⌘K` did nothing
+
+Reported next: _"inside the regular terminal if i press command + k it's clear
+the terminal but here not"_.
+
+Correct, and half of it was mine. Phase 3 stopped `⌘K` arming the split chord
+while the caret is in a terminal — which was right — but never gave it the
+behaviour a terminal is expected to have instead, so it did nothing at all.
+
+**It has to clear two copies.** The view's, and the headless mirror in main that
+a remount restores from. Clearing only the view looks correct until the panel is
+closed and reopened, at which point every cleared line is back. So `⌘K` is a
+`terminal:clear` round trip rather than a one-line call on the emulator, and the
+guard is a probe that closes and reopens the panel:
+
+```
+✓ the marker is on screen
+✓ and gone after ⌘K
+✓ still gone after closing and reopening the panel
+✓ the shell is still running — {"running":true,"foreground":"zsh","busy":false}
+```
+
+**The shell is not told.** `⌘K` is a display action everywhere it exists: it does
+not interrupt, sends nothing, and a half-typed command survives it. Returning
+`false` from xterm's key handler is what stops the keystroke reaching the shell
+as a literal `^K`, which would kill the line instead.
+
+Handled in `TerminalView` rather than the workspace's global listener, because it
+is only a clear _while a terminal holds the caret_ — everywhere else `⌘K` is
+still the split chord.
+
+**On the probe, not the feature.** The first version typed by poking an
+`InputEvent` at xterm's hidden textarea; xterm ignores that, and the probe failed
+on its own setup rather than on the code. Typing through CDP — real key events,
+the way a person produces them — worked first time. Twice now a terminal probe
+has been wrong before the code was.

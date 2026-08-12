@@ -299,6 +299,24 @@ export class TerminalService {
     this.applySize(session, cols, rows)
   }
 
+  /**
+   * Throw away the scrollback, as `⌘K` does in Terminal.app.
+   *
+   * Both copies, and that is the whole reason this crosses the boundary at all.
+   * The view could clear itself in one line — but the snapshot a remount restores
+   * from is the headless mirror here, so clearing only the renderer would put
+   * every cleared line back the next time the panel was reopened.
+   *
+   * The shell is not told. `⌘K` is a display action everywhere it exists: it does
+   * not interrupt, it does not send a newline, and a half-typed command survives
+   * it. Anything else would be a different feature wearing its shortcut.
+   */
+  clear(ref: TerminalRef, epoch: number): void {
+    const session = this.live(ref, epoch)
+    if (session === null) return
+    session.mirror.clear()
+  }
+
   /** What a confirmation dialog would need to say. */
   describe(ref: TerminalRef): TerminalDescription | null {
     const session = this.find(ref)

@@ -2257,6 +2257,10 @@ export class ChorusRuntime {
     this.terminals.resize(ref, epoch, cols, rows)
   }
 
+  clearTerminal(ref: TerminalRef, epoch: number): void {
+    this.terminals.clear(ref, epoch)
+  }
+
   ackTerminal(ref: TerminalRef, epoch: number, seq: number): void {
     this.terminals.ack(ref, epoch, seq)
   }

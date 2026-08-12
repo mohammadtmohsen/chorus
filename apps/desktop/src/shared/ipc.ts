@@ -993,6 +993,19 @@ export const IPC_CONTRACT = {
     response: z.object({ ok: z.literal(true) }),
   },
 
+  /**
+   * Throw away the scrollback, as `⌘K` does in Terminal.app.
+   *
+   * Goes through main because the snapshot a remount restores from lives there:
+   * clearing only the view would put every cleared line back on the next tab
+   * switch. The shell is not told — `⌘K` is a display action, and a half-typed
+   * command survives it.
+   */
+  'terminal:clear': {
+    request: z.object({ ref: TerminalRefShape, epoch: z.number().int() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
   /** Whether killing this would lose work, for a confirmation to decide on. */
   'terminal:describe': {
     request: z.object({ ref: TerminalRefShape }),
@@ -1239,6 +1252,9 @@ export interface ChorusApi {
   readonly ackTerminal: (
     request: IpcRequest<'terminal:ack'>
   ) => Promise<IpcResponse<'terminal:ack'>>
+  readonly clearTerminal: (
+    request: IpcRequest<'terminal:clear'>
+  ) => Promise<IpcResponse<'terminal:clear'>>
   readonly describeTerminal: (
     request: IpcRequest<'terminal:describe'>
   ) => Promise<IpcResponse<'terminal:describe'>>

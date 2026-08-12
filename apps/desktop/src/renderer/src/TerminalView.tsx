@@ -155,6 +155,29 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
         term.write('[2m[the terminal could not be opened][0m\r\n')
       })
 
+    /*
+     * `⌘K` clears, the way it does in Terminal.app and every terminal since.
+     *
+     * Handled here rather than in the workspace's global listener because it is
+     * only a clear *while a terminal has the caret*; everywhere else `⌘K` is the
+     * split chord. Returning false stops xterm passing the keystroke to the
+     * shell, which would otherwise send a literal `^K` and kill the line.
+     *
+     * Both copies go: the view's, and the headless mirror in main that a remount
+     * restores from. Clearing one without the other means every cleared line
+     * comes back the next time the panel is opened.
+     */
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true
+      if (!event.metaKey || event.altKey || event.shiftKey || event.ctrlKey) return true
+      if (event.key.toLowerCase() !== 'k') return true
+      term.clear()
+      if (attachment !== null) {
+        void window.chorus.clearTerminal({ ref, epoch: attachment.epoch })
+      }
+      return false
+    })
+
     const typed = term.onData((data) => {
       if (attachment === null) return
       void window.chorus.writeTerminal({ ref, epoch: attachment.epoch, data })

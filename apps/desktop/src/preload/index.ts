@@ -72,6 +72,7 @@ const api: ChorusApi = {
   writeTerminal: invoke('terminal:write'),
   resizeTerminal: invoke('terminal:resize'),
   ackTerminal: invoke('terminal:ack'),
+  clearTerminal: invoke('terminal:clear'),
   describeTerminal: invoke('terminal:describe'),
   setBadge: invoke('app:setBadge'),
   focusWindow: invoke('app:focus'),
