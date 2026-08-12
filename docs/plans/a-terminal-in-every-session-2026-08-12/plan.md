@@ -692,11 +692,11 @@ took the recommended branch of each and each is cheap to flip before Phase 0:
 **node-pty over pipes** (§2), **no agent access** (§7), **one terminal per
 scope** (§7).
 
-**2. Does the global terminal need a keybinding?** Codex scoped `⌘J` to the
-session terminal, which leaves the global one button-only — the one surface you
-would reach for while _not_ focused on a session, and the one with no keyboard
-route. `⌘⇧J` is free and is the obvious candidate, but inventing a binding is
-outside what was asked for.
+**2. ~~Does the global terminal need a keybinding?~~ Settled: `⌘⇧J`.** Asked for
+after using it. It works from anywhere, including from inside a terminal —
+unlike `⌘J`, which must resolve "which session" and goes inert where nothing can
+answer. Both panels now print their own combo in the header, beside the Hide
+button that does the same thing.
 
 **3. Branch dependency on `fix/a-suite-that-can-go-red`.** C-027's fix is
 **unmerged** — `git branch -a --contains 294d910` returns only that branch, and

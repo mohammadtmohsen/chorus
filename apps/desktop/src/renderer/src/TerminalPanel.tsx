@@ -27,6 +27,8 @@ export interface TerminalPanelProps {
    * answer; the alternative is threading focus state back up through the store.
    */
   readonly variant: 'global' | 'session'
+  /** The combo that toggles this panel, shown in its header. */
+  readonly shortcut: string
 }
 
 /**
@@ -118,6 +120,16 @@ export function TerminalPanel(props: TerminalPanelProps): React.JSX.Element {
         {exited !== null && (
           <span className="terminal-exited">{t('terminal.exited', { code: exited })}</span>
         )}
+        {/*
+          The shortcut, next to the control it duplicates.
+        
+          A person who reaches for Hide is the person who has not learned the
+          key yet, so this is where it is worth saying — and saying it once, in
+          the panel, rather than in a settings sheet nobody opens.
+        */}
+        <kbd className="terminal-shortcut" title={t('terminal.toggleHint')}>
+          {props.shortcut}
+        </kbd>
         <button
           type="button"
           className="terminal-action"

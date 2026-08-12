@@ -1260,6 +1260,7 @@ export function Session(props: {
             pane.current?.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()
           }}
           variant="session"
+          shortcut={t('terminal.shortcutSession')}
         />
       )}
 

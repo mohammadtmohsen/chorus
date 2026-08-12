@@ -5776,7 +5776,6 @@ input::placeholder {
 }
 
 .terminal-action {
-  margin-left: auto;
   flex: 0 0 auto;
   background: none;
   border: 1px solid transparent;
@@ -5843,4 +5842,24 @@ input::placeholder {
  */
 .terminal-surface .xterm .xterm-viewport {
   background-color: transparent;
+}
+
+/*
+ * The shortcut in a terminal's header.
+ *
+ * A key cap rather than plain text, because it is an instruction about the
+ * keyboard sitting next to a button that does the same thing — the shape is what
+ * says "press this" without a sentence explaining it.
+ */
+.terminal-shortcut {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 10px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px calc(var(--step) * 1.5);
+  line-height: 1.5;
+  white-space: nowrap;
 }

@@ -168,6 +168,21 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
        * pane was focused last — so without this, typing `⌘J` in the global panel
        * would toggle a panel somewhere else entirely.
        */
+      /*
+       * `⌘⇧J` toggles the global terminal, and unlike `⌘J` it works from
+       * anywhere — including from inside a terminal.
+       *
+       * There is nothing to resolve: `⌘J` has to answer "which session", which
+       * is why it goes inert when the caret is somewhere that cannot answer.
+       * This one names its target outright, so a person in the global terminal
+       * can close it with the key that opened it.
+       */
+      if (event.metaKey && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'j') {
+        event.preventDefault()
+        state.toggleGlobalTerminal()
+        return
+      }
+
       if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'j') {
         event.preventDefault()
         if (document.activeElement?.closest('.terminal-panel--global') != null) return
@@ -364,6 +379,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
             }}
             onFocusAway={() => undefined}
             variant="global"
+            shortcut={t('terminal.shortcutGlobal')}
           />
         )}
       </main>

@@ -559,3 +559,35 @@ still the split chord.
 on its own setup rather than on the code. Typing through CDP — real key events,
 the way a person produces them — worked first time. Twice now a terminal probe
 has been wrong before the code was.
+
+## After Phase 4 — `⌘⇧J`, and the panels say so
+
+Asked for after using it: a key for the global terminal, and the combo printed in
+each panel's header before Hide.
+
+This settles the plan's §8.2, which had been left open on the grounds that
+inventing a binding was outside what was asked for. It is asked for now.
+
+**`⌘⇧J` works from anywhere, including inside a terminal**, where `⌘J` is
+deliberately inert. The asymmetry is not an oversight: `⌘J` has to answer "which
+session", and it goes quiet exactly where nothing can answer — with the caret in
+the global panel, `focusedPaneId` still points at whatever pane was focused last,
+so acting would toggle something else. `⌘⇧J` names its target outright, so it can
+close the panel you are standing in.
+
+That also removes the sharp edge Phase 3 recorded: the global terminal used to be
+button-only, so opening it took the caret and then `⌘J` did nothing with no
+explanation. Now the key that opened it closes it.
+
+**The combo is in the header because that is who needs it.** Someone reaching for
+Hide is someone who has not learned the key, and a `<kbd>` next to the button
+doing the same job says it without a sentence.
+
+Verified in the running app: `⌘⇧J` opens and closes the global panel from inside
+itself, each header shows its own combo before Hide, and `⌘⇧J` leaves a session
+panel alone.
+
+**One note on the probe, again.** Its first run failed on a CDP timeout, not on
+the code — a diagnostic showed the key handled and the panel present. Re-running
+passed six of six. Worth recording because the reflex on a red probe is to change
+the code, and three times in this plan the probe was the thing that was wrong.
