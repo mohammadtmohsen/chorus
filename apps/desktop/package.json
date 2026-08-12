@@ -28,6 +28,8 @@
     "@chorus/orchestrator": "workspace:*",
     "@chorus/shared": "workspace:*",
     "@chorus/workspace": "workspace:*",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^13.0.2",
     "i18next": "^26.3.6",
     "node-pty": "^1.1.0",

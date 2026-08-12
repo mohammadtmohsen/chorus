@@ -1,14 +1,17 @@
 # Status
 
-| Phase                                | State                          | Commit |
-| ------------------------------------ | ------------------------------ | ------ |
-| 0 — prove it packages                | **shipped**, strategy A chosen | —      |
-| 1 — the terminal service in main     | not started                    | —      |
-| 2 — IPC and flow control             | not started                    | —      |
-| 3 — the two panels, `⌘J`, the button | not started                    | —      |
-| 4 — persistence                      | not started                    | —      |
+| Phase                                | State                          | Commit    |
+| ------------------------------------ | ------------------------------ | --------- |
+| 0 — prove it packages                | **shipped**, strategy A chosen | `88668c4` |
+| 1 — the terminal service in main     | **shipped**                    | —         |
+| 2 — IPC and flow control             | not started                    | —         |
+| 3 — the two panels, `⌘J`, the button | not started                    | —         |
+| 4 — persistence                      | not started                    | —         |
 
-Nothing is committed. Everything below is in the working tree.
+On `feat/a-terminal-in-every-session`, branched from `main` rather than from
+`fix/a-suite-that-can-go-red`. The plan's §8.3 asked whether the terminal work
+depends on that branch landing; it does not — the two touch no file in common,
+so the dependency was avoided rather than accepted.
 
 ## Phase 0 — shipped
 
@@ -108,14 +111,103 @@ why.
 | `package.json`                         | `postinstall`, plus `dev` calling it directly                                           |
 | `eslint.config.mjs`                    | `scripts/**/*.mjs` has no tsconfig, like the other build scripts                        |
 | `apps/desktop/e2e/packaged.mjs`        | the regression guard                                                                    |
-| `apps/desktop/build/pty-smoke.cjs`     | **throwaway** — delete in Phase 1                                                       |
+| `apps/desktop/build/pty-smoke.cjs`     | **throwaway** — extended in Phase 1, deleted when the panel lands                       |
 
-### One thing to decide before Phase 1
+### The open question from this phase, since answered
 
-`pnpm install` runs the root `postinstall`, but pnpm short-circuits on "Already
-up to date" and skips it — even with `--force`. On a genuine fresh clone
-node_modules is absent, so the install does real work and the hook fires; that
-path was **not** exercised here, because forcing it from this checkout was not
-possible. `dev` calls the script directly, so the common case is covered either
-way. If it turns out pnpm does not run it on a fresh clone either, the repair
-moves into the app's own startup for the unpackaged case.
+Phase 0 could not prove pnpm runs the root `postinstall`, because install
+short-circuits on "Already up to date" even under `--force`. Adding the two xterm
+packages at the start of Phase 1 gave it real work, and it fired:
+
+```
+. postinstall$ node scripts/fix-spawn-helper.mjs
+```
+
+So the hook works on any install that does something, which includes a fresh
+clone. `dev` calling the script directly stays as the belt to that braces.
+
+## Phase 1 — shipped
+
+The service that owns the shells. No IPC and no UI yet: this is the part that has
+to be right before either of those can be built against it.
+
+### What it is
+
+`src/main/terminal.ts` — a `Pty` port, a `TerminalService`, and the real
+`node-pty` spawner at the bottom. `src/main/shell.ts` — which shell, and how.
+
+The port is the same move as `event-store`'s `port.ts`: one file knows what a PTY
+is, and all 30 service tests drive a fake. That is what makes the lifecycle
+testable at all without spawning shells in `pnpm check`.
+
+### The three design claims, and the tests that would catch losing them
+
+Each was mutation-tested — the guard was broken on purpose and the right tests
+went red. A guard whose test passes without it is not a guard.
+
+| claim                                   | mutation                          | result |
+| --------------------------------------- | --------------------------------- | ------ |
+| global and session storage are separate | `forget` also clears `global`     | 2 red  |
+| a stale epoch is ignored                | epoch check dropped from `live()` | 3 red  |
+| `detach` is not `dispose`               | `detach` also kills               | 1 red  |
+
+The storage mutation exposed a weak assertion, which is the more useful half:
+"ending a conversation leaves the global shell running" originally checked only
+that the global PTY was not killed, and **passed while the global terminal was
+orphaned** — dropped from storage, process leaked, user's terminal gone. It now
+asserts the service still holds it.
+
+That failure mode is not hypothetical here. `runtime.close()` carries a comment
+about asides that describes it exactly: separate storage was right, _and_
+quitting still left them running because nothing drained them. `TerminalService.close()`
+drains the global slot for that reason, and the wiring comment says so.
+
+### Verified against a real tty
+
+The fake proves lifecycle; it cannot prove a tty. Run against a real shell:
+
+```
+PASS  a command runs, on a real tty — saw "hi\r\n"
+PASS  ⌃C interrupts a foreground process — was sleep, now zsh
+PASS  a full-screen program draws and exits cleanly — alt-screen entered and left
+```
+
+`was sleep, now zsh` is the one worth keeping: the foreground process actually
+changed back, so the interrupt reached the process group as a signal rather than
+closing a pipe. And `vi` both entered (`?1049h`) and left (`?1049l`) the alternate
+screen, which is the property §4.4 rests on.
+
+Snapshot fidelity was checked the same way, in the unit tests: colour set before
+the retained output and an alternate-screen entry both survive
+serialize-and-remount. A byte ring would lose both.
+
+### Decisions taken here
+
+**The live-child policy is expressible, not chosen.** The plan said settle it in
+this phase because it shapes the disposal signature. What it actually shapes is
+whether the service can _answer_ the question, so `describe(ref)` reports
+`{ running, foreground, busy }` — busy meaning something other than the shell is
+in the foreground, which is how a "this will lose work" prompt would decide. All
+three candidate policies — never ask, ask when busy, ask only on quit — sit on
+top of that without changing a signature. The product choice is still open and is
+now cheap.
+
+**Backpressure is paced by the headless mirror**, not by a renderer, and this
+phase is where that matters most: with no panel open there is no renderer to
+apply any, and a firehose would corrupt the very snapshot the panel exists to
+restore. Tested with nobody attached.
+
+**`reap.ts` is untouched.** Adding a shell name to `AGENT_PATTERNS` would
+`SIGKILL` every `zsh` the user has open outside Chorus — the file's own rationale
+is that matching by pattern is what keeps it from killing something unrelated,
+and a bare shell name defeats it.
+
+### Not verified
+
+- **No UI.** Nothing is on screen; `⌘J` and the panels are Phase 3. Everything
+  here was driven from tests and a probe.
+- **The `⌃C` and `vi` probe is dev-path only.** It takes a node-pty path
+  argument and was run against the packaged bundle for `echo hi` in Phase 0, but
+  the interactive checks were not re-run there.
+- **Sizes are forwarded, not observed.** `resize` reaches the PTY and the mirror,
+  but nothing has yet watched a real `vim` reflow — that needs the panel.
