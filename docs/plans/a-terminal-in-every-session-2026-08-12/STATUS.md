@@ -591,3 +591,67 @@ panel alone.
 the code — a diagnostic showed the key handled and the panel present. Re-running
 passed six of six. Worth recording because the reflex on a red probe is to change
 the code, and three times in this plan the probe was the thing that was wrong.
+
+## The merge gate
+
+Run after the branch was otherwise finished, to answer "is this ready".
+
+|                                         |                                                                       |
+| --------------------------------------- | --------------------------------------------------------------------- |
+| `pnpm check`                            | green — 1356 passed                                                   |
+| `pnpm e2e`                              | **28/28** — and 26/28 on the run before it, same branch, same machine |
+| `pnpm verify:package`                   | **green**, on a real packaged `.app`                                  |
+| diff read end to end                    | done — four defects, all mine, fixed in `fc2495e`                     |
+| mutation tests                          | 10, each red in the right places                                      |
+| debug noise · `any` · hardcoded strings | none                                                                  |
+
+**The e2e result needed two runs to interpret, which is C-029 exactly.** The
+first reported `2 failed`; the second reported `all 28 passed`, from the same
+commit. Nothing was changed in between. That entry says a full run fails a
+different subset each time and that a red run is therefore not evidence — this
+is that, and it cost a re-run to establish rather than a hunt.
+
+**`verify:package` mattered more than the other two.** It is the only thing that
+exercises the packaging arrangement this branch rewrote, and no CI job runs it:
+
+```
+✓ spawn-helper is in the bundle, outside the asar
+✓ spawn-helper is executable, so a PTY can actually spawn
+✓ the event store opens, so the native module loaded
+✓ an agent joins, so the SDK found its own files
+```
+
+### The central claim, finally tested
+
+Four phases asserted that a command survives its view and never tested it with a
+command actually running. It does:
+
+```
+✓ a long command is running in the panel — at tick-2
+✓ the shell is still running with no view attached — foreground sleep
+✓ and six seconds later the shell is still there — foreground sleep
+✓ and output past where we left it is on screen — left at tick-2, saw tick-6
+```
+
+Two things that probe got wrong before it got them right, both worth keeping:
+
+**Counting rendered ticks is scroll-dependent.** Comparing the highest `tick-N`
+on screen before and after reported the command going _backwards_ on one run,
+because xterm renders only visible rows. Waiting for a tick that did not exist
+when the panel closed cannot be faked by scrolling.
+
+**`describe().busy` is an instantaneous sample.** Asserting it stayed `true`
+failed with foreground `zsh` while the loop was demonstrably still running —
+between `sleep`s the foreground _is_ the shell. That matters for the open
+live-child decision: keyed on `busy` alone, a confirmation would say "nothing
+running" mid-loop and kill work it promised to protect.
+
+### C-026, attempted and still not measured
+
+The proxy tried here — frames until `.score`'s geometry stops moving — is not a
+valid instrument in a driven window, because Electron throttles
+`requestAnimationFrame` when the window is not frontmost. It produced 0, then 1,
+then hung. Measuring it properly needs what the original did, wrapping the app's
+own `ResizeObserver`, which must be installed _before_ the renderer's scripts run
+— a harness change, not a probe change. Recorded as the next step rather than
+resolved with a number that means nothing.
