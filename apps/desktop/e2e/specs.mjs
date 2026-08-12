@@ -214,20 +214,44 @@ const offerLabels = (page) =>
  *
  * Waits for a stable content height rather than for an event, because it is the
  * layout that has to be still, and that is what can be observed from out here.
+ *
+ * **Says whether it worked, and that is the point** (C-027, one level down).
+ * This used to `return` on success and fall out of the loop on timeout — the
+ * same `undefined` either way. A caller that had waited fifteen seconds without
+ * the pane ever holding still went on to select against a moving transcript and
+ * failed somewhere downstream, with the real cause upstream and invisible. Both
+ * passage specs depend on this, and both are on C-029's list.
+ *
+ * The numbers come back with the verdict so a failure carries a record rather
+ * than a shrug, which is what turned C-003 from an afternoon into three lines.
  */
 const settled = async (page, { timeout = 15_000 } = {}) => {
   const height = () => page.evaluate(`document.querySelector('.score-content').offsetHeight`)
-  const deadline = Date.now() + timeout
+  const started = Date.now()
+  const deadline = started + timeout
   let last = await height()
+  let samples = 1
   let stable = 0
+  const record = (still) => ({
+    still,
+    height: last,
+    samples,
+    waited: Date.now() - started,
+  })
   while (Date.now() < deadline) {
     await wait(150)
     const now = await height()
+    samples += 1
     stable = now === last ? stable + 1 : 0
     last = now
-    if (stable >= 3) return
+    if (stable >= 3) return record(true)
   }
+  return record(false)
 }
+
+/** Reads a `settled()` record back as the sentence a spec asserts. */
+const stillness = (r) =>
+  `the transcript stopped moving (${String(r.height)}px, ${String(r.samples)} samples, ${String(r.waited)}ms)`
 
 export const specs = [
   {
@@ -413,7 +437,19 @@ export const specs = [
      * find nothing and take the empty-account branch — passing while checking
      * no number at all.
      */
-    async run(assert) {
+    /*
+     * Skips rather than asserting `true`, and that is C-027.
+     *
+     * Both branches below are legitimate — an API-key account genuinely has no
+     * plan window to check — but written as `assert(true, …)` they printed a
+     * tick, which made "all 28 passed" a claim nobody could check.
+     *
+     * Two sites, at most one skip: the first `skip` throws, so reaching the
+     * second means the first did not fire. A run therefore reports `28 passed`
+     * or `27 passed, 1 skipped`, never two. Worth stating because the arithmetic
+     * is easy to get wrong from a grep, and it was.
+     */
+    async run(assert, skip) {
       const app = await launch()
       try {
         await started(app)
@@ -421,8 +457,7 @@ export const specs = [
 
         // No panel at all is the API-key case, and saying nothing is right.
         if (!(await app.evaluate(`!!document.querySelector('.activity-usage')`))) {
-          assert(true, 'no plan window on this account, and nothing claimed')
-          return
+          skip('no plan window on this account, and nothing claimed')
         }
 
         await app.evaluate(`(() => {
@@ -444,8 +479,7 @@ export const specs = [
           })))()`)
 
         if (windows.length === 0) {
-          assert(true, 'no plan window on this account, and nothing claimed')
-          return
+          skip('the panel is there but carries no plan window')
         }
         assert(
           windows.every((w) => Number.isNaN(w.percent) || (w.percent >= 0 && w.percent <= 100)),
@@ -2457,7 +2491,8 @@ export const specs = [
           `document.querySelector('.entry[data-kind="message"][data-actor="claude"][data-status="complete"]') !== null`,
           { timeout: 180_000, label: 'the reply landed' }
         )
-        await settled(app)
+        const rest = await settled(app)
+        assert(rest.still, stillness(rest))
         const own = await selectInside(app, '.entry[data-actor="user"]')
         assert(own !== '', 'a passage of your own message can be selected')
         await app.until(`document.querySelector('.quote-offer') !== null`, {
@@ -2567,7 +2602,8 @@ export const specs = [
           `document.querySelector('.entry[data-kind="message"][data-actor="claude"][data-status="complete"]') !== null`,
           { timeout: 180_000, label: 'the reply landed' }
         )
-        await settled(app)
+        const rest = await settled(app)
+        assert(rest.still, stillness(rest))
 
         await selectInside(
           app,
