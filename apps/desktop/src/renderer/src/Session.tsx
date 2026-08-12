@@ -40,8 +40,18 @@ import {
  * a click landing anywhere inside one would hand the caret straight back to the
  * composer and undo that.
  */
+/*
+ * Clicking one of these does not hand the caret to the composer.
+ *
+ * `.terminal-panel` is here for a reason the tag list cannot cover: xterm types
+ * into a hidden `<textarea>` that is a *sibling* of the rendered rows, not an
+ * ancestor, so a click on the terminal's own output matches none of the tags
+ * above and the composer took the caret. Typing into the shell then went into
+ * the message box instead — observed, with the characters landing under the
+ * transcript.
+ */
 const FOCUS_KEEPS_ITS_OWN =
-  'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question'
+  'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question, .terminal-panel'
 
 /**
  * The transcript entry a DOM node sits inside, in the shape `askableSource`

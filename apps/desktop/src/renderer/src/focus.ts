@@ -32,6 +32,14 @@
  * the next Enter — pressed at a dialog, meaning "confirm this" — would approve a
  * command they were never shown. Emptiness has nothing to do with it: the caret
  * may be on a `<select>` or a button, and it must still stay where it is.
+ *
+ * **A terminal is the second such exception, and it inverts the first.** The
+ * emptiness rule assumes an empty box means an idle one. xterm types into a
+ * hidden `<textarea>` it clears after every keystroke, so a terminal's box is
+ * empty *permanently* — and every test here read it as idle and handed the caret
+ * to the composer while someone was mid-command. Reported as "I'm trying to
+ * write in the terminal but it focuses the main input", with the characters
+ * landing under the transcript.
  */
 
 /**
@@ -60,6 +68,17 @@ export interface Focused {
    * one whose inner element is not `.sheet`.
    */
   readonly inModal: boolean
+  /**
+   * Inside a terminal, where the emptiness rule above is simply wrong.
+   *
+   * xterm types into a hidden `<textarea>` it clears after every keystroke, so
+   * the box is empty **by design, permanently**. Every test this file makes
+   * therefore reads a terminal as idle — "a box with nothing in it costs nothing
+   * to leave" — and the caret gets pulled into the composer out from under
+   * someone who is very obviously mid-command. Emptiness cannot mean idle here,
+   * so the question is not asked: a terminal keeps its caret.
+   */
+  readonly inTerminal: boolean
 }
 
 /**
@@ -73,7 +92,7 @@ const TYPED = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'num
 
 export function mayTakeCaret(focused: Focused | null): boolean {
   if (focused === null) return true
-  return !focused.inModal && !isWriting(focused)
+  return !focused.inModal && !focused.inTerminal && !isWriting(focused)
 }
 
 function isWriting(focused: Focused): boolean {
@@ -100,6 +119,7 @@ export function focusedNow(): Focused | null {
     value: writtenIn(el),
     editable: el.isContentEditable,
     inModal: el.closest('.sheet-backdrop') !== null,
+    inTerminal: el.closest('.terminal-panel') !== null,
   }
 }
 

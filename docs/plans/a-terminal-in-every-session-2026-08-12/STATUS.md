@@ -481,3 +481,44 @@ global panel does commit, matching its neighbours in `Workspace`.
 - **C-026 still not re-measured**, and it is now the oldest outstanding item in
   this plan.
 - **No frame timings** for an agent streaming beside a live terminal.
+
+## After Phase 4 — the caret went to the composer
+
+Reported on first real use: _"trying to write on terminal but it's focus in main
+input"_, with a screenshot of `claude` running in the panel and the typed
+characters sitting in the message box below it.
+
+**Two independent causes**, and the second is the interesting one.
+
+**The click.** `.pane`'s `onClick` hands the caret to the composer unless the
+target matches `FOCUS_KEEPS_ITS_OWN`, a list of tags and card classes. xterm
+types into a hidden `<textarea>` that is a _sibling_ of the rendered rows, not an
+ancestor — so a click on the terminal's own output matched nothing in that list.
+`.terminal-panel` is now in it.
+
+**The effect.** When a burst of approvals clears, the composer reclaims the caret
+if `mayTakeCaret` allows. That predicate's whole design is "emptiness, not
+focus": an empty box costs nothing to leave, a box with words in it is someone
+mid-thought. **A terminal's box is empty by design, permanently** — xterm clears
+its input proxy after every keystroke — so the rule read a shell mid-command as
+an idle box and took the caret. `Focused` gained `inTerminal`, and
+`mayTakeCaret` refuses, exactly as it already does for `inModal`.
+
+That is the second exception to the emptiness rule and it _inverts_ the first:
+the modal case says emptiness is irrelevant, this one says emptiness lies.
+
+Reproduced before fixing, in the running app:
+
+```
+WITHOUT: ✗ clicking the terminal leaves the caret in the terminal — caret is in the composer
+WITH:    ✓ clicking the terminal leaves the caret in the terminal — caret is in the terminal
+```
+
+Mutating `mayTakeCaret` back turns two unit tests red.
+
+**Worth recording about the process, not just the bug.** Four phases of probes I
+wrote, every one green, and neither cause showed up in any of them. The UI probe
+even focuses the terminal — with `.focus()`, programmatically, which is the one
+route that skips the click handler entirely. It took a person clicking on the
+thing. That is the gate the workflow calls "UI verify", and it earned its place
+here on the first use.
