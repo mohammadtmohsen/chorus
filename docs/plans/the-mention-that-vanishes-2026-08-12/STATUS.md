@@ -108,3 +108,68 @@ lacks OS focus, moving focus between controls inside it does not close the
 menu.** It is close to unreachable in use — clicking inside a window focuses it —
 but it is the second time a measurement here was invalid because the window's
 focus state was assumed rather than established. Establish it first, always.
+
+## Phase 2 — the residual did not reproduce, and there is a good explanation for it
+
+| mode                               | KEPT | LOST | SKIP | ERROR |
+| ---------------------------------- | ---- | ---- | ---- | ----- |
+| real key events (CDP)              | 8    | 0    | 0    | 0     |
+| synthetic (the e2e helper's shape) | 8    | 0    | 0    | 0     |
+
+Sixteen focus round-trips, every one with the mention intact — `live`, `parsed`,
+`stampLen == draftLen`.
+
+**That is strong against the residual still occurring at its original rate.** It
+was seen 2 times in 6, about 33%. Sixteen consecutive survivals at that rate has
+probability `(2/3)^16 ≈ 0.15%`. Whatever produced those two records is not
+happening now at anything like that frequency.
+
+### The leading explanation, and the first pass caught it in the act
+
+The first Phase 2 batch scored one real-mode run as a failure carrying
+`mention: "@0:ceten"`. Stray keystrokes had reached the composer while the probe
+pulled the window to the front — these probes steal focus, so anything typed
+during a run lands in the box under test.
+
+Follow that through the build those two unexplained runs were taken on. Stray
+input changes `draft`. The stamp still holds the old text, so `liveMention`
+rejects it — **correctly**, that is the entire purpose of the stamp. And on
+`838827f` the attribute reported `active`, so a correctly-invalidated mention
+printed exactly `data-mention: "none"` — the same string as a mention that had
+been destroyed.
+
+So the most likely reading is that the residual was **the stamp working, reported
+through an instrument that could not say so.** Not proven — it was not caught
+directly — but it fits every fact: the symptom, the ambiguity Phase 1 found, and
+a live observation of the contamination that produces it. Under Phase 1's
+attributes the same event now reads `live: stale`, which is unmistakable.
+
+### Three ways the first pass manufactured a false failure
+
+Recorded because they are the same class of error as the withdrawn baseline, and
+all three were mine:
+
+- **The verdict asked about rows.** A run was scored LOST for `rows === 0`, but
+  rows are downstream of what the query matches — `@ceten` matches no agent and
+  no file, so zero rows was the right answer to a different question.
+- **A contaminated draft was counted rather than flagged.** It is now reported
+  as `SKIP` when the starting draft is not exactly `@0:c`.
+- **A missing measurement was counted as a failure.** A run that produced no
+  output at all — crash or timeout — was tallied as LOST rather than as absent.
+
+The corrected probe judges the thing actually in question: did the mention
+survive the round-trip, `after.mention === before.mention && live === 'live'`.
+
+### What this does not establish
+
+Sixteen runs cannot clear a rare flake, and this file has already had to withdraw
+one conclusion drawn from too few runs. The claim here is bounded: **at the rate
+originally observed, it would almost certainly have appeared, and it did not.**
+
+## What Phase 3 is now
+
+The residual no longer justifies a fix on its own. **The stamp blocker still
+does, and it is a confirmed defect rather than an unexplained observation:** text
+equality lets a stale mention reactivate whenever the same text returns, and
+`choose` splices a stamped offset against a live caret. Neither needs a flaky
+reproduction to be true — both are readable in the code.
