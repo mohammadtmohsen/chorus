@@ -34,122 +34,58 @@ _Empty. C-001 was the only entry and it shipped._
 
 ## Open
 
-### C-003 · The residual menu failure
+### C-003 · The residual menu failure — **cause named, fixed, awaiting merge**
 
-`typing a slash offers the commands this project actually has` still fails
-occasionally after its fix. The mechanism behind the original bug is settled and
-fixed on both sides of the IPC boundary; what remains is unexplained and looks
-like load rather than a second bug.
+**Fixed on `fix/a-suite-that-can-go-red`, not yet on `main`.** Kept here rather
+than moved out because nothing has merged and no person has driven the built app
+yet; it leaves the board when both are true.
 
-Eight hypotheses are dead and written down in the plan's `STATUS.md`, along with
-the instrumentation that killed them. That list is the head start.
+**The cause was the blur, and it took three attempts to fix.** `onBlur` cleared
+the mention unconditionally and nothing undid it — `refreshMention` runs on
+change, select and keydown, and focus returning is none of those. Reproduced on
+demand at the OS level: steal the window's focus with another application and
+give it back, and the record returns `mention: none`, `rows: 0`, `value: "/"`,
+`caret: 1` — the failing run above, field for field.
 
-**A ninth is now dead too, and it is the one that looked most like the answer.**
-`58907f1` found and fixed a real defect with an identical symptom: both menus
-could reach a state from which they **never asked again** — the slash list after
-five asks in nine seconds, the file list after one — so waiting could not help
-and one more keystroke fixed it instantly. Reproduced on demand against the real
-`Composer`, and fixed. See
-[`docs/plans/the-menu-that-asks-once-2026-08-11/`](docs/plans/the-menu-that-asks-once-2026-08-11/).
+That also explains the `focused: true` in the original record, which had looked
+impossible: **a window losing focus fires `blur` on the element while
+`document.activeElement` still points at it.**
 
-**It is not the cause of this entry.** Three full suite runs after the fix, and
-the slash spec still failed once — but the menu now reports its own state, and it
-said:
+The three attempts, because two of them measured _worse_ than doing nothing and
+only the suite caught them:
 
-```
-never became true: a leading slash opened the menu — the menu reported: no status row
-```
+| attempt                                     | slash spec  |
+| ------------------------------------------- | ----------- |
+| `focused`, defaulting to false              | 2 / 5 runs  |
+| `leftBox`, cleared by typing                | 9 / 10      |
+| **a window blur is not the box being left** | **10 / 10** |
 
-`no status row` means **nothing was in flight and nothing had given up**, which
-ruled out waiting and pointed at the composer rather than the menu.
+The first died on something worth knowing: **Chromium defers a focus event while
+the document itself is unfocused**, so an Electron launched behind another window
+takes `el.focus()`, sets `activeElement`, and dispatches nothing. A gate keyed on
+a focus event that never arrives can never open.
 
-**Caught, with the composer's own state.** Seven full suite runs on
-`fix/the-menu-that-asks-once`; the slash spec failed **2 of 7**, and **20 of 20
-alone** — it needs the suite's load, not repetition. The second failure carried
-this:
+What finally worked was a distinction nobody had drawn: alt-tabbing away is not
+leaving the box — the caret is still in it, and still in it on return — so a blur
+arriving with `document.hasFocus()` false is ignored.
 
-```json
-{
-  "lookup": "no status row",
-  "mention": "none",
-  "commands": "50",
-  "value": "/",
-  "caret": 1,
-  "focused": true,
-  "composers": 1,
-  "rows": 0
-}
-```
+**Measured back to back on one machine: 7/10 without, 10/10 with. Five full
+suites, 28/28 each.**
 
-**Read what that says.** The slash is in the box. The caret is after it. The box
-has focus. **Fifty commands are loaded.** There is one composer. And the composer
-parsed **no mention at all**.
+Two defects were found and fixed alongside it, neither of which needed a
+reproduction because both are readable in the code: an **invisible menu could
+still swallow a keystroke** (interception was gated on row count, which C-003's
+fix made able to disagree with visibility), and the mention's validity check was
+**text equality alone**, which let a stale mention reactivate whenever the same
+text returned and let `choose` splice a stamped offset against a live caret.
 
-So this was never about the list arriving — the list was there. Everything the
-decision depends on was correct and the decision still came out null.
+**One limit is recorded rather than fixed:** while the window lacks OS focus,
+moving focus between controls inside it does not close the menu either. Close to
+unreachable — clicking inside a window focuses it.
 
-**Both were wrong, and the third was on the original list all along.** The next
-failure carried them:
-
-```json
-{
-  "mention": "none",
-  "draftLen": "1",
-  "dismissed": "none",
-  "commands": "50",
-  "value": "/",
-  "caret": 1,
-  "focused": true,
-  "rows": 0
-}
-```
-
-`draftLen: 1` says React's `draft` **is** `/`, so `onChange` fired. `dismissed:
-none` says nothing was swallowed. Which leaves the one path the first
-investigation named and never eliminated — _"the only paths that null it are a
-blur and `dismissed`"_ — and it is **the blur**.
-
-`onBlur` cleared the mention unconditionally, and **nothing ever undid it**.
-`refreshMention` runs on change, on select and on keydown; focus returning is
-none of those, so the box kept `/` and the menu stayed shut until another
-character was typed. Reproduced on demand — blur the box and refocus it, and the
-record comes back identical field for field, `rows` 49 → 0.
-
-**A first fix was tried, measured, and rejected.** `onFocus={refreshMention}` —
-re-read the box when the caret returns — looked obviously right and made things
-**much worse**, back to back on the same machine:
-
-|                | menu specs                   |
-| -------------- | ---------------------------- |
-| with `onFocus` | **2 passed / 3 failed of 5** |
-| without it     | **5 passed / 0 failed of 5** |
-
-The likely reason, and the thing any fix here has to handle: **at the moment a
-focus event fires, the caret can still be at 0**. `findCommandQuery` slices
-`text.slice(0, caret)`, so with caret 0 it sees an empty string, finds no `/`,
-returns null — and nulls a perfectly good mention. Restoring on focus is right in
-principle and cannot be done by reading the caret _during_ the focus event.
-
-**So the cause is known and the fix is not written.** Whatever it is, it must
-re-derive the mention after the caret has been restored, not while it is being.
-
-**Do not remove the instrumentation** — `data-mention`, `data-commands`,
-`data-draft-len`, `data-dismissed` and the menu's status row are what turned this
-from a shrug into three lines. The original bug was solved by instrumenting
-`refreshMention`, that instrumentation was taken out, and this entry is what it
-cost.
-
-**It is not only the slash menu.** During the 0.10.0 release gate, `an @ offers
-the cast, then the project's files` failed on `typing a name found files` in one
-full-suite run, passed in the run before it, and passed alone in 6s immediately
-after. Same shape: a menu that populates over IPC, timing out only under the load
-of a long suite. Whatever this is, it is about the menus rather than about slash
-commands, which widens the search and makes "environmental" the more likely
-answer.
-
-**Done when:** either it is reproduced with a named cause, or it survives a long
-quiet run often enough to call the earlier failures environmental — with the
-number of runs stated rather than implied.
+**Done when:** merged to `main`, and `@c` typed by hand in the installed build
+with `data-mention-live` read to confirm which state it is in — because `@c` with
+no menu looks identical whether the box was left or the mention went.
 
 ### C-004 · Measure what catch-up actually costs
 
@@ -178,6 +114,16 @@ is closed with the reason the log deliberately records the conversation rather
 than the prompts.
 
 ### C-006 · Should any of the e2e suite run in CI
+
+**Unblocked for the first time.** This entry was waiting on a suite whose green
+was worth believing. C-027 gave the runner a third outcome so `all N passed`
+means N ran, and C-003's fix took the worst flake from 7/10 to 10/10 with five
+full suites at 28/28. The plan for this is written and unstarted at
+`docs/plans/what-a-green-build-proves-2026-08-11/`, and its Phase 0 — does
+Electron open a window on a GitHub runner at all — is now the next thing here.
+
+Note C-031 before designing the job: the focus-dependent checks cannot run
+alongside anything that takes the window server's attention.
 
 CI runs typecheck, lint, format, tests and a build. It **cannot** run the 26 e2e
 specs or `verify:package`, because both drive real `claude` and `codex` CLIs with
@@ -445,38 +391,24 @@ count before and after stated, over the same stimulus — or this is closed as
 acceptable, with the 38 written down so nobody re-derives the alarm from the
 same observation.
 
-### C-027 · Nothing stops a spec passing without testing anything
+### C-027 · Nothing stops a spec passing without testing anything — **fixed, awaiting merge**
 
-Found while trying to get a two-agent room for an unrelated check. `an agent can
-ask a question and get an answer back` waited on `.voices--pane .voice` — a class
-**nothing in the renderer has carried for some time**, surviving only as an
-orphaned CSS rule. It timed out after 60 seconds, hit a `catch` that read every
-possible failure as "claude is not installed", and **passed**. On a machine with
-claude 2.1.226 installed.
+**Fixed on `fix/a-suite-that-can-go-red` (`294d910`), not yet on `main`.**
 
-The spec's own comment had predicted it exactly: _"the spec then skips itself and
-reports green, which is the one outcome worse than failing."_ It then did that,
-for as long as nobody looked.
+The runner had two outcomes and now has three. `skip(reason)` throws a sentinel
+the runner counts separately, spec 5's two `assert(true, …)` sites use it, and
+`all N passed` is now reserved for the case that earns it — nothing skipped and
+nothing failed. A spec finishing with **zero** assertions is a failure.
 
-The instance is fixed — the preflight is gone entirely, since a fresh session
-already has claude, and what remains is an assertion that fails rather than a
-wait that skips. Unfixed is the **class**: the runner has no notion of "skipped".
-A spec that returns early after `assert(true, …)` is indistinguishable, in the
-output and in the exit code, from one that did its job. `all 28 passed` is
-therefore a claim nobody can check.
+Verified against four fake specs rather than against this machine's account: the
+only real skips fire on an account with no plan window, and a criterion that
+depends on the tester's billing plan is not a criterion. Both new guards were
+mutated to confirm the tests fail without them.
 
-Two conditional skips remain and both are legitimate — spec 5 twice, for an
-account with no plan window, guarded by a data check rather than a swallowed
-failure. So the answer is not to ban the shape; it is to make it visible.
+Two sites, at most one skip — they are mutually exclusive branches, so a run
+reports `28 passed` or `27 passed, 1 skipped`, never two.
 
-**Why it matters more now:** C-006 is about putting specs in CI precisely so a
-green build means something. A suite that can report green while testing nothing
-makes that worse rather than better — it would move a false negative from a place
-someone occasionally reads to a place nobody reads at all.
-
-**Done when:** a spec that skips is reported as skipped and counted separately
-from one that passed, so `all N passed` means N specs actually ran — and the
-remaining legitimate skips say so in the output rather than printing a tick.
+**Done when:** merged to `main`.
 
 ### C-028 · The blocking cards are only ever tested away from the app
 
@@ -519,38 +451,83 @@ command, and a handoff sheet keeps focus across a parent re-render — or it is
 written down that these are covered by unit and harness only, with the reason a
 real approval cannot be provoked on demand.
 
-### C-029 · Four specs fail under the suite that pass on their own
+### C-029 · Four specs fail under the suite that pass on their own — **one down, and the premise was wrong**
 
-A full run fails 2-3 specs, and **a different subset each time**. Measured across
-several runs while releasing 0.11.0:
+The entry's original prose claimed none of the four was broken and all failed only
+under cumulative load. **Both halves were false**, and its own table said so: two
+of the four are recorded at 2/3 and 3/4 _alone_.
 
-| spec                                                       | alone | in a full run   |
-| ---------------------------------------------------------- | ----- | --------------- |
-| `the question stays at the top of the answer it asked for` | 2/3   | fails often     |
-| `offers only the actions a passage can actually take`      | 3/4   | fails sometimes |
-| `an @ offers the cast, then the project's files`           | 3/3   | fails sometimes |
-| `keeps the offer when the transcript scrolls under it`     | 3/3   | fails sometimes |
+**CPU load is eliminated as the cause.** Five full suites passed 28/28 on a
+machine carrying more than twice its core count — the opposite of what "they fail
+under load" predicts.
 
-**None of them is broken.** Each passes in isolation; what they share is failing
-only under the load of twenty-eight specs launching real Electrons and real CLIs
-back to back. `the question stays at the top` was checked against clean
-`origin/main` and fails there too, so this is not from any recent branch.
+**The real mechanism was caught in the act.** A debug run watching one window
+recorded `document.hasFocus()` going from true to false **with nothing driving
+it**, ten seconds after a menu opened. The trigger is focus-stealing, not
+contention, which is why an unattended-but-busy machine looks clean and a person
+working the machine sees failures.
 
-**Why it matters more than four flaky tests.** `all 28 passed` is currently a
-coin toss, so nobody can use a red run as evidence of anything — which is the
-exact failure C-027 describes from the other side, and it makes C-006's "put
-specs in CI" actively harmful until it is fixed. It also cost real time this
-week: a genuine C-003 failure had to be separated from three innocent ones by
-hand, run by run.
+**One of the four is fixed.** `typing a slash offers the commands this project
+actually has` went from **7/10 to 10/10** back to back, via C-003's blur. The `@`
+spec fails through the same mechanism and should be re-measured.
 
-**One of the four is understood.** The `@` spec fails through C-003's blur, and
-that entry has the record. The other three have no diagnosis, and it is worth
-knowing whether they share a mechanism — three different specs going wrong only
-under load is either one environmental cause or three coincidences.
+A caution learned expensively here: an early five-run baseline came back clean and
+was reported as "does not reproduce". That was withdrawn — the slash spec fails
+about 30% of the time, and five runs have better than a one-in-three chance of
+showing nothing. **Ten runs is the floor for a per-spec rate, and a straight A/B
+beats a remembered baseline**, because the machine drifts between measurements.
 
-**Done when:** a full run's failures are reproducible enough to name a cause for
-each, or the suite is made to tolerate the load — with the pass rate stated over a
-specific number of runs, before and after.
+Still undiagnosed: `the question stays at the top of the answer it asked for` and
+`offers only the actions a passage can actually take`. Neither builds a mention,
+so neither is C-003.
+
+**Done when:** the two remaining specs have a named cause each, or the suite is
+made to tolerate whatever this is — with before/after rates over a stated number
+of runs.
+
+### C-030 · Something blurs this machine's windows unprompted
+
+Found while diagnosing C-003 and never explained. A debug run watching a single
+Electron window recorded `document.hasFocus()` going from `true` to `false`
+**with nothing driving it** — no click, no app switch, no probe action — about
+ten seconds after a menu opened.
+
+**Why it matters:** it is the reason C-003 was reachable at all. A blur that
+nobody asks for is what turns "the menu never comes back" from a theoretical bug
+into one a user meets, and it is the best current explanation for C-029's
+remaining flakes. It also means any future measurement here has a hidden
+variable in it.
+
+Candidates never eliminated: `mediaanalysisd` (seen at 171% CPU), Spotlight
+indexing, a notification, or something in the window server. Whether it happens
+on other machines is unknown, and that is the first thing worth knowing.
+
+**Done when:** the source is named, or it is shown not to happen on a second
+machine — in which case it is this Mac's problem and gets recorded as such rather
+than chased in the app.
+
+### C-031 · The e2e probes take focus from whoever is using the machine
+
+The harness drives a real window, and several diagnostics for C-003 had to steal
+OS focus with `osascript` to test blur and refocus. Two costs, both paid:
+
+- **Stray keystrokes land in the composer under test.** A probe run was scored as
+  a failure carrying `mention: "@0:ceten"` — characters typed by the person at
+  the keyboard, arriving in the test's own box while the probe held focus.
+- **The probes stop working when the machine is in use.** Twelve consecutive runs
+  failed at `never became true: window focus`, because macOS would not hand
+  focus over while someone was working in another app.
+
+**Why it matters:** it makes a class of measurement unrepeatable at exactly the
+times someone is around to ask for it, and worse, it can produce a _confident
+wrong result_ rather than an obvious failure — the `ceten` run looked like a
+defect and was not.
+
+**Done when:** either the focus-dependent checks can run without taking focus —
+a second display, a headless window, or a `WebContents`-level blur that does not
+touch the window server — or the suite states plainly that these specs need an
+idle machine and skips with a reason when it cannot get one, which C-027's
+mechanism now makes possible.
 
 ## Parked, with reasons
 

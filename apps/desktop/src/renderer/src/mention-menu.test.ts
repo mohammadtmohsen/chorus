@@ -4,7 +4,10 @@ import {
   commandOptions,
   findCommandQuery,
   findMentionQuery,
+  liveMention,
   mentionOptions,
+  menuTakesKeys,
+  menuVisible,
 } from './mention-menu.js'
 
 describe('findCommandQuery', () => {
@@ -154,5 +157,126 @@ describe('applyMention', () => {
     const mention = findMentionQuery('@b', 2)
     const both = mentionOptions(BOTH, 'b')[0]
     expect(applyMention('@b', mention!, 2, both!).text).toBe('@codex @claude ')
+  })
+})
+
+/*
+ * C-003, as the two pure decisions it comes apart into.
+ *
+ * The bug was that `onBlur` expressed "close the menu" by discarding "what is
+ * being typed", and nothing re-derived it when focus came back. Reproduced at
+ * the OS level — steal the window's focus with another app and give it back, and
+ * the menu never returns — and the fix is that these two questions are now asked
+ * separately.
+ */
+describe('menuVisible', () => {
+  const slash = { trigger: '/', start: 0, query: '' } as const
+
+  it('shows the menu when the box has the caret and there are rows', () => {
+    expect(menuVisible(true, 50, slash, null)).toBe(true)
+  })
+
+  /*
+   * The half that closes the menu. A menu floating over the transcript should
+   * not outlive the box being left — this is the part `onBlur` was right about.
+   */
+  it('hides the menu the moment the box loses the caret', () => {
+    expect(menuVisible(false, 50, slash, null)).toBe(false)
+  })
+
+  it('opens with no rows to say a lookup is still running', () => {
+    expect(menuVisible(true, 0, slash, 'asking')).toBe(true)
+  })
+
+  it('stays shut with no rows and nothing in flight', () => {
+    expect(menuVisible(true, 0, slash, null)).toBe(false)
+  })
+
+  it('does not show a status row to a box that is not focused', () => {
+    expect(menuVisible(false, 0, slash, 'asking')).toBe(false)
+  })
+})
+
+describe('liveMention', () => {
+  const slash = { trigger: '/', start: 0, query: '' } as const
+  const stamp = (from: string, rev: number, caret = from.length) => ({
+    query: slash,
+    from,
+    rev,
+    caret,
+  })
+
+  it('is the mention while the draft and the revision both still match', () => {
+    expect(liveMention(stamp('/', 1), '/', 1)?.query).toBe(slash)
+  })
+
+  it('is nothing when there is no mention', () => {
+    expect(liveMention(null, '/', 1)).toBeNull()
+  })
+
+  /*
+   * The case the stamp was introduced for: `quote` and `insert` write the draft
+   * from a control outside the textarea and then refocus it, firing no change
+   * event. Without this the menu reopens against rewritten text and choosing a
+   * row splices at an offset belonging to the old string.
+   */
+  it('is nothing once something rewrote the draft from outside the box', () => {
+    expect(liveMention(stamp('@ali', 4), '> quoted passage\n\n@ali', 5)).toBeNull()
+  })
+
+  /*
+   * And the case text equality cannot see, which is why there is a revision.
+   *
+   * Send clears the draft and recall brings the same string back. Nothing
+   * cleared the mention — invalidation was only ever inferred from the text — so
+   * on text alone it reactivates here, carrying offsets from an edit two writes
+   * ago.
+   */
+  it('does not let a stale mention reactivate when the same text returns', () => {
+    const before = stamp('/re', 7)
+    expect(liveMention(before, '/re', 7)?.query).toBe(slash) // the original
+    expect(liveMention(before, '/re', 9)).toBeNull() // sent, then recalled
+  })
+
+  /*
+   * The mirror of it, and the reason the revision is not enough on its own.
+   *
+   * `refreshMention` reads the DOM. If a value has been written that React has
+   * not rendered yet, the query describes newer text than `draft` holds while
+   * the revision still reads as the older one. Blessing that would put offsets
+   * from the new text against the old — exactly the splice the stamp exists to
+   * stop.
+   */
+  it('does not bless a mention read from text the draft has not caught up to', () => {
+    expect(liveMention(stamp('@cx', 3), '@c', 3)).toBeNull()
+  })
+
+  it('carries the caret it was read at, so a splice cannot use a moved one', () => {
+    expect(liveMention(stamp('@cla', 2, 4), '@cla', 2)?.caret).toBe(4)
+  })
+})
+
+describe('menuTakesKeys', () => {
+  it('takes keys when the menu is on screen with rows in it', () => {
+    expect(menuTakesKeys(true, 50)).toBe(true)
+  })
+
+  /*
+   * The defect this predicate exists for. A menu hidden because the box was
+   * left still derives its rows from the mention, so keying off rows alone means
+   * an arrow key vanishes: the caret does not move, history recall does not run,
+   * and nothing on screen explains it.
+   */
+  it('does not take keys while the menu is off screen, however many rows it has', () => {
+    expect(menuTakesKeys(false, 50)).toBe(false)
+  })
+
+  /*
+   * And the older half, which predates C-003: the menu opens with no rows to say
+   * a lookup is running. Letting that take Enter means a message beginning with
+   * `/` cannot be sent while the list is still arriving.
+   */
+  it('does not take keys from an open menu that has nothing to choose', () => {
+    expect(menuTakesKeys(true, 0)).toBe(false)
   })
 })

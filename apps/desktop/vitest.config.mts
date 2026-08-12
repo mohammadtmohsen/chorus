@@ -16,12 +16,18 @@ import { defineConfig } from 'vitest/config'
  *
  * `.tsx` is included because such a test needs a component to render; the React
  * plugin is here to compile it.
+ *
+ * `e2e/**` is here for one file and deliberately not for the specs. The e2e
+ * runner decides what "passed" means, and until C-027 the only way to exercise
+ * that decision was to launch twenty-eight real Electrons and read the output.
+ * `runner.mjs` is pure and its tests drive fake specs, so they belong in the
+ * fast suite; `specs.mjs` needs a built app and stays out of it.
  */
 export default defineConfig({
   plugins: [react()],
   test: {
     name: 'desktop',
     environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'e2e/**/*.test.mjs'],
   },
 })

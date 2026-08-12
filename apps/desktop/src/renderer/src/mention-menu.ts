@@ -21,6 +21,124 @@ export interface MentionQuery {
   readonly query: string
 }
 
+/**
+ * A mention together with everything needed to know it still describes the box.
+ *
+ * **One snapshot, three parts, and each part answers a different way of being
+ * wrong.** A `MentionQuery` is a pair of offsets into one particular string at
+ * one particular caret; on its own it cannot say whether that string is still
+ * what is in the box.
+ */
+export interface StampedMention {
+  readonly query: MentionQuery
+  /**
+   * The exact text it was read out of.
+   *
+   * Catches the draft being rewritten from outside the textarea — `quote`,
+   * `insert` and `send` all do that and fire no change event — and catches the
+   * narrower case of `refreshMention` reading a DOM value React has not rendered
+   * yet, where the offsets would describe newer text than the draft holds.
+   */
+  readonly from: string
+  /**
+   * Which revision of the draft that was.
+   *
+   * Text equality alone is forgeable: two different edits produce the same
+   * string. `send` then recall, `quote` then undo, or simply retyping the same
+   * word brings back text a stale mention matches, and it would come back to
+   * life carrying offsets from an earlier edit. A counter cannot be forged that
+   * way.
+   */
+  readonly rev: number
+  /**
+   * The caret it was read at.
+   *
+   * `findMentionQuery` derives the query from `text.slice(0, caret)`, so the
+   * caret *is* the end of the region the query describes. Splicing at a
+   * different one writes the option into the wrong place — which is why `choose`
+   * uses this rather than reading the caret again at click time.
+   */
+  readonly caret: number
+}
+
+/**
+ * The mention, but only if it still describes the box.
+ *
+ * A `MentionQuery` is a pair of offsets into one particular string. `onChange`
+ * keeps them honest for anything a person types, but `quote`, `insert` and
+ * `send` write the draft from outside the textarea and fire no change event —
+ * and two of those refocus afterwards, which is precisely when a menu would
+ * reopen against text its offsets no longer fit. Choosing a row then splices at
+ * a stale offset and deletes whatever now sits there.
+ *
+ * Comparing the stamp makes that unrepresentable rather than merely unlikely,
+ * and costs one string compare. The alternative — re-deriving after every
+ * programmatic write — needs the caret, and the caret is exactly what cannot be
+ * trusted around a focus event (C-003).
+ */
+export function liveMention(
+  mention: StampedMention | null,
+  draft: string,
+  rev: number
+): StampedMention | null {
+  if (mention === null) return null
+  /*
+   * Both tokens, because each catches what the other cannot.
+   *
+   * Text alone lets a stale mention reactivate the moment the same string comes
+   * back — send then recall is enough. The revision alone would pass in the one
+   * race this was built for: a DOM value written but not yet rendered, stamped
+   * against the revision the *old* draft still holds, so offsets from the new
+   * text would be blessed against the old.
+   */
+  return mention.from === draft && mention.rev === rev ? mention : null
+}
+
+/**
+ * Whether the menu is on screen.
+ *
+ * Visibility depends on focus; what is being typed does not. Keeping them in one
+ * value is what made C-003: `onBlur` cleared the mention to close the menu, and
+ * nothing re-derived it when focus came back, so the box kept its `/` and the
+ * menu stayed shut until another key was pressed.
+ *
+ * The `lookup` arm is why this takes a status at all — a menu that says "still
+ * looking" has no rows, and without it an unanswered lookup was indistinguishable
+ * from having nothing to offer.
+ */
+export function menuVisible(
+  focused: boolean,
+  rows: number,
+  mention: MentionQuery | null,
+  lookup: string | null
+): boolean {
+  if (!focused) return false
+  return rows > 0 || (mention !== null && lookup !== null)
+}
+
+/**
+ * Whether the menu may take a keystroke before the composer sees it.
+ *
+ * **Both halves, and each one was learned separately.**
+ *
+ * `rows > 0` alone was the original rule, and its reason still stands: the menu
+ * also opens with no rows to say a lookup is running, and letting that menu take
+ * keys makes `% rows` a division by zero and — worse — swallows Enter, so a
+ * message beginning with `/` could not be sent while the list was arriving.
+ *
+ * `visible` is the half added with C-003's fix, because that fix made the two
+ * able to disagree. Visibility is now gated on the box not having been left,
+ * while `rows` is derived from the mention alone — so a menu can be off screen
+ * with fifty rows behind it. Keying off `rows` there means an **invisible menu
+ * swallowing an arrow key**: the caret does not move, history recall does not
+ * run, and nothing on screen explains why.
+ *
+ * A listbox nobody can see is not a listbox. It should not hold the keyboard.
+ */
+export function menuTakesKeys(visible: boolean, rows: number): boolean {
+  return visible && rows > 0
+}
+
 export interface MentionOption {
   /** What is inserted, without the leading trigger. */
   readonly insert: string

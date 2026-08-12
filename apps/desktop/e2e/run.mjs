@@ -1,4 +1,5 @@
 import { ensureBuilt } from './harness.mjs'
+import { runSpecs, summarize } from './runner.mjs'
 import { specs } from './specs.mjs'
 
 /**
@@ -6,6 +7,9 @@ import { specs } from './specs.mjs'
  *
  * Serially on purpose: each one launches a real Electron and real agents, and
  * several at once would compete for the same CLIs and make timings meaningless.
+ *
+ * The loop itself lives in `runner.mjs` so it can be tested against fake specs;
+ * this file is the part that needs a build and a machine.
  */
 ensureBuilt()
 
@@ -16,24 +20,15 @@ if (chosen.length === 0) {
   process.exit(1)
 }
 
-let failed = 0
-for (const spec of chosen) {
-  const started = Date.now()
-  const notes = []
-  try {
-    await spec.run((ok, note) => {
-      notes.push(`${ok ? '  ✓' : '  ✗'} ${note}`)
-      if (!ok) throw new Error(note)
-    })
-    console.log(`✓ ${spec.name} (${String(Math.round((Date.now() - started) / 1000))}s)`)
-    for (const note of notes) console.log(note)
-  } catch (error) {
-    failed += 1
-    console.log(`✗ ${spec.name}`)
-    for (const note of notes) console.log(note)
-    console.log(`  ${error instanceof Error ? error.message : String(error)}`)
-  }
-}
+const tally = await runSpecs(chosen)
 
-console.log(failed === 0 ? `\nall ${String(chosen.length)} passed` : `\n${String(failed)} failed`)
-process.exit(failed === 0 ? 0 : 1)
+console.log(`\n${summarize(tally)}`)
+/*
+ * A skip does not fail the run.
+ *
+ * It is a spec saying this machine cannot answer the question — an account with
+ * no plan window, say — which is not the same as the answer being wrong. It is
+ * counted and named in the summary instead, which is the whole of C-027: the
+ * cost of a skip should be that someone can see it, not that the build stops.
+ */
+process.exit(tally.failed === 0 ? 0 : 1)
