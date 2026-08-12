@@ -383,6 +383,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       }
     }, [conversationId, draft])
 
+    /**
+     * Which branch last decided the mention, for the record rather than for logic.
+     *
+     * Six things can make the menu unavailable — the parse finding nothing, the
+     * `dismissed` branch, `choose`, Escape, `liveMention` rejecting the stamp,
+     * and `leftBox` hiding it — and until now the attribute said `none` for
+     * several of them. Two failing runs could not be explained because of it.
+     *
+     * A ref rather than state: writing this must never cause a render, or the
+     * instrument changes the thing it measures.
+     */
+    const why = useRef<'parsed' | 'no-parse' | 'dismissed' | 'chosen' | 'escaped'>('no-parse')
+
     /** Identifies one mention being typed, so a refresh can tell it from the next. */
     const queryKey = useRef<string | null>(null)
     /** The query Escape dismissed; it stays shut until you type a different one. */
@@ -435,10 +448,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         setHighlighted(0)
       }
       if (key !== null && key === dismissed.current) {
+        why.current = 'dismissed'
         setMention(null)
         return
       }
       dismissed.current = null
+      why.current = found === null ? 'no-parse' : 'parsed'
       // Stamped with the exact text it was read from, so a later render can tell
       // whether it still describes the box. See the state declaration.
       setMention(found === null ? null : { query: found, from: el.value })
@@ -564,6 +579,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         if (el === null || active === null || option === undefined) return
         const next = applyMention(el.value, active, el.selectionStart, option)
         setDraft(next.text)
+        why.current = 'chosen'
         setMention(null)
         // After React has written the new value, or the caret lands wherever the
         // browser last left it.
@@ -712,9 +728,36 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
          * appears. These cost two strings per render and are the difference
          * between a named cause and another afternoon.
          */
+        /*
+         * **The raw mention, not the live one, and that distinction is C-003's
+         * second afternoon.**
+         *
+         * This briefly reported `active`, which is null both when nothing was
+         * parsed *and* when a mention exists whose stamp no longer matches the
+         * draft. Two completely different defects printed the same `none`, and
+         * two failing runs could not be told apart because of it. The whole
+         * value of this attribute is that one string means one thing.
+         */
         data-mention={
-          active === null ? 'none' : `${active.trigger}${String(active.start)}:${active.query}`
+          mention === null
+            ? 'none'
+            : `${mention.query.trigger}${String(mention.query.start)}:${mention.query.query}`
         }
+        /*
+         * Whether the stamp still describes the box, and `leftBox` beside it,
+         * because those are the other two ways the menu goes away without the
+         * mention being touched.
+         *
+         * Lengths rather than the text: `data-draft-len` already exists because
+         * duplicating what someone is typing into a second place is not
+         * something this file does, and a stamp is a copy of the draft. A
+         * mismatch in length or in `live` names the branch without keeping a
+         * word of it.
+         */
+        data-mention-live={mention === null ? 'none' : active === null ? 'stale' : 'live'}
+        data-mention-why={why.current}
+        data-stamp-len={mention === null ? -1 : mention.from.length}
+        data-left-box={leftBox}
         data-commands={commands.length}
         /*
          * The two that separate the last pair of candidates.
@@ -950,6 +993,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
               if (menuOpen && e.key === 'Escape') {
                 e.preventDefault()
                 dismissed.current = queryKey.current
+                why.current = 'escaped'
                 setMention(null)
                 return
               }
