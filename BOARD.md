@@ -531,10 +531,17 @@ several runs while releasing 0.11.0:
 | `an @ offers the cast, then the project's files`           | 3/3   | fails sometimes |
 | `keeps the offer when the transcript scrolls under it`     | 3/3   | fails sometimes |
 
-**None of them is broken.** Each passes in isolation; what they share is failing
-only under the load of twenty-eight specs launching real Electrons and real CLIs
-back to back. `the question stays at the top` was checked against clean
-`origin/main` and fails there too, so this is not from any recent branch.
+**Corrected 2026-08-12: "none of them is broken" was wrong, and the table above
+already said so.** This paragraph read _"Each passes in isolation; what they
+share is failing only under the load of twenty-eight specs"_ — while the `alone`
+column two lines up records **2/3** and **3/4**. Half the population fails
+without any load at all, so cumulative load is not what they share, and a
+diagnosis starting from it starts from the wrong question. The error was reading
+the prose and not the numbers directly under it, which is the failure this whole
+board is meant to prevent.
+
+What stands: `the question stays at the top` was checked against clean
+`origin/main` and fails there too, so none of this comes from a recent branch.
 
 **Why it matters more than four flaky tests.** `all 28 passed` is currently a
 coin toss, so nobody can use a red run as evidence of anything — which is the
@@ -543,10 +550,17 @@ specs in CI" actively harmful until it is fixed. It also cost real time this
 week: a genuine C-003 failure had to be separated from three innocent ones by
 hand, run by run.
 
-**One of the four is understood.** The `@` spec fails through C-003's blur, and
-that entry has the record. The other three have no diagnosis, and it is worth
-knowing whether they share a mechanism — three different specs going wrong only
-under load is either one environmental cause or three coincidences.
+**One of the four is understood, and one is now excluded.** The `@` spec fails
+through C-003's blur, and that entry has the record.
+
+`the question stays at the top` is **not** C-003, and this needed no run to
+establish: across its whole body it never types `/` or `@`, so it never builds a
+mention at all — what it asserts is horizontal overflow,
+`score.scrollWidth - score.clientWidth`. Filing "is it also the blur?" as an open
+question was filing something the file answers.
+
+That leaves two undiagnosed, not three, and the population is no longer uniform:
+one fails only in a full run, one fails alone as well.
 
 **Done when:** a full run's failures are reproducible enough to name a cause for
 each, or the suite is made to tolerate the load — with the pass rate stated over a
