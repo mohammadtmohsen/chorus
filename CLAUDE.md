@@ -4,8 +4,16 @@ A local-first workspace where a developer collaborates with several coding
 agents in one shared conversation. Electron + React, pnpm workspaces, Turbo.
 
 Chorus **drives** the user's installed `claude` and `codex` CLIs — it does not
-replace them. Both run headless over stdio; there is no PTY anywhere. Retiring
-the terminal here means retiring the _interface_, not the binary.
+replace them. Both run headless over stdio, with **no PTY between Chorus and an
+agent**. Retiring the terminal here means retiring the _interface_, not the
+binary.
+
+That is a claim about agents, and only about agents. **The person gets a real
+shell**: `⌘J` opens one per session and the activity bar opens a global one, and
+those are PTYs (`main/terminal.ts`). Until 2026-08-12 this file said "there is no
+PTY anywhere", which is why the distinction is spelled out rather than assumed —
+read the old sentence with `node-pty` in the lockfile and the only honest
+conclusion is that someone broke the rule.
 
 ## Commands
 
@@ -47,6 +55,26 @@ explain.
 
 If you add something in this category, push it — do not add a `ChorusEventPayload`.
 
+### Terminal output is not a log event, and it fails the test above
+
+Worth stating because the rule does **not** settle it. Ask "would reading this
+back a week later be worse than having none?" of terminal scrollback and the
+answer is plainly no — last week's build output would be useful. It passes, and
+it is still excluded, for two reasons that are not that test:
+
+- **The log records the conversation.** A shell you typed into is a second stream
+  that happens to share a pane. Folding it in makes every consumer — `catchup.ts`,
+  the projections, `transcript.ts` — answer "is this one mine?" forever. The
+  global terminal makes it plain: it has no `conversationId` to file an event
+  under at all.
+- **It is the worst case of C-021's unsolved half.** That entry is open because
+  storing what an agent _read_ means storing whatever it read, including files
+  the permission engine treats as secret. A terminal is the sharpest instance —
+  `cat .env`, `env`, `aws configure`, a pasted token — and nothing scrubs a shell.
+
+Scrollback lives in a bounded `@xterm/headless` mirror in main, is replayed to a
+view on attach, and goes when the app does.
+
 ## Where things live
 
 ```
@@ -56,12 +84,27 @@ packages/adapter-codex    codex app-server JSON-RPC -> AgentEvent
 packages/orchestrator     conversation service, policy engine, catch-up, supervisor
 packages/event-store      SQLite, migrations, projections
 packages/workspace        read-only git status and diff
-apps/desktop/src/main     Electron main: runtime, IPC, windows
+apps/desktop/src/main     Electron main: runtime, IPC, windows, terminal.ts
 apps/desktop/src/renderer transcript reduction and UI
 ```
 
 Nothing provider-specific may leak past an adapter except `raw`, which exists
 only for debugging.
+
+### The second native module
+
+`node-pty`, and it was a decision rather than a convenience — the build plan
+budgeted for `better-sqlite3` **only**. It earns its place because a pipe is not
+a terminal: no `vim`, no `htop`, no shell history, and `⌃C` closes a pipe instead
+of signalling a process group.
+
+Both native deps ship N-API prebuilds that load in Electron unmodified, so
+**`npmRebuild: false`** is set explicitly in `electron-builder.yml`. Left at the
+default, `@electron/rebuild` compiles `node-pty` — it recognises prebuilds only
+from `prebuildify` or `prebuild-install`, and node-pty uses neither — and the
+packaged app would then load a different binary from `pnpm dev`, silently.
+
+There is no toolchain and no rebuild step. Keep it that way.
 
 ## Adding an event type is a five-file change
 
@@ -142,11 +185,26 @@ enforces this (`UNIVERSAL_DENIES` may not carry a `pathPattern`).
   with `rerender`, and prove the test fails without the fix.
 - **Only the active tab of each pane is mounted** (max 4). Everything a session
   needs to survive unmounting rides in `SessionCarry`; background conversations
-  stay live in the main process and report through the pulse.
+  stay live in the main process and report through the pulse. A terminal is the
+  same shape one level further out: the shell lives in main, the component is a
+  _view_ onto it, and unmounting calls `detach` and never `dispose` — otherwise
+  clicking another tab would kill a running build.
 - **No `dangerouslySetInnerHTML`, ever.** Agent output is untrusted, and building
-  from a typed tree makes injection impossible by construction.
+  from a typed tree makes injection impossible by construction. xterm satisfies
+  this by construction too — it builds its DOM with `createElement` and is handed
+  output as data, never interpolated into markup.
 - The markdown parser and syntax highlighter are hand-written on purpose. Adding
   a grammar engine is a decision, not a convenience.
+- **`@xterm/xterm` is the exception, and the reason does not generalise.** The
+  hand-written parser is tractable and its mistakes are cosmetic — a paragraph
+  that looks slightly off. A conformant VT emulator is neither: running `vim`
+  correctly means alternate screen buffers, scroll regions, origin mode, cursor
+  save/restore and several hundred escape sequences whose behaviour is defined
+  only by what `xterm` does. Hand-rolling it is the "guessed shape" failure the
+  Adapters section warns about, one level up. Restoration uses
+  `@xterm/headless` + `@xterm/addon-serialize` in main, because VT state is
+  cumulative and a trimmed ring of raw bytes loses the alternate-screen entry
+  that came before it.
 - **No hardcoded user-facing strings** — `i18n/en.json`. The reducers have no
   translator, which is why events carry keys (`notice.source`) and the renderer
   turns them into words.
@@ -164,6 +222,26 @@ enforces this (`UNIVERSAL_DENIES` may not carry a `pathPattern`).
 - **better-sqlite3 is synchronous** and lives on the main thread. Every delta
   from every conversation passes through it; `DeltaBuffer` coalescing is what
   makes that survivable.
+- **node-pty ships `spawn-helper` without its executable bit.** Mode 0644 in the
+  tarball; its `install` script only checks a prebuild exists and its
+  `postinstall` does nothing off Windows. The binding execs that helper on every
+  spawn, so the failure is a bare `posix_spawnp failed.` that never mentions
+  permissions. Repaired in two places because dev and packaged load different
+  files: `scripts/fix-spawn-helper.mjs` for `node_modules`, and
+  `build/sign-adhoc.cjs` for the bundle — **before** `codesign`, since editing a
+  signed bundle invalidates it. Projects that compile from source never see this,
+  because `lib/utils.js` prefers `build/Release` where the linker sets the bit.
+- **xterm paints `.xterm-viewport` `#000` and positions it over everything.** The
+  theme colour lands on `.xterm` underneath and is covered, so the terminal draws
+  on black whatever the app's ground is — in both colour schemes, which is what
+  made it look deliberate. One rule in `styles.css` overrides it on specificity.
+  Found by emulating `prefers-color-scheme` and reading the rendered colour;
+  asserting the `--ansi-*` tokens resolved would have shipped it.
+- **A test that counts panes to prove a shortcut was ignored can never fail.**
+  Splitting a pane that holds its only tab is a legitimate no-op, so with one
+  session the count cannot move and the assertion passes with the guard removed.
+  Measure `defaultPrevented` on the key instead, and carry a control proving the
+  mechanism fires when it should. This is C-027 from the inside.
 
 ## Plans
 
