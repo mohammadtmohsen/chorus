@@ -92,17 +92,41 @@ describe('frameFields', () => {
   })
 })
 
+const chorus = (pid: number, reports: RootReport[], state: ConnectionState = 'connected') => ({
+  pid,
+  state,
+  reports,
+})
+
 describe('diagnosticLines', () => {
   it('explains each root by index rather than by path', () => {
-    const lines = diagnosticLines([bare('unmatched')], window())
-    expect(lines.join('\n')).toContain('#0 unmatched')
-    expect(lines.join('\n')).not.toContain(ROOT)
+    const text = diagnosticLines([chorus(101, [bare('unmatched')])], window()).join('\n')
+    expect(text).toContain('#0 unmatched')
+    expect(text).not.toContain(ROOT)
   })
 
   it('distinguishes the two schemes of a diff by naming the active one', () => {
-    expect(diagnosticLines([bare('unsupported')], window({ scheme: 'git' })).join('\n')).toContain(
-      'active document: git'
-    )
+    const text = diagnosticLines(
+      [chorus(101, [bare('unsupported')])],
+      window({ scheme: 'git' })
+    ).join('\n')
+    expect(text).toContain('active document: git')
+  })
+
+  /*
+   * The reason the roots moved onto the connection: two Chorus processes ask
+   * about different projects, and a dump that flattened them would describe a
+   * set neither of them named.
+   */
+  it('keeps each Chorus process and its roots apart', () => {
+    const text = diagnosticLines(
+      [chorus(101, [ready()]), chorus(202, [bare('unmatched')], 'dialing')],
+      window({ connections: countStates(['connected', 'dialing']) })
+    ).join('\n')
+    expect(text).toContain('pid 101 (connected): 1 root(s)')
+    expect(text).toContain('pid 202 (dialing): 1 root(s)')
+    expect(text).toContain('#0 ready')
+    expect(text).toContain('#0 unmatched')
   })
 
   /*
@@ -110,9 +134,12 @@ describe('diagnosticLines', () => {
    * publishes no roots, so every other line reads as if nothing were wrong.
    */
   it('calls out a protocol mismatch, which otherwise looks like an idle window', () => {
-    const lines = diagnosticLines([], window({ connections: countStates(['extensionOutdated']) }))
+    const lines = diagnosticLines(
+      [chorus(101, [], 'extensionOutdated')],
+      window({ connections: countStates(['extensionOutdated']) })
+    )
     expect(lines.join('\n')).toContain('update this extension')
-    expect(lines.join('\n')).toContain('roots published: 0')
+    expect(lines.join('\n')).toContain('pid 101 (extensionOutdated): 0 root(s)')
   })
 
   it('tells the other direction apart', () => {
@@ -121,7 +148,7 @@ describe('diagnosticLines', () => {
   })
 
   it('reports a remembered selection as cached', () => {
-    expect(diagnosticLines([ready('cached')], window()).join('\n')).toContain(
+    expect(diagnosticLines([chorus(101, [ready('cached')])], window()).join('\n')).toContain(
       'selection reported: cached'
     )
   })

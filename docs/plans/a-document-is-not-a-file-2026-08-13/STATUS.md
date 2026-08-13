@@ -1,6 +1,6 @@
 # Status — a document is not a file
 
-Status: **Phase 0 implemented, not yet driven in a real VS Code window.** Plan
+Status: **Phases 0–2 shipped, none of it driven in a real VS Code window.** Plan
 approved after one review round that corrected five things; those corrections are
 marked in the plan itself rather than quietly folded in.
 
@@ -131,8 +131,41 @@ Everything user-facing. The pill has no way to _show_ `cached` yet:
 provable by test and by the Phase 0 diagnostics, and what the user should see is
 that the pill stops going blank.
 
+**Phase 2 done: the roots belong to the Chorus that named them.**
+
+`extension.ts` held one `roots` array for the window and every connection's
+`setRoots` overwrote it, so with two Chorus processes running the last handshake
+decided what both of them heard about. The array moved onto `ChorusConnection`,
+which already owns the descriptor and the pid; `publish` now walks the
+connections and reports each against its own roots, and `onRoots` shrank to "the
+window should republish" because the roots no longer travel with it.
+
+The diagnostics dump follows: `ChorusDiagnostics` is per process, so a window
+serving two Chorus instances prints `pid 101 (connected): 1 root(s)` twice
+rather than a flattened set neither of them asked about. The trace line carries
+the pid for the same reason.
+
+Gate: `pnpm check` green — 1404 tests (up from 1402), 3 skipped.
+
+**Observed against the real running Chorus.** The built bundle, smoke-loaded
+under a stubbed `vscode`, connected to the Chorus running on this machine and
+dumped:
+
+```
+  Chorus processes: 1 found, 1 connected, 0 dialing
+  pid 97597 (connected): 8 root(s)
+    #0 unmatched — no workspace folder here is exactly that root, …
+    …
+    #6 unsupported — the active document is not one this extension can reference
+    selection reported: none
+```
+
+Eight real roots, six `unmatched` because the probe's only workspace folder is
+this repo, two `unsupported` because the probe has no editor at all. Which is
+the first time any of this has been legible from outside.
+
 ## Still to come
 
-Phases 1–6 unchanged from the plan. Phase 0 has to be **released and installed**
-before Phase 4 lands, or the migration surface it adds will not be present on the
-machine that needs it.
+Phases 3–6 unchanged from the plan. Phases 0–2 are **committed but not
+released**, and Phase 0 has to be released and installed before Phase 4 lands or
+the migration surface it adds will not be on the machine that needs it.

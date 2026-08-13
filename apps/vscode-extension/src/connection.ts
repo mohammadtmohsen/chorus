@@ -24,8 +24,12 @@ import type { RootReport } from './editor-context.js'
 const BACKOFF_MS = [250, 500, 1_000, 2_000, 5_000, 10_000] as const
 
 export interface ConnectionHandlers {
-  /** Chorus published a new set of roots to filter against. */
-  readonly onRoots: (roots: readonly string[]) => void
+  /**
+   * Chorus published a new set of roots. The roots themselves are held by the
+   * connection that was told about them — see `roots` — so this says only that
+   * the window should republish.
+   */
+  readonly onRoots: () => void
   /** Chorus asked for the selected text of one root. */
   readonly onSnapshot: (root: string) => CurrentContextResult
   readonly onStateChange: () => void
@@ -47,6 +51,17 @@ export class ChorusConnection {
   #timer: NodeJS.Timeout | null = null
   #disposed = false
   #handshaken = false
+  /**
+   * What *this* Chorus asked to be told about.
+   *
+   * Per connection, and that is the fix rather than the design: the window used
+   * to hold one `roots` array that every connection's `setRoots` overwrote, so
+   * with two Chorus processes running the last handshake won and both were then
+   * reported against the other's projects. One window can legitimately serve
+   * several Chorus processes — the descriptor directory is scanned for all of
+   * them — so the roots belong beside the pid that named them.
+   */
+  #roots: string[] = []
 
   constructor(
     private readonly descriptor: Descriptor,
@@ -76,6 +91,11 @@ export class ChorusConnection {
 
   get pid(): number {
     return this.descriptor.pid
+  }
+
+  /** The roots this Chorus published, or none until it has said. */
+  get roots(): readonly string[] {
+    return this.#roots
   }
 
   start(): void {
@@ -192,7 +212,8 @@ export class ChorusConnection {
 
     const frame = decoded.value
     if (frame.method === 'setRoots') {
-      this.handlers.onRoots(frame.params.roots)
+      this.#roots = [...frame.params.roots]
+      this.handlers.onRoots()
       return
     }
 

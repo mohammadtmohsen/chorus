@@ -107,9 +107,22 @@ const EXPLANATION: Record<IdeStatus, string> = {
 
 const yesNo = (value: boolean): string => (value ? 'yes' : 'no')
 
+/**
+ * One connected Chorus, and what this window would tell it.
+ *
+ * Per process rather than per window: a window can serve several Chorus
+ * instances, each having named its own roots, and a dump that flattened them
+ * would describe a set of projects no single Chorus asked about.
+ */
+export interface ChorusDiagnostics {
+  readonly pid: number
+  readonly state: ConnectionState
+  readonly reports: readonly RootReport[]
+}
+
 /** The `Chorus: Diagnose editor context` dump, one line per element. */
 export function diagnosticLines(
-  reports: readonly RootReport[],
+  chorus: readonly ChorusDiagnostics[],
   window: WindowDiagnostics
 ): string[] {
   const { connections: c } = window
@@ -120,13 +133,15 @@ export function diagnosticLines(
     `  workspace folders: ${String(window.folderCount)}`,
     `  active document: ${window.scheme ?? 'none — no active text editor'}`,
     `  Chorus processes: ${String(c.found)} found, ${String(c.connected)} connected, ${String(c.dialing)} dialing`,
-    `  roots published: ${String(reports.length)}`,
   ]
 
-  for (const [index, report] of reports.entries()) {
-    lines.push(`    #${String(index)} ${report.status} — ${EXPLANATION[report.status]}`)
+  for (const one of chorus) {
+    lines.push(`  pid ${String(one.pid)} (${one.state}): ${String(one.reports.length)} root(s)`)
+    for (const [index, report] of one.reports.entries()) {
+      lines.push(`    #${String(index)} ${report.status} — ${EXPLANATION[report.status]}`)
+    }
+    lines.push(`    selection reported: ${frameSource(one.reports)}`)
   }
-  lines.push(`  selection reported: ${frameSource(reports)}`)
 
   // The one failure the rest of the dump cannot describe: a refused handshake
   // means no roots were ever published, so every line above reads as if

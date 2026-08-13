@@ -6,7 +6,7 @@
 | -------------------------------------------------- | ------------------------------------------------- |
 | 0 — make the extension say why, and be installable | implemented — pending your check in a real window |
 | 1 — stop forgetting the selection                  | implemented — five tests red on the old code      |
-| 2 — one root list per Chorus process               | not started                                       |
+| 2 — one root list per Chorus process               | implemented                                       |
 | 3 — resolve a document, not a file                 | not started                                       |
 | 4 — provenance on the wire (protocol v2)           | not started                                       |
 | 5 — what the agent is told about a diff            | not started                                       |

@@ -37,7 +37,7 @@ function makeConnection(
     outcome: 'unavailable',
     reason: 'unsupported',
   }),
-  onRoots: (roots: readonly string[]) => void = () => undefined
+  onRoots: () => void = () => undefined
 ): ChorusConnection {
   const c = new ChorusConnection(
     d,
@@ -181,17 +181,41 @@ describe('state', () => {
     expect(received).toEqual([])
   })
 
-  it('passes roots from Chorus to the handler', async () => {
-    const seen: string[][] = []
-    const c = makeConnection(descriptor(), undefined, (roots) => seen.push([...roots]))
+  /*
+   * The roots stay on the connection that was told about them. A window can
+   * serve several Chorus processes, and one shared array meant the last
+   * handshake decided what every one of them heard about.
+   */
+  it('keeps the roots Chorus published, and says the window should republish', async () => {
+    let republished = 0
+    const c = makeConnection(descriptor(), undefined, () => (republished += 1))
+    c.start()
+    await settle()
+    expect(c.roots).toEqual([])
+
+    peers[0]?.write(
+      encodeFrame({ jsonrpc: '2.0', method: 'setRoots', params: { roots: ['/p/a', '/p/b'] } })
+    )
+    await settle()
+
+    expect(c.roots).toEqual(['/p/a', '/p/b'])
+    expect(republished).toBe(1)
+  })
+
+  it('replaces the roots rather than accumulating them', async () => {
+    const c = makeConnection(descriptor())
     c.start()
     await settle()
     peers[0]?.write(
       encodeFrame({ jsonrpc: '2.0', method: 'setRoots', params: { roots: ['/p/a', '/p/b'] } })
     )
     await settle()
+    peers[0]?.write(
+      encodeFrame({ jsonrpc: '2.0', method: 'setRoots', params: { roots: ['/p/c'] } })
+    )
+    await settle()
 
-    expect(seen).toEqual([['/p/a', '/p/b']])
+    expect(c.roots).toEqual(['/p/c'])
   })
 })
 

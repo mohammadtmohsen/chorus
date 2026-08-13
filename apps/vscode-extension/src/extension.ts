@@ -50,7 +50,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const windowId = randomUUID()
   const cache = new SelectionCache()
   const connections = new Map<number, ChorusConnection>()
-  let roots: string[] = []
   let debounce: NodeJS.Timeout | null = null
 
   const output = vscode.window.createOutputChannel('Chorus')
@@ -116,9 +115,17 @@ export function activate(context: vscode.ExtensionContext): void {
     // this runs on every debounced selection change.
     const current = facts()
     const editor = currentEditor()
-    const reports = reportAll(roots, current, editor, cache)
-    for (const connection of connections.values()) connection.send(reports)
-    if (tracing()) log('frame', frameFields(reports, windowDiagnostics(editor, current)))
+    // Each Chorus hears about its own roots and nobody else's. `reportAll`
+    // observes the cache, which is idempotent for a given editor and set of
+    // workspace folders — both fixed across this loop.
+    const diagnostics = tracing() ? windowDiagnostics(editor, current) : null
+    for (const connection of connections.values()) {
+      const reports = reportAll(connection.roots, current, editor, cache)
+      connection.send(reports)
+      if (diagnostics !== null) {
+        log('frame', { pid: connection.pid, ...frameFields(reports, diagnostics) })
+      }
+    }
     paint()
   }
 
@@ -180,10 +187,8 @@ export function activate(context: vscode.ExtensionContext): void {
           isFocused: () => vscode.window.state.focused,
         },
         {
-          onRoots: (next) => {
-            roots = [...next]
-            publish()
-          },
+          // The connection keeps what it was told; the window only republishes.
+          onRoots: publish,
           onSnapshot: snapshot,
           onStateChange: publish,
           log,
@@ -229,10 +234,14 @@ export function activate(context: vscode.ExtensionContext): void {
       const current = facts()
       const editor = currentEditor()
       const resolved = cache.resolve(editor)
-      const reports = roots.map((root) =>
-        reportFor(root, current, resolved.editor, resolved.source)
-      )
-      for (const line of diagnosticLines(reports, windowDiagnostics(editor, current))) {
+      const chorus = [...connections.values()].map((connection) => ({
+        pid: connection.pid,
+        state: connection.state,
+        reports: connection.roots.map((root) =>
+          reportFor(root, current, resolved.editor, resolved.source)
+        ),
+      }))
+      for (const line of diagnosticLines(chorus, windowDiagnostics(editor, current))) {
         output.appendLine(line)
       }
       // `true` preserves focus: the answer is worth reading, not worth stealing
