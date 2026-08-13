@@ -28,29 +28,6 @@ read, which is how the status summary went stale a day after it was written.
 
 Nothing here can be finished by me alone.
 
-### C-034 · The mention menu has never been driven by hand
-
-C-003 shipped and left this board, but **its last check never happened**. Every
-piece of evidence for that fix is machinery: 7/10 → 10/10 back to back, 0
-failures in 560 spec-executions across twenty suites, an OS-level probe that
-steals the window's focus and gives it back. Nobody has typed into the app.
-
-**Why it needs a person rather than a commit:** the failure and the correct
-behaviour look identical on screen. `@c` sitting in the box with no menu is what
-you see when the box was legitimately left — which closes the menu on purpose —
-and it is also what the bug looked like. Only `data-mention-live` tells them
-apart, and reading it means having the built app open.
-
-That ambiguity is not hypothetical: a screenshot of exactly this state reopened
-C-003 once already, and it could not be judged from the image.
-
-**Done when:** `pnpm app:install`, type `@c`, alt-tab away and back, then read
-`data-mention-live` on `.composer` — `live` means the fix holds and this is done;
-`stale` or `none` means C-003 reopens with a record attached rather than a
-shrug.
-
----
-
 ## Open
 
 ### C-004 · Measure what catch-up actually costs
