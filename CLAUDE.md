@@ -28,6 +28,51 @@ pnpm app:install   # packages and installs the local build
 `pnpm check` is the gate. It is fast (~40s warm) and there is no reason to skip
 it.
 
+## Releasing
+
+**"Release" is one word and it means all of this.** Asked to release, do the
+whole sequence without asking which parts — the only thing worth confirming is
+the version number when the bump is not obvious.
+
+1. **Merge** whatever is outstanding into `main`, and check there is genuinely
+   nothing left: `git cherry main <branch>` marks a commit `-` when an
+   equivalent patch is already in `main`. `git branch --no-merged` compares
+   _ancestry_, so a rebased or squashed branch shows as outstanding forever and
+   merging it replays months-old files over current ones.
+2. **Bump the version in both places** — `package.json` and
+   `apps/desktop/package.json`. They are separate and drift silently.
+3. **Write the CHANGELOG entry**, in its own voice: "what changed, for someone
+   deciding whether to update". Say what was broken from the user's side, not
+   which function was edited. If a previous release recorded a known gap that
+   this one closes, say so — that is the line people are waiting for.
+4. **`pnpm check`** — the gate. Never package around a red gate.
+5. **`pnpm package`** — builds the VS Code extension, the app, and the DMG into
+   `apps/desktop/release/Chorus-<version>-arm64.dmg`.
+6. **`pnpm --filter @chorus/desktop run verify:package`**, and this one is not
+   optional. It drives the _built bundle_ rather than `out/`, which is the only
+   thing that catches a packaging fault — `node-pty` ships `spawn-helper`
+   without its executable bit, so a build can pass every unit test, launch fine,
+   and be unable to open a shell.
+7. **Commit** as `chore(release): X.Y.Z`, touching only the changelog and the two
+   `package.json` files.
+8. **Tag and push**: `git tag -a vX.Y.Z -m "Chorus X.Y.Z"`, then push `main` and
+   the tag separately.
+9. **Publish**: `gh release create vX.Y.Z <dmg> --title "Chorus X.Y.Z"
+--notes-file <notes>`. The notes are the changelog section for that version
+   plus the ad-hoc-signing paragraph — every release repeats it, because every
+   downloader meets Gatekeeper (C-002).
+10. **Verify against the API, not the exit code.** `gh release view` for the
+    asset and its size; `git ls-remote --tags` for the tag. A `git push
+--delete` of several refs aborts entirely if one does not exist, and prints
+    nothing useful about what did not happen.
+
+**What a release does not prove, and must not be reported as proving.** The
+28-spec e2e suite is not part of this sequence — it takes ~5 minutes, passes
+about 6 runs in 10 (C-029), and has to be run deliberately. `verify:package`
+covers launch, the native module, the composer and an agent joining. Anything
+about the transcript, tabs, or a menu under load is unverified unless someone
+ran the suite or drove the app. Say which of those happened.
+
 ## The one rule everything else follows from
 
 **The event log is the source of truth, and it is append-only.**

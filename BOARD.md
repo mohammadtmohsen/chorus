@@ -109,6 +109,17 @@ alongside anything that takes the window server's attention. And note the count 
 **there are 28 specs, not the 26 this entry says below**; `packaged.mjs` carries
 the same stale number.
 
+**Half of the fallback now exists.** The plan for this entry recorded that there
+was no release checklist anywhere, and one of the two ways to close C-006 runs
+through it. `CLAUDE.md` § Releasing is now that checklist, and it is explicit
+that the e2e suite is **not** part of the release sequence and that a release
+therefore proves launch, the native module, the composer and an agent joining —
+nothing about the transcript, tabs, or a menu under load.
+
+What it deliberately does **not** say is "run the suite before tagging", because
+at 6 of 10 clean that would block two releases in five on a coin toss. Making it
+a gate is exactly what fixing C-029 would buy.
+
 CI runs typecheck, lint, format, tests and a build. It **cannot** run the 26 e2e
 specs or `verify:package`, because both drive real `claude` and `codex` CLIs with
 real credentials. So a green PR is not evidence about the renderer, and this
