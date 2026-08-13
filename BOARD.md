@@ -591,6 +591,29 @@ a sample, or a different signal.
 can and that is written down as a decision with the reason — and if it asks, the
 signal it asks on is not a single sample of `busy`.
 
+### C-035 · A notebook cell is a document the editor context cannot name
+
+`resolveDocument` (`apps/vscode-extension/src/document-identity.ts`) now parses
+`file:`, `git:` and `gl-review:` and refuses everything else, on purpose: a
+scheme nobody has read yields a wrong path rather than none, and main's
+re-validation turns a wrong path into a silent `unmatched`.
+
+`vscode-notebook-cell:` is the one refusal a user will actually hit. A cell is a
+real `TextEditor` with a real selection, so the selection is there to be read —
+but its URI names the `.ipynb` and carries the cell in a fragment, and a
+reference of `notebook.ipynb:12-14` means nothing to an agent: line 12 of the
+JSON file is not line 12 of the cell. Making it work means carrying a cell
+identity through `EditorMetadata`, the pill and the reference format, which is a
+protocol decision and not a parsing one.
+
+Until then a notebook behaves as it did before this work: no context, and — since
+"a document is not a file" landed — at least no longer wiping the selection you
+already had.
+
+**Done when:** either a cell selection produces a reference an agent can act on,
+or the refusal is written down as permanent with the reason, so the next person
+does not rediscover it as a gap.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
