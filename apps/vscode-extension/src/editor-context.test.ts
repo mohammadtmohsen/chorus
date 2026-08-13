@@ -132,10 +132,47 @@ describe('SelectionCache', () => {
     expect(cache.resolve(null).editor).toBeNull()
   })
 
-  it('forgets the cache when the current editor is unsupported', () => {
+  /*
+   * The inverse of what this asserted until 2026-08-13, and the whole of "it
+   * does not always see my selection". Looking at something with no name — the
+   * `git:` side of a diff, an output channel — is not moving to another
+   * project, and throwing the selection away made the pill depend on the order
+   * things were clicked in.
+   */
+  it('keeps the cache when the current editor is not referenceable', () => {
     const cache = new SelectionCache()
     cache.observe(editor(), [ROOT])
-    cache.observe(editor({ uriScheme: 'output' }), [ROOT])
+    cache.observe(editor({ uriScheme: 'git' }), [ROOT])
+    expect(cache.resolve(null).editor?.filePath).toBe(`${ROOT}/src/a.ts`)
+  })
+
+  /*
+   * `resolve(null)` cannot fail on the defect this phase fixes: it is the one
+   * input for which the old code already consulted the cache. The unsupported
+   * editor is still the *active* one while the user reaches for Chorus —
+   * `activeTextEditor` survives the window blurring — so this is the call that
+   * has to be tested.
+   */
+  it('prefers the cache over an active editor that cannot be referenced', () => {
+    const cache = new SelectionCache()
+    cache.observe(editor(), [ROOT])
+    const resolved = cache.resolve(editor({ uriScheme: 'git' }))
+    expect(resolved.source).toBe('cached')
+    expect(resolved.editor?.filePath).toBe(`${ROOT}/src/a.ts`)
+  })
+
+  it('reports nothing when there is no cache and nothing referenceable', () => {
+    const resolved = new SelectionCache().resolve(editor({ uriScheme: 'output' }))
+    expect(resolved.editor).toBeNull()
+  })
+
+  /* A closed buffer cannot go on offering its lines. */
+  it('forgets a cached document when that document closes', () => {
+    const cache = new SelectionCache()
+    cache.observe(editor(), [ROOT])
+    cache.forget(`file://${ROOT}/src/other.ts`)
+    expect(cache.resolve(null).editor).not.toBeNull()
+    cache.forget(`file://${ROOT}/src/a.ts`)
     expect(cache.resolve(null).editor).toBeNull()
   })
 
@@ -168,5 +205,33 @@ describe('reportAll', () => {
 
   it('returns nothing when Chorus has asked about no roots', () => {
     expect(reportAll([], trusted, editor(), new SelectionCache())).toEqual([])
+  })
+
+  /*
+   * The phase's exit criterion, driven the way the extension drives it: one
+   * frame with a real selection, then a frame in which the active editor is the
+   * `git:` pane of a diff. That second frame reported `unsupported` — the pill
+   * went blank while the user was clicking into Chorus to ask about the very
+   * lines it had just been showing.
+   */
+  it('keeps reporting the selection while the user looks at a diff pane', () => {
+    const cache = new SelectionCache()
+    reportAll([ROOT], trusted, editor(), cache)
+
+    const later = reportAll([ROOT], trusted, editor({ uriScheme: 'git' }), cache)
+    expect(later[0]?.status).toBe('ready')
+    expect(later[0]?.editor?.source).toBe('cached')
+    expect(later[0]?.editor?.selection.start.line).toBe(10)
+  })
+
+  /* The half that must not move: another project's file is still the wrong
+     answer, and answering it from the cache would attach the wrong file. */
+  it('still empties when the current editor is another project file', () => {
+    const cache = new SelectionCache()
+    reportAll([ROOT], trusted, editor(), cache)
+
+    const later = reportAll([ROOT], trusted, editor({ filePath: '/p/other/x.ts' }), cache)
+    expect(later[0]?.status).toBe('unmatched')
+    expect(later[0]?.editor).toBeNull()
   })
 })

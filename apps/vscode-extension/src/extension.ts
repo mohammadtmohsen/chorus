@@ -206,6 +206,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.onDidChangeActiveTextEditor(schedule),
     vscode.window.onDidChangeWindowState(schedule),
     vscode.workspace.onDidChangeWorkspaceFolders(schedule),
+    /*
+     * The cache now survives the user looking at something unreferenceable, so
+     * it also has to notice when the document it holds goes away — otherwise a
+     * tab closed an hour ago would still be offering its lines.
+     */
+    vscode.workspace.onDidCloseTextDocument((document) => {
+      cache.forget(document.uri.toString())
+      schedule()
+    }),
     vscode.commands.registerCommand('chorus.reconnect', () => {
       for (const connection of connections.values()) connection.dispose()
       connections.clear()

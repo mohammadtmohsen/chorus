@@ -87,6 +87,50 @@ VSIX in a dev checkout reports its own old version. The plan now says this.
   when it is.
 - Nothing is committed.
 
+**Phase 1 done: the selection survives looking at something else.**
+
+Both halves moved, because either alone is invisible. `observe` now returns
+early for a document that is not referenceable at all — the `git:` side of a
+diff, an `untitled:` scratch buffer, an output channel — instead of treating it
+like another project's file. `resolve` prefers the current editor only when it
+is one that can be referenced, which is the half the first draft of the plan
+missed: `activeTextEditor` survives the window losing focus to Chorus, so the
+unsupported pane is still _active_ while the user is clicking into the composer,
+and a cache nobody consults is not a fix.
+
+`SelectionCache.forget(fileUrl)` and a new `onDidCloseTextDocument`
+subscription are the cost of keeping things longer: "keep what we had" must not
+outlive the buffer it describes. Keyed on the URL, because that is what
+identifies a document across schemes.
+
+The rule that did **not** move: another project's file still empties the cache.
+That is the guarantee the cache exists to make, and there is a control test
+holding it — it passes with and without this change, which is the point of it.
+
+Gate: `pnpm check` green — 1402 tests (up from 1397), 3 skipped.
+
+**Proven against the unfixed code.** With `editor-context.ts` stashed back to
+HEAD, five of the new tests fail:
+
+```
+× keeps the cache when the current editor is not referenceable
+× prefers the cache over an active editor that cannot be referenced
+× reports nothing when there is no cache and nothing referenceable
+× forgets a cached document when that document closes
+× keeps reporting the selection while the user looks at a diff pane
+```
+
+The last is the phase's exit criterion driven the way the extension drives it:
+`reportAll` with a real selection, then `reportAll` with the `git:` pane active
+— `ready`, `source: 'cached'`, and the original range at line 10.
+
+### What is still not verified
+
+Everything user-facing. The pill has no way to _show_ `cached` yet:
+`toPushFile` drops `source`, which Phase 4 fixes. Until then this phase is
+provable by test and by the Phase 0 diagnostics, and what the user should see is
+that the pill stops going blank.
+
 ## Still to come
 
 Phases 1–6 unchanged from the plan. Phase 0 has to be **released and installed**

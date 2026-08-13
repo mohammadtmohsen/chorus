@@ -129,25 +129,61 @@ export function reportFor(
  * reaching for the Chorus composer. Without this the pill would empty exactly
  * when it is about to be used.
  *
- * The cache is cleared whenever there *is* a current editor that is not
- * eligible, so an unrelated file never falls back to an older in-project
- * selection. Absence of an editor is remembered; the wrong editor is not.
+ * **Forgetting is only correct for another project's file.** Until 2026-08-13
+ * one rule served two situations: "the user is now looking at a file from
+ * somewhere else" and "the user is now looking at something that is not a file
+ * at all" both threw the selection away. The second is wrong, and it is the
+ * common one — the left pane of a git diff is `git:`, a scratch buffer is
+ * `untitled:`, and clicking either wiped the pill. Claude Code's extension
+ * keeps its cached selection until the last visible editor closes; this is the
+ * same idea with the project rule left intact.
+ *
+ * What it costs is staleness: a remembered selection can be minutes old. It is
+ * marked `cached` for exactly that reason, and Send re-asks the editor rather
+ * than trusting it.
  */
 export class SelectionCache {
   #last: EditorLike | null = null
 
-  /** Record the current editor, and report what should be used in its place. */
+  /** Record the current editor, if it says anything about what to remember. */
   observe(editor: EditorLike | null, roots: readonly string[]): void {
     if (editor === null) return
-    const eligible = isSupported(editor) && roots.some((r) => isInside(r, editor.filePath))
-    this.#last = eligible ? editor : null
+    /*
+     * Not referenceable at all — an output channel, the `git:` side of a diff,
+     * a notebook cell. The user has not moved to another project; they have
+     * looked at something this extension has no name for, and what they had
+     * selected before is still the best answer.
+     */
+    if (!isSupported(editor)) return
+    this.#last = roots.some((r) => isInside(r, editor.filePath)) ? editor : null
   }
 
-  /** The editor to report, and whether it is live or remembered. */
+  /**
+   * The editor to report, and whether it is live or remembered.
+   *
+   * The current editor wins only when it is one that can be referenced.
+   * Preferring it unconditionally — which this did until 2026-08-13 — meant
+   * `observe` could keep a perfectly good selection that `resolve` then refused
+   * to use, because `activeTextEditor` survives the window losing focus to
+   * Chorus. Both halves have to agree or neither is visible.
+   */
   resolve(editor: EditorLike | null): { editor: EditorLike | null; source: 'current' | 'cached' } {
-    if (editor !== null) return { editor, source: 'current' }
+    if (editor !== null && isSupported(editor)) return { editor, source: 'current' }
     if (this.#last !== null) return { editor: this.#last, source: 'cached' }
+    // Null and unsupported both report `unsupported`, so there is nothing to
+    // choose between them here.
     return { editor: null, source: 'current' }
+  }
+
+  /**
+   * Drop the cache if the document it holds is the one that just closed.
+   *
+   * Keyed on the URL rather than the path, because that is what identifies a
+   * document across schemes. Without this, "keep what we had" can outlive the
+   * buffer it describes — a tab closed an hour ago still offering its lines.
+   */
+  forget(fileUrl: string): void {
+    if (this.#last?.fileUrl === fileUrl) this.#last = null
   }
 
   clear(): void {
