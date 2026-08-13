@@ -7,7 +7,7 @@
 | 0 — make the extension say why, and be installable | implemented — pending your check in a real window |
 | 1 — stop forgetting the selection                  | implemented — five tests red on the old code      |
 | 2 — one root list per Chorus process               | implemented                                       |
-| 3 — resolve a document, not a file                 | not started                                       |
+| 3 — resolve a document, not a file                 | implemented — parsed and tested, not yet wired    |
 | 4 — provenance on the wire (protocol v2)           | not started                                       |
 | 5 — what the agent is told about a diff            | not started                                       |
 | 6 — verification, including a real GitLab MR       | not started                                       |

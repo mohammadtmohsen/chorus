@@ -164,6 +164,40 @@ Eight real roots, six `unmatched` because the probe's only workspace folder is
 this repo, two `unsupported` because the probe has no editor at all. Which is
 the first time any of this has been legible from outside.
 
+**Phase 3 done: `document-identity.ts`, and it is deliberately not called yet.**
+
+`resolveDocument` maps a URI to an absolute working-tree path plus the
+provenance of the lines: `worktree`, `ref` for `git:`, `review` for
+`gl-review:`. Twenty tests, all against URI strings taken from the two
+extensions' bundles rather than from memory.
+
+The three parses that matter:
+
+- `git:` reads the **absolute** path out of `query.path`, because `uri.path`
+  may carry an appended `.git` to keep the language id neutral. An empty ref is
+  the working tree, not a version needing qualification.
+- `gl-review:` rejoins `uri.path` — repo-relative, wearing a leading slash —
+  onto the `repositoryRoot` in the query. Its `fsPath` is `/src/app.ts`, a
+  real-looking absolute path pointing nowhere, and that is the value Claude
+  Code sends.
+- `commit` is carried, because base and head panes of the same file differ by
+  nothing else. `exists` is carried as content-of-this-pane, which is what
+  GitLab means by it; `!exists || !commit` is its `isEmptyFileUri`, the blank
+  pane opposite an added or deleted file, and resolves to nothing.
+
+`changeType` is validated against `added | deleted | renamed | modified`, read
+out of the bundle (`BQe="added", zQe="deleted", VQe="renamed", uhe="modified"`)
+rather than assumed.
+
+**Why nothing calls it yet.** Wiring it into `currentEditor` now would make a
+merge request selection report as an ordinary working-tree selection —
+`src/app.ts:120-134` pointing at a file whose lines have moved. That is worse
+than refusing, and it is exactly the lie the plan set out to avoid. The
+resolver lands with its tests; Phase 4 puts provenance on the wire and turns it
+on in the same change.
+
+Gate: `pnpm check` green — 1424 tests (up from 1404), 3 skipped.
+
 ## Still to come
 
 Phases 3–6 unchanged from the plan. Phases 0–2 are **committed but not
