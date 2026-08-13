@@ -614,6 +614,37 @@ already had.
 or the refusal is written down as permanent with the reason, so the next person
 does not rediscover it as a gap.
 
+### C-036 · The extension speaks English, and the app's rule says it must not
+
+"No hardcoded user-facing strings — `i18n/en.json`" is a renderer convention that
+`apps/vscode-extension` has never followed. Its manifest strings go through
+`package.nls.json` properly, but everything it writes at runtime is a literal in
+`extension.ts`: the status bar's `Chorus: linked`, `Chorus: not running`, both
+`update the extension` / `update Chorus` warnings with their tooltips, and every
+line of the `Chorus: Diagnose editor context` dump.
+
+Pre-existing — the first two shipped with the feature — but the protocol-2 work
+added five more without deciding anything, which is how a convention quietly
+becomes an exception.
+
+**Why it matters:** these are the strings a user reads at the worst moment. The
+mismatch warning exists precisely because editor context has gone silent, and it
+is the one instruction that unblocks them. If Chorus is worth translating, the
+sentence telling you the extension is out of date is not the place to stop.
+
+**What makes it awkward rather than obvious:** the extension host has its own
+mechanism, `vscode.l10n`, which is not the app's `t()` and wants bundle files
+declared in the manifest and shipped inside the VSIX. So this is not "import the
+translator" — it is a second localisation system, in a build that deliberately
+writes its own VSIX by hand to avoid dependencies. The diagnostics dump is also
+arguably not user-facing prose but a bug-report artifact, and translating it
+would make pasted reports unreadable to whoever receives them.
+
+**Done when:** either the runtime strings a user acts on go through `vscode.l10n`
+with the VSIX carrying its bundle, or the extension is written down as English-only
+with the reason — and in that case the diagnostics dump is named as the thing that
+stays English on purpose.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
