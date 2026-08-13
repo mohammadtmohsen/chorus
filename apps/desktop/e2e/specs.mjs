@@ -2223,6 +2223,43 @@ export const specs = [
           `a bare @ offers the cast and no files, got ${JSON.stringify(cast)}`
         )
 
+        /*
+         * And it is actually on the screen, which is a different question.
+         *
+         * Everything above passes on a menu the user cannot see. `.dock` carries
+         * `overflow-y: auto` so a tall approval card's buttons stay reachable,
+         * and while the menu rendered inside the composer that clip cut it down
+         * to about 5px of its 35.5 — present in the DOM, painted almost nowhere.
+         * A screenshot of the running app is the only thing that caught it.
+         *
+         * `elementFromPoint` is the cheapest thing that asks Chromium rather
+         * than the DOM: it hit-tests against what was composited, so a row
+         * behind a clip, under an opaque ancestor, or off-screen answers with
+         * something that is not part of the listbox.
+         */
+        await app.settle()
+        const painted = await app.evaluate(`(() => {
+          const menu = document.querySelector('.mention-menu')
+          const row = menu?.querySelector('.mention-option')
+          if (!row) return { ok: false, why: 'no row to sample' }
+          const at = row.getBoundingClientRect()
+          const hit = document.elementFromPoint(
+            Math.round(at.left + at.width / 2),
+            Math.round(at.top + at.height / 2)
+          )
+          const dock = document.querySelector('.dock')?.getBoundingClientRect()
+          return {
+            ok: hit !== null && menu.contains(hit),
+            why: hit === null ? 'nothing at that point' : hit.className || hit.tagName,
+            row: { top: Math.round(at.top), bottom: Math.round(at.bottom) },
+            dockTop: dock === undefined ? null : Math.round(dock.top),
+          }
+        })()`)
+        assert(
+          painted.ok === true,
+          `the first row is hit-testable where it is drawn, got ${JSON.stringify(painted)}`
+        )
+
         // `mention-menu` is the app's own source file, so the repository is
         // guaranteed to contain it — no fixture, and it must come from git.
         await draft(app, '@mention-menu')

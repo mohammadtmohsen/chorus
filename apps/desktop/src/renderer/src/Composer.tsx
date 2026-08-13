@@ -1,4 +1,13 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { quotePath } from './attach.js'
@@ -607,6 +616,73 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      */
     const menuOpen = menuVisible(!leftBox, options.length, active, lookup)
 
+    /** The composer's own box, which is what the portalled menu is placed from. */
+    const anchor = useRef<HTMLFormElement | null>(null)
+    /**
+     * Where the menu sits in viewport coordinates, or null until it is measured.
+     *
+     * **The menu has to leave the pane, because `.dock` scrolls.** It carries
+     * `overflow-y: auto` so a tall approval card's buttons stay reachable, and a
+     * scroll container clips whatever overflows it. At rest the dock is only as
+     * tall as the composer, so a bare `@` — a 35.5px menu drawn above the box —
+     * had 5px of itself inside the clip and the rest cut off. It was in the DOM
+     * the whole time, which is why the spec asserting on `querySelector` passed
+     * a screenshot that plainly showed the bug. Relaxing the dock's overflow
+     * would trade this for the unreachable-buttons one it was added to fix.
+     *
+     * `bottom` rather than `top`, so the list grows upward from the composer
+     * without anything having to measure how tall it is — the same behaviour the
+     * `bottom: calc(100% + …)` rule had, minus the clip.
+     */
+    const [menuAt, setMenuAt] = useState<{
+      left: number
+      width: number
+      bottom: number
+    } | null>(null)
+
+    useLayoutEffect(() => {
+      if (!menuOpen) {
+        setMenuAt(null)
+        return
+      }
+      const place = (): void => {
+        const el = anchor.current
+        if (el === null) return
+        const box = el.getBoundingClientRect()
+        // 6px is `calc(var(--step) * 2)`, the gap the absolute rule carried.
+        const next = { left: box.left, width: box.width, bottom: window.innerHeight - box.top + 6 }
+        // A scroll asks on every event; only an actual move is worth a render.
+        setMenuAt((current) =>
+          current !== null &&
+          current.left === next.left &&
+          current.width === next.width &&
+          current.bottom === next.bottom
+            ? current
+            : next
+        )
+      }
+      place()
+      /*
+       * Three things move the composer under an open menu, and leaving any of
+       * them out strands the popup where the box used to be: the window
+       * resizing, an ancestor scrolling — the dock, once an approval card is up
+       * — and the composer growing under its own content, an attachment landing
+       * or the textarea taking another line.
+       *
+       * `scroll` does not bubble, so it is heard in the capture phase or not at
+       * all.
+       */
+      window.addEventListener('resize', place)
+      document.addEventListener('scroll', place, true)
+      const watch = new ResizeObserver(place)
+      if (anchor.current !== null) watch.observe(anchor.current)
+      return () => {
+        window.removeEventListener('resize', place)
+        document.removeEventListener('scroll', place, true)
+        watch.disconnect()
+      }
+    }, [menuOpen])
+
     const choose = useCallback(
       (index: number) => {
         const el = input.current
@@ -761,6 +837,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
 
     return (
       <form
+        ref={anchor}
         className="composer"
         /*
          * What the composer believes, where a failing run can read it.
@@ -866,57 +943,79 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             )}
           </div>
         )}
-        {menuOpen && (
-          <ul className="mention-menu" id={`mentions-${conversationId}`} role="listbox">
-            {options.map((option, i) => (
-              <li key={option.label}>
-                <button
-                  type="button"
-                  className="mention-option"
-                  role="option"
-                  aria-selected={i === highlighted}
-                  data-on={i === highlighted}
-                  // Pointer down, not click: the textarea blurs on click and
-                  // the menu would be gone before the choice registered.
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    choose(i)
-                  }}
-                  onMouseEnter={() => {
-                    setHighlighted(i)
-                  }}
-                >
-                  <span className="mention-dots" aria-hidden="true">
-                    {option.agents.map((agent) => (
-                      <span key={agent} className={`voice-dot voice--${agent}`} />
-                    ))}
-                  </span>
-                  <span className="mention-name">
-                    {/* A bare option inserts no trigger, so it must not show
+        {menuOpen &&
+          /*
+           * Portalled, and the reason is the dock's clip — see `menuAt` above.
+           * Everything else about the menu stays here: the keys, the highlight,
+           * `aria-controls` (which resolves by id, wherever the list lives) and
+           * `onMouseDown`, which still reaches this component because React
+           * routes portal events through the React tree rather than the DOM one.
+           */
+          createPortal(
+            <ul
+              className="mention-menu"
+              id={`mentions-${conversationId}`}
+              role="listbox"
+              /* Hidden for the one commit it takes to measure. A layout effect
+                 places it before the browser paints, so this should never be
+                 seen — it is here so that a frame lost to something else shows
+                 nothing rather than a menu at the viewport's top-left. */
+              style={
+                menuAt === null
+                  ? { visibility: 'hidden' }
+                  : { left: menuAt.left, width: menuAt.width, bottom: menuAt.bottom }
+              }
+            >
+              {options.map((option, i) => (
+                <li key={option.label}>
+                  <button
+                    type="button"
+                    className="mention-option"
+                    role="option"
+                    aria-selected={i === highlighted}
+                    data-on={i === highlighted}
+                    // Pointer down, not click: the textarea blurs on click and
+                    // the menu would be gone before the choice registered.
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      choose(i)
+                    }}
+                    onMouseEnter={() => {
+                      setHighlighted(i)
+                    }}
+                  >
+                    <span className="mention-dots" aria-hidden="true">
+                      {option.agents.map((agent) => (
+                        <span key={agent} className={`voice-dot voice--${agent}`} />
+                      ))}
+                    </span>
+                    <span className="mention-name">
+                      {/* A bare option inserts no trigger, so it must not show
                         one: a file row reading "@src/a.ts" would promise a
                         mention it does not write. */}
-                    {option.bare === true ? '' : (active?.trigger ?? '@')}
-                    {option.label}
-                  </span>
-                  <span className="mention-detail">{option.detail}</span>
-                </button>
-              </li>
-            ))}
-            {options.length === 0 && lookup !== null && (
-              /*
-               * `data-lookup` is not decoration. A spec asserting on the visible
-               * words would be asserting on a translation, and the point of this
-               * row is that a run can say *which* state it ended in rather than
-               * timing out with nothing to report.
-               */
-              <li className="mention-status" data-lookup={lookup} aria-live="polite">
-                {lookup === 'asking' && t('conversation.lookingUp')}
-                {lookup === 'exhausted' && t('conversation.noneFound')}
-                {lookup === 'unavailable' && t('conversation.lookupUnavailable')}
-              </li>
-            )}
-          </ul>
-        )}
+                      {option.bare === true ? '' : (active?.trigger ?? '@')}
+                      {option.label}
+                    </span>
+                    <span className="mention-detail">{option.detail}</span>
+                  </button>
+                </li>
+              ))}
+              {options.length === 0 && lookup !== null && (
+                /*
+                 * `data-lookup` is not decoration. A spec asserting on the visible
+                 * words would be asserting on a translation, and the point of this
+                 * row is that a run can say *which* state it ended in rather than
+                 * timing out with nothing to report.
+                 */
+                <li className="mention-status" data-lookup={lookup} aria-live="polite">
+                  {lookup === 'asking' && t('conversation.lookingUp')}
+                  {lookup === 'exhausted' && t('conversation.noneFound')}
+                  {lookup === 'unavailable' && t('conversation.lookupUnavailable')}
+                </li>
+              )}
+            </ul>,
+            document.body
+          )}
         <Attachments
           items={attached}
           onRemove={(path) => {

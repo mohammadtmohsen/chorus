@@ -2816,13 +2816,22 @@ body {
  *
  * Sits on top of the composer rather than pushing it: the field must not move
  * under the caret while you are typing into it.
+ *
+ * **Fixed, and placed by `Composer` rather than by this rule.** It used to be
+ * `position: absolute; bottom: calc(100% + var(--step) * 2)` inside the form,
+ * which put it inside `.dock` — and the dock scrolls, so it clipped the menu to
+ * the few pixels that happened to fall inside it. `left`, `width` and `bottom`
+ * now arrive as inline styles measured from the composer's own box; nothing
+ * here may set them, or a scroll would move the box and not the popup.
+ *
+ * `z-index: 70` for the same reason `.workspace-session-profile-menu` uses it:
+ * having left the pane, the popup is stacked against the whole window, so it
+ * has to clear the sidebar's 60 and stay under the 80 a sheet covers everything
+ * with. The old 5 was a number chosen inside a pane and means nothing out here.
  */
 .mention-menu {
-  position: absolute;
-  bottom: calc(100% + var(--step) * 2);
-  left: 0;
-  right: 0;
-  z-index: 5;
+  position: fixed;
+  z-index: 70;
   margin: 0;
   padding: calc(var(--step));
   list-style: none;
@@ -2839,8 +2848,6 @@ body {
    * covering. A screenshot of the running app is the only thing that showed it.
    */
   max-height: min(40vh, 22rem);
-  overflow-y: auto;
-  max-height: 40vh;
   overflow-y: auto;
 }
 
