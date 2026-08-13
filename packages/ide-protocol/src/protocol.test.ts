@@ -28,6 +28,7 @@ function metadata(overrides: Record<string, unknown> = {}): Record<string, unkno
     languageId: 'typescript',
     documentVersion: 3,
     isDirty: false,
+    provenance: { kind: 'worktree' },
     selection: { ...range, isEmpty: false, selectedBytes: 12 },
     ...overrides,
   }

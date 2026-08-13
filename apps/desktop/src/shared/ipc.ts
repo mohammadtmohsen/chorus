@@ -158,6 +158,25 @@ export const IdeStatusShape = z.enum([
 export type IdeStatusShape = z.infer<typeof IdeStatusShape>
 
 /**
+ * Which version of the file the selected lines are — mirroring the protocol's
+ * `provenance`, the same way the status list above mirrors its statuses.
+ *
+ * Restated rather than imported so the renderer's dependencies stay where they
+ * are. Drift is not silent: `toPushFile` builds this out of an `EditorMetadata`
+ * and would stop typechecking.
+ *
+ * The renderer needs it because a selection from a merge request diff is not
+ * the file on disk, and a pill that says `src/app.ts:120-134` and means
+ * something else is worse than one that says nothing.
+ */
+export const IdeProvenanceShape = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('worktree') }),
+  z.object({ kind: z.literal('ref'), ref: z.string() }),
+  z.object({ kind: z.literal('review'), commit: z.string() }),
+])
+export type IdeProvenanceShape = z.infer<typeof IdeProvenanceShape>
+
+/**
  * The live frame the renderer sees.
  *
  * Note what is *not* here: no absolute path, no file URL, and no source text.
@@ -178,6 +197,16 @@ export const IdeContextPush = z.object({
       isDirty: z.boolean(),
       languageId: z.string(),
       selectedBytes: z.number().int(),
+      provenance: IdeProvenanceShape,
+      /**
+       * Whether this is the live selection or the last one remembered.
+       *
+       * Dropped here until 2026-08-13, which is why the pill could not say
+       * `cached` even though the extension had been sending it since the
+       * feature shipped — and why a remembered selection was indistinguishable
+       * from a current one at the moment it mattered.
+       */
+      source: z.enum(['current', 'cached']),
     })
     .nullable(),
 })
@@ -194,6 +223,7 @@ export const IdeSnapshotResult = z.discriminatedUnion('outcome', [
     isDirty: z.boolean(),
     languageId: z.string(),
     text: z.string(),
+    provenance: IdeProvenanceShape,
   }),
   z.object({ outcome: z.literal('unavailable'), reason: IdeStatusShape }),
   z.object({ outcome: z.literal('tooLarge'), selectedBytes: z.number().int() }),

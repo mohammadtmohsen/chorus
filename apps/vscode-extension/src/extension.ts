@@ -17,6 +17,7 @@ import {
   type ConnectionCounts,
   type WindowDiagnostics,
 } from './diagnostics.js'
+import { resolveDocument } from './document-identity.js'
 import { pidIsAlive, readDescriptors } from './discovery.js'
 import {
   isInside,
@@ -291,14 +292,32 @@ function canonical(path: string): string {
   }
 }
 
-/** The active editor, flattened into the shape the rules understand. */
+/**
+ * The active editor, flattened into the shape the rules understand.
+ *
+ * `resolveDocument` is the whole of what changed in protocol 2: a diff pane is
+ * an ordinary `TextEditor`, and what it needed was not permission but a way to
+ * say which version of the file its lines are. A document it cannot name keeps
+ * its scheme and carries `provenance: null`, so the diagnostics can still say
+ * *what* was refused rather than reporting nothing at all.
+ */
 function currentEditor(): EditorLike | null {
   const editor = vscode.window.activeTextEditor
   if (editor === undefined) return null
   const { document, selection } = editor
+  const resolved = resolveDocument({
+    scheme: document.uri.scheme,
+    path: document.uri.path,
+    query: document.uri.query,
+    fsPath: document.uri.fsPath,
+  })
   return {
     uriScheme: document.uri.scheme,
-    filePath: document.uri.scheme === 'file' ? canonical(document.uri.fsPath) : document.uri.fsPath,
+    // `canonical` resolves as far as the path exists, so a review document
+    // naming a file that is not in this working tree keeps its literal path
+    // rather than becoming something else.
+    filePath: resolved === null ? document.uri.fsPath : canonical(resolved.filePath),
+    provenance: resolved?.provenance ?? null,
     fileUrl: document.uri.toString(),
     languageId: document.languageId,
     documentVersion: document.version,

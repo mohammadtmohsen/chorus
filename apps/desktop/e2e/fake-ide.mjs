@@ -122,7 +122,20 @@ export class FakeIde {
   }
 
   /** Report one file as the active editor for `root`. */
-  report(root, { file, startLine = 10, endLine = 12, isDirty = false, focused = true } = {}) {
+  report(
+    root,
+    {
+      file,
+      startLine = 10,
+      endLine = 12,
+      isDirty = false,
+      focused = true,
+      // Protocol 2. A real window sends what `resolveDocument` decided; the
+      // working tree is what an ordinary open file resolves to.
+      provenance = { kind: 'worktree' },
+      source = 'current',
+    } = {}
+  ) {
     this.#write({
       jsonrpc: '2.0',
       method: 'stateChanged',
@@ -134,12 +147,13 @@ export class FakeIde {
             root,
             status: 'ready',
             editor: {
-              source: 'current',
+              source,
               filePath: file,
               fileUrl: `file://${file}`,
               languageId: 'typescript',
               documentVersion: 1,
               isDirty,
+              provenance,
               selection: {
                 start: { line: startLine, character: 0 },
                 end: { line: endLine, character: 4 },

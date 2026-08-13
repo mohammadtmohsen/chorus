@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { quotePath } from './attach.js'
 import { Attachments, type Attachment } from './Attachments.js'
-import { formatContextBlock, withEditorContext } from './editor-context.js'
+import { formatContextBlock, markFor, versionFor, withEditorContext } from './editor-context.js'
 import {
   applyMention,
   commandOptions,
@@ -789,9 +789,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
               : t('ide.error.unavailable', { reason: t(`ide.status.${snapshot.reason}`) })
           )
         }
+        // The version, if these lines are not the working tree's. Without it an
+        // agent opens the path and answers about content that has moved.
+        const version = versionFor(snapshot.provenance, snapshot.relativePath)
         const block = formatContextBlock(
           { ...snapshot },
-          { heading: t('ide.heading'), unsaved: t('ide.unsaved') }
+          {
+            heading: t('ide.heading'),
+            unsaved: t('ide.unsaved'),
+            version: version === null ? '' : t(version.key, version.params),
+          }
         )
         return withEditorContext(text, block)
       }
@@ -926,6 +933,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                   }`
                 : t(`ide.status.${ide.status}`)}
             </span>
+            {/*
+             * Which selection this is, when the path does not already say it: a
+             * merge request commit, a git ref, or that these lines are
+             * remembered rather than live. Separate from the path so it can be
+             * dimmed, and so a long branch name cannot be mistaken for part of
+             * the file name.
+             */}
+            {ide.status === 'ready' && ide.file !== null && (
+              <span className="ide-pill-mark">
+                {[
+                  ide.file.source === 'cached' ? t('ide.mark.cached') : null,
+                  ...(() => {
+                    const mark = markFor(ide.file.provenance)
+                    return mark === null ? [] : [t(mark.key, mark.params)]
+                  })(),
+                ]
+                  .filter((part) => part !== null)
+                  .join(' · ')}
+              </span>
+            )}
             {ide.status === 'ready' && (
               <button
                 type="button"

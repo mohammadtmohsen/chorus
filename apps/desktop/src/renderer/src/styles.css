@@ -5673,6 +5673,21 @@ input::placeholder {
   font-family: var(--mono);
 }
 
+/*
+ * Which version, and whether it is remembered. Dimmer and not monospaced, so it
+ * reads as a note about the reference rather than part of the path — and it
+ * gives up its width first, because a truncated `MR a1b2c3d` still says what it
+ * needs to while a truncated path does not.
+ */
+.ide-pill-mark {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.72;
+}
+
 /* Anything that is not `ready` is an explanation, not a reference. */
 .ide-pill:not([data-status='ready']) .ide-pill-what {
   font-family: inherit;

@@ -8,15 +8,17 @@ import {
   reportFor,
   SelectionCache,
   type EditorLike,
+  type ReferenceableEditor,
   type WindowFacts,
 } from './editor-context.js'
 
 const ROOT = '/p/project'
 
-function editor(overrides: Partial<EditorLike> = {}): EditorLike {
+function editor(overrides: Partial<ReferenceableEditor> = {}): ReferenceableEditor {
   return {
     uriScheme: 'file',
     filePath: `${ROOT}/src/a.ts`,
+    provenance: { kind: 'worktree' },
     fileUrl: `file://${ROOT}/src/a.ts`,
     languageId: 'typescript',
     documentVersion: 1,
@@ -29,6 +31,15 @@ function editor(overrides: Partial<EditorLike> = {}): EditorLike {
     selectedText: 'const a = 1',
     ...overrides,
   }
+}
+
+/**
+ * A document `resolveDocument` could not name — an output channel, a notebook
+ * cell. Since protocol 2 this is what "unsupported" means: `git:` and
+ * `gl-review:` are now referenceable, so a scheme alone no longer decides.
+ */
+function unreferenceable(uriScheme = 'output'): EditorLike {
+  return { ...editor(), uriScheme, provenance: null }
 }
 
 const trusted: WindowFacts = { workspaceFolders: [ROOT], isTrusted: true }
@@ -54,8 +65,16 @@ describe('isSupported', () => {
     expect(isSupported(editor())).toBe(true)
   })
 
+  /* Since protocol 2 a diff pane is referenceable: what decides is whether
+     `resolveDocument` could say which version of the file it is. */
+  it('accepts a document whose version is a git ref', () => {
+    expect(
+      isSupported(editor({ uriScheme: 'git', provenance: { kind: 'ref', ref: 'HEAD' } }))
+    ).toBe(true)
+  })
+
   it.each(['untitled', 'output', 'comment', 'vscode-notebook-cell'])('rejects %s', (scheme) => {
-    expect(isSupported(editor({ uriScheme: scheme }))).toBe(false)
+    expect(isSupported(unreferenceable(scheme))).toBe(false)
   })
 
   it('rejects nothing at all', () => {
@@ -84,7 +103,7 @@ describe('reportFor', () => {
   })
 
   it('discloses no path for a non-file document', () => {
-    const report = reportFor(ROOT, trusted, editor({ uriScheme: 'untitled' }), 'current')
+    const report = reportFor(ROOT, trusted, unreferenceable('untitled'), 'current')
     expect(report).toEqual({ root: ROOT, status: 'unsupported', editor: null })
   })
 
@@ -142,7 +161,7 @@ describe('SelectionCache', () => {
   it('keeps the cache when the current editor is not referenceable', () => {
     const cache = new SelectionCache()
     cache.observe(editor(), [ROOT])
-    cache.observe(editor({ uriScheme: 'git' }), [ROOT])
+    cache.observe(unreferenceable('output'), [ROOT])
     expect(cache.resolve(null).editor?.filePath).toBe(`${ROOT}/src/a.ts`)
   })
 
@@ -156,13 +175,13 @@ describe('SelectionCache', () => {
   it('prefers the cache over an active editor that cannot be referenced', () => {
     const cache = new SelectionCache()
     cache.observe(editor(), [ROOT])
-    const resolved = cache.resolve(editor({ uriScheme: 'git' }))
+    const resolved = cache.resolve(unreferenceable('output'))
     expect(resolved.source).toBe('cached')
     expect(resolved.editor?.filePath).toBe(`${ROOT}/src/a.ts`)
   })
 
   it('reports nothing when there is no cache and nothing referenceable', () => {
-    const resolved = new SelectionCache().resolve(editor({ uriScheme: 'output' }))
+    const resolved = new SelectionCache().resolve(unreferenceable('output'))
     expect(resolved.editor).toBeNull()
   })
 
@@ -218,7 +237,7 @@ describe('reportAll', () => {
     const cache = new SelectionCache()
     reportAll([ROOT], trusted, editor(), cache)
 
-    const later = reportAll([ROOT], trusted, editor({ uriScheme: 'git' }), cache)
+    const later = reportAll([ROOT], trusted, unreferenceable('vscode-notebook-cell'), cache)
     expect(later[0]?.status).toBe('ready')
     expect(later[0]?.editor?.source).toBe('cached')
     expect(later[0]?.editor?.selection.start.line).toBe(10)

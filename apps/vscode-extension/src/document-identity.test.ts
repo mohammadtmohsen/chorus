@@ -110,7 +110,7 @@ describe('resolveDocument — gl-review', () => {
   it('rejoins the repo-relative path onto the repository root', () => {
     expect(resolveDocument(review())).toEqual({
       filePath: `${REPO}/src/app.ts`,
-      provenance: { kind: 'review', commit: 'a1b2c3d4e5f6', changeType: 'modified' },
+      provenance: { kind: 'review', commit: 'a1b2c3d4e5f6' },
     })
   })
 
@@ -133,9 +133,16 @@ describe('resolveDocument — gl-review', () => {
     expect(resolveDocument(review({ commit: '' }))).toBeNull()
   })
 
-  it('carries the change type, on the closed set GitLab actually writes', () => {
-    expect(resolveDocument(review({ changeType: 'renamed' }))?.provenance).toMatchObject({
-      changeType: 'renamed',
+  /*
+   * Validated as a shape check and then dropped. An unexpected value means this
+   * is not the URI shape we read out of the bundle, and refusing beats
+   * misparsing — but nothing downstream reads it, because the commit already
+   * covers the rename case: `git show <commit>:<old path>` works.
+   */
+  it('checks the change type against the closed set, and carries none of it', () => {
+    expect(resolveDocument(review({ changeType: 'renamed' }))?.provenance).toEqual({
+      kind: 'review',
+      commit: 'a1b2c3d4e5f6',
     })
     expect(resolveDocument(review({ changeType: 'invented' }))).toBeNull()
   })

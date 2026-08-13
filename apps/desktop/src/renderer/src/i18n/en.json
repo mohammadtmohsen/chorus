@@ -243,6 +243,19 @@
     "unsaved": "unsaved buffer",
     "on": "Included",
     "off": "Excluded",
+    "mark": {
+      "cached": "remembered",
+      "head": "HEAD",
+      "index": "staged",
+      "ref": "at {{ref}}",
+      "review": "MR {{commit}}"
+    },
+    "version": {
+      "head": "from HEAD, not the working tree — `git show HEAD:{{path}}` is this version",
+      "index": "from the staged copy, not the working tree",
+      "ref": "from `{{ref}}`, not the working tree — `git show {{ref}}:{{path}}` is this version",
+      "review": "from merge request commit `{{commit}}`, not the working tree — `git show {{commit}}:{{path}}` is this version"
+    },
     "include": "Include this selection with your message",
     "exclude": "Do not send this selection",
     "status": {

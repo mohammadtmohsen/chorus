@@ -19,24 +19,9 @@
  * A scheme we have not parsed yields nothing, which the pill can explain.
  */
 
-/** Which version of the file the selected lines come from. */
-export type Provenance =
-  | { readonly kind: 'worktree' }
-  /** A git ref: `HEAD`, `~` for the index, or a commit sha. */
-  | { readonly kind: 'ref'; readonly ref: string }
-  /** A merge request diff pane, identified by the commit it was read at. */
-  | {
-      readonly kind: 'review'
-      readonly commit: string
-      readonly changeType: ChangeType
-    }
+import { CHANGE_TYPES, type ChangeType, type Provenance } from '@chorus/ide-protocol'
 
-/**
- * The four values GitLab writes, read out of its bundle rather than guessed:
- * `BQe="added", zQe="deleted", VQe="renamed", uhe="modified"`.
- */
-export const CHANGE_TYPES = ['added', 'deleted', 'renamed', 'modified'] as const
-export type ChangeType = (typeof CHANGE_TYPES)[number]
+export type { Provenance }
 
 /** The parts of a `vscode.Uri` this needs. `query` is already decoded there. */
 export interface DocumentUri {
@@ -149,9 +134,15 @@ function resolveReview(uri: DocumentUri): ResolvedDocument | null {
   const filePath = joinInside(root, uri.path)
   if (filePath === null) return null
 
-  const changeType = query['changeType']
-  if (!isChangeType(changeType)) return null
-  return { filePath, provenance: { kind: 'review', commit, changeType } }
+  /*
+   * Validated and then dropped. It is a shape check — an unexpected value means
+   * this is not the URI we read out of the bundle, and refusing beats
+   * misparsing — but nothing downstream would read it. The commit already
+   * covers what it would explain: `git show <commit>:<old path>` works for a
+   * renamed file too.
+   */
+  if (!isChangeType(query['changeType'])) return null
+  return { filePath, provenance: { kind: 'review', commit } }
 }
 
 /**

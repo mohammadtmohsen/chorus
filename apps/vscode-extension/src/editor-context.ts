@@ -3,6 +3,7 @@ import {
   utf8ByteLength,
   type EditorMetadata,
   type IdeStatus,
+  type Provenance,
 } from '@chorus/ide-protocol'
 
 /**
@@ -16,9 +17,21 @@ import {
 
 /** The parts of an active editor this extension is allowed to look at. */
 export interface EditorLike {
-  /** `file` for a real document on disk; anything else is out of scope for v1. */
+  /** Kept for diagnostics: which scheme was refused is the useful half. */
   readonly uriScheme: string
+  /**
+   * The absolute working-tree path `document-identity.ts` resolved, which for a
+   * `gl-review:` document is nothing like the document's own `fsPath`.
+   *
+   * Meaningless when `provenance` is null, and unreachable in that case: every
+   * path that reads this asks `isSupported` first.
+   */
   readonly filePath: string
+  /**
+   * Which version of the file the lines are, or null when this is not a
+   * document that can be referenced at all.
+   */
+  readonly provenance: Provenance | null
   readonly fileUrl: string
   readonly languageId: string
   readonly documentVersion: number
@@ -44,9 +57,21 @@ export interface WindowFacts {
   readonly isTrusted: boolean
 }
 
-/** Whether a document is something Chorus can hand an agent a path to. */
-export function isSupported(editor: EditorLike | null): editor is EditorLike {
-  return editor !== null && editor.uriScheme === 'file'
+/** An editor whose document has a name and a version. */
+export interface ReferenceableEditor extends EditorLike {
+  readonly provenance: Provenance
+}
+
+/**
+ * Whether a document is something Chorus can hand an agent a path to.
+ *
+ * This asked `uriScheme === 'file'` until 2026-08-13, which refused the two
+ * panes of every diff. The question is now whether `resolveDocument` could say
+ * what the document is — a path *and* which version of it — because a path
+ * without a version is what makes a merge request selection a lie.
+ */
+export function isSupported(editor: EditorLike | null): editor is ReferenceableEditor {
+  return editor !== null && editor.provenance !== null
 }
 
 /**
@@ -62,7 +87,10 @@ export function isInside(root: string, filePath: string): boolean {
   return filePath.startsWith(root.endsWith('/') ? root : `${root}/`)
 }
 
-export function metadataFor(editor: EditorLike, source: 'current' | 'cached'): EditorMetadata {
+export function metadataFor(
+  editor: ReferenceableEditor,
+  source: 'current' | 'cached'
+): EditorMetadata {
   return {
     source,
     filePath: editor.filePath,
@@ -70,6 +98,7 @@ export function metadataFor(editor: EditorLike, source: 'current' | 'cached'): E
     languageId: editor.languageId,
     documentVersion: editor.documentVersion,
     isDirty: editor.isDirty,
+    provenance: editor.provenance,
     selection: {
       start: { line: editor.selection.start.line, character: editor.selection.start.character },
       end: { line: editor.selection.end.line, character: editor.selection.end.character },
@@ -143,7 +172,7 @@ export function reportFor(
  * than trusting it.
  */
 export class SelectionCache {
-  #last: EditorLike | null = null
+  #last: ReferenceableEditor | null = null
 
   /** Record the current editor, if it says anything about what to remember. */
   observe(editor: EditorLike | null, roots: readonly string[]): void {

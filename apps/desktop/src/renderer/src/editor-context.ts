@@ -12,6 +12,8 @@
  * cannot carry it faithfully.
  */
 
+import type { IdeProvenanceShape } from '../../shared/ipc.js'
+
 export interface EditorReference {
   /** Relative to the conversation's cwd, because that is where agents run. */
   readonly relativePath: string
@@ -25,6 +27,8 @@ export interface EditorBlock extends EditorReference {
   readonly text: string
   readonly languageId: string
   readonly isDirty: boolean
+  /** Which version of the file these lines are. */
+  readonly provenance: IdeProvenanceShape
 }
 
 /**
@@ -92,10 +96,20 @@ export function safeLanguageId(languageId: string): string {
  */
 export function formatContextBlock(block: EditorBlock, labels: ContextLabels): string {
   const reference = formatReference(block)
-  const suffix = block.isDirty ? ` (${labels.unsaved})` : ''
+  /*
+   * Two different reasons the path is not enough, and they do not overlap. An
+   * unsaved buffer is the right file with newer content; a diff pane is a
+   * *different version* of it, and opening the path there shows lines that have
+   * moved. `version` carries the second, already translated, because the
+   * reducers have no translator.
+   */
+  const qualifier = labels.version === '' ? '' : ` (${labels.version})`
+  const suffix = block.isDirty ? ` (${labels.unsaved})` : qualifier
   const head = `${labels.heading}: \`${reference}\`${suffix}`
   if (block.isEmpty || block.text === '') return head
-  if (!block.isDirty) return head
+  // The quoted lines are mandatory once the document is not the working tree:
+  // there, the text is the only copy of what the user is actually looking at.
+  if (!block.isDirty && block.provenance.kind === 'worktree') return head
 
   const fence = fenceFor(block.text)
   // No trimming anywhere: leading indentation is syntax, and a trailing newline
@@ -106,6 +120,79 @@ export function formatContextBlock(block: EditorBlock, labels: ContextLabels): s
 export interface ContextLabels {
   readonly heading: string
   readonly unsaved: string
+  /**
+   * Which version these lines are, translated by the caller, or `''` for the
+   * working tree — where the path already says it.
+   */
+  readonly version: string
+}
+
+/**
+ * A translation key and its parameters, for a caller that has a translator.
+ *
+ * The reducers do not, which is the standing rule here: events and payloads
+ * carry keys and the renderer turns them into words. So the judgement — which
+ * of these a provenance deserves, and what goes in the sentence — is decided by
+ * the pure functions below and tested, while the words live in `en.json`.
+ */
+export interface Phrase {
+  readonly key: string
+  readonly params: Record<string, string>
+}
+
+/** Seven is what every git UI shows, and enough to `git show`. */
+export function shortSha(sha: string): string {
+  return /^[0-9a-f]{8,}$/i.test(sha) ? sha.slice(0, 7) : sha
+}
+
+/**
+ * The pill's marker, or null when the path already says everything.
+ *
+ * Short: it sits beside a file name in a box the width of the composer.
+ */
+export function markFor(provenance: IdeProvenanceShape): Phrase | null {
+  switch (provenance.kind) {
+    case 'worktree':
+      return null
+    case 'ref':
+      if (provenance.ref === 'HEAD') return { key: 'ide.mark.head', params: {} }
+      // `~` is the git extension's name for the index, and means nothing to
+      // anyone who has not read its source.
+      if (provenance.ref === '~') return { key: 'ide.mark.index', params: {} }
+      return { key: 'ide.mark.ref', params: { ref: shortSha(provenance.ref) } }
+    case 'review':
+      return { key: 'ide.mark.review', params: { commit: shortSha(provenance.commit) } }
+  }
+}
+
+/**
+ * The qualifier that goes into the message, or null for the working tree.
+ *
+ * This is the sentence that stops an agent reading the wrong lines. It names
+ * the version *and* the command that reproduces it, because the alternative —
+ * "these lines are from somewhere else, good luck" — leaves it with nothing to
+ * do but open the file and be wrong.
+ */
+export function versionFor(provenance: IdeProvenanceShape, relativePath: string): Phrase | null {
+  switch (provenance.kind) {
+    case 'worktree':
+      return null
+    case 'ref':
+      if (provenance.ref === 'HEAD')
+        return { key: 'ide.version.head', params: { path: relativePath } }
+      // No `git show` for the index: `:file` is the syntax, and putting a
+      // colon-prefixed path in a sentence invites it being typed as a ref.
+      if (provenance.ref === '~') return { key: 'ide.version.index', params: {} }
+      return {
+        key: 'ide.version.ref',
+        params: { ref: provenance.ref, path: relativePath },
+      }
+    case 'review':
+      return {
+        key: 'ide.version.review',
+        params: { commit: provenance.commit, path: relativePath },
+      }
+  }
 }
 
 /**

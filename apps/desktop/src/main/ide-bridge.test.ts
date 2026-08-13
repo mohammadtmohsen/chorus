@@ -106,6 +106,7 @@ function editor(filePath: string): EditorMetadata {
     languageId: 'typescript',
     documentVersion: 1,
     isDirty: false,
+    provenance: { kind: 'worktree' },
     selection: {
       start: { line: 10, character: 0 },
       end: { line: 12, character: 4 },

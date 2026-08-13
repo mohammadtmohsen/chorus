@@ -2044,6 +2044,69 @@ export const specs = [
   },
 
   {
+    name: 'a merge request selection says which version it is',
+    /*
+     * Protocol 2, through the real socket. A `gl-review` document is a real
+     * text editor whose *content* is a committed blob, so `src/a.ts:12-14` on
+     * its own points an agent at lines that have moved. The pill has to say so,
+     * and `cached` has to be visible too — it travelled on the wire since the
+     * feature shipped and was dropped on the way to the renderer until now.
+     *
+     * The fake IDE sends what a real window would send after `resolveDocument`
+     * parsed the URI; what this proves is the half a unit test cannot — that
+     * the frame survives the socket, the broker, and the IPC boundary with its
+     * provenance intact.
+     */
+    async run(assert) {
+      const before = existingDescriptors()
+      const app = await launch()
+      let ide = null
+      try {
+        await started(app)
+
+        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-mr-'))
+        mkdirSync(join(project, 'src'), { recursive: true })
+        writeFileSync(join(project, 'src/a.ts'), 'const a = 1\n')
+
+        const conversationId = await app.evaluate(
+          `document.querySelector('.pane').dataset.conversation`
+        )
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
+        )
+
+        const descriptor = await waitForDescriptor(before)
+        ide = await FakeIde.connect(descriptor)
+        const [root] = await ide.awaitRoots()
+
+        ide.report(root, {
+          file: join(root, 'src/a.ts'),
+          startLine: 11,
+          endLine: 13,
+          source: 'cached',
+          provenance: { kind: 'review', commit: 'a1b2c3d4e5f6' },
+        })
+        await app.until(`!!document.querySelector('.ide-pill-mark')`, {
+          label: 'the version marker appears',
+        })
+
+        const shown = await app.evaluate(`document.querySelector('.ide-pill-what').textContent`)
+        assert(shown === 'src/a.ts:12-14', `the pill still names the file and lines, got ${shown}`)
+
+        const mark = await app.evaluate(`document.querySelector('.ide-pill-mark').textContent`)
+        // The short sha, and never `!456`: the number a human sees is `iid`,
+        // which the review URI does not carry.
+        assert(mark.includes('a1b2c3d'), `the marker names the commit, got ${mark}`)
+        assert(!mark.includes('a1b2c3d4e5f6'), `the marker is shortened, got ${mark}`)
+        assert(mark.includes('remembered'), `a cached selection says so, got ${mark}`)
+      } finally {
+        ide?.close()
+        await app.quit()
+      }
+    },
+  },
+
+  {
     name: 'Send asks the editor again rather than trusting the pill',
     /*
      * The pill is debounced, so it can be a few hundred milliseconds behind.
@@ -2086,6 +2149,7 @@ export const specs = [
             languageId: 'typescript',
             documentVersion: 2,
             isDirty: true,
+            provenance: { kind: 'worktree' },
             selection: {
               start: { line: 39, character: 0 },
               end: { line: 40, character: 3 },

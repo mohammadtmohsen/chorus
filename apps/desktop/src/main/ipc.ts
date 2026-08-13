@@ -94,6 +94,10 @@ function toPushFile(root: CanonicalRoot, editor: EditorMetadata): IdeContextPush
     isDirty: editor.isDirty,
     languageId: editor.languageId,
     selectedBytes: editor.selection.selectedBytes,
+    // Both are about *which* selection this is rather than where it lives, so
+    // neither discloses anything the relative path did not already.
+    provenance: editor.provenance,
+    source: editor.source,
   }
 }
 
@@ -504,6 +508,9 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         isDirty: snapshot.isDirty,
         languageId: snapshot.languageId,
         text: snapshot.selection.text,
+        // What decides whether the agent is told to read the file or told that
+        // reading it would show something else.
+        provenance: snapshot.provenance,
       } as const
     },
 

@@ -18,6 +18,7 @@ const editor = (source: 'current' | 'cached') => ({
   languageId: 'typescript',
   documentVersion: 1,
   isDirty: false,
+  provenance: { kind: 'worktree' as const },
   selection: {
     start: { line: 11, character: 0 },
     end: { line: 13, character: 0 },

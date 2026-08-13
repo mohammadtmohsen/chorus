@@ -1,6 +1,6 @@
 # Status — a document is not a file
 
-Status: **Phases 0–2 shipped, none of it driven in a real VS Code window.** Plan
+Status: **All six phases implemented; no real GitLab merge request driven yet.** Plan
 approved after one review round that corrected five things; those corrections are
 marked in the plan itself rather than quietly folded in.
 
@@ -82,10 +82,9 @@ VSIX in a dev checkout reports its own old version. The plan now says this.
 - **Nothing has been driven in a real VS Code window.** The trace setting, the
   command in the palette, the mismatch text in the status bar and the Settings
   panel no longer offering a phantom update are all unobserved in the app.
-- The e2e suite was not run. `pnpm package` was not run, so the new
-  `extraResources` entry is untested; the seal count should go from 77 to **78**
-  when it is.
-- Nothing is committed.
+- The e2e suite was not run _at this point_ — four specs were run later, under
+  Phase 4. `pnpm package` was not run, so the new `extraResources` entry is
+  untested; the seal count should go from 77 to **78** when it is.
 
 **Phase 1 done: the selection survives looking at something else.**
 
@@ -200,6 +199,74 @@ Gate: `pnpm check` green — 1424 tests (up from 1404), 3 skipped.
 
 ## Still to come
 
-Phases 3–6 unchanged from the plan. Phases 0–2 are **committed but not
-released**, and Phase 0 has to be released and installed before Phase 4 lands or
-the migration surface it adds will not be on the machine that needs it.
+**One install, and one thing only a person can do.** The extension is built to
+0.8.0 and speaks protocol 2; anything older cannot connect at all, by design. So
+the sequence is: install the VSIX, then open a real merge request in the GitLab
+panel, select lines on _both_ sides of the diff, and check that the two differ by
+commit and agree on path. Every `gl-review` claim in here rests on a bundle read
+and unit tests over captured URI strings until someone does that.
+
+**Phases 4 and 5 done: provenance travels, and the agent is told which version.**
+
+`PROTOCOL_VERSION` is 2. `provenance` joins `editorMetadata` and
+`editorSnapshot`, `currentEditor` finally calls `resolveDocument`, and
+`isSupported` stops asking about the scheme: the question is now whether the
+document has a name _and_ a version, because a path without a version is what
+made a merge request selection a lie.
+
+`toPushFile` carries `provenance` and `source` — the second had been on the wire
+since the feature shipped and was dropped one line before the renderer, which is
+why the pill could never say `cached`. The pill now reads
+`src/a.ts:12-14` with `remembered · MR a1b2c3d` beside it, in its own dimmer
+span so a long ref cannot be mistaken for part of the path.
+
+**What the agent gets.** `formatContextBlock`'s rule inverts once the document
+is not the working tree: the quoted text stops being optional, because it is the
+only true copy of what the user is looking at. The qualifier names the version
+_and_ the command that reproduces it —
+``from merge request commit `a1b2c3d4e5f6`, not the working tree — `git show
+a1b2c3d4e5f6:src/app.ts` is this version`` — since telling an agent "these lines
+are from elsewhere" without telling it how to see them leaves it nothing to do
+but open the file and be wrong. The full sha goes in the message and the short
+one in the pill.
+
+`changeType` was dropped from the wire while implementing. The resolver still
+validates it — an unexpected value means the URI is not the shape we read, and
+refusing beats misparsing — but nothing downstream would have read it: the
+commit already covers the rename case, because `git show <commit>:<old path>`
+works.
+
+**Two corrections the compiler made, both worth recording.** The mirrored
+`IdeProvenanceShape` in `shared/ipc.ts` drifted the moment `changeType` left the
+protocol, and typechecking caught it in `toPushFile` — which is exactly the
+claim its comment makes. And `metadataFor` now takes a `ReferenceableEditor`, so
+the "provenance is non-null here" invariant is enforced by narrowing rather than
+by comment.
+
+Gate: `pnpm check` green — 1438 tests (up from 1424), 3 skipped.
+
+### What was actually observed
+
+- **A new e2e spec, green against the built app**: a review-provenance frame
+  crosses the real socket, the broker and the IPC boundary, and the pill reads
+  `src/a.ts:12-14` with `remembered · MR a1b2c3d`. It asserts the sha is
+  shortened and that `!456` never appears — that number is `iid`, which the
+  review URI does not carry.
+- The two older IDE specs still pass under protocol 2: `follows the editor for
+its own project, and only that one`, and `Send asks the editor again rather
+than trusting the pill`.
+- **The mismatch surface fired on its first real encounter.** Smoke-loading the
+  new bundle against the Chorus running on this machine — an installed app still
+  speaking protocol 1 — produced `protocol mismatch {"expected":2,"received":1}`,
+  a status bar reading `$(warning) Chorus: update Chorus`, and a dump saying
+  `pid 97597 (chorusOutdated): 0 root(s)`. Phase 0 was built for the other
+  direction and caught this one unprompted.
+
+### What is still not verified
+
+- **No real GitLab merge request has been opened.** Every `gl-review` claim
+  still rests on the bundle read plus unit tests over captured URI strings. The
+  e2e fake sends what a real window _would_ send.
+- Nothing has been driven in a real VS Code window at all — the extension is
+  built to 0.8.0 but not installed.
+- The full 28-spec suite was not run; four specs were.
