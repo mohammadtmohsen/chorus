@@ -3,14 +3,27 @@ import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as vscode from 'vscode'
-import { MAX_SELECTED_BYTES, utf8ByteLength, type CurrentContextResult } from '@chorus/ide-protocol'
+import {
+  MAX_SELECTED_BYTES,
+  PROTOCOL_VERSION,
+  utf8ByteLength,
+  type CurrentContextResult,
+} from '@chorus/ide-protocol'
 import { ChorusConnection } from './connection.js'
+import {
+  countStates,
+  diagnosticLines,
+  frameFields,
+  type ConnectionCounts,
+  type WindowDiagnostics,
+} from './diagnostics.js'
 import { pidIsAlive, readDescriptors } from './discovery.js'
 import {
   isInside,
   isSupported,
   metadataFor,
   reportAll,
+  reportFor,
   SelectionCache,
   type EditorLike,
   type WindowFacts,
@@ -46,13 +59,31 @@ export function activate(context: vscode.ExtensionContext): void {
     output.appendLine(fields === undefined ? message : `${message} ${JSON.stringify(fields)}`)
   }
 
+  const counts = (): ConnectionCounts => countStates([...connections.values()].map((c) => c.state))
+
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
   const paint = (): void => {
-    const live = [...connections.values()].filter((c) => c.connected).length
+    const live = counts()
     // Deliberately a different vocabulary from the per-conversation status in
     // Chorus: this window knows whether it reached a Chorus process, not which
     // conversation is asking or whether its root matched.
-    status.text = live > 0 ? '$(link) Chorus: linked' : '$(debug-disconnect) Chorus: not running'
+    //
+    // A version mismatch outranks both, because it is the one state the user
+    // has to act on and the one that used to be invisible: `start()` refuses
+    // the handshake, so an outdated extension looked exactly like no Chorus
+    // running at all. Phase 4 bumps the protocol, and this is what makes that
+    // survivable for anyone who has the extension already installed.
+    if (live.extensionOutdated > 0) {
+      status.text = '$(warning) Chorus: update the extension'
+      status.tooltip = 'This Chorus speaks a newer protocol. Update from Chorus → Settings.'
+    } else if (live.chorusOutdated > 0) {
+      status.text = '$(warning) Chorus: update Chorus'
+      status.tooltip = 'This extension speaks a newer protocol than the running Chorus.'
+    } else {
+      status.text =
+        live.connected > 0 ? '$(link) Chorus: linked' : '$(debug-disconnect) Chorus: not running'
+      status.tooltip = undefined
+    }
     status.show()
   }
 
@@ -63,10 +94,31 @@ export function activate(context: vscode.ExtensionContext): void {
     isTrusted: vscode.workspace.isTrusted,
   })
 
+  /** Read per use: a setting toggled while VS Code runs must take effect now. */
+  const tracing = (): boolean =>
+    vscode.workspace.getConfiguration('chorus').get<boolean>('trace') === true
+
+  const windowDiagnostics = (
+    editor: EditorLike | null,
+    current: WindowFacts
+  ): WindowDiagnostics => ({
+    scheme: editor?.uriScheme ?? null,
+    trusted: current.isTrusted,
+    folderCount: current.workspaceFolders.length,
+    connections: counts(),
+    extensionVersion: extensionVersion(context),
+    protocolVersion: PROTOCOL_VERSION,
+  })
+
   const publish = (): void => {
     if (disposed) return
-    const reports = reportAll(roots, facts(), currentEditor(), cache)
+    // One `facts()` per frame: it calls `realpathSync` per workspace folder, and
+    // this runs on every debounced selection change.
+    const current = facts()
+    const editor = currentEditor()
+    const reports = reportAll(roots, current, editor, cache)
     for (const connection of connections.values()) connection.send(reports)
+    if (tracing()) log('frame', frameFields(reports, windowDiagnostics(editor, current)))
     paint()
   }
 
@@ -158,6 +210,25 @@ export function activate(context: vscode.ExtensionContext): void {
       for (const connection of connections.values()) connection.dispose()
       connections.clear()
       rescan()
+    }),
+    vscode.commands.registerCommand('chorus.diagnose', () => {
+      /*
+       * `cache.resolve` rather than `reportAll`, which would `observe` and so
+       * change what the *next* frame says. Asking why something is wrong must
+       * not alter it.
+       */
+      const current = facts()
+      const editor = currentEditor()
+      const resolved = cache.resolve(editor)
+      const reports = roots.map((root) =>
+        reportFor(root, current, resolved.editor, resolved.source)
+      )
+      for (const line of diagnosticLines(reports, windowDiagnostics(editor, current))) {
+        output.appendLine(line)
+      }
+      // `true` preserves focus: the answer is worth reading, not worth stealing
+      // the caret from whatever the user was in the middle of.
+      output.show(true)
     }),
     {
       dispose: () => {

@@ -132,6 +132,29 @@ describe('handshake', () => {
     await settle()
     expect(c.connected).toBe(true)
   })
+
+  /*
+   * The refusal above is silent: no frame is sent, so the status bar read "not
+   * running" and the only trace was a line in an unopened output channel. The
+   * state is what the window can act on, and the direction decides which of the
+   * two things the user has to update.
+   */
+  it('names a mismatch by direction, so the status bar can say what to update', () => {
+    expect(makeConnection(descriptor({ protocolVersion: PROTOCOL_VERSION + 1 })).state).toBe(
+      'extensionOutdated'
+    )
+    expect(makeConnection(descriptor({ protocolVersion: PROTOCOL_VERSION - 1 })).state).toBe(
+      'chorusOutdated'
+    )
+  })
+
+  it('moves from dialing to connected on a version it can speak', async () => {
+    const c = makeConnection(descriptor())
+    expect(c.state).toBe('dialing')
+    c.start()
+    await settle()
+    expect(c.state).toBe('connected')
+  })
 })
 
 describe('state', () => {

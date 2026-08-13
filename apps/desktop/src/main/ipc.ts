@@ -25,6 +25,7 @@ import {
   extensionStatus,
   installBundledExtension,
   openProjectInEditor,
+  readBundledVersion,
   resolveVsix,
 } from './ide-extension.js'
 import { probeAgents } from './agent-probe.js'
@@ -66,9 +67,10 @@ function extensionDeps(): ReturnType<typeof defaultDeps> {
     })
   return defaultDeps({
     vsixPath: vsix,
-    // The extension is versioned with the app it ships inside, so the app's own
-    // version is what the bundled VSIX carries.
-    bundledVersion: () => (vsix() === null ? null : app.getVersion()),
+    // Read from the sidecar the VSIX build writes, never from the app's own
+    // version: the two are separate numbers and assuming otherwise is what made
+    // Settings offer an update that could never complete.
+    bundledVersion: () => readBundledVersion(vsix()),
   })
 }
 

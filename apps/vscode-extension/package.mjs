@@ -107,6 +107,21 @@ try {
       stdio: 'inherit',
     }
   )
+  /*
+   * The version of *this* archive, written beside it.
+   *
+   * Chorus has to know what it is about to install, and a VSIX is a zip: main
+   * would need either a dependency or a hand-rolled inflate to read the
+   * manifest back out, for one string. Writing it here means the number
+   * describes the artifact rather than the tree — a stale VSIX in a dev
+   * checkout reports its own old version instead of whatever `package.json`
+   * happens to say today.
+   *
+   * Before this, `bundledVersion` answered `app.getVersion()`. The app was
+   * 0.12.0 and the extension 0.6.0, so Settings offered an update forever and
+   * installing one changed nothing.
+   */
+  writeFileSync(`${out}.version`, `${manifest.version}\n`)
   console.log(`chorus-vscode.vsix  ${manifest.version}`)
 } finally {
   rmSync(staging, { recursive: true, force: true })

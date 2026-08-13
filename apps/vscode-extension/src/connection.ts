@@ -7,6 +7,7 @@ import {
   PROTOCOL_VERSION,
   type CurrentContextResult,
 } from '@chorus/ide-protocol'
+import type { ConnectionState } from './diagnostics.js'
 import type { Descriptor } from './discovery.js'
 import type { RootReport } from './editor-context.js'
 
@@ -55,6 +56,22 @@ export class ChorusConnection {
 
   get connected(): boolean {
     return this.#handshaken
+  }
+
+  /**
+   * What to tell the user about this Chorus, in one word.
+   *
+   * A mismatch is split by direction because the two have different fixes and
+   * only the user can apply either: an extension behind its Chorus is updated
+   * from Chorus's own settings, while a Chorus behind its extension is the
+   * older app. Reported rather than logged, because `start()` refuses a
+   * mismatch and returns — before this, the only trace was one line in an
+   * output channel nobody opens, under a status bar reading "not running".
+   */
+  get state(): ConnectionState {
+    if (this.descriptor.protocolVersion > PROTOCOL_VERSION) return 'extensionOutdated'
+    if (this.descriptor.protocolVersion < PROTOCOL_VERSION) return 'chorusOutdated'
+    return this.#handshaken ? 'connected' : 'dialing'
   }
 
   get pid(): number {

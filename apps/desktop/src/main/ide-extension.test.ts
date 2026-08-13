@@ -9,6 +9,7 @@ import {
   isOlder,
   openProjectInEditor,
   parseInstalledVersion,
+  readBundledVersion,
   resolveVsix,
   type ExtensionDeps,
 } from './ide-extension.js'
@@ -197,5 +198,61 @@ describe('resolveVsix', () => {
      not there. */
   it('returns null when it is absent', () => {
     expect(resolveVsix({ packaged: true, resourcesPath: dir, appPath: '/unused' })).toBeNull()
+  })
+})
+
+describe('readBundledVersion', () => {
+  let dir: string
+  let vsix: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'chorus-vsix-'))
+    vsix = join(dir, 'chorus-vscode.vsix')
+    writeFileSync(vsix, 'x')
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('reads the version the VSIX build wrote beside it', () => {
+    writeFileSync(`${vsix}.version`, '0.6.0\n')
+    expect(readBundledVersion(vsix)).toBe('0.6.0')
+  })
+
+  it('has nothing to say when there is no VSIX', () => {
+    expect(readBundledVersion(null)).toBeNull()
+  })
+
+  /* An app packaged before the sidecar existed. `null` already means "offer
+     nothing", so it loses the button rather than gaining a wrong version. */
+  it('has nothing to say when the sidecar is missing', () => {
+    expect(readBundledVersion(vsix)).toBeNull()
+  })
+
+  it('refuses a value that is not a version', () => {
+    writeFileSync(`${vsix}.version`, 'not a version\n')
+    expect(readBundledVersion(vsix)).toBeNull()
+  })
+
+  /*
+   * The whole point of the change, stated as a test: 0.6.0 installed against
+   * 0.6.0 bundled is up to date. Reading the app's version instead made this
+   * `0.6.0` against `0.12.0` — `need: 'update'`, forever, and the update
+   * reinstalled 0.6.0.
+   */
+  it('makes an up-to-date machine report no work to do', async () => {
+    writeFileSync(`${vsix}.version`, '0.6.0\n')
+    const status = await extensionStatus(
+      deps({
+        exec: () => Promise.resolve({ stdout: `${EXTENSION_ID}@0.6.0\n` }),
+        bundledVersion: () => readBundledVersion(vsix),
+      })
+    )
+    expect(status).toMatchObject({
+      installedVersion: '0.6.0',
+      bundledVersion: '0.6.0',
+      need: 'none',
+    })
   })
 })

@@ -41,6 +41,11 @@ npmRebuild: false
 extraResources:
   - from: ../vscode-extension/chorus-vscode.vsix
     to: chorus-vscode.vsix
+  # What that archive's version is. Main reads it rather than assuming the
+  # extension is versioned with the app — they are separate numbers, and
+  # assuming otherwise offered an update that reinstalled the same build.
+  - from: ../vscode-extension/chorus-vscode.vsix.version
+    to: chorus-vscode.vsix.version
 
 # Both ship N-API prebuilds, so nothing is compiled at pack time — but a .node
 # cannot be dlopen'd from inside an asar, so they must stay outside it.

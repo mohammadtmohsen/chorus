@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { compare, findExecutable } from './which.js'
@@ -174,6 +174,35 @@ export function resolveVsix(options: {
         join(options.appPath, '../vscode-extension/chorus-vscode.vsix'),
       ]
   return candidates.find((path) => existsSync(path)) ?? null
+}
+
+/**
+ * The version of the VSIX that is actually on disk.
+ *
+ * `package.mjs` writes it beside the archive in the same run, from the same
+ * manifest, so it describes that build rather than the tree it was built from.
+ *
+ * Until 2026-08-13 this was `app.getVersion()`, which is not a fact about the
+ * VSIX at all: the app was `0.12.0` while the extension shipped `0.6.0`, so
+ * `extensionStatus` computed `need: 'update'` on a machine that was already up
+ * to date, and pressing the button reinstalled the same version and left the
+ * prompt standing. That mattered beyond tidiness — it is the path a user has to
+ * follow when the protocol version moves.
+ *
+ * A malformed or missing sidecar answers `null`, which already means "offer
+ * nothing": an app packaged before this existed loses the update button rather
+ * than gaining a wrong one.
+ */
+export function readBundledVersion(vsixPath: string | null): string | null {
+  if (vsixPath === null) return null
+  let raw: string
+  try {
+    raw = readFileSync(`${vsixPath}.version`, 'utf8')
+  } catch {
+    return null
+  }
+  const version = raw.trim()
+  return /^\d+\.\d+\.\d+(?:[.+-][0-9A-Za-z.+-]+)?$/.test(version) ? version : null
 }
 
 /** The real dependencies, for production. */

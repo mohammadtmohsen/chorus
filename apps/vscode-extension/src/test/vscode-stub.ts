@@ -24,10 +24,12 @@ export const window = {
   state: { focused: true },
   createOutputChannel: () => ({
     appendLine: () => undefined,
+    show: () => undefined,
     dispose: () => undefined,
   }),
   createStatusBarItem: () => ({
     text: '',
+    tooltip: undefined as string | undefined,
     show: () => undefined,
     hide: () => undefined,
     dispose: () => undefined,
@@ -41,6 +43,9 @@ export const workspace = {
   workspaceFolders: undefined as unknown,
   isTrusted: true,
   onDidChangeWorkspaceFolders: event(),
+  // `chorus.trace` reads through this on every published frame; unset here, so
+  // a smoke-load takes the quiet path.
+  getConfiguration: () => ({ get: () => undefined }),
 }
 
 export const commands = {
