@@ -7,6 +7,44 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.12.0
+
+### There is a terminal in every session
+
+`⌘J` opens a shell beside the conversation, and `⌘⇧J` opens a global one from
+the activity bar. It is a real PTY, not a pipe — so `vim` and `htop` draw
+properly, shell history works, and `⌃C` signals the process group instead of
+closing a pipe on a process that never notices.
+
+The shell belongs to the app, not to the panel you are looking at. Switch tabs
+mid-build and the build keeps running; come back and the output is still there,
+replayed from where it was. `⌘K` clears, and stays cleared.
+
+Scrollback lives in memory and goes when the app does. It is deliberately not
+written to the conversation log — a shell is a second stream that happens to
+share a pane, and `cat .env` in a terminal is exactly the kind of thing the log
+should not be keeping.
+
+### The mention menu comes back when you do
+
+Type `@` or `/`, switch to another app, come back — and the menu was gone. Not
+closed and reopenable: **gone until you typed another character**, with your
+`@ali` still sitting in the box and nothing on screen explaining why nothing was
+being offered.
+
+The menu closing when you click elsewhere in Chorus is deliberate; it floats over
+the transcript and should get out of the way. But leaving the app is not leaving
+the box — your caret is still in it when you come back — and those two were being
+treated as the same thing.
+
+### Picking a name can no longer land in the wrong place
+
+A rarer one, found while fixing the above. If the draft changed between the menu
+opening and you choosing from it — quoting a passage does that, so does sending —
+the replacement could be written at an offset from the older text, overwriting a
+few characters that had nothing to do with the mention. Choosing now works from a
+single snapshot or does nothing at all.
+
 ## 0.11.0
 
 ### Chorus has an icon
