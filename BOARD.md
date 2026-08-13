@@ -28,7 +28,26 @@ read, which is how the status summary went stale a day after it was written.
 
 Nothing here can be finished by me alone.
 
-_Empty. C-001 was the only entry and it shipped._
+### C-034 · The mention menu has never been driven by hand
+
+C-003 shipped and left this board, but **its last check never happened**. Every
+piece of evidence for that fix is machinery: 7/10 → 10/10 back to back, 0
+failures in 560 spec-executions across twenty suites, an OS-level probe that
+steals the window's focus and gives it back. Nobody has typed into the app.
+
+**Why it needs a person rather than a commit:** the failure and the correct
+behaviour look identical on screen. `@c` sitting in the box with no menu is what
+you see when the box was legitimately left — which closes the menu on purpose —
+and it is also what the bug looked like. Only `data-mention-live` tells them
+apart, and reading it means having the built app open.
+
+That ambiguity is not hypothetical: a screenshot of exactly this state reopened
+C-003 once already, and it could not be judged from the image.
+
+**Done when:** `pnpm app:install`, type `@c`, alt-tab away and back, then read
+`data-mention-live` on `.composer` — `live` means the fix holds and this is done;
+`stale` or `none` means C-003 reopens with a record attached rather than a
+shrug.
 
 ---
 
@@ -62,15 +81,33 @@ than the prompts.
 
 ### C-006 · Should any of the e2e suite run in CI
 
-**Unblocked for the first time.** This entry was waiting on a suite whose green
-was worth believing. C-027 gave the runner a third outcome so `all N passed`
-means N ran, and C-003's fix took the worst flake from 7/10 to 10/10 with five
-full suites at 28/28. The plan for this is written and unstarted at
-`docs/plans/what-a-green-build-proves-2026-08-11/`, and its Phase 0 — does
-Electron open a window on a GitHub runner at all — is now the next thing here.
+**Half unblocked, and the other half got worse when it was measured.** This
+entry was briefly marked "unblocked for the first time" on the strength of five
+clean suites. **That was withdrawn**: twenty runs put the suite at **6 of 10
+clean** (C-029), so `all 28 passed` is what a full run says about 60% of the
+time.
+
+What genuinely improved is the _meaning_ of a green run rather than its
+frequency. C-027 gave the runner a third outcome, so `all N passed` now means N
+specs actually ran instead of possibly skipping in silence — which is what this
+entry needed before CI could prove anything at all. And C-003's fix took the
+worst offender to 0 failures in 560 spec-executions.
+
+**But a 60% pass rate is not something to put in front of a pull request.** A
+required check that fails four times in ten teaches everyone to ignore it, which
+is worse than not having it — the same trade this entry already warns about in
+its own last paragraph. **C-029 is now this entry's blocker, not C-027.**
+
+The plan is written and unstarted at
+`docs/plans/what-a-green-build-proves-2026-08-11/`. Its Phase 0 — does Electron
+open a window on a GitHub runner at all — is still worth answering, because it is
+independent of the flake rate and a failure there closes this entry a different
+way.
 
 Note C-031 before designing the job: the focus-dependent checks cannot run
-alongside anything that takes the window server's attention.
+alongside anything that takes the window server's attention. And note the count —
+**there are 28 specs, not the 26 this entry says below**; `packaged.mjs` carries
+the same stale number.
 
 CI runs typecheck, lint, format, tests and a build. It **cannot** run the 26 e2e
 specs or `verify:package`, because both drive real `claude` and `codex` CLIs with
