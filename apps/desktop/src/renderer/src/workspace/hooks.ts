@@ -217,7 +217,8 @@ export function useSessionRowState(conversationId: string): SessionRowState {
     useShallow((state: WorkspaceStore) => {
       const pulse = state.pulses[conversationId]
       return {
-        waiting: (pulse?.approvalIds.length ?? 0) + (pulse?.questionIds.length ?? 0),
+        approvals: pulse?.approvalIds.length ?? 0,
+        questions: pulse?.questionIds.length ?? 0,
         working: (pulse?.working ?? []).join(','),
         unread: pulse?.unread ?? 0,
         failed: pulse?.failed ?? false,
@@ -226,12 +227,13 @@ export function useSessionRowState(conversationId: string): SessionRowState {
   )
   return useMemo(
     () => ({
-      waiting: flat.waiting,
+      approvals: flat.approvals,
+      questions: flat.questions,
       working: flat.working === '' ? [] : (flat.working.split(',') as AgentId[]),
       unread: flat.unread,
       failed: flat.failed,
     }),
-    [flat.waiting, flat.working, flat.unread, flat.failed]
+    [flat.approvals, flat.questions, flat.working, flat.unread, flat.failed]
   )
 }
 

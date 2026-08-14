@@ -12,15 +12,29 @@ import i18n from './index'
  * an unrelated reason. These assertions are the reader that was missing.
  */
 
+/*
+ * Arrays are leaves too.
+ *
+ * i18next reads a list with `returnObjects`, which is how the rotating
+ * "thinking" words are stored — one key, many phrases. Before that existed this
+ * type was `string | Catalogue`, and adding a list broke the walker rather than
+ * the catalogue: every assertion below still wants to see those phrases, so an
+ * array is flattened into indexed paths (`conversation.thinkingWords.0`) instead
+ * of being skipped.
+ */
 interface Catalogue {
-  [key: string]: string | Catalogue
+  [key: string]: string | readonly string[] | Catalogue
 }
 
 /** Every leaf, as a dotted path, so a failure names the entry to fix. */
 function leaves(node: Catalogue, prefix = ''): [string, string][] {
   return Object.entries(node).flatMap(([key, value]) => {
     const path = prefix === '' ? key : `${prefix}.${key}`
-    return typeof value === 'string' ? [[path, value] as [string, string]] : leaves(value, path)
+    if (typeof value === 'string') return [[path, value] as [string, string]]
+    if (Array.isArray(value)) {
+      return value.map((item, i) => [`${path}.${String(i)}`, item] as [string, string])
+    }
+    return leaves(value as Catalogue, path)
   })
 }
 

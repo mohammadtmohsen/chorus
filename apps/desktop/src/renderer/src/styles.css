@@ -4883,15 +4883,78 @@ input::placeholder {
  * Under the pointer it shows a line, not a slab: the handle is 9px wide, and
  * filling all of it would put a bar between the panes on every pass of the
  * mouse. A centred gradient paints the middle pixel only.
+ *
+ * Two corrections on 2026-08-14, both from seeing it on screen.
+ *
+ * **It was `--bone`**, which is `--text-primary` — #e6e6e6, the brightest thing
+ * in the palette. A resize hint drawn in the colour reserved for prose outshone
+ * every border, tab edge and pane outline it ran between, so pointing at a seam
+ * lit the loudest line on screen. `--border-strong` is the token for exactly
+ * this: "for anything a pointer has to find".
+ *
+ * **And it ran the full height**, corner to corner, which read as the window
+ * being cut in two rather than as a handle being offered. It is now inset top
+ * and bottom, so the line sits inside the panes it divides instead of scoring
+ * the whole edge. `background-size` with `no-repeat` does the inset; the
+ * gradient still paints the middle pixel across.
  */
-.workspace-sash[data-orientation='row']:hover,
-.workspace-sash[data-orientation='row']:focus-visible {
-  background: linear-gradient(to right, transparent 4px, var(--bone) 4px 5px, transparent 5px);
+/*
+ * The hint fills the gutter it is offering to move.
+ *
+ * A 1px hairline said "there is a line here", which was already true — the two
+ * panes have edges. What a resize handle has to say is "this gap is the thing
+ * you can drag", so the mark is now the width of the gap itself: each
+ * `.workspace-pane` insets by `--step * 2`, two of them meet at a seam, so the
+ * gutter is `--step * 4` and that is what gets painted.
+ *
+ * Drawn on `::after` rather than as a background, because the sash is 9px of
+ * grabbable nothing and the gutter is 12px — the mark has to be able to exceed
+ * its own handle. Centred with a transform so it stays on the seam whatever the
+ * hit area is widened to later.
+ *
+ * Translucent, so it reads as the gap lighting up rather than as a bar being
+ * inserted between two panes.
+ */
+.workspace-sash::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  /* 22%, down from 45%. At the full width of the gutter, the alpha that read as
+     a hint on a 1px line reads as a filled bar — area carries far more weight
+     than a hairline at the same colour. */
+  background: color-mix(in srgb, var(--border-strong) 22%, transparent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
 }
 
-.workspace-sash[data-orientation='column']:hover,
-.workspace-sash[data-orientation='column']:focus-visible {
-  background: linear-gradient(to bottom, transparent 4px, var(--bone) 4px 5px, transparent 5px);
+.workspace-sash:hover::after,
+.workspace-sash:focus-visible::after {
+  opacity: 1;
+}
+
+.workspace-sash[data-orientation='row']::after {
+  /* Inset from the pane corners, so it sits inside what it divides rather than
+     scoring the window edge to edge. */
+  top: calc(var(--step) * 4);
+  bottom: calc(var(--step) * 4);
+  left: 50%;
+  width: calc(var(--step) * 4);
+  transform: translateX(-50%);
+}
+
+.workspace-sash[data-orientation='column']::after {
+  top: 50%;
+  right: calc(var(--step) * 4);
+  left: calc(var(--step) * 4);
+  height: calc(var(--step) * 4);
+  transform: translateY(-50%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-sash::after {
+    transition: none;
+  }
 }
 
 .workspace-pane {
@@ -4906,6 +4969,12 @@ input::placeholder {
    */
   grid-template-rows: 40px minmax(0, 1fr);
   width: 100%;
+  /*
+   * The 6px on the sides is what makes a pane read as bounded. Tried at 0 on
+   * 2026-08-14 and reverted on sight: without it a split pair meets flush at the
+   * sash and the outer edges run into the window, so three rounded bodies read
+   * as one slab with lines drawn on it. The gutter is the gap, not decoration.
+   */
   padding: 0 calc(var(--step) * 2) calc(var(--step) * 2);
   /*
    * Both dimensions, and the height is the one that matters.
@@ -5962,8 +6031,28 @@ input::placeholder {
   flex-direction: column;
   justify-content: space-between;
   width: var(--rail);
-  /* The top inset is the traffic lights' room and the window's drag handle. */
-  padding: var(--rail-top) 0 calc(var(--step) * 2);
+  /*
+   * The top inset is the traffic lights' room and the window's drag handle. The
+   * left inset is the rail paying for its neighbour, and it is why every child
+   * can go back to plain centring.
+   *
+   * `.workspace-pane` adds 6px of padding before its body starts, so anything
+   * centred inside a 76px rail sits 16px from the window and 22px from the pane
+   * it points at. Measured, and visible: the tiles read as leaning left, and the
+   * account dividers with them.
+   *
+   * Shifting the *content box* right by that 6px fixes every child at once —
+   * tiles, the account block and its rules, and anything added later — rather
+   * than each one carrying its own asymmetric margin. An earlier pass did give
+   * `.rail-item` a hand-computed `19px / 13px` margin; it centred the tiles and
+   * left the dividers behind, which is the argument for doing it here.
+   *
+   * Deleting the pane's padding instead was tried the same day and reverted on
+   * sight: split panes then meet flush at the sash and the outer ones run into
+   * the window. That padding is load-bearing, so the rail is what accounts for
+   * it.
+   */
+  padding: var(--rail-top) 0 calc(var(--step) * 2) calc(var(--step) * 2);
   /*
    * No edge of its own.
    *
@@ -6127,6 +6216,8 @@ input::placeholder {
   /* 44 x 44, comfortably past WCAG's 24px pointer-target floor. */
   width: 44px;
   height: 44px;
+  /* Centred in the rail's content box, which `.quick-rail` has already shifted
+     to account for its neighbour — see the padding comment there. */
   margin: 0 auto;
   padding: 0;
   border: 1px solid var(--border-default);
@@ -6258,6 +6349,7 @@ input::placeholder {
  * when the session is waiting on a person, a diamond when the last turn failed.
  */
 .state-mark {
+  position: relative;
   width: 7px;
   height: 7px;
   flex: none;
@@ -6280,10 +6372,56 @@ input::placeholder {
  * name. This was `--voice-codex` outright, so a Claude-only session breathed in
  * Codex's colour.
  */
+/*
+ * Bigger than the resting ring, and it pulses a halo rather than dimming itself.
+ *
+ * It was 7px running `breathe`, and that animation was doing almost nothing
+ * here. `breathe`'s halo is drawn in `--voice`, which this mark never sets — it
+ * sets `color`, and `--voice` is undefined in the rail, so the `color-mix`
+ * resolved to nothing and the whole halo was dropped. What survived was an
+ * opacity dip between 1 and 0.65 on a 7px dot: real, and invisible at arm's
+ * length. Worse, on the rail an animated `box-shadow` overrode the 2px
+ * `--bg-chrome` separator ring that keeps the mark legible against the tile.
+ *
+ * So the motion moved to `::after`. The parent keeps its own `box-shadow` for
+ * the separator, the ring animates on a layer of its own in `currentcolor` —
+ * which *is* set, and is the voice of whoever is working — and 9px matches the
+ * waiting and failed marks, which were already larger for the same reason.
+ */
 .state-mark[data-state='working'] {
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   color: var(--text-primary);
-  animation: breathe 1.6s ease-in-out infinite;
+}
+
+.state-mark[data-state='working']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: state-pulse 1.6s ease-out infinite;
+}
+
+/*
+ * A ring that leaves, rather than a glow that throbs.
+ *
+ * `ease-out` with the growth front-loaded and a hold at the end: the eye is
+ * caught by the departure, and the pause between pulses is what stops a row of
+ * working sessions reading as a strobe.
+ */
+@keyframes state-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentcolor 70%, transparent);
+  }
+
+  70% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, currentcolor 0%, transparent);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentcolor 0%, transparent);
+  }
 }
 
 .state-mark[data-state='working'][data-voice='codex'] {
@@ -6294,10 +6432,35 @@ input::placeholder {
   color: var(--voice-claude);
 }
 
-.state-mark[data-state='waiting'] {
+/*
+ * Blocked: a triangle, in the danger colour, because something is held up.
+ *
+ * This was `waiting`, one state for both kinds of interruption. An approval is
+ * an agent stopped mid-turn holding a tool it may not run — the session is not
+ * progressing until a person answers — and the warning triangle is the shape
+ * that already means that everywhere else.
+ */
+.state-mark[data-state='approval'] {
   width: 9px;
   clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
   color: var(--danger);
+}
+
+/*
+ * Asked: a square, in the accent, because nothing is blocked.
+ *
+ * An agent that asked a question has finished its turn and is waiting on a
+ * conversation, not on a permission. Red would say the session is stuck when it
+ * is not, and the accent is what this app already uses for "here is the thing to
+ * act on". The square is its own shape rather than a second circle: colour alone
+ * cannot carry state (WCAG 1.4.1), and the rule this file already follows is
+ * shape first, colour second.
+ */
+.state-mark[data-state='question'] {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  color: var(--accent-text);
 }
 
 .state-mark[data-state='failed'] {
@@ -6307,10 +6470,19 @@ input::placeholder {
   color: var(--danger);
 }
 
-/* Motion nobody asked for, in a thing they are trying to read. */
+/*
+ * Motion nobody asked for, in a thing they are trying to read.
+ *
+ * The pseudo-element goes too, not just its animation: a ring frozen at its 0%
+ * frame is a permanent halo, which is a different mark rather than a still one.
+ */
 @media (prefers-reduced-motion: reduce) {
   .state-mark[data-state='working'] {
     animation: none;
+  }
+
+  .state-mark[data-state='working']::after {
+    display: none;
   }
 }
 
@@ -6466,9 +6638,23 @@ input::placeholder {
  * figure keep the two lines from shifting sideways as the numbers move between
  * one, two and three digits — or between a number and a dash.
  */
+/*
+ * Label left, figure right, across the whole block.
+ *
+ * These used to sit next to each other with a 3px gap, so `5h 11%` and
+ * `Week 6%` started at the same place and *ended* wherever their digits ran out.
+ * Four readings in a column, four different right edges — and the figure is the
+ * part being compared, which makes it the part that has to line up.
+ *
+ * `space-between` rather than a fixed label column: the labels are the
+ * provider's own words and one of them is already a translation, so a column
+ * width guessed here would be wrong in the first locale that disagrees.
+ */
 .rail-window {
   display: flex;
   align-items: baseline;
+  justify-content: space-between;
+  /* Now a minimum, not the spacing: it only applies when the row is full. */
   gap: 3px;
   font-family: var(--ui-font);
   line-height: 1.2;
@@ -6484,6 +6670,10 @@ input::placeholder {
 
 .rail-window-percent {
   min-width: 26px;
+  /* The `min-width` is a reservation, so without this a short figure sits at the
+     left of its own box and `6%` lands inboard of `11%` — the misalignment
+     `space-between` was added to remove, one level down. */
+  text-align: right;
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
@@ -6570,6 +6760,18 @@ input::placeholder {
 
 .session-preview-actions button {
   flex: 1;
+  /*
+   * The mark and the word, centred as a pair.
+   *
+   * `inline-flex` rather than `flex` so the button still sizes to its content
+   * the way `flex: 1` above expects, and `gap` rather than a margin on the icon
+   * so an armed End — which swaps a power symbol for a cross and lengthens its
+   * label — cannot drift out of alignment with the button beside it.
+   */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--step) * 1.5);
   padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
   border: 1px solid var(--border-default);
   border-radius: var(--radius);
@@ -6578,6 +6780,23 @@ input::placeholder {
   font-family: var(--ui-font);
   font-size: 12px;
   cursor: pointer;
+}
+
+/*
+ * 14px against a 12px label: an icon set to the text's own size reads smaller
+ * than it, because a glyph fills its box and a letter does not. `currentcolor`
+ * is what makes the danger states free — the mark follows the word to red on
+ * hover and on arming without a rule of its own.
+ */
+.session-preview-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .session-preview-actions button:hover,
@@ -7268,5 +7487,194 @@ input::placeholder {
     bottom: 0;
     left: var(--rail);
     box-shadow: 0 0 32px rgb(0 0 0 / 45%);
+  }
+}
+
+/*
+ * The Restart / End confirmation.
+ *
+ * A narrow sheet, because the question is two sentences and a 720px dialog for
+ * two sentences reads as a form. It reuses `.sheet` rather than inventing a
+ * second modal ground, so there is one surface, one border and one shadow for
+ * everything in this app that covers the workspace.
+ */
+.sheet--confirm {
+  width: min(440px, 100%);
+  gap: calc(var(--step) * 3);
+}
+
+.confirm-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--ui-font);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.confirm-body {
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--ui-font);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Pushed right, and Cancel stays first in the DOM: reading order is Cancel then
+   the action, tab order matches, and the destructive one is not what Enter
+   lands on from a fresh focus. */
+.confirm-actions {
+  justify-content: flex-end;
+  margin-top: var(--step);
+}
+
+.confirm-actions button {
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--ui-font);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.confirm-actions button:hover,
+.confirm-actions button:focus-visible {
+  background: var(--bg-control);
+  color: var(--text-primary);
+}
+
+/* The action carries the accent; only End carries the danger. Restarting is
+   recoverable — the conversation survives it — so painting it red would spend
+   the one colour that means "this cannot be undone". */
+.confirm-go {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.confirm-go--danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger);
+}
+
+.confirm-go--danger:hover,
+.confirm-go--danger:focus-visible {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+/* ------------------------------------------------- a tile that says its state */
+
+/*
+ * A session that wants something looks like it wants something.
+ *
+ * The tile carried its state almost entirely in a 7px mark in one corner, which
+ * is the right amount of signal for "an agent is talking" and far too little for
+ * "this session is blocked on you". The border and the ground now move too, so
+ * the thing you are scanning for is the tile rather than the dot on it.
+ *
+ * Colour follows the mark exactly — danger for blocked, accent for asked — so
+ * the two readings agree instead of being two systems to learn.
+ */
+.rail-session[data-state='approval'],
+.rail-session[data-state='question'] {
+  border-width: 1.5px;
+  color: var(--text-primary);
+}
+
+.rail-session[data-state='approval'] {
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-surface));
+}
+
+.rail-session[data-state='question'] {
+  border-color: color-mix(in srgb, var(--accent-text) 70%, transparent);
+  background: color-mix(in srgb, var(--accent-text) 12%, var(--bg-surface));
+}
+
+/*
+ * Working: a light that travels the border, rather than a border that blinks.
+ *
+ * Asked for as "walking in a square path", and that is the right instinct — a
+ * pulsing outline competes with the pulsing dot and the two beat against each
+ * other, while a segment that travels reads as continuous progress and stays
+ * legible next to it.
+ *
+ * A conic gradient rotated by an animated custom property, masked so only the
+ * border band survives. `@property` is what makes it smooth: a plain
+ * `--angle: 0deg` is an unparsed string to the animation engine and would step
+ * between keyframes rather than interpolate. Chromium has had this since 2020;
+ * this app ships its own Electron, so there is no browser matrix to worry about.
+ *
+ * `::before` rather than `::after`, which the state mark's halo already uses.
+ */
+@property --tile-orbit {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.rail-session[data-state='working'] {
+  /* The travelling segment takes the voice of whoever is working, and falls back
+     to the neutral text colour when two agents are running and there is no one
+     voice to name — the same rule the dot follows. */
+  --orbit: var(--text-primary);
+}
+
+.rail-session[data-state='working'][data-voice='codex'] {
+  --orbit: var(--voice-codex);
+}
+
+.rail-session[data-state='working'][data-voice='claude'] {
+  --orbit: var(--voice-claude);
+}
+
+.rail-session[data-state='working']::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  /* The band's thickness. `padding` is what the mask subtracts to leave a ring. */
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--tile-orbit),
+    transparent 0deg 200deg,
+    color-mix(in srgb, var(--orbit) 85%, transparent) 300deg,
+    transparent 340deg 360deg
+  );
+  /* Keep the fill, drop the middle: `exclude` leaves only the padding band. */
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: tile-orbit 2.6s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes tile-orbit {
+  to {
+    --tile-orbit: 360deg;
+  }
+}
+
+/*
+ * Motion goes; the state does not.
+ *
+ * A travelling light with the travel removed is a lopsided smear on one corner,
+ * so the whole band is replaced by a plain border in the same colour. Reduced
+ * motion asks for less movement, not less information.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .rail-session[data-state='working']::before {
+    animation: none;
+    padding: 0;
+    background: none;
+    mask: none;
+  }
+
+  .rail-session[data-state='working'] {
+    border-color: color-mix(in srgb, var(--orbit) 70%, transparent);
   }
 }

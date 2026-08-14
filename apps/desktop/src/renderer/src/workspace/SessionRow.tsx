@@ -83,10 +83,14 @@ export function SessionRow(props: SessionRowProps): React.JSX.Element {
   const name = [
     props.session.title,
     t(`state.${facts.state}`),
+    /* The count is named by the state it belongs to: "2 to approve" is an
+       instruction, "2 waiting" was a number and a shrug. */
     facts.count > 0
-      ? facts.state === 'waiting'
-        ? t('workspace.waiting', { count: facts.count })
-        : t('workspace.unread', { count: facts.count })
+      ? facts.state === 'approval'
+        ? t('workspace.approvals', { count: facts.count })
+        : facts.state === 'question'
+          ? t('workspace.questions', { count: facts.count })
+          : t('workspace.unread', { count: facts.count })
       : null,
     props.placement === 'active' ? t('state.active') : null,
   ]

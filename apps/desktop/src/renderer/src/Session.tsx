@@ -6,6 +6,7 @@ import { deadlineState, formatCountdown, type DeadlineState } from './deadline.j
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
 import { focusedNow, mayTakeCaret } from './focus.js'
+import { thinkingWord, offsetForActor, THINKING_WORD_MS } from './thinking-word.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import { QuickQuestion } from './QuickQuestion.js'
 import {
@@ -882,7 +883,7 @@ export function Session(props: {
           <span className="speaker">{soleAgent === undefined ? '' : t(`actor.${soleAgent}`)}</span>
         </div>
         <p className="said thinking" role="status">
-          <span className="thinking-word">{t('conversation.waiting')}</span>
+          <ThinkingWord kind="waiting" />
           <span className="thinking-dots" aria-hidden="true">
             <i />
             <i />
@@ -903,7 +904,7 @@ export function Session(props: {
           <span className="speaker">{t(`actor.${agent}`)}</span>
         </div>
         <p className="said thinking" role="status">
-          <span className="thinking-word">{t('conversation.thinking')}</span>
+          <ThinkingWord kind="thinking" offset={offsetForActor(agent)} />
           <span className="thinking-dots" aria-hidden="true">
             <i />
             <i />
@@ -1931,4 +1932,53 @@ export function readable(error: unknown): string {
 export function shortenPath(path: string): string {
   const parts = path.split('/').filter(Boolean)
   return parts.length <= 2 ? path : `…/${parts.slice(-2).join('/')}`
+}
+
+/**
+ * The rotating word in a silent row.
+ *
+ * Its own component so the timer belongs to it: a `setInterval` in `Session`
+ * would re-render four mounted transcripts every 2.6 seconds for the sake of one
+ * word, which is exactly the kind of thing `render-count.ts` was written to
+ * catch.
+ *
+ * Elapsed time from mount rather than a stored index, because the row unmounts
+ * the moment the first token arrives — there is no state worth keeping and a
+ * clock cannot drift out of step with itself.
+ *
+ * `role="status"` is on the paragraph above, so a screen reader announces the
+ * row once when it appears. This deliberately does not re-announce on every
+ * word: the point is reassurance for someone watching, not a stream of
+ * interruptions for someone listening.
+ */
+function ThinkingWord({
+  kind,
+  offset = 0,
+}: {
+  readonly kind: 'thinking' | 'waiting'
+  readonly offset?: number
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    /* Frozen for anyone who asked for less motion. Text that changes under the
+       eye is motion, whatever the media query was named for. */
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const started = performance.now()
+    const timer = setInterval(() => {
+      setElapsed(performance.now() - started)
+    }, THINKING_WORD_MS)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [])
+
+  const words = t(`conversation.${kind}Words`, { returnObjects: true })
+  const list = Array.isArray(words) ? (words as string[]) : []
+  /* The single-word key is the fallback, so a missing or malformed list degrades
+     to what this row said before rather than to an empty line. */
+  const word = list.length > 0 ? thinkingWord(list, elapsed, offset) : t(`conversation.${kind}`)
+
+  return <span className="thinking-word">{word}</span>
 }

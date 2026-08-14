@@ -10,7 +10,13 @@ import {
   type SessionRowState,
 } from './session-row.js'
 
-const IDLE: SessionRowState = { waiting: 0, working: [], unread: 0, failed: false }
+const IDLE: SessionRowState = {
+  approvals: 0,
+  questions: 0,
+  working: [],
+  unread: 0,
+  failed: false,
+}
 
 const session = (conversationId: string, title: string): SessionInfo => ({
   conversationId,
@@ -22,7 +28,17 @@ const session = (conversationId: string, title: string): SessionInfo => ({
 
 describe('stateOf', () => {
   it('puts a request ahead of a report', () => {
-    expect(stateOf({ ...IDLE, waiting: 1, working: ['claude'] })).toBe('waiting')
+    expect(stateOf({ ...IDLE, approvals: 1, working: ['claude'] })).toBe('approval')
+    expect(stateOf({ ...IDLE, questions: 1, working: ['claude'] })).toBe('question')
+  })
+
+  /*
+   * Answering the approval unblocks an agent mid-turn; the question is still
+   * there afterwards. Reporting the question first would leave a tool call held
+   * while someone replied to the thing that was blocking nothing.
+   */
+  it('puts a blocked agent ahead of an asked one', () => {
+    expect(stateOf({ ...IDLE, approvals: 1, questions: 4 })).toBe('approval')
   })
 
   it('reads working when nothing is waiting', () => {
@@ -45,15 +61,42 @@ describe('stateOf', () => {
 })
 
 describe('projectRow', () => {
-  it('shows the waiting count rather than the unread one', () => {
+  it('shows the approval count rather than the unread one', () => {
     const facts = projectRow(
       session('a', 'Fix login'),
-      { waiting: 2, working: [], unread: 9, failed: false },
+      { approvals: 2, questions: 0, working: [], unread: 9, failed: false },
       'offscreen',
       'FL'
     )
     expect(facts.count).toBe(2)
-    expect(facts.state).toBe('waiting')
+    expect(facts.state).toBe('approval')
+  })
+
+  /*
+   * The count belongs to the state being reported. A row showing 5 while it is
+   * reporting an approval — because three of those are questions — would be a
+   * number for a state the row is not in.
+   */
+  it('counts only the request it is reporting', () => {
+    const facts = projectRow(
+      session('a', 'Fix login'),
+      { approvals: 2, questions: 3, working: [], unread: 9, failed: false },
+      'offscreen',
+      'FL'
+    )
+    expect(facts.state).toBe('approval')
+    expect(facts.count).toBe(2)
+  })
+
+  it('shows the question count when nothing is blocked', () => {
+    const facts = projectRow(
+      session('a', 'Fix login'),
+      { approvals: 0, questions: 3, working: [], unread: 9, failed: false },
+      'offscreen',
+      'FL'
+    )
+    expect(facts.state).toBe('question')
+    expect(facts.count).toBe(3)
   })
 
   it('shows unread when nothing is waiting', () => {

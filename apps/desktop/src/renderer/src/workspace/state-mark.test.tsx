@@ -51,11 +51,11 @@ describe('StateMark', () => {
   })
 
   /*
-   * A voice on a state that is not "working" would colour a waiting triangle or
-   * a failed diamond by whoever happened to run last.
+   * A voice on a state that is not "working" would colour a blocked triangle, an
+   * asked square or a failed diamond by whoever happened to run last.
    */
-  it('carries no voice on the other three states', () => {
-    for (const state of ['idle', 'waiting', 'failed'] as const) {
+  it('carries no voice on the other four states', () => {
+    for (const state of ['idle', 'approval', 'question', 'failed'] as const) {
       cleanup()
       const drawn = mark(render(<StateMark state={state} voice="codex" />).container)
       expect(drawn.dataset['state']).toBe(state)
@@ -65,7 +65,7 @@ describe('StateMark', () => {
 
   /* The words are in the control's accessible name; the shape is decoration. */
   it('stays out of the accessible name', () => {
-    const drawn = mark(render(<StateMark state="waiting" />).container)
+    const drawn = mark(render(<StateMark state="approval" />).container)
     expect(drawn.getAttribute('aria-hidden')).toBe('true')
   })
 })

@@ -12,21 +12,33 @@ import type { SessionInfo } from '../Session.js'
  */
 
 /**
- * Four states, in the order they outrank each other.
+ * Five states, in the order they outrank each other.
  *
- * Waiting first because it is the only one that is a request rather than a
- * report — an approval sitting unanswered is worth more of the row than the
- * fact that something else is also running. Failed outranks idle so a turn that
- * ended badly does not read as a session at rest.
+ * The two requests come first, because a request is worth more of the row than
+ * a report — something sitting unanswered outranks the fact that something else
+ * is also running. Failed outranks idle so a turn that ended badly does not read
+ * as a session at rest.
+ *
+ * `waiting` used to be one state covering both requests, and the pulse has
+ * always carried them apart — `approvalIds` and `questionIds` were summed in
+ * `hooks.ts` and the difference thrown away one line later. They are not the
+ * same interruption: an approval is an agent **blocked** mid-turn holding a tool
+ * it cannot run, and answering it is unblocking. A question is an agent that has
+ * finished thinking and wants a person's input. One is stalled work, the other
+ * is a conversation, and telling them apart at a glance is the whole reason a
+ * rail exists.
  */
-export type SessionState = 'waiting' | 'working' | 'failed' | 'idle'
+export type SessionState = 'approval' | 'question' | 'working' | 'failed' | 'idle'
 
 /** Where the session is, which is about the workspace rather than the agent. */
 export type SessionPlacement = 'active' | 'open' | 'offscreen'
 
 /** The narrow slice of a pulse a row subscribes to. Nothing invisible is here. */
 export interface SessionRowState {
-  readonly waiting: number
+  /** Tool calls held pending a decision. An agent is blocked on each of these. */
+  readonly approvals: number
+  /** Questions asked of a person. Nothing is blocked; something was asked. */
+  readonly questions: number
   readonly working: readonly AgentId[]
   readonly unread: number
   readonly failed: boolean
@@ -51,8 +63,17 @@ export interface SessionRowFacts {
   readonly voice: AgentId | null
 }
 
+/*
+ * Approval before question, because it is the one holding something up.
+ *
+ * A session with both is reported as needing an approval: answering that
+ * unblocks an agent mid-turn, and the question will still be there afterwards.
+ * The reverse order would leave a tool call held while a person replied to
+ * something that was not blocking anything.
+ */
 export function stateOf(row: SessionRowState): SessionState {
-  if (row.waiting > 0) return 'waiting'
+  if (row.approvals > 0) return 'approval'
+  if (row.questions > 0) return 'question'
   if (row.working.length > 0) return 'working'
   if (row.failed) return 'failed'
   return 'idle'
@@ -72,7 +93,10 @@ export function projectRow(
     state,
     placement,
     participants: session.participants,
-    count: state === 'waiting' ? row.waiting : row.unread,
+    /* The count belongs to whichever request is being reported, not to both:
+       a row showing "3" while two of them are questions and one an approval
+       would be a number for a state it is not in. */
+    count: state === 'approval' ? row.approvals : state === 'question' ? row.questions : row.unread,
     voice: row.working.length === 1 ? (row.working[0] ?? null) : null,
   }
 }

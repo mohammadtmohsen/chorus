@@ -64,7 +64,18 @@
     "addSelectionDetail": "Include what VS Code has open",
     "settings": "Session settings",
     "endArmed": "An agent is working — press again to end this session",
-    "includedMenu": "What goes with this message"
+    "includedMenu": "What goes with this message",
+    "thinkingWords": [
+      "thinking",
+      "reading",
+      "considering",
+      "working through it",
+      "piecing it together",
+      "looking closer",
+      "weighing it up",
+      "following the thread"
+    ],
+    "waitingWords": ["waiting", "reaching the agent", "handing it over", "getting started"]
   },
   "workspace": {
     "sessions": "Sessions",
@@ -75,8 +86,6 @@
     "empty": "No session is open in the editor",
     "emptyHint": "Choose a running session from the sidebar.",
     "working": "working",
-    "waiting_one": "{{count}} waiting",
-    "waiting_other": "{{count}} waiting",
     "unread_one": "{{count}} unread update",
     "unread_other": "{{count}} unread updates",
     "closeTab": "Close {{title}} — the session keeps running",
@@ -101,7 +110,18 @@
       "left": "Split left",
       "right": "Split right"
     },
-    "noMatches": "No session matches that."
+    "noMatches": "No session matches that.",
+    "confirmRestartTitle": "Restart this session?",
+    "confirmRestartBody": "The agents reconnect and the conversation stays. Anything they are part-way through is lost.",
+    "confirmRestartBodyWorking": "An agent is working right now. Restarting stops it mid-turn; the conversation stays.",
+    "confirmEndTitle": "End this session?",
+    "confirmEndBody": "The agents leave and the session closes. The conversation is kept and can be reopened from history.",
+    "confirmEndBodyWorking": "An agent is working right now. Ending stops it mid-turn. The conversation is kept and can be reopened from history.",
+    "confirmCancel": "Cancel",
+    "approvals_one": "{{count}} to approve",
+    "approvals_other": "{{count}} to approve",
+    "questions_one": "{{count}} to answer",
+    "questions_other": "{{count}} to answer"
   },
   "settings": {
     "open": "Settings",
@@ -453,7 +473,8 @@
   "state": {
     "idle": "idle",
     "working": "working",
-    "waiting": "waiting for you",
+    "approval": "needs your approval",
+    "question": "waiting on your answer",
     "failed": "last turn failed",
     "active": "showing now"
   },

@@ -181,9 +181,17 @@ function SessionPreviewCard(props: {
   const planning = usePlanning(props.session.conversationId)
   const card = useRef<HTMLDivElement | null>(null)
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null)
-  /* Armed only while an agent is working — the one moment ending costs something. */
-  const working = (pulse?.working.length ?? 0) > 0
-  const [armedEnd, setArmedEnd] = useState(false)
+  /*
+   * The arm-then-confirm state that used to live here is gone.
+   *
+   * End armed itself while an agent was working, and that *was* the
+   * confirmation. Both actions now open a real dialog from `App`, so keeping the
+   * arm would mean three clicks to end a session — and a second confirmation is
+   * how people learn to click through the first one without reading it.
+   *
+   * `working` goes with it: the dialog reads it from the store when it opens,
+   * which is also the only moment it matters.
+   */
 
   const dismiss = props.controller.dismiss
   useEffect(() => {
@@ -305,30 +313,63 @@ function SessionPreviewCard(props: {
         The rule it broke is a real one — a hover card that can act is a hover
         card you have to be careful around — and what makes it affordable here is
         that this card is already hoverable for WCAG 2.2, so reaching a button in
-        it is a deliberate movement rather than a slip. Ending still asks twice
-        while an agent is working, exactly as the menu does: that is the one
-        moment there is anything to lose.
+        it is a deliberate movement rather than a slip. Both buttons now open the
+        confirmation dialog `App` owns, so neither destroys anything from a hover
+        card on one click.
       */}
       <div className="session-preview-actions">
         <button type="button" onClick={props.onRestart}>
+          <RestartIcon />
           {t('workspace.restart')}
         </button>
-        <button
-          type="button"
-          className="session-preview-danger"
-          data-armed={armedEnd ? 'true' : undefined}
-          onClick={() => {
-            if (working && !armedEnd) {
-              setArmedEnd(true)
-              return
-            }
-            props.onEnd()
-          }}
-        >
-          {armedEnd ? t('workspace.endConfirm') : t('workspace.end')}
+        <button type="button" className="session-preview-danger" onClick={props.onEnd}>
+          <EndIcon armed={false} />
+          {t('workspace.end')}
         </button>
       </div>
     </div>,
     document.body
+  )
+}
+
+/*
+ * The two icons these buttons wear.
+ *
+ * `aria-hidden`, because each sits beside its own word — the button is already
+ * named, and a second name for the same control is noise in a screen reader
+ * rather than help. Built from paths rather than a font or an inline string, for
+ * the reason the whole renderer is: agent output is untrusted and a typed tree
+ * cannot be injected into.
+ */
+function RestartIcon(): React.JSX.Element {
+  return (
+    <svg className="session-preview-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {/* An arc with a head, not a closed ring: a full circle reads as "loading",
+          which is the one thing restarting must not be confused with. */}
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  )
+}
+
+/*
+ * A power symbol while it is a question, a cross once it is armed.
+ *
+ * The label already changes on arming and the button turns red; the mark changes
+ * with them so the state is carried by more than colour, which is the same rule
+ * the dashed tab border follows. WCAG 1.4.1 — colour is never the only signal.
+ */
+function EndIcon({ armed }: { readonly armed: boolean }): React.JSX.Element {
+  return (
+    <svg className="session-preview-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {armed ? (
+        <path d="M18 6 6 18M6 6l12 12" />
+      ) : (
+        <>
+          <path d="M12 4v8" />
+          <path d="M17.7 7.5a8 8 0 1 1-11.4 0" />
+        </>
+      )}
+    </svg>
   )
 }

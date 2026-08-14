@@ -11,6 +11,7 @@ import { noticesFrom, roomsWaiting, shouldRaise, trackPending, type Notice } fro
 import { HistoryPanel } from './HistoryPanel.js'
 import { Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
+import { ConfirmSessionAction } from './workspace/ConfirmSessionAction.js'
 import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
 import { reorderSessions } from './workspace/session-row.js'
 
@@ -520,12 +521,55 @@ export function App(): React.JSX.Element {
   )
 
   /*
-   * Ending asks twice while an agent is working, and the asking is done by the
-   * control you pressed — the menu item arms itself, exactly as the pane's ✕
-   * does. A `window.confirm` was doing this job and had to go: it is an OS
-   * dialog in an app drawn entirely in one typeface, and it blocks the renderer
-   * while three other sessions are still streaming into it.
+   * Both actions are confirmed, from every surface, by one dialog.
+   *
+   * They used to ask unevenly: End armed itself in the menu and the preview but
+   * only while an agent was working, Restart asked nothing anywhere, and the
+   * composer's buttons went straight through. Same key press, different amount of
+   * destruction, depending on which control was nearest.
+   *
+   * Wrapping here rather than at each call site is the point. Every surface is
+   * already handed `restart` and `endNow` — the comment further down says so —
+   * so a confirmation on the funnel cannot be routed around by a fourth caller
+   * added later.
+   *
+   * Still not `window.confirm`, for the reasons that removed it before: it is an
+   * OS dialog in an app drawn entirely in one typeface, and it blocks the
+   * renderer while three other sessions stream into it.
    */
+  const [confirming, setConfirming] = useState<{
+    readonly kind: 'restart' | 'end'
+    readonly conversationId: string
+    readonly working: boolean
+  } | null>(null)
+
+  /*
+   * `working` read once, from the store, rather than subscribed to.
+   *
+   * `App` deliberately does not take a pulse subscription — that is what made
+   * the shell re-render on every delta of every streaming session. The dialog
+   * only needs the answer at the moment it opens, and a turn finishing while
+   * someone reads a sentence does not change what the sentence should have said.
+   */
+  const ask = useCallback((kind: 'restart' | 'end', conversationId: string) => {
+    const pulse = useWorkspaceStore.getState().pulses[conversationId]
+    setConfirming({ kind, conversationId, working: (pulse?.working.length ?? 0) > 0 })
+  }, [])
+
+  const askRestart = useCallback(
+    (conversationId: string) => {
+      ask('restart', conversationId)
+    },
+    [ask]
+  )
+
+  const askEnd = useCallback(
+    (conversationId: string) => {
+      ask('end', conversationId)
+    },
+    [ask]
+  )
+
   const rename = useCallback(
     (conversationId: string, title: string) => {
       window.chorus
@@ -783,8 +827,8 @@ export function App(): React.JSX.Element {
         starting={starting}
         onNewSession={start}
         onRename={rename}
-        onRestart={restart}
-        onEnd={endNow}
+        onRestart={askRestart}
+        onEnd={askEnd}
         onCommitLayout={commitLayout}
         onReorderSessions={moveSession}
         onOpenSettings={() => {
@@ -819,16 +863,35 @@ export function App(): React.JSX.Element {
             /* The same two handlers the session menu is given, so a button in
                the composer and a row in the menu do one thing, not two. */
             onRestart={() => {
-              restart(session.conversationId)
+              askRestart(session.conversationId)
             }}
             onEnd={() => {
-              endNow(session.conversationId)
+              askEnd(session.conversationId)
             }}
           />
         )}
       />
 
       {sheets}
+      {/*
+        Last, so it covers the sheets as well as the workspace. Restart and End
+        are reachable from the composer, which is behind a sheet often enough.
+      */}
+      {confirming !== null && (
+        <ConfirmSessionAction
+          kind={confirming.kind}
+          working={confirming.working}
+          onCancel={() => {
+            setConfirming(null)
+          }}
+          onConfirm={() => {
+            const { kind, conversationId } = confirming
+            setConfirming(null)
+            if (kind === 'end') endNow(conversationId)
+            else restart(conversationId)
+          }}
+        />
+      )}
       {badge}
     </div>
   )
