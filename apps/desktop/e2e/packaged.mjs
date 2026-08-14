@@ -5,13 +5,17 @@ import { launch } from './harness.mjs'
 /**
  * Drives the app a user would install, rather than the one the specs drive.
  *
- * The 26 specs run `electron .` against `out/`, which is the same source and a
+ * The specs run `electron .` against `out/`, which is the same source and a
  * different program: `out/` is a directory tree, and the bundle is an asar with
  * two things deliberately outside it — `better-sqlite3`, which is native and
  * cannot be loaded from an archive, and the Claude SDK, which resolves its own
  * files at runtime. Nothing in the suite touched either arrangement, so for
- * several releases "all 26 passed" said nothing about whether the thing on the
+ * several releases a green suite said nothing about whether the thing on the
  * DMG could open its own database.
+ *
+ * The count used to be written here — "the 26 specs", then wrong by six. A total
+ * in prose is a number nobody updates when they add a spec, so it is gone rather
+ * than corrected.
  *
  * This asks the four questions the suite cannot:
  *

@@ -754,38 +754,26 @@ function PaneTabStrip(
   )
 }
 
-/**
- * How much of the edge a split target paints.
+/*
+ * A split target paints the pane it will make, at the size it will be.
  *
- * The *target* is half the pane — that is what the drop makes, and the hit area
- * is unchanged — but painting all of it puts a translucent slab over half a
- * transcript, which reads as "this half is selected" rather than as "a pane will
- * open along this edge". A strip is what the approved composition draws, and it
- * is the more truthful of the two: the seam is where the new pane's boundary
- * will be, and the seam is what the dashed edge marks.
+ * This drew a 52px strip along the edge until 2026-08-14 — `SPLIT_STRIP_PX` and
+ * a `stripFor` helper, both gone — on the argument that a translucent slab over
+ * half a transcript reads as "this half is selected" rather than as "a pane will
+ * open here". Reversed on request, and the request is the better reading: what a
+ * person wants from a drop target is *where the thing lands*, and a strip makes
+ * them infer that from a seam. Half a pane is not a selection when it is wearing
+ * a "Split right" chip.
+ *
+ * Nothing about the geometry moved. `target.rect` was always the real
+ * destination and the hit area was always the full half — only the paint was a
+ * strip. So a two-way split now shows a half and a split of an already-split
+ * pane shows a quarter, with no arithmetic here: whatever the resolver says the
+ * drop makes is what gets drawn.
+ *
+ * The dashed edge survives and matters more now. It marks the seam the split
+ * opens along, which is the one thing a filled rectangle cannot say by itself.
  */
-const SPLIT_STRIP_PX = 52
-
-/** The strip along `direction`'s edge of the target rectangle. */
-function stripFor(
-  rect: {
-    left: number
-    top: number
-    right: number
-    bottom: number
-    width: number
-    height: number
-  },
-  direction: SplitDirection
-): CSSProperties {
-  const width = Math.min(SPLIT_STRIP_PX, rect.width)
-  const height = Math.min(SPLIT_STRIP_PX, rect.height)
-  if (direction === 'left') return { left: rect.left, top: rect.top, width, height: rect.height }
-  if (direction === 'right')
-    return { left: rect.right - width, top: rect.top, width, height: rect.height }
-  if (direction === 'up') return { left: rect.left, top: rect.top, width: rect.width, height }
-  return { left: rect.left, top: rect.bottom - height, width: rect.width, height }
-}
 
 function DragFeedback({ drag }: { drag: ActiveTabDrag | null }): React.JSX.Element | null {
   const { t } = useTranslation()
@@ -800,16 +788,12 @@ function DragFeedback({ drag }: { drag: ActiveTabDrag | null }): React.JSX.Eleme
         data-disabled={target.disabled}
         data-kind={target.kind}
         data-direction={target.kind === 'split' ? target.direction : undefined}
-        style={
-          target.kind === 'split'
-            ? stripFor(target.rect, target.direction)
-            : {
-                left: target.rect.left,
-                top: target.rect.top,
-                width: target.rect.width,
-                height: target.rect.height,
-              }
-        }
+        style={{
+          left: target.rect.left,
+          top: target.rect.top,
+          width: target.rect.width,
+          height: target.rect.height,
+        }}
       >
         <span>
           {target.kind === 'move'

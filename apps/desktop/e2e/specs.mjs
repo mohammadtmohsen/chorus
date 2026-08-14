@@ -1593,9 +1593,24 @@ export const specs = [
           split.overlay !== null && /split/i.test(split.overlay),
           `and names the target it is over, got ${String(split.overlay)}`
         )
+        /*
+         * Inverted on 2026-08-14, and the old assertion is worth recording.
+         *
+         * It read `width <= 56 && width < paneWidth / 3` — "painted as an edge
+         * strip, not half the pane" — which held the composition accepted in
+         * STATUS §8. The user then asked for the opposite: a target that covers
+         * the area the new pane will actually occupy. `target.rect` always was
+         * that area, so only the paint changed.
+         *
+         * The bounds are a *range* rather than `=== paneWidth / 2`, because the
+         * rect comes from a live layout with a sash and a border in it. Too loose
+         * and it passes on the old strip; 40% of the pane is comfortably above
+         * the 52px the strip drew at any window this suite runs at.
+         */
         assert(
-          split.strip.width <= 56 && split.strip.width < split.strip.paneWidth / 3,
-          `the target is painted as an edge strip, not half the pane (${String(split.strip.width)} of ${String(split.strip.paneWidth)})`
+          split.strip.width > split.strip.paneWidth * 0.4 &&
+            split.strip.width <= split.strip.paneWidth * 0.6,
+          `the target covers the half it will become, not an edge strip (${String(split.strip.width)} of ${String(split.strip.paneWidth)})`
         )
         assert(
           split.strip.dashed === 'dashed',
@@ -3518,6 +3533,181 @@ export const specs = [
           `and the bar wrapped, as it must at this width (${String(narrow.rows)} rows)`
         )
         await app.viewport()
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+  {
+    name: 'a terminal renders ANSI in the theme, and re-reads it when the scheme changes',
+    /*
+     * Nothing guarded the terminal's colour, and the gap cost a full diagnosis.
+     *
+     * A report of "monochrome output" was chased through three layers on the
+     * assumption it was real: the PTY environment, then `node-pty`'s `TERM`, then
+     * the renderer. It was none of them — the shell was BSD `ls` with `CLICOLOR`
+     * unset, which is monochrome in every terminal on macOS. Proving that took
+     * driving the app by hand, because no spec could answer "does a terminal
+     * paint colour" and so the question stayed open the whole way.
+     *
+     * So this is the answer, written down. It types a *deterministic* escape
+     * sequence rather than running a program: what a given tool decides to emit
+     * depends on its own capability detection, and a spec that shipped that
+     * decision would fail the day someone set `NO_COLOR`.
+     *
+     * The assertion is equality with the tokens, not "more than one colour". A
+     * count passes with the palette wired to the wrong theme, and passes again
+     * with the light block ignored entirely — which is the specific bug the
+     * `--ansi-*` tokens exist to prevent, and the one `readTheme` is here for.
+     * `styles.css` already carries a comment saying that asserting the tokens
+     * *resolved* would have shipped the black-viewport bug; asserting the
+     * rendered cell is the version of that check that could have caught it.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        await started(app)
+
+        await app.bringToFront()
+
+        /*
+         * Opened from the rail, and clicked until it sticks.
+         *
+         * Both parts are forced by races rather than chosen. ⌘⇧J is out because
+         * its listener is registered in a `useEffect`, so there is a window
+         * where `.pane` exists — which is all `started` waits for — and the
+         * handler does not. A keydown sent into it is dropped in silence.
+         *
+         * The retry is the more interesting one. `hydrate` applies its result
+         * with `set({ ...reconcileWorkspace(saved) })`, and `workspace-layout`
+         * always produces a `globalTerminal` — closed, on a fresh profile. So a
+         * toggle that lands before hydration is not merely early, it is
+         * *overwritten*, and the panel never appears however long the spec then
+         * waits. Measured at roughly half of runs.
+         *
+         * That is a real defect and it is filed as C-038: a person who clicks
+         * the terminal in the first moment after launch gets nothing at all. It
+         * is not what this spec asks about, so it is worked around rather than
+         * asserted.
+         *
+         * **Delete this loop when C-038 is fixed.** It will not remove itself —
+         * it will pass on the first attempt and go on sitting here, reading as
+         * though the toggle were unreliable when it no longer is.
+         */
+        await app.until(`!!document.querySelector('[data-rail-terminal]')`, {
+          timeout: 30_000,
+          label: 'the rail offers a global terminal',
+        })
+        let opened = false
+        for (let attempt = 0; attempt < 10 && !opened; attempt += 1) {
+          await app.evaluate(
+            `(() => { document.querySelector('[data-rail-terminal]').click(); return true })()`
+          )
+          await wait(1000)
+          opened =
+            (await app.evaluate(`!!document.querySelector('.terminal-panel--global')`)) === true
+        }
+        assert(opened, 'the global terminal opened')
+        await app.settle()
+        // The shell has to reach its first prompt, or the write lands in a pty
+        // that is still starting and zsh's own init clears it.
+        await wait(3000)
+
+        /*
+         * Typed at the shell, because the emulator is not reachable from the DOM.
+         *
+         * Writing to the `Terminal` directly would be the tighter test — it is
+         * the same call the push channel makes — but xterm keeps no back
+         * reference from its element to the instance, and `_core` is reached
+         * from the terminal rather than the node. Tried and returned undefined.
+         *
+         * `printf` with literal escapes rather than a program whose output is
+         * coloured: this has to stay a question about rendering. A spec that ran
+         * `git log` would be asserting git's capability detection too, and would
+         * fail the day someone exported `NO_COLOR`.
+         */
+        const paint = async () => {
+          const focused = await app.evaluate(`(() => {
+            const ta = document.querySelector('.terminal-panel--global .xterm-helper-textarea')
+            if (ta === null) return false
+            ta.focus()
+            return true
+          })()`)
+          if (focused !== true) return false
+          await app.send('Input.insertText', {
+            text: `clear; printf '\\033[31mRED\\033[0m \\033[32mGRN\\033[0m \\033[34mBLU\\033[0m\\n'`,
+          })
+          for (const type of ['keyDown', 'keyUp']) {
+            await app.send('Input.dispatchKeyEvent', {
+              type,
+              key: 'Enter',
+              windowsVirtualKeyCode: 13,
+              nativeVirtualKeyCode: 13,
+              text: '\r',
+            })
+          }
+          return true
+        }
+
+        const read = () =>
+          app.evaluate(`(() => {
+            const panel = document.querySelector('.terminal-panel--global')
+            const found = {}
+            for (const row of panel.querySelectorAll('.xterm-rows > div')) {
+              for (const span of row.querySelectorAll('span')) {
+                const text = (span.textContent ?? '').trim()
+                if (text === 'RED' || text === 'GRN' || text === 'BLU') {
+                  found[text] = getComputedStyle(span).color
+                }
+              }
+            }
+            const s = getComputedStyle(document.documentElement)
+            return {
+              found,
+              tokens: {
+                RED: s.getPropertyValue('--ansi-red').trim(),
+                GRN: s.getPropertyValue('--ansi-green').trim(),
+                BLU: s.getPropertyValue('--ansi-blue').trim(),
+              },
+            }
+          })()`)
+
+        const schemes = {}
+        for (const scheme of ['dark', 'light']) {
+          await app.send('Emulation.setEmulatedMedia', {
+            features: [{ name: 'prefers-color-scheme', value: scheme }],
+          })
+          // The theme is re-read on a `matchMedia` change, so the write has to
+          // come after the scheme moves or the cells keep the old palette.
+          await wait(1200)
+          assert((await paint()) === true, `the ${scheme} terminal accepted a write`)
+          await wait(2500)
+          const { found, tokens } = await read()
+          schemes[scheme] = tokens
+
+          for (const cell of ['RED', 'GRN', 'BLU']) {
+            const want = hexToRgb(tokens[cell])
+            assert(
+              found[cell] === want,
+              `${scheme}: ${cell} renders its token (${tokens[cell]} -> ${want}), got ${String(found[cell])}`
+            )
+          }
+        }
+
+        /*
+         * The control, and the reason the loop above cannot pass vacuously.
+         *
+         * Both schemes assert "the cell equals the token", which is satisfied by
+         * a palette that never changes if the tokens never change either. This is
+         * what proves the two palettes are genuinely different, so the equality
+         * above is measuring a re-read rather than a constant. C-027 from the
+         * inside, again.
+         */
+        assert(
+          schemes.dark.RED !== schemes.light.RED,
+          `the two schemes define different reds (dark ${schemes.dark.RED}, light ${schemes.light.RED})`
+        )
+        await app.send('Emulation.setEmulatedMedia', { features: [] })
       } finally {
         await app.quit()
       }

@@ -5341,13 +5341,18 @@ input::placeholder {
 }
 
 /*
- * A split paints the seam, not the half.
+ * A split paints the pane it will make, and the seam it will open along.
  *
- * The strip sits on the edge the new pane will open along, and the dashed side
- * is the boundary between what is there now and what is about to be — solid on
- * the three sides that are the window, dashed on the one side that is the split.
- * The rectangle behind the gesture is still half the pane; this is what is
- * *drawn*, and painting the whole half read as "half of this is selected".
+ * Until 2026-08-14 this drew a 52px strip on the edge rather than the half —
+ * `SPLIT_STRIP_PX` in `Workspace.tsx`, now deleted. The argument was that a wash
+ * over half a transcript reads as "this half is selected"; the answer, on being
+ * asked for it directly, is that a drop target's job is to show where the thing
+ * lands, and a strip makes you infer that from a seam.
+ *
+ * So the fill is now the destination at its real size — a half, or a quarter of
+ * an already-split pane — and the dashed edge does the work the fill cannot: it
+ * says which side the seam opens on. Solid on the three sides that are the
+ * window, dashed on the one side that is the split.
  */
 .workspace-drop-overlay[data-kind='split'] {
   border-radius: 6px;
@@ -5381,22 +5386,18 @@ input::placeholder {
 }
 
 /*
- * The label steps outside a strip it cannot fit inside.
+ * The label sits inside the target now, because the target can hold it.
  *
- * 52px of strip does not hold "Split right", and a chip clipped to its first
- * three letters is worse than one beside the thing it names. Placed on the side
- * the pane is coming *from*, so it sits over the transcript rather than off the
- * window.
+ * It used to be pushed outside with `right: calc(100% + 10px)`: 52px of strip
+ * does not hold "Split right", and a chip clipped to three letters is worse than
+ * one beside the thing it names. The overlay is a half-pane wide as of
+ * 2026-08-14, so the chip goes back to the middle of the rectangle it labels —
+ * which is also what stops the fill reading as a selection, since a selection
+ * does not announce what it is about to do.
+ *
+ * `place-items: center` on `.workspace-drop-overlay` already does the centring;
+ * the rules that overrode it are what needed removing.
  */
-.workspace-drop-overlay[data-direction='right'] > span {
-  position: absolute;
-  right: calc(100% + 10px);
-}
-
-.workspace-drop-overlay[data-direction='left'] > span {
-  position: absolute;
-  left: calc(100% + 10px);
-}
 
 .workspace-drop-overlay[data-disabled='true'] {
   border-color: var(--border-strong);

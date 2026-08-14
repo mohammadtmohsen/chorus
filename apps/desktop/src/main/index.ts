@@ -156,6 +156,33 @@ void app.whenReady().then(async () => {
 const overrideUserData = process.env['CHORUS_USER_DATA']
 if (overrideUserData !== undefined && overrideUserData !== '') {
   app.setPath('userData', overrideUserData)
+  /*
+   * And the session directory with it, which is a separate path and was not.
+   *
+   * `sessionData` is where Chromium keeps its HTTP cache, and it stopped
+   * defaulting to `userData` in Electron 20. So overriding `userData` alone gave
+   * every e2e launch a private database and a *shared* cache — and a shared
+   * cache of `file://` documents means a run can be served the `index.html` a
+   * previous run loaded, pointing at a hashed bundle that no longer exists.
+   *
+   * Measured, not inferred, and it defeated a mutation test before it was found:
+   * `readTheme` was deliberately broken, the break was confirmed present in
+   * `out/renderer/assets/index-WAOOPaQa.js`, the spec passed anyway, and the page
+   * asked for its own script URL answered `index-DaglO1ZH.js` — the previous
+   * build, already deleted from disk.
+   *
+   * This is C-014 one layer down. That entry guards `out/` being stale relative
+   * to `src/`; nothing guarded the renderer being stale relative to `out/`, and
+   * the failure mode is the one C-014 calls the worst possible outcome — a spec
+   * reporting on code that is not under review.
+   *
+   * What the evidence covers: three full-suite runs, two with this line and one
+   * with it reverted, produced the same eight failures in the same order — so
+   * **no observed regression from this change**, which is a narrower claim than
+   * safe. The suite is red either way, for reasons belonging to the control-rail
+   * redesign; the matrix and the per-failure triage are in that plan's STATUS §10.
+   */
+  app.setPath('sessionData', overrideUserData)
 }
 
 app.on('window-all-closed', () => {

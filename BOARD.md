@@ -61,7 +61,7 @@ than the prompts.
 **Half unblocked, and the other half got worse when it was measured.** This
 entry was briefly marked "unblocked for the first time" on the strength of five
 clean suites. **That was withdrawn**: twenty runs put the suite at **6 of 10
-clean** (C-029), so `all 28 passed` is what a full run says about 60% of the
+clean** (C-029), so a green suite is what a full run says about 60% of the
 time.
 
 What genuinely improved is the _meaning_ of a green run rather than its
@@ -82,9 +82,12 @@ independent of the flake rate and a failure there closes this entry a different
 way.
 
 Note C-031 before designing the job: the focus-dependent checks cannot run
-alongside anything that takes the window server's attention. And note the count —
-**there are 28 specs, not the 26 this entry says below**; `packaged.mjs` carries
-the same stale number.
+alongside anything that takes the window server's attention.
+
+**Do not write the spec count down anywhere.** This paragraph used to correct 26
+to 28, `packaged.mjs` carried the 26, and by 2026-08-14 the real figure was 32 —
+so the correction had itself gone stale, which is worse than the number it was
+fixing. Both are now phrased without a total. `specs.mjs` is the count.
 
 **Half of the fallback now exists.** The plan for this entry recorded that there
 was no release checklist anywhere, and one of the two ways to close C-006 runs
@@ -97,7 +100,7 @@ What it deliberately does **not** say is "run the suite before tagging", because
 at 6 of 10 clean that would block two releases in five on a coin toss. Making it
 a gate is exactly what fixing C-029 would buy.
 
-CI runs typecheck, lint, format, tests and a build. It **cannot** run the 26 e2e
+CI runs typecheck, lint, format, tests and a build. It **cannot** run the e2e
 specs or `verify:package`, because both drive real `claude` and `codex` CLIs with
 real credentials. So a green PR is not evidence about the renderer, and this
 session shipped a transcript change that way before a local run caught an
@@ -676,6 +679,41 @@ turn, but that is inference from a process table, not from a log — nobody has 
 app-server per agent, with the previous one killed before a replacement is
 spawned — and something fails loudly when it is not. A count in the pulse would
 be enough to make the next occurrence visible in a second instead of an hour.
+
+### C-038 · The global terminal can be toggled into a state hydration throws away
+
+`hydrate` applies its result with `set({ ...reconcileWorkspace(saved) })`, and
+`shared/workspace-layout.ts:93` always produces a `globalTerminal` — closed, on a
+profile with nothing saved. So a toggle that lands between the rail rendering and
+hydration finishing is not merely early, it is **overwritten**, and the panel
+never appears however long you wait.
+
+Found while writing the terminal colour spec, which failed on it in roughly half
+its runs before the cause was understood: the click reported success, the store
+said open, and the next `set` reverted it with no error anywhere. The spec works
+around it by clicking until it sticks.
+
+**That workaround does outlive the fix, and has to be deleted by hand.** An
+earlier draft of this entry claimed otherwise — that the loop would simply pass on
+its first attempt and so cost nothing. It would, and it would also still be there,
+a retry with no defect left to retry against, reading to the next person as though
+the toggle were unreliable. Closing this means removing the loop in
+`specs.mjs` and clicking once.
+
+**Why it matters:** a person who clicks the terminal in the first moment after
+launch gets nothing at all, and nothing tells them why. The window is short —
+under a second on this machine — but launch is exactly when someone reaches for a
+shell, and the second click always works, which is what makes it read as a
+flaky button rather than a bug worth reporting.
+
+**Not just the terminal.** `globalTerminal` is the instance that was caught; every
+field `reconcileWorkspace` supplies has the same shape, so any pre-hydration
+interaction with workspace state is discarded the same way.
+
+**Done when:** either the store refuses interactions until `hydrated` is true —
+it already carries the flag — or `hydrate` merges rather than replaces the fields
+a user can have touched. A test that toggles before hydration and asserts the
+state survives is what would hold it.
 
 ## Parked, with reasons
 

@@ -66,9 +66,10 @@ the version number when the bump is not obvious.
 --delete` of several refs aborts entirely if one does not exist, and prints
     nothing useful about what did not happen.
 
-**What a release does not prove, and must not be reported as proving.** The
-28-spec e2e suite is not part of this sequence — it takes ~5 minutes, passes
-about 6 runs in 10 (C-029), and has to be run deliberately. `verify:package`
+**What a release does not prove, and must not be reported as proving.** The e2e
+suite is not part of this sequence — it takes ~5 minutes, passes about 6 runs in
+10 (C-029), and has to be run deliberately. (Its size is whatever `specs.mjs`
+holds; this used to say "28-spec" and was wrong by four within the week.) `verify:package`
 covers launch, the native module, the composer and an agent joining. Anything
 about the transcript, tabs, or a menu under load is unverified unless someone
 ran the suite or drove the app. Say which of those happened.

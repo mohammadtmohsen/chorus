@@ -295,6 +295,10 @@ Run targeted renderer tests while iterating, then `pnpm check`. Run the relevant
 
 The final gate is a human visual pass over the Phase 0 state matrix. The redesign is complete only when the user approves the hierarchy and can identify active, working, waiting, and unread sessions without comparing neighbouring rows.
 
+**And a green suite. `specs.mjs` in full, nothing failing.** This is an exit criterion rather than a nicety because the suite is currently red _at this plan's own surfaces_ — see STATUS § "10. What the suite says, and the three-run matrix behind it". Seven of the eight failures are this redesign's, and one of them is a real gap rather than a stale assertion. A visual approval taken while those sit red would approve a picture of something the specs say is broken, which is the same mistake §8 already records once.
+
+Note the interaction with C-029: a flaky suite cannot be an exit criterion on a single run. The bar is that no failure is _this plan's_ — attributable intermittents may be re-run and named, per the reporting rule in the paragraph above.
+
 ## What this deliberately does not do
 
 - It does not redesign the transcript, composer, approval cards, terminal, settings, or history panel except where shared tokens and performance isolation touch them.

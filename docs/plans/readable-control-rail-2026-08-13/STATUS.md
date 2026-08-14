@@ -641,7 +641,104 @@ work.
 
 ## Still open
 
-- **The user's visual approval of `impl-parity-01..04`.** That is the only gate
-  left; nothing is staged, committed or pushed.
+- **The user's visual approval of `impl-parity-01..04`.** ~~That is the only gate
+  left; nothing is staged, committed or pushed.~~ Both halves of that went stale
+  on 2026-08-14: the work **was** committed and pushed to `main` (`5ba8c57`), and
+  it is no longer the only gate. Phase 5 now also requires a green suite, because
+  the suite is red at this plan's own surfaces — §10.
+- **Eight failing specs, seven of them this plan's.** Six are assertions still
+  reaching for the deleted `.session-drawer`; one is a composer ceiling the
+  accepted composition moved past; one is a real gap — the final answer is not
+  actually brighter than the working around it. Triage in §10.
 - True 200% zoom, and working/waiting/failed states under live agent load, remain
   documented follow-ups rather than things this plan verified.
+
+## 10. What the suite says, and the three-run matrix behind it
+
+Recorded here rather than on BOARD because seven of these eight belong to this
+plan, and an entry would split ownership before anyone has triaged them.
+
+The suite was run three times on 2026-08-14, as an A/B of an unrelated change to
+`main/index.ts` (isolating Electron's `sessionData`, so e2e launches stop sharing
+one HTTP cache). The A/B is what makes the failure list trustworthy:
+
+| run | `sessionData` isolated | result                         |
+| --- | ---------------------- | ------------------------------ |
+| 1   | yes                    | 24 passed, 0 skipped, 8 failed |
+| 2   | yes                    | 24 passed, 0 skipped, 8 failed |
+| 3   | **no** (reverted)      | 24 passed, 0 skipped, 8 failed |
+
+Same eight, same order, all three runs. **No observed regression from the cache
+change across three A/B runs** — which is the honest claim, and is not the same as
+calling it safe: the suite is red either way, so what the matrix rules out is that
+this particular change made it redder.
+
+It also rules out C-029. That entry measured 2–3 failures on a bad run and never
+the same set twice; eight identical failures reproducing three times is
+deterministic, not flake.
+
+### The eight, classified
+
+**Stale assertion after intentional redesign — seven.**
+
+Six fail identically, before reaching any assertion, on
+`TypeError: Cannot read properties of null (reading 'dataset')` — the `openDrawer`
+helper doing `document.querySelector('.session-drawer').dataset`:
+
+- shows what the conversation has used
+- the collapsed rail runs the day on its own
+- a session is one row, one preview and one menu
+- a rail drag places a session, and only Arrange reorders
+- the drawer docks, resizes within its range, and comes back that width
+- an ended conversation can be found again and reopened
+
+`.session-drawer` no longer exists. It went with `ActivityBar.tsx`, which this
+plan deleted in favour of `QuickRail.tsx`. What is left behind is **16 references
+in `specs.mjs` and 14 orphaned rules in `styles.css`** — the specs are reaching for
+an element the redesign removed, and the CSS is still styling it. Phase 5 already
+says "update the existing sidebar e2e scenario instead of keeping assertions for
+the old dense cards"; this is precisely that work, not yet done.
+
+The seventh is a threshold this plan itself moved:
+
+- a terminal belongs to one session, and the global one is a different thing
+
+It passes every geometry assertion — terminal 212px, header 38px, the pane
+divider, the neighbour's full height — and fails the last one,
+`an empty composer holds no room it is not using — got 137px`, against a ceiling of 120. That ceiling predates the accepted composition, which §8 records as "a 212px
+session-only terminal, a **171px composer**". 137 is inside the approved design and
+outside the old assertion.
+
+**Real regression within the redesign — one.**
+
+- steps fold to a line, and the answer reads as the answer
+
+Fails on `and it is lit where the working around it is not
+(rgb(230, 230, 230) vs rgb(230, 230, 230))`. The two colours are meant to differ.
+`styles.css` carries the rule and its reasoning — "the conclusion is set at full
+brightness while the working around it stays muted":
+
+```css
+.entry[data-final='true'] .said .md-p,
+.entry[data-final='true'] .said .md-list {
+  color: var(--bone);
+}
+```
+
+But `.said .md-p` sets no colour at all, so _every_ message already renders at
+`--bone`. The rule assigns what its target already has, and the muted half of the
+contrast was never written. It is a no-op, and the distinction the spec exists to
+protect does not exist on screen. Fixing it means muting non-final prose, not
+touching the `[data-final]` rule.
+
+**Unrelated defect — none.** Nothing here goes to BOARD.
+
+### What this does not say
+
+Nobody has driven these eight by hand. The classification is read off the failure
+text, the DOM, and the CSS, and the composer one is settled by §8's own record of
+the accepted geometry — but "stale assertion" is a judgement that the spec is
+wrong and the code is right, and for the six drawer failures that judgement rests
+on the element being deliberately deleted rather than accidentally lost. If
+`.session-drawer` was meant to survive under a new name, six of these move
+category.

@@ -91,9 +91,10 @@ export async function runSpecs(specs, { log = console.log, now = () => Date.now(
 /**
  * The last line, and it may only say "all N passed" when that is true.
  *
- * `all 28 passed` printed while two specs skipped is the claim this whole entry
- * is about, so the unqualified form is reserved for the one case that earns it:
- * nothing skipped and nothing failed.
+ * An unqualified `all N passed` printed while two of those N skipped is the claim
+ * this whole entry is about, so that form is reserved for the one case that earns
+ * it: nothing skipped and nothing failed. (The example here named a count once;
+ * it went stale, like every other total written down in this repo.)
  */
 export function summarize({ passed, skipped, failed }) {
   if (skipped === 0 && failed === 0) return `all ${String(passed)} passed`
