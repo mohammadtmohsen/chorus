@@ -731,6 +731,18 @@ contrast was never written. It is a no-op, and the distinction the spec exists t
 protect does not exist on screen. Fixing it means muting non-final prose, not
 touching the `[data-final]` rule.
 
+**Fixed on 2026-08-14, and it took two attempts.** The first scoped the muting to
+the two agent voices, on the reasoning that a person's own words are not
+"working". That left the spec red for the same reason as before: a turn is one
+user message, some tool rows and one final reply, so there is no _non-final
+agent_ message to be quieter than, and the rule went on doing nothing. The muting
+now applies to every message that is not the answer, the user's included — if the
+answer is marked by brightness alone, then everything that is not the answer has
+to be less bright. The spec reports `rgb(230, 230, 230) vs rgb(179, 179, 179)`
+and passes for the first time.
+
+That leaves **seven** failures, all of them stale assertions.
+
 **Unrelated defect — none.** Nothing here goes to BOARD.
 
 ### What this does not say

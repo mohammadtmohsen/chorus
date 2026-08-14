@@ -1793,7 +1793,32 @@ body {
  * the row was meant to end. What survives is the part that never depended on a
  * box: the conclusion is set at full brightness while the working around it
  * stays muted.
+ *
+ * **Only half of that shipped, for two releases.** The rule below set the
+ * conclusion to `--bone`, which is what every message already inherited, so it
+ * assigned a colour to something that already had it — a no-op wearing the
+ * comment above. Nothing ever muted the working, so there was no contrast to
+ * see. Caught by the spec that exists for exactly this, reporting
+ * `rgb(230, 230, 230) vs rgb(230, 230, 230)`; it went red in 0.13.0 and 0.14.0
+ * because it was read as a stale assertion rather than a live one.
+ *
+ * It applies to every message that is not the answer, the user's included, and
+ * that was the second thing got wrong here. The first attempt scoped it to the
+ * two agent voices on the reasoning that a person's own words are not "working" —
+ * which sounds right and leaves the mark doing nothing, because a turn is one
+ * user message, some tool rows, and one final reply. There is no *non-final
+ * agent* message to be quieter than. If the answer is marked by brightness
+ * alone, everything that is not the answer has to be less bright.
+ *
+ * `--text-secondary` rather than a mix: it is the token guaranteed 4.5:1 on all
+ * four surfaces, and this is prose, not decoration. What you typed stays
+ * perfectly readable; it stops being the loudest thing on the page.
  */
+.entry--message:not([data-final='true']) .said .md-p,
+.entry--message:not([data-final='true']) .said .md-list {
+  color: var(--text-secondary);
+}
+
 .entry[data-final='true'] .said .md-p,
 .entry[data-final='true'] .said .md-list {
   color: var(--bone);
