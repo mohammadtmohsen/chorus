@@ -6616,9 +6616,17 @@ input::placeholder {
   cursor: pointer;
 }
 
+/*
+ * 6px between windows, against the 3px inside one.
+ *
+ * Each window is now a figure plus its own meter, and at the old 2px the gap
+ * *between* the two pairs was smaller than the gap inside one — so the four
+ * elements read as one stack of alternating type and rules rather than as two
+ * readings. The bar has to sit closer to its own figure than to the next.
+ */
 .rail-account {
   display: grid;
-  gap: 2px;
+  gap: calc(var(--step) * 2);
 }
 
 /*
@@ -6675,16 +6683,31 @@ input::placeholder {
  * provider's own words and one of them is already a translation, so a column
  * width guessed here would be wrong in the first locale that disagrees.
  */
+/*
+ * A window is now a figure with its own meter under it, so it stacks.
+ *
+ * It used to be the row itself — label left, figure right — with one meter per
+ * *account* below both rows. `.rail-window-row` is that row, moved down a level;
+ * this is the pair.
+ */
 .rail-window {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  /* Now a minimum, not the spacing: it only applies when the row is full. */
+  flex-direction: column;
+  /* Tight: the bar belongs to the figure above it, and a gap the size of the
+     one between windows would let it drift to the row below. */
   gap: 3px;
   font-family: var(--ui-font);
   line-height: 1.2;
   /* `Week 100%` is the widest this can be, and 52px is what it has. */
   white-space: nowrap;
+}
+
+.rail-window-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  /* A minimum, not the spacing: it only applies when the row is full. */
+  gap: 3px;
 }
 
 .rail-window-label {
@@ -6744,10 +6767,18 @@ input::placeholder {
  */
 /* Slightly heavier and without a border of its own: at 4px inside a 1px frame
    the fill was two pixels of colour, which reads as a line rather than a bar. */
+/*
+ * One per window now, not one per account.
+ *
+ * `margin-top: 5px` is gone with the move: it was pushing a single account-level
+ * bar clear of two rows of type, and here it would fight `.rail-window`'s own
+ * 3px gap and put the bar nearer the next window than to the figure it reports.
+ * 4px tall rather than 5, because two meters in the space of one is twice the
+ * horizontal rule and the block should not read as striped.
+ */
 .rail-meter {
   display: block;
-  height: 5px;
-  margin-top: 5px;
+  height: 4px;
   border: 0;
   border-radius: 999px;
   /* A track you can see at 52px, so an empty one still reads as a meter with

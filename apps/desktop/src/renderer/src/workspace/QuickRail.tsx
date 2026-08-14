@@ -422,8 +422,9 @@ function RailUsage(): React.JSX.Element {
                   reading.percent !== null && reading.percent >= 90 ? 'nearly' : undefined
                 }
               >
-                <span className="rail-window-label">
-                  {/*
+                <span className="rail-window-row">
+                  <span className="rail-window-label">
+                    {/*
                     The provider's own duration, in the word it is usually
                     called by. `describeWindow` says `1w` for a seven-day window,
                     which is right in a popover of exact figures and reads as a
@@ -431,54 +432,61 @@ function RailUsage(): React.JSX.Element {
                     "Week". Derived from the reported minutes either way; nothing
                     here invents a window the provider did not report.
                   */}
-                  {reading.kind === 'long' && reading.label === '1w'
-                    ? t('activity.week')
-                    : reading.label}
-                </span>
-                <span
-                  className="rail-window-percent"
-                  /*
-                   * The em dash explains itself on hover.
-                   *
-                   * This machine's Codex account reports no windows, so its two
-                   * slots are dashes — and a dash with no explanation reads as a
-                   * bug in Chorus rather than as silence from the provider. The
-                   * screen-reader line below has said so all along; this is the
-                   * same sentence for everyone else.
-                   */
-                  title={
-                    reading.percent === null
-                      ? t('activity.usageUnreported', {
-                          agent: reading.agentId,
-                          window: reading.label,
-                        })
-                      : t('activity.usage', {
-                          agent: reading.agentId,
-                          percent: reading.percent,
-                          window: reading.label,
-                          reset: reading.reset,
-                        })
-                  }
-                >
-                  {/*
+                    {reading.kind === 'long' && reading.label === '1w'
+                      ? t('activity.week')
+                      : reading.label}
+                  </span>
+                  <span
+                    className="rail-window-percent"
+                    /*
+                     * The em dash explains itself on hover.
+                     *
+                     * This machine's Codex account reports no windows, so its two
+                     * slots are dashes — and a dash with no explanation reads as a
+                     * bug in Chorus rather than as silence from the provider. The
+                     * screen-reader line below has said so all along; this is the
+                     * same sentence for everyone else.
+                     */
+                    title={
+                      reading.percent === null
+                        ? t('activity.usageUnreported', {
+                            agent: reading.agentId,
+                            window: reading.label,
+                          })
+                        : t('activity.usage', {
+                            agent: reading.agentId,
+                            percent: reading.percent,
+                            window: reading.label,
+                            reset: reading.reset,
+                          })
+                    }
+                  >
+                    {/*
                     An em dash, not `0%`. Zero says the account is empty; this
                     says nobody has answered yet, and they are different facts.
                   */}
-                  {reading.percent === null ? '—' : `${String(reading.percent)}%`}
+                    {reading.percent === null ? '—' : `${String(reading.percent)}%`}
+                  </span>
+                </span>
+                {/*
+                  Each window's own bar, directly under the figure it belongs to.
+
+                  There used to be one bar per account, drawing the short window
+                  only, sitting under both rows — so the long window had a number
+                  and no shape, and the bar that was there appeared to belong to
+                  whichever row you read last. Two readings, two meters, each
+                  touching its own figure.
+
+                  Empty at 0% rather than absent when a window is unreported: a
+                  missing track would make the two accounts different heights and
+                  read as a layout fault rather than as silence from a provider.
+                  The em dash above already says nobody answered.
+                */}
+                <span className="rail-meter">
+                  <i style={{ width: `${String(reading.percent ?? 0)}%` }} />
                 </span>
               </span>
             ))}
-            {/*
-              One bar, drawing the shorter window — the one that stops you
-              working this afternoon. Empty when nothing has been reported.
-            */}
-            <span className="rail-meter" data-agent={account.agentId}>
-              <i
-                style={{
-                  width: `${String(account.windows.find((w) => w.kind === 'short')?.percent ?? 0)}%`,
-                }}
-              />
-            </span>
           </span>
         ))}
         <span className="sr-only">
