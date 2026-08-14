@@ -613,6 +613,23 @@ export function App(): React.JSX.Element {
     panel: 'review' | 'summary'
   } | null>(null)
 
+  /*
+   * The door back to those two panels.
+   *
+   * This state survived the sidenav's removal and its only caller did not, so
+   * `setPanelRequest` was being called with `null` and nothing else — Summary and
+   * Review still worked and could not be reached. The hover card asks for them
+   * now.
+   *
+   * `openSession` first, and that is the comment above made operational: a panel
+   * reads a mounted transcript, so requesting one for a background session has
+   * to put it on screen before the request means anything.
+   */
+  const openPanel = useCallback((conversationId: string, panel: 'review' | 'summary') => {
+    useWorkspaceStore.getState().openSession(conversationId)
+    setPanelRequest({ conversationId, panel })
+  }, [])
+
   /** What a conversation may do, changed from wherever the profile is shown. */
   const applyProfile = useCallback(
     async (conversationId: string, profileId: string) => {
@@ -829,6 +846,7 @@ export function App(): React.JSX.Element {
         onRename={rename}
         onRestart={askRestart}
         onEnd={askEnd}
+        onOpenPanel={openPanel}
         onCommitLayout={commitLayout}
         onReorderSessions={moveSession}
         onOpenSettings={() => {

@@ -40,6 +40,7 @@ interface WorkspaceProps {
   readonly starting: boolean
   readonly onNewSession: () => void
   readonly onRename: (conversationId: string, title: string) => void
+  readonly onOpenPanel: (conversationId: string, panel: 'review' | 'summary') => void
   readonly onRestart: (conversationId: string) => void
   readonly onEnd: (conversationId: string) => void
   readonly onCommitLayout: () => void
@@ -398,8 +399,15 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
           sessions={props.sessions}
           profiles={props.profiles}
           home={props.home}
+          installed={props.installed}
           onRestart={props.onRestart}
           onEnd={props.onEnd}
+          onRename={props.onRename}
+          onOpenPanel={props.onOpenPanel}
+          onToggleAgent={props.onToggleAgent}
+          onChooseFolder={props.onChooseFolder}
+          onSetFolder={props.onSetFolder}
+          onChooseProfile={props.onChooseProfile}
         />
 
         {menu !== null && menuSession !== undefined && (
@@ -635,7 +643,6 @@ function PaneTabStrip(
   }
 ): React.JSX.Element {
   const { t } = useTranslation()
-  const [renaming, setRenaming] = useState<string | null>(null)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   /* A strip that scrolls can hold the active tab off screen. */
@@ -674,66 +681,52 @@ function PaneTabStrip(
               data-active={active}
               data-dragging={props.drag?.conversationId === conversationId}
             >
-              {renaming === conversationId ? (
-                <input
-                  className="workspace-tab-rename"
-                  defaultValue={session.title}
-                  autoFocus
-                  aria-label={t('conversation.renameTitle')}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape') setRenaming(null)
-                    if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                      props.onRename(conversationId, event.currentTarget.value)
-                      setRenaming(null)
-                    }
-                  }}
-                  onBlur={() => {
-                    setRenaming(null)
-                  }}
-                />
-              ) : (
-                <button
-                  ref={(element) => {
-                    tabRefs.current[index] = element
-                  }}
-                  type="button"
-                  className="workspace-tab-main"
-                  data-workspace-tab={conversationId}
-                  id={`tab-${props.paneId}-${conversationId}`}
-                  role="tab"
-                  tabIndex={active ? 0 : -1}
-                  aria-selected={active}
-                  aria-controls={`panel-${props.paneId}-${conversationId}`}
-                  title={session.title}
-                  onPointerDown={(event) => {
-                    props.onTabPointerDown(conversationId, session.title, props.paneId, event)
-                  }}
-                  onClick={() => {
-                    if (props.consumeSuppressedClick()) return
-                    props.onActivate(props.paneId, conversationId)
-                  }}
-                  onAuxClick={(event) => {
-                    if (event.button === 1) props.onClose(props.paneId, conversationId)
-                  }}
-                  /* The only way to rename a session, now that the drawer is gone. */
-                  onDoubleClick={() => {
-                    setRenaming(conversationId)
-                  }}
-                  onKeyDown={(event) => {
-                    onTabKeyDown(index, event)
-                  }}
-                >
-                  <svg className="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M20 12a8 8 0 0 1-8 8H5l-1.5 2v-4.5A8 8 0 1 1 20 12Z" />
-                  </svg>
-                  <span className="workspace-tab-title">{session.title}</span>
-                  <span className="workspace-tab-voices" aria-hidden="true">
-                    {session.participants.map((agent) => (
-                      <span className={`voice-dot voice--${agent}`} key={agent} />
-                    ))}
-                  </span>
-                </button>
-              )}
+              {/*
+                No rename here any more; it lives on the hover card's title.
+
+                A tab is 160px of truncated name in a strip whose single click
+                switches panes — so renaming was a double-click on the one
+                control whose click already means something else, editing a title
+                in a box too narrow to show it. The card shows the whole name and
+                is already where you go to ask about a session.
+              */}
+              <button
+                ref={(element) => {
+                  tabRefs.current[index] = element
+                }}
+                type="button"
+                className="workspace-tab-main"
+                data-workspace-tab={conversationId}
+                id={`tab-${props.paneId}-${conversationId}`}
+                role="tab"
+                tabIndex={active ? 0 : -1}
+                aria-selected={active}
+                aria-controls={`panel-${props.paneId}-${conversationId}`}
+                title={session.title}
+                onPointerDown={(event) => {
+                  props.onTabPointerDown(conversationId, session.title, props.paneId, event)
+                }}
+                onClick={() => {
+                  if (props.consumeSuppressedClick()) return
+                  props.onActivate(props.paneId, conversationId)
+                }}
+                onAuxClick={(event) => {
+                  if (event.button === 1) props.onClose(props.paneId, conversationId)
+                }}
+                onKeyDown={(event) => {
+                  onTabKeyDown(index, event)
+                }}
+              >
+                <svg className="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 12a8 8 0 0 1-8 8H5l-1.5 2v-4.5A8 8 0 1 1 20 12Z" />
+                </svg>
+                <span className="workspace-tab-title">{session.title}</span>
+                <span className="workspace-tab-voices" aria-hidden="true">
+                  {session.participants.map((agent) => (
+                    <span className={`voice-dot voice--${agent}`} key={agent} />
+                  ))}
+                </span>
+              </button>
               <button
                 type="button"
                 className="workspace-tab-close"

@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { ALL_AGENTS, shortenPath, type AgentId, type SessionInfo } from '../Session.js'
-import { usePlanning, useWorkspaceActions } from './hooks.js'
+import type { AgentId, SessionInfo } from '../Session.js'
+import { SessionSettings } from './SessionSettings.js'
 
 /**
  * One menu for the whole list, opened against whichever row asked for it.
@@ -44,8 +44,6 @@ export interface SessionMenuProps {
 
 export function SessionMenu(props: SessionMenuProps): React.JSX.Element {
   const { t } = useTranslation()
-  const { setPlanning } = useWorkspaceActions()
-  const planning = usePlanning(props.session.conversationId)
   const surface = useRef<HTMLDivElement | null>(null)
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null)
 
@@ -130,118 +128,16 @@ export function SessionMenu(props: SessionMenuProps): React.JSX.Element {
       }}
       onKeyDown={onKeyDown}
     >
-      <div className="session-settings">
-        <p className="session-settings-label">{t('conversation.cast')}</p>
-        <ul className="session-settings-agents">
-          {ALL_AGENTS.map((agent) => {
-            const here = props.session.participants.includes(agent)
-            const available = props.installed.includes(agent)
-            return (
-              <li key={agent}>
-                <button
-                  type="button"
-                  className={`voice voice--${agent}`}
-                  data-on={here}
-                  aria-pressed={here}
-                  disabled={!here && !available}
-                  title={
-                    available
-                      ? t(here ? 'conversation.removeAgent' : 'conversation.addAgent', { agent })
-                      : t('agents.notFound', { agent })
-                  }
-                  onClick={() => {
-                    void props.onToggleAgent(agent, here)
-                  }}
-                >
-                  <span className="voice-dot" aria-hidden="true" />
-                  {agent}
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-
-        <p className="session-settings-label">{t('conversation.choosePath')}</p>
-        <div className="session-settings-folder">
-          <button
-            type="button"
-            className="path path--button session-settings-path"
-            title={
-              props.session.cwd === props.home ? t('conversation.choosePath') : props.session.cwd
-            }
-            data-empty={props.session.cwd === props.home}
-            onClick={() => {
-              void props.onChooseFolder()
-            }}
-          >
-            {props.session.cwd === props.home
-              ? t('conversation.noFolder')
-              : shortenPath(props.session.cwd)}
-          </button>
-          {props.session.cwd !== props.home && (
-            <button
-              type="button"
-              className="session-settings-clear"
-              aria-label={t('conversation.clearFolder')}
-              title={t('conversation.clearFolder')}
-              onClick={() => {
-                void props.onSetFolder('')
-              }}
-            >
-              <span aria-hidden="true">×</span>
-            </button>
-          )}
-        </div>
-
-        <p className="session-settings-label">{t('aside.profileLabel')}</p>
-        <ul className="session-settings-profiles" role="listbox">
-          {props.profiles.map((profile) => (
-            <li key={profile.id}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={profile.id === props.session.profileId}
-                data-on={profile.id === props.session.profileId}
-                className="profile-option"
-                onClick={() => {
-                  if (profile.id === props.session.profileId) return
-                  void props.onChooseProfile(profile.id)
-                }}
-              >
-                <span className="profile-option-name">{profile.name}</span>
-                <span className="profile-option-summary">{profile.summary}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-
-        <p className="session-settings-label">{t('plan.label')}</p>
-        <button
-          type="button"
-          className="session-settings-plan"
-          aria-pressed={planning}
-          title={planning ? t('plan.leave') : t('plan.enter')}
-          onClick={() => {
-            const conversationId = props.session.conversationId
-            window.chorus
-              .setPlanMode({ conversationId, on: !planning })
-              /*
-               * The session's answer, not the click's intent: a mode that
-               * failed to change must not leave a control claiming it did.
-               * The preview reads the same value, so a lie here would be a
-               * lie in two places.
-               */
-              .then((result) => {
-                setPlanning(conversationId, result.planning)
-              })
-              .catch(() => {
-                // The previous state is the truthful one.
-              })
-          }}
-        >
-          {planning ? t('preview.planOn') : t('preview.planOff')}
-        </button>
-      </div>
+      <SessionSettings
+        session={props.session}
+        home={props.home}
+        profiles={props.profiles}
+        installed={props.installed}
+        onToggleAgent={props.onToggleAgent}
+        onChooseFolder={props.onChooseFolder}
+        onSetFolder={props.onSetFolder}
+        onChooseProfile={props.onChooseProfile}
+      />
     </div>,
     document.body
   )

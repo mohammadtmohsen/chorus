@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { ALL_AGENTS, shortenPath, type SessionInfo } from '../Session.js'
+import { shortenPath, type AgentId, type SessionInfo } from '../Session.js'
 import { compactTokens, money } from '../format.js'
-import { useSessionPulse, usePlanning } from './hooks.js'
+import { useSessionPulse } from './hooks.js'
 import { createSignal, useSignal, type Signal } from './signal.js'
+import { SessionSettings } from './SessionSettings.js'
 
 /**
  * One read-only card, shown from either representation of a session.
@@ -137,10 +138,28 @@ export function previewTriggerProps(
 export function SessionPreviewHost(props: {
   readonly controller: PreviewController
   readonly sessions: readonly SessionInfo[]
-  readonly profiles: readonly { readonly id: string; readonly name: string }[]
+  /* `summary` joins the shape the menu already required: the card renders the
+     same permission chooser now, and a profile without its sentence is a list of
+     three names that do not say what they do. */
+  readonly profiles: readonly {
+    readonly id: string
+    readonly name: string
+    readonly summary: string
+  }[]
   readonly home: string
+  readonly installed: readonly AgentId[]
   readonly onRestart: (conversationId: string) => void
   readonly onEnd: (conversationId: string) => void
+  readonly onRename: (conversationId: string, title: string) => void
+  readonly onOpenPanel: (conversationId: string, panel: 'review' | 'summary') => void
+  readonly onToggleAgent: (
+    conversationId: string,
+    agentId: AgentId,
+    present: boolean
+  ) => Promise<void>
+  readonly onChooseFolder: (conversationId: string) => Promise<void>
+  readonly onSetFolder: (conversationId: string, cwd: string) => Promise<void>
+  readonly onChooseProfile: (conversationId: string, profileId: string) => Promise<void>
 }): React.JSX.Element | null {
   const target = useSignal(props.controller.target)
   const session = props.sessions.find((s) => s.conversationId === target?.conversationId)
@@ -163,6 +182,27 @@ export function SessionPreviewHost(props: {
         props.profiles.find((p) => p.id === session.profileId)?.name ?? session.profileId
       }
       home={props.home}
+      installed={props.installed}
+      profiles={props.profiles}
+      onRename={(title) => {
+        props.onRename(session.conversationId, title)
+      }}
+      onOpenPanel={(panel) => {
+        props.controller.dismiss()
+        props.onOpenPanel(session.conversationId, panel)
+      }}
+      onToggleAgent={async (agentId, present) => {
+        await props.onToggleAgent(session.conversationId, agentId, present)
+      }}
+      onChooseFolder={async () => {
+        await props.onChooseFolder(session.conversationId)
+      }}
+      onSetFolder={async (cwd) => {
+        await props.onSetFolder(session.conversationId, cwd)
+      }}
+      onChooseProfile={async (profileId) => {
+        await props.onChooseProfile(session.conversationId, profileId)
+      }}
     />
   )
 }
@@ -173,12 +213,24 @@ function SessionPreviewCard(props: {
   readonly session: SessionInfo
   readonly profileName: string
   readonly home: string
+  readonly installed: readonly AgentId[]
+  readonly profiles: readonly {
+    readonly id: string
+    readonly name: string
+    readonly summary: string
+  }[]
   readonly onRestart: () => void
   readonly onEnd: () => void
+  readonly onRename: (title: string) => void
+  readonly onOpenPanel: (panel: 'review' | 'summary') => void
+  readonly onToggleAgent: (agentId: AgentId, present: boolean) => Promise<void>
+  readonly onChooseFolder: () => Promise<void>
+  readonly onSetFolder: (cwd: string) => Promise<void>
+  readonly onChooseProfile: (profileId: string) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const [renaming, setRenaming] = useState(false)
   const pulse = useSessionPulse(props.session.conversationId)
-  const planning = usePlanning(props.session.conversationId)
   const card = useRef<HTMLDivElement | null>(null)
   const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null)
   /*
@@ -254,24 +306,69 @@ function SessionPreviewCard(props: {
       onPointerEnter={props.controller.hold}
       onPointerLeave={props.controller.leave}
     >
-      <p className="session-preview-title">{props.session.title}</p>
+      {/*
+        Double-click to rename, which is where renaming now lives.
+        
+        It used to be on the workspace tab. A tab is 160px of truncated title in
+        a strip you click to switch panes, so renaming there meant double-clicking
+        the one control whose single click does something else — and editing a
+        name in a box too narrow to show it. The card already shows the whole
+        title and is already the place you go to ask about a session.
+        
+        A `<p>` with a handler rather than a button: the title is a heading, and a
+        control that only responds to a gesture nobody can see is worse than one
+        with a real affordance. The rename is also reachable from the session menu,
+        which is the keyboard route — this is the shortcut, not the only door.
+      */}
+      {renaming ? (
+        <input
+          className="session-preview-rename"
+          defaultValue={props.session.title}
+          autoFocus
+          aria-label={t('conversation.renameTitle')}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              setRenaming(false)
+            }
+            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              props.onRename(event.currentTarget.value)
+              setRenaming(false)
+            }
+          }}
+          onBlur={(event) => {
+            props.onRename(event.currentTarget.value)
+            setRenaming(false)
+          }}
+        />
+      ) : (
+        <p
+          className="session-preview-title"
+          /* The whole title, since the line truncates. The rename affordance is
+             the `cursor: text` and the double-click, not a tooltip that would
+             hide the name it is offering to change. */
+          title={props.session.title}
+          onDoubleClick={() => {
+            setRenaming(true)
+          }}
+        >
+          {props.session.title}
+        </p>
+      )}
       <p className="path session-preview-path">
         {props.session.cwd === props.home
           ? t('conversation.noFolder')
           : shortenPath(props.session.cwd)}
       </p>
       <dl className="session-preview-facts">
-        <dt>{t('preview.participants')}</dt>
-        <dd>
-          {/* Through `ALL_AGENTS` rather than the session's own array, so the
-              order is the same for every session however they were seated. */}
-          {ALL_AGENTS.filter((agent) => props.session.participants.includes(agent)).join(', ') ||
-            t('conversation.nobodyHere')}
-        </dd>
-        <dt>{t('preview.profile')}</dt>
-        <dd>{props.profileName}</dd>
-        <dt>{t('preview.plan')}</dt>
-        <dd>{planning ? t('preview.planOn') : t('preview.planOff')}</dd>
+        {/*
+          The cast, the profile and Plan mode used to be three read-only rows
+          here, restating what `SessionSettings` below now lets you change. Two
+          renderings of one fact is two things to keep in agreement, and the
+          editable one is strictly more informative — it says what the value is
+          *and* what it could be.
+        */}
         {tokens > 0 && (
           <>
             <dt>{t('preview.spend')}</dt>
@@ -308,6 +405,38 @@ function SessionPreviewCard(props: {
         )}
       </dl>
       {/*
+        Everything this session can be set to, in the card that opens on it.
+        
+        The same component the session menu renders, not a copy — see
+        `SessionSettings`. What this card is has changed with it: it was
+        deliberately informational, and the header above still says actions live
+        in the menu. They live in both now, and the reason the card is allowed
+        them is unchanged from when it gained Restart and End — it is hoverable
+        for WCAG 2.2, so reaching a control inside it is a deliberate movement
+        rather than a slip.
+        
+        The pointer is held while a folder dialog is open: choosing a folder
+        takes focus to a native window, the pointer leaves the card on its way
+        there, and without this the card would close behind the dialog and drop
+        the answer when it came back.
+      */}
+      <div className="session-preview-settings" onPointerEnter={props.controller.hold}>
+        <SessionSettings
+          session={props.session}
+          home={props.home}
+          profiles={props.profiles}
+          installed={props.installed}
+          onToggleAgent={props.onToggleAgent}
+          onChooseFolder={async () => {
+            props.controller.hold()
+            await props.onChooseFolder()
+            props.controller.hold()
+          }}
+          onSetFolder={props.onSetFolder}
+          onChooseProfile={props.onChooseProfile}
+        />
+      </div>
+      {/*
         Two actions on a card that was deliberately informational.
         
         The rule it broke is a real one — a hover card that can act is a hover
@@ -317,6 +446,38 @@ function SessionPreviewCard(props: {
         confirmation dialog `App` owns, so neither destroys anything from a hover
         card on one click.
       */}
+      {/*
+        Summary and Changes, which had nowhere to be opened from at all.
+
+        Both panels still existed — `App` holds a `panelRequest` and `Session`
+        reads it — but the only thing that ever set it was the sidenav, and the
+        sidenav is gone. `setPanelRequest` was left being called with `null` and
+        nothing else: two working panels with no door. This is the door.
+
+        Their own row, above the destructive pair. Four buttons in one line at
+        300px would be four truncated labels, and putting "End Session" beside
+        "Summary" invites the wrong one on a hurried click.
+      */}
+      <div className="session-preview-actions session-preview-actions--panels">
+        <button
+          type="button"
+          onClick={() => {
+            props.onOpenPanel('summary')
+          }}
+        >
+          <SummaryIcon />
+          {t('summary.open')}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            props.onOpenPanel('review')
+          }}
+        >
+          <ChangesIcon />
+          {t('changes.heading')}
+        </button>
+      </div>
       <div className="session-preview-actions">
         <button type="button" onClick={props.onRestart}>
           <RestartIcon />
@@ -341,6 +502,26 @@ function SessionPreviewCard(props: {
  * the reason the whole renderer is: agent output is untrusted and a typed tree
  * cannot be injected into.
  */
+function SummaryIcon(): React.JSX.Element {
+  return (
+    <svg className="session-preview-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {/* Lines of unequal length: a summary is prose, and four equal rules read
+          as a list or a hamburger. */}
+      <path d="M5 7h14M5 12h14M5 17h8" />
+    </svg>
+  )
+}
+
+function ChangesIcon(): React.JSX.Element {
+  return (
+    <svg className="session-preview-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {/* A plus over a minus — the two things a diff is, and the shape `git` has
+          trained everyone to read as one. */}
+      <path d="M4 8h8M8 4v8M4 17h8M16 4l4 4-4 4M20 8h-8" />
+    </svg>
+  )
+}
+
 function RestartIcon(): React.JSX.Element {
   return (
     <svg className="session-preview-icon" viewBox="0 0 24 24" aria-hidden="true">

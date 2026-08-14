@@ -7269,12 +7269,46 @@ input::placeholder {
   }
 }
 
-.session-preview-title {
+/*
+ * The title and the field it becomes are one box in two states.
+ *
+ * Swapping a `<p>` for an `<input>` moved everything under it, and it was four
+ * mismatches at once rather than one: the paragraph's 3px bottom margin, the
+ * field's 1px bottom border, `line-height: 1.4` against an input's default
+ * `normal`, and a `letter-spacing` on one of them. Each is a pixel or two; the
+ * eye reads the sum as the card lurching.
+ *
+ * So every box property is declared once, for both, and only the border
+ * *colour* changes between them — the border is present and transparent when
+ * reading, so the 1px is reserved rather than introduced. `font-family:
+ * inherit` because an input does not inherit type by default and would drop to
+ * the UA's form font.
+ *
+ * Both are one line, for the same reason: a title that wraps to two lines while
+ * reading and to one while editing is the largest jump of the lot. The whole
+ * title is in the `title` attribute, and the session menu is the route that
+ * never truncates.
+ */
+.session-preview-title,
+.session-preview-rename {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
   margin: 0 0 var(--step);
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: none;
   color: var(--text-primary);
+  font-family: inherit;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.4;
+  letter-spacing: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-preview-path {
@@ -7760,4 +7794,68 @@ input::placeholder {
   .rail-session[data-state='working'] {
     border-color: color-mix(in srgb, var(--orbit) 70%, transparent);
   }
+}
+
+/*
+ * The hover card became the place a session is configured, so it needs the room.
+ *
+ * It was an informational card sized to five facts. It now carries the cast, the
+ * folder, the three permission profiles with their sentences, Plan mode and two
+ * actions — the same `SessionSettings` the menu renders. 300px is what the
+ * profile summaries need to stay two lines rather than four.
+ */
+.session-preview {
+  width: 300px;
+  /*
+   * Bounded, because the contents grew past the window.
+   *
+   * Measured at 1056px tall once the permission profiles and their sentences
+   * moved in — taller than the app's own 860px default window, so the card ran
+   * off the bottom and the two actions at its foot were unreachable. The
+   * placement logic clamps a card to the viewport but cannot shrink one that is
+   * simply too big.
+   *
+   * Scrolling rather than truncating: every row in here is something you might
+   * have opened the card to change, and a hidden permission chooser is worse
+   * than a scrollbar.
+   */
+  max-height: calc(100vh - var(--step) * 8);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A rule between what the session *is* and what it can be set to. */
+.session-preview-settings {
+  margin-top: calc(var(--step) * 3);
+  padding-top: calc(var(--step) * 3);
+  border-top: 1px solid var(--border-default);
+}
+
+/* The one thing that differs while editing: the line under it turns on. */
+.session-preview-rename {
+  border-bottom-color: var(--accent-text);
+}
+
+.session-preview-rename:focus-visible {
+  outline: none;
+}
+
+/* The title says it can be renamed by being pointable, not by drawing a control
+   nobody asked for on a card that is mostly reading. */
+.session-preview-title {
+  cursor: text;
+}
+
+/* Summary and Changes sit above the destructive pair, with a little air between
+   the two rows so they do not read as one four-button block. */
+.session-preview-actions--panels {
+  margin-top: calc(var(--step) * 3);
+  padding-top: 0;
+  border-top: 0;
+}
+
+.session-preview-actions--panels + .session-preview-actions {
+  margin-top: var(--step);
+  padding-top: 0;
+  border-top: 0;
 }
