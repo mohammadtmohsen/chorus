@@ -452,6 +452,9 @@ function apply(view: Mutable, event: TranscriptEvent): void {
 
     case 'turn.completed':
       view.working = view.working.filter((a) => a !== event.actor)
+      // Before the key is dropped, and before an interruption notice is pushed
+      // below: this is the only moment the last reply is known to be the last.
+      liftChangesAboveFinal(view, event.actor)
       // The turn's card is finished. The next turn opens its own rather than
       // growing this one, which is what makes a card mean "this turn".
       if (isAgent(event.actor)) view.openChanges[event.actor] = null
@@ -1030,6 +1033,10 @@ function mergeChanges(
  * approved composition. Moving it on completion keeps the row's identity (it is
  * still merged into as more files land) and is driven entirely by logged events,
  * so a replay produces the same order.
+ *
+ * This cannot know whether the reply it is moving under is the *last* one, so it
+ * moves under every one and `liftChangesAboveFinal` undoes the final hop when the
+ * turn ends. See there for why the last reply is the exception.
  */
 function moveChangesBelow(view: Mutable, actor: TranscriptEvent['actor']): void {
   if (!isAgent(actor)) return
@@ -1039,6 +1046,37 @@ function moveChangesBelow(view: Mutable, actor: TranscriptEvent['actor']): void 
   if (at === -1 || at === view.messages.length - 1) return
   const [card] = view.messages.splice(at, 1)
   if (card !== undefined) view.messages.push(card)
+}
+
+/**
+ * The last reply is the one the card does not go under.
+ *
+ * `moveChangesBelow` puts the card beneath each reply as it completes, which is
+ * right for narration mid-turn — the card is evidence and evidence reads under
+ * the claim. It is wrong for the *final* reply, and that only became visible
+ * once the answer was given a brightness of its own: a receipt printed after the
+ * conclusion means the conclusion is not the last thing in the turn, which is
+ * the whole property `data-final` exists to assert.
+ *
+ * So the last hop is undone here rather than prevented there. Prevention is not
+ * available: `agent.message.completed` cannot know whether another reply is
+ * coming, and guessing from a timer would make the order depend on how fast the
+ * provider was. `turn.completed` is the first moment "final" is a fact.
+ *
+ * Only when the card actually trails, and only over an agent's own message — a
+ * notice or a tool row after it means something else happened last and the card
+ * is already where it belongs.
+ */
+function liftChangesAboveFinal(view: Mutable, actor: TranscriptEvent['actor']): void {
+  if (!isAgent(actor)) return
+  const key = view.openChanges[actor]
+  if (key === null) return
+  const last = view.messages.length - 1
+  if (last < 1 || view.messages[last]?.key !== key) return
+  const above = view.messages[last - 1]
+  if (above?.kind !== 'message' || !isAgent(above.actor)) return
+  const [card] = view.messages.splice(last, 1)
+  if (card !== undefined) view.messages.splice(last - 1, 0, card)
 }
 
 function appendStreamed(

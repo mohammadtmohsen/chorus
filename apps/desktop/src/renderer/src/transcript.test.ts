@@ -755,6 +755,45 @@ describe('changes card', () => {
     expect(view.messages.map((m) => m.kind)).toEqual(['message', 'changes'])
   })
 
+  /*
+   * The exception `liftChangesAboveFinal` exists for.
+   *
+   * Mid-turn the card belongs under the words explaining it. After the *last*
+   * reply it does not: a receipt printed below the conclusion means the
+   * conclusion is not the last thing in the turn, which is the property
+   * `data-final` is there to assert.
+   */
+  it('rises back above the reply once the turn is over', () => {
+    const events = [
+      event('turn.started', { turnRef: 't1' }),
+      wrote([{ path: 'src/a.ts' }]),
+      event('agent.message.completed', { itemRef: 'm1', text: 'Done.' }),
+    ]
+    const midTurn = events.reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+    expect(midTurn.messages.map((m) => m.kind)).toEqual(['message', 'changes'])
+
+    const ended = reduceEvents(midTurn, [
+      event('turn.completed', { turnRef: 't1', status: 'completed' }),
+    ])
+    expect(ended.messages.map((m) => m.kind)).toEqual(['changes', 'message'])
+  })
+
+  /* Narration in the middle of a turn keeps the card underneath it — only the
+     last hop is undone, not every one. */
+  it('stays under a reply that is not the last one', () => {
+    const view = [
+      event('turn.started', { turnRef: 't1' }),
+      wrote([{ path: 'src/a.ts' }]),
+      event('agent.message.completed', { itemRef: 'm1', text: 'Editing now' }),
+      event('agent.message.completed', { itemRef: 'm2', text: 'Done.' }),
+      event('turn.completed', { turnRef: 't1', status: 'completed' }),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    // m1, then the card it explains, then the final reply last.
+    expect(view.messages.map((m) => m.kind)).toEqual(['message', 'changes', 'message'])
+    expect(view.messages.at(-1)?.text).toBe('Done.')
+  })
+
   it('sums a file edited twice in one turn', () => {
     const view = [
       wrote([{ path: 'src/a.ts', added: 3, removed: 1 }]),
