@@ -7,6 +7,24 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.14.1
+
+### The answer at the end of a turn now stands out from the working
+
+A finished turn is supposed to mark its conclusion by brightness — the reply lit,
+the working around it quieter. Only half of that was ever built. The rule meant to
+brighten the answer set it to the colour every message already had, so it changed
+nothing, and a turn's final reply looked exactly like the rest of the transcript.
+It shipped that way in 0.13.0 and 0.14.0.
+
+Everything that is not the answer is now a step quieter, including your own
+message. It stays comfortably readable — the colour is one the palette guarantees
+for prose — it simply stops competing with the reply you were waiting for.
+
+This was the one genuine defect among the failing end-to-end specs recorded in
+0.13.0's known gaps. The rest are assertions describing the old sidebar, and are
+a cleanup rather than a bug.
+
 ## 0.14.0
 
 ### The rail says what kind of attention a session wants
