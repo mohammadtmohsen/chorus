@@ -1397,9 +1397,18 @@ body {
   position: relative;
   display: grid;
   grid-template-columns: 32px 1fr;
+  /*
+   * A third row, for anything offered *about* the message rather than said in
+   * it. The handoff is the only tenant today; it moved out of the head so the
+   * decision to pass a reply to the other agent comes after reading the reply.
+   *
+   * Aligned with `said`, not with `avatar`: it belongs to the words, and a
+   * control starting at the face would read as belonging to the speaker.
+   */
   grid-template-areas:
     'avatar head'
-    '.      said';
+    '.      said'
+    '.      actions';
   column-gap: calc(var(--step) * 3);
   row-gap: calc(var(--step) * 0.5);
   padding-block: calc(var(--step) * 3.5);
@@ -3667,16 +3676,29 @@ input::placeholder {
  * same thing, so the two sit together at the end of the head rather than
  * splitting the space between them.
  */
+/*
+ * The row under a reply that holds what you can do with it.
+ *
+ * `margin-top` is small on purpose: this is attached to the message above, not a
+ * band between two turns. `justify-content: flex-start` puts it under the first
+ * word rather than out at the right margin — it is read as part of the reply's
+ * left-aligned column, and a control alone on the right edge reads as chrome.
+ */
+.entry-actions {
+  display: flex;
+  grid-area: actions;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  margin-top: var(--step);
+}
+
 .handoff-action {
   /*
-   * In the head, immediately before the time.
-   *
-   * It had a grid column of its own for a while, which put it on the body's
-   * line — and took its width out of the head, so a reply with a handoff had
-   * its time a word's width left of a reply without one. The time is the thing
-   * that must line up down the column; this sits inside it.
+   * Was `margin-left: auto` when this lived in the head, pinning it to the far
+   * edge just inside the time. In its own row there is nothing to push against
+   * and nothing to be pushed by, so the margin is gone rather than kept and
+   * neutralised.
    */
-  margin-left: auto;
   padding: 0;
   border: 0;
   background: none;
@@ -3691,10 +3713,15 @@ input::placeholder {
   transition: color 120ms ease;
 }
 
-/* The time keeps the far edge; the handoff sits just inside it. */
-.entry-head:has(.handoff-action) .entry-time {
-  margin-left: calc(var(--step) * 2);
-}
+/*
+ * The `:has(.handoff-action)` nudge on `.entry-time` is gone with the move.
+ *
+ * It existed to stop the time and the handoff both claiming the far edge of the
+ * head. Nothing shares that edge now, so the time is pinned by its own
+ * `margin-left: auto` alone — which is also what puts a reply with a handoff and
+ * one without back on the same line, the thing that rule was written to protect
+ * in the first place.
+ */
 
 .handoff-action:hover {
   color: var(--voice);

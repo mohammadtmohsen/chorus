@@ -554,28 +554,7 @@ export const Entry = memo(function Entry({
         actor={message.actor}
         at={message.kind === 'message' ? message.at : undefined}
         silent={grouped}
-      >
-        {/*
-          Offered on what was *said*, and only there.
-
-          It used to appear on every row an agent produced — including a notice,
-          where handing off "NOTE: tool_progress" means nothing — which is what
-          forced a head line onto grouped step rows just to hold it, and what
-          pushed the time out of line with the row above. A handoff carries a
-          message to the other agent; the rows that are not messages have none.
-        */}
-        {onHandOff !== undefined && message.kind === 'message' && message.status === 'complete' && (
-          <button
-            type="button"
-            className="handoff-action"
-            onClick={() => {
-              onHandOff(message)
-            }}
-          >
-            {t('handoff.action')}
-          </button>
-        )}
-      </EntryHead>
+      ></EntryHead>
       <div className="said" data-streaming={message.status === 'streaming'}>
         {message.kind === 'command' ? (
           /*
@@ -709,6 +688,35 @@ export const Entry = memo(function Entry({
         */}
         {message.summary !== undefined && <SummaryCard items={message.summary} />}
       </div>
+      {/*
+        Offered under the words, not beside the name.
+
+        Two rules decide where this goes. The first is what it is *for*: only a
+        message can be handed off — a notice saying "NOTE: tool_progress" carries
+        nothing to the other agent — which is why the condition is unchanged from
+        when it lived in the head.
+
+        The second is when you decide. It sat top-right, level with the speaker,
+        so the one control that moves a reply to the other agent was offered
+        before the reply had been read. Handing off is a judgement about what was
+        said; it belongs after the saying. Under the message it is also next to
+        the composer, which is the other thing you might do instead — reply
+        yourself — and those two choices now sit together rather than at opposite
+        ends of the row.
+      */}
+      {onHandOff !== undefined && message.kind === 'message' && message.status === 'complete' && (
+        <div className="entry-actions">
+          <button
+            type="button"
+            className="handoff-action"
+            onClick={() => {
+              onHandOff(message)
+            }}
+          >
+            {t('handoff.action')}
+          </button>
+        </div>
+      )}
     </article>
   )
 })
