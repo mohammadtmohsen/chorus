@@ -7,6 +7,79 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.13.0
+
+### The left side is a rail, not a stack of control panels
+
+A session used to be a card holding its title, state, agent toggles, profile,
+folder, plan mode, tasks, Summary, Review, cost, context, Restart and End — and
+the whole card was also a drag handle. One object doing navigation, configuration,
+monitoring and destruction at once.
+
+It is now a **collapsed quick rail** by default: one shortcut per session, four
+account readings, a terminal and settings. Open the drawer when you want to
+manage rather than navigate. A row is a row; hovering or focusing it opens a
+read-only preview, and every action lives in one menu behind `More` — with
+Restart and End below a divider, and End arming itself while an agent is working.
+
+Reordering is deliberate now rather than a consequence of touching a card. Drag a
+session to a tab strip, a pane, or any of the four edges to split; `Arrange` mode
+reorders the list and cannot reach the workspace. `Move Up` and `Move Down` do the
+same without a drag, and the result is announced for screen readers.
+
+### The transcript is rows, not boxes
+
+A turn is an unboxed row with a face beside it. The bubble is gone — a bubble
+around your own words claimed a two-sided conversation, which is the one thing
+this app is not. A turn's working folds to one line each, openable, and the final
+answer is marked so the conclusion does not read like more working.
+
+Below 720px the face used to be drawn **on top of the speaker's name**. The
+narrow layout was still positioning things by names the redesign had removed, so
+below that width the avatar and the name resolved to the same rectangle.
+
+### A drop target the size of the pane it will make
+
+Dragging a session to a pane edge drew a thin strip and left you to infer the
+result. It now fills the space the new pane will actually occupy — a half, or a
+quarter when you split an already-split pane — with the dashed edge marking the
+seam it opens along.
+
+### The mention menu is no longer clipped
+
+`@` and `/` opened a menu that the composer's dock cut off, so the list you were
+choosing from was cropped by the box you were typing in.
+
+### VS Code: a selection now says which version it is
+
+Sending a selection from a merge-request diff, or the left pane of a git diff,
+used to go out bare — `src/app.ts:120-134`, as though those were the lines on
+disk. They are not, and an agent told otherwise can only open the file and be
+wrong.
+
+The pill now reads `remembered · MR a1b2c3d`, and the message names the commit
+and how to see it: `git show a1b2c3d4e5f6:src/app.ts` is this version. Selections
+also survive looking at something that is not a file, and each Chorus window
+keeps its own root list rather than sharing one.
+
+**This needs extension 0.8.0**, and that extension cannot talk to an older
+Chorus. It says so plainly instead of failing quietly — a mismatch puts
+"Chorus: update Chorus" in the status bar.
+
+### Known gaps in this release
+
+**The rail's visual approval is still open.** The behaviour shipped and was
+reviewed; the pixel-parity pass against the supplied reference is not finished,
+and eight end-to-end specs are failing at these surfaces. Seven are assertions
+still describing the old sidebar. One is real and worth knowing: **the final
+answer in a turn is not actually brighter than the working around it.** The rule
+meant to do it assigns a colour every message already has, so the distinction is
+absent rather than subtle.
+
+**No real GitLab merge request has been opened against the new selection code.**
+Every claim about MR diffs rests on unit tests over captured URIs and an
+end-to-end fake that sends what a real window would send.
+
 ## 0.12.0
 
 ### There is a terminal in every session
