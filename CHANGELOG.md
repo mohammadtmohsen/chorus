@@ -7,6 +7,71 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.14.0
+
+### The rail says what kind of attention a session wants
+
+A session shortcut used to have one way of saying it needed you, whether an agent
+was blocked on a permission or had simply asked you something. Those are not the
+same interruption — one is stalled work, the other is a conversation — and
+Chorus has always known the difference internally without showing it.
+
+Now it shows: a **red triangle** when an agent is blocked waiting for you to
+approve a tool call, and a **blue square** when one has finished thinking and
+asked you a question. The tile itself takes the colour too, so you are scanning
+for a tile rather than for a dot on it. A session with both reports the approval
+first, because answering that unblocks an agent and the question will still be
+there afterwards.
+
+The count now says what it counts. "2 to approve" rather than "2 waiting".
+
+### A working session is visible from across the room
+
+The dot marking a working agent was 7px and dimmed slightly on a cycle, which is
+about as much signal as a dust speck. It is bigger, it pulses a ring in the
+working agent's own colour, and the tile's border carries a light that travels
+around it while the turn runs.
+
+### Nothing destructive happens on one click
+
+Restart and End used to ask unevenly. End would ask twice — but only while an
+agent was working, and only from some of the places it appears. Restart never
+asked at all, from anywhere. Both now open the same confirmation wherever you
+press them, and it tells you what you actually lose: whether a turn is in
+flight, and whether the conversation survives. It does, in both cases; ending
+keeps it in history.
+
+### The wait before an agent speaks is no longer a blank
+
+There is a gap between sending a message and the first words coming back — the
+provider connecting, context loading, a hook running. That gap showed one fixed
+word and three dots for however long it lasted, which made a slow start look
+indistinguishable from a stuck session. The row now works through a series of
+phrases while it waits, so a long pause reads as a long pause.
+
+### Smaller corrections
+
+- The rail's shortcuts and its account readings sit centred now. They were 16px
+  from the window's edge and 22px from the pane beside them, which read as a
+  column leaning left.
+- The account percentages line up on their right edges, so `6%` and `13%` can be
+  compared down the column instead of ending wherever their digits ran out.
+- Dragging a pane divider used to light a full-height white line, brighter than
+  anything else on screen. It is now the width of the gap it moves, inset from
+  the corners, and much quieter.
+- Restart and End in the hover card carry icons.
+
+### Known gaps in this release
+
+Unchanged from 0.13.0 and still open: the control rail's pixel-parity pass is
+unfinished, eight end-to-end specs are failing at those surfaces, and **the final
+answer in a turn is still not brighter than the working around it** — the rule
+meant to do it assigns a colour every message already has.
+
+The confirmation dialog, the rotating wait phrases and the travelling border were
+verified by their tests and by reading the rendered styles, not by driving them in
+the app.
+
 ## 0.13.0
 
 ### The left side is a rail, not a stack of control panels
