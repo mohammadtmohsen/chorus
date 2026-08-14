@@ -18,11 +18,13 @@ import {
   focusPane,
   moveTab,
   openSession,
+  placeSession,
   reconcileWorkspace,
   reorderTab,
   replaceSession,
   setBranchSizes,
   splitTab,
+  splitWithSession,
   tabLocation,
   type SplitDirection,
 } from './layout.js'
@@ -69,6 +71,19 @@ export interface SessionPulse {
    * replace semantics that is the only thing that says the last task finished.
    */
   readonly tasksByActor: Readonly<Record<string, readonly BackgroundTaskView[]>>
+  /**
+   * The last turn in this conversation ended badly.
+   *
+   * One of the four states a row draws, and the only one with no other source:
+   * waiting is a count of approvals, working is a list of actors, idle is the
+   * absence of both. `turn.completed` carries `status`, so this is folded from
+   * the log like the rest of the pulse rather than pushed.
+   *
+   * Cleared when a turn starts, not when the row is seen. A failure that
+   * disappeared because a pointer crossed it would be a state you could miss by
+   * looking at it.
+   */
+  readonly failed: boolean
 }
 
 /** One background task, as a card needs to draw it. */
@@ -98,6 +113,7 @@ const EMPTY_PULSE: SessionPulse = {
   costUsd: null,
   contextByActor: {},
   tasksByActor: {},
+  failed: false,
 }
 
 /**
@@ -109,6 +125,18 @@ const EMPTY_PULSE: SessionPulse = {
 export interface WorkspaceRuntime {
   readonly hydrated: boolean
   readonly pulses: Readonly<Record<string, SessionPulse>>
+  /**
+   * Which conversations are reading and reasoning only.
+   *
+   * It used to live inside the toggle that set it, which was fine while the
+   * toggle was the only thing that showed it. The preview shows it now, and the
+   * toggle is in a menu that unmounts — so a control's own `useState` would
+   * forget the mode every time the menu closed.
+   *
+   * Runtime rather than snapshot: a mode belongs to a running session, and a
+   * relaunch is a new one. Nothing here is persisted.
+   */
+  readonly planning: Readonly<Record<string, boolean>>
 }
 
 export interface WorkspaceActions {
@@ -126,6 +154,16 @@ export interface WorkspaceActions {
   reorderTab: (paneId: string, fromIndex: number, slotBefore: number) => void
   moveTab: (conversationId: string, targetPaneId: string, slotBefore: number) => void
   splitTab: (conversationId: string, targetPaneId: string, direction: SplitDirection) => void
+  /** Move an open session, or open a closed one, into a pane at a slot. */
+  placeSession: (conversationId: string, targetPaneId: string, slotBefore: number) => void
+  /** The same, into a new group beside the target. Refuses a fifth pane. */
+  splitWithSession: (
+    conversationId: string,
+    targetPaneId: string,
+    direction: SplitDirection
+  ) => void
+  /** What plan mode actually became, as the session reported it. */
+  setPlanning: (conversationId: string, planning: boolean) => void
   setBranchSizes: (path: readonly number[], sizes: readonly number[]) => void
   equalizeBranch: (path: readonly number[]) => void
   replaceSession: (previousId: string, nextId: string) => void
@@ -177,8 +215,29 @@ export function reducePulse(
   let questionIds = [...pulse.questionIds]
   let unread = visible ? 0 : pulse.unread
 
-  if (event.type === 'turn.started' && !working.includes(event.actor)) working.push(event.actor)
-  if (event.type === 'turn.completed') working = working.filter((actor) => actor !== event.actor)
+  let failed = pulse.failed
+  if (event.type === 'turn.started') {
+    if (!working.includes(event.actor)) working.push(event.actor)
+    failed = false
+  }
+  if (event.type === 'turn.completed') {
+    working = working.filter((actor) => actor !== event.actor)
+    /*
+     * Set, never cleared here.
+     *
+     * `interrupted` is not a failure: it is what stopping an agent looks like
+     * from the log's side, and marking the row failed for it would turn a
+     * deliberate Stop into an alarm. But this was an assignment, so *any*
+     * completion decided the flag — and a conversation has two agents in it. One
+     * failing and the other finishing normally a second later left a row that
+     * said idle, which is the one case where the state matters most: the reply
+     * you are waiting for never came and nothing on the rail says so.
+     *
+     * `turn.started` is the only thing that clears it, which is what the field's
+     * own comment already promised: a failure survives until the next turn.
+     */
+    if (event.payload['status'] === 'failed') failed = true
+  }
   if (event.type === 'approval.requested') {
     const id = pulseKey(event, 'approvalId')
     if (!approvalIds.includes(id)) approvalIds.push(id)
@@ -236,6 +295,7 @@ export function reducePulse(
     // not be able to erase what the context channel pushed.
     contextByActor: pulse.contextByActor,
     tasksByActor: pulse.tasksByActor,
+    failed,
   }
 }
 
@@ -258,11 +318,16 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       ...EMPTY_WORKSPACE,
       hydrated: false,
       pulses: {},
+      planning: {},
       hydrate: (saved, conversationIds, unreadByConversation = {}) => {
         const repaired = reconcileWorkspace(saved, conversationIds)
         set({
           ...repaired,
           hydrated: true,
+          // Restored sessions start out of plan mode, and the caller seeds the
+          // ones the runtime says are in it. Carrying a stale map through a
+          // second hydrate would claim a mode nothing had asked for.
+          planning: {},
           /*
            * Seeded with what happened while the app was closed.
            *
@@ -307,6 +372,21 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         update((current) => splitTab(current, conversationId, targetPaneId, direction))
         clearUnread(conversationId)
       },
+      placeSession: (conversationId, targetPaneId, slotBefore) => {
+        update((current) => placeSession(current, conversationId, targetPaneId, slotBefore))
+        clearUnread(conversationId)
+      },
+      splitWithSession: (conversationId, targetPaneId, direction) => {
+        update((current) => splitWithSession(current, conversationId, targetPaneId, direction))
+        clearUnread(conversationId)
+      },
+      setPlanning: (conversationId, planning) => {
+        set((state) =>
+          state.planning[conversationId] === planning
+            ? state
+            : { planning: { ...state.planning, [conversationId]: planning } }
+        )
+      },
       setBranchSizes: (path, sizes) => {
         update((current) => setBranchSizes(current, path, sizes))
       },
@@ -339,6 +419,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           return {
             ...next,
             pulses: without(state.pulses, conversationId),
+            planning: without(state.planning, conversationId),
             terminals: without(state.terminals, conversationId),
           }
         })

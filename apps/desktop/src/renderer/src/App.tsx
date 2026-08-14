@@ -12,6 +12,7 @@ import { HistoryPanel } from './HistoryPanel.js'
 import { Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
+import { reorderSessions } from './workspace/session-row.js'
 
 /**
  * Raises one banner, and makes clicking it land somewhere useful.
@@ -356,6 +357,19 @@ export function App(): React.JSX.Element {
             // saved when each card was last on screen.
             Object.fromEntries(reopened.map((session) => [session.conversationId, session.unread]))
           )
+          /*
+           * Plan mode, seeded after the hydrate that clears it.
+           *
+           * It used to live inside the toggle that set it, so nothing outside
+           * that one control could say whether a session was reading-only. The
+           * preview says it now, and the runtime is the only thing that knows —
+           * the mode belongs to a running agent, not to a saved file.
+           */
+          for (const session of reopened) {
+            if (session.planning) {
+              useWorkspaceStore.getState().setPlanning(session.conversationId, true)
+            }
+          }
           return merged
         })
       })
@@ -438,6 +452,61 @@ export function App(): React.JSX.Element {
     [applyRestart]
   )
 
+  /**
+   * An aside stops being a footnote and becomes a room.
+   *
+   * The list is refreshed from main rather than assembled here: promotion gives
+   * the conversation a profile, a title and a cwd, and guessing any of them in
+   * the renderer is how a tab ends up describing something other than what was
+   * opened.
+   */
+  const promoteAside = useCallback(
+    (asideId: string, profileId: string) => {
+      void (async () => {
+        try {
+          const promoted = await window.chorus.promoteAside({ asideId, profileId })
+          updateSessions((current) => [...current, promoted])
+          useWorkspaceStore.getState().openSession(promoted.conversationId)
+        } catch (error) {
+          fail(setError)(error)
+        }
+      })()
+    },
+    [updateSessions]
+  )
+
+  /**
+   * A session card dropped at a new place in the rail.
+   *
+   * The order is computed once, here, and the same value is both rendered and
+   * written down. Reading it back off `sessionsRef` to persist would write the
+   * order as it was *before* React applied the update — the list would look
+   * right until the next launch and then come back as it started.
+   */
+  const moveSession = useCallback(
+    (conversationId: string, slot: number) => {
+      const current = sessionsRef.current
+      const order = reorderSessions(
+        current.map((session) => session.conversationId),
+        conversationId,
+        slot
+      )
+      const byId = new Map(current.map((session) => [session.conversationId, session]))
+      const next = order.flatMap((id) => {
+        const session = byId.get(id)
+        return session === undefined ? [] : [session]
+      })
+      updateSessions(() => next)
+      window.chorus
+        .writeConversationLayout({
+          order: [...order],
+          workspace: workspaceSnapshot(useWorkspaceStore.getState()),
+        })
+        .catch(fail(setError))
+    },
+    [updateSessions]
+  )
+
   const endNow = useCallback(
     (conversationId: string) => {
       carries.current.delete(conversationId)
@@ -499,34 +568,6 @@ export function App(): React.JSX.Element {
     conversationId: string
     panel: 'review' | 'summary'
   } | null>(null)
-
-  const openPanel = useCallback((conversationId: string, panel: 'review' | 'summary') => {
-    useWorkspaceStore.getState().openSession(conversationId)
-    setPanelRequest({ conversationId, panel })
-  }, [])
-
-  /**
-   * An aside stops being a footnote and becomes a room.
-   *
-   * The list is refreshed from main rather than assembled here: promotion gives
-   * the conversation a profile, a title and a cwd, and guessing any of them in
-   * the renderer is how a tab ends up describing something other than what was
-   * opened.
-   */
-  const promoteAside = useCallback(
-    (asideId: string, profileId: string) => {
-      void (async () => {
-        try {
-          const promoted = await window.chorus.promoteAside({ asideId, profileId })
-          updateSessions((current) => [...current, promoted])
-          useWorkspaceStore.getState().openSession(promoted.conversationId)
-        } catch (error) {
-          fail(setError)(error)
-        }
-      })()
-    },
-    [updateSessions]
-  )
 
   /** What a conversation may do, changed from wherever the profile is shown. */
   const applyProfile = useCallback(
@@ -644,28 +685,6 @@ export function App(): React.JSX.Element {
    * back. Anything the caller forgot keeps its place at the end, so a stale
    * list cannot drop a live session.
    */
-  const reorderSessions = useCallback(
-    (order: readonly string[]) => {
-      const current = sessionsRef.current
-      const named = new Set(order)
-      const byId = new Map(current.map((session) => [session.conversationId, session]))
-      const next = [
-        ...order.flatMap((id) => {
-          const session = byId.get(id)
-          return session === undefined ? [] : [session]
-        }),
-        ...current.filter((session) => !named.has(session.conversationId)),
-      ]
-      updateSessions(() => next)
-      window.chorus
-        .writeConversationLayout({
-          order: next.map((session) => session.conversationId),
-          workspace: workspaceSnapshot(useWorkspaceStore.getState()),
-        })
-        .catch(fail(setError))
-    },
-    [updateSessions]
-  )
 
   const installed = (probes ?? []).filter((probe) => probe.installed).map((probe) => probe.id)
 
@@ -732,10 +751,24 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="stage">
+      {/*
+       * One compact row, and nothing in it but the name and the build.
+       *
+       * It was 40px of wrapping header with a padding rule that reserved the
+       * sidebar's width; it is 31px now, holds the wordmark and the version, and
+       * carries no actions — those all moved to the rail and the session menu.
+       * That is the whole of its job, plus two it does by existing: it is the
+       * window's drag region, and it is where `titleBarStyle: hiddenInset` puts
+       * the traffic lights, so nothing below it has to leave room for them.
+       */}
       <header className="masthead">
         <h1 className="wordmark">
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
-          {appVersion !== null && <span className="app-version">{appVersion}</span>}
+          {appVersion !== null && (
+            <span className="app-version" data-app-version>
+              {appVersion}
+            </span>
+          )}
         </h1>
       </header>
 
@@ -752,13 +785,10 @@ export function App(): React.JSX.Element {
         onRename={rename}
         onRestart={restart}
         onEnd={endNow}
-        onReorderSessions={reorderSessions}
         onCommitLayout={commitLayout}
+        onReorderSessions={moveSession}
         onOpenSettings={() => {
           setShowingSettings(true)
-        }}
-        onOpenHistory={() => {
-          setShowingHistory(true)
         }}
         profiles={profiles}
         installed={installed}
@@ -767,7 +797,6 @@ export function App(): React.JSX.Element {
         onSetFolder={setFolder}
         home={home}
         onChooseProfile={applyProfile}
-        onOpenPanel={openPanel}
         renderSession={(session, focused, paneId) => (
           <Session
             key={session.conversationId}
@@ -787,6 +816,14 @@ export function App(): React.JSX.Element {
             carry={carries.current.get(session.conversationId)}
             onCarry={keepCarry}
             onPromoteAside={promoteAside}
+            /* The same two handlers the session menu is given, so a button in
+               the composer and a row in the menu do one thing, not two. */
+            onRestart={() => {
+              restart(session.conversationId)
+            }}
+            onEnd={() => {
+              endNow(session.conversationId)
+            }}
           />
         )}
       />

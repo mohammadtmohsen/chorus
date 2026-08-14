@@ -1,5 +1,5 @@
 import { connect } from 'node:net'
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { wait } from './harness.mjs'
@@ -15,6 +15,18 @@ import { wait } from './harness.mjs'
  */
 
 const DESCRIPTOR_DIR = join(tmpdir(), 'chorus-ide')
+
+/**
+ * A path in the form the app publishes it, or unchanged when it cannot be
+ * resolved — a root that no longer exists is a mismatch, not a crash.
+ */
+function canonical(path) {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
 
 function descriptorNames() {
   try {
@@ -111,14 +123,36 @@ export class FakeIde {
     this.#socket.write(`${JSON.stringify(frame)}\n`)
   }
 
-  /** Wait until Chorus has told this window which roots it cares about. */
-  async awaitRoots(timeout = 15_000) {
+  /**
+   * Wait until Chorus has told this window which roots it cares about.
+   *
+   * Pass `expect` — the directory the spec just handed the conversation — and
+   * this becomes deterministic. Two places send `setRoots`: the handshake
+   * answers with whatever the bridge holds at that instant, and the real update
+   * lands later, when the runtime resyncs. `setProjectDirectory` resolving does
+   * *not* mean the bridge has the root yet, so the first frame can be empty or
+   * still carry a previous project. Accepting it made `const [root] = await
+   * awaitRoots()` yield `undefined`, and a `report()` against that root is
+   * filtered out by the bridge — the spec then times out on a pill that was
+   * never going to render, which reads as flake and is not.
+   *
+   * Compared through `realpathSync` because the app canonicalizes its roots and
+   * macOS reaches a temp dir through `/var`, a symlink to `/private/var`.
+   */
+  async awaitRoots(expect = null, timeout = 15_000) {
+    const wanted = expect === null ? null : canonical(expect)
     const deadline = Date.now() + timeout
     while (Date.now() < deadline) {
-      if (this.received.some((f) => f.method === 'setRoots')) return this.roots
+      const arrived = this.received.some((f) => f.method === 'setRoots')
+      if (arrived && wanted === null) return this.roots
+      if (arrived && this.roots.some((root) => canonical(root) === wanted)) return this.roots
       await wait(100)
     }
-    throw new Error('Chorus never sent setRoots')
+    throw new Error(
+      wanted === null
+        ? 'Chorus never sent setRoots'
+        : `Chorus never published ${wanted}; last roots were ${this.roots.join() || '(none)'}`
+    )
   }
 
   /** Report one file as the active editor for `root`. */

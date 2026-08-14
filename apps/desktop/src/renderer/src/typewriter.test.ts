@@ -81,8 +81,18 @@ describe('nextShown', () => {
     expect(elapsed).toBeLessThanOrEqual(DRAIN_MS + 32)
   })
 
+  /*
+   * Still typing rather than appearing.
+   *
+   * The threshold was 100ms against a 140ms drain window. The window is 80ms
+   * now — the plan's range, and the point below which motion stops reading as
+   * writing — so the claim this makes has to be the same claim measured against
+   * the current contract: several frames, not one. Asserting 100 against an
+   * 80ms window would only ever have been asserting the constant.
+   */
   it('takes a readable moment over a short one', () => {
     const { elapsed } = play(40)
-    expect(elapsed).toBeGreaterThan(100)
+    expect(elapsed).toBeGreaterThan(48)
+    expect(elapsed).toBeLessThanOrEqual(DRAIN_MS + 16)
   })
 })

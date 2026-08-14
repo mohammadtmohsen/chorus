@@ -1,4 +1,7 @@
+import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import type { AgentId } from '@chorus/shared'
+import type { SessionRowState } from './session-row.js'
 import {
   TERMINAL_HEIGHT,
   type TerminalPanelState,
@@ -8,7 +11,7 @@ import {
 
 /** Stable identity, so a selector returning it compares equal to itself. */
 const CLOSED_PANEL: TerminalPanelState = { open: false, height: TERMINAL_HEIGHT.default }
-import { tabLocation } from './layout.js'
+import { leafPaneIds, tabLocation } from './layout.js'
 import {
   useWorkspaceStore,
   type SessionPulse,
@@ -52,6 +55,9 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     reorderTab,
     moveTab,
     splitTab,
+    placeSession,
+    splitWithSession,
+    setPlanning,
     setBranchSizes,
     equalizeBranch,
     replaceSession,
@@ -77,6 +83,9 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     reorderTab,
     moveTab,
     splitTab,
+    placeSession,
+    splitWithSession,
+    setPlanning,
     setBranchSizes,
     equalizeBranch,
     replaceSession,
@@ -175,11 +184,75 @@ export function useSessionPulse(conversationId: string): SessionPulse | undefine
 }
 
 /**
- * Every pulse at once, for the things that count across sessions.
+ * How many sessions have an agent working in them, and nothing else.
  *
- * Returns the store's own object rather than deriving one, so the identity is
- * stable between unrelated renders and a consumer's `useMemo` actually holds.
+ * This replaced `useAllPulses()` in the shell. The old hook returned the whole
+ * pulse map, so *every* streamed delta changed the object it was compared
+ * against and re-rendered the workspace — which renders every mounted pane, and
+ * therefore every live transcript. A number cannot do that: a delta that does
+ * not change the count compares equal and nobody re-renders.
  */
-export function useAllPulses(): Readonly<Record<string, SessionPulse>> {
-  return useWorkspaceStore((state) => state.pulses)
+export function useWorkingSessionCount(): number {
+  return useWorkspaceStore(
+    (state) => Object.values(state.pulses).filter((pulse) => pulse.working.length > 0).length
+  )
+}
+
+/**
+ * What a rail shortcut or a drawer row actually draws.
+ *
+ * Deliberately not `useSessionPulse`. That returns the whole pulse including
+ * `lastSeq`, which changes on every event — so a row re-rendered on each token
+ * of a reply it was not showing a single character of. This omits `lastSeq`,
+ * the usage totals, the context map and the task list; a shallow compare over
+ * the four fields left is what makes an ordinary text delta cost nothing.
+ *
+ * `working` is a new array each time the store folds an event, so the shallow
+ * compare would still report a change — `useShallow` compares one level, and
+ * one level down is the array's identity. Joining it into a string is what
+ * makes the comparison actually about the value.
+ */
+export function useSessionRowState(conversationId: string): SessionRowState {
+  const flat = useWorkspaceStore(
+    useShallow((state: WorkspaceStore) => {
+      const pulse = state.pulses[conversationId]
+      return {
+        waiting: (pulse?.approvalIds.length ?? 0) + (pulse?.questionIds.length ?? 0),
+        working: (pulse?.working ?? []).join(','),
+        unread: pulse?.unread ?? 0,
+        failed: pulse?.failed ?? false,
+      }
+    })
+  )
+  return useMemo(
+    () => ({
+      waiting: flat.waiting,
+      working: flat.working === '' ? [] : (flat.working.split(',') as AgentId[]),
+      unread: flat.unread,
+      failed: flat.failed,
+    }),
+    [flat.waiting, flat.working, flat.unread, flat.failed]
+  )
+}
+
+/**
+ * Which conversations have a tab somewhere, as one comparable string.
+ *
+ * The list needs this to mark rows "open elsewhere", and it needs it once
+ * rather than once per row — twenty rows each walking the layout tree is twenty
+ * subscriptions to a value that is the same for all of them. A `Set` would be a
+ * new object on every store change and never compare equal, so the selector
+ * returns the primitive and the caller rebuilds the set behind a `useMemo`.
+ */
+export function useOpenConversationKey(): string {
+  return useWorkspaceStore((state) =>
+    leafPaneIds(state.layout)
+      .flatMap((paneId) => state.panes[paneId]?.tabs ?? [])
+      .join('\n')
+  )
+}
+
+/** Reading and reasoning only. Runtime state; it never survives a relaunch. */
+export function usePlanning(conversationId: string): boolean {
+  return useWorkspaceStore((state) => state.planning[conversationId] ?? false)
 }

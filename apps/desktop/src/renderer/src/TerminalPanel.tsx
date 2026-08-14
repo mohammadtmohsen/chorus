@@ -130,16 +130,25 @@ export function TerminalPanel(props: TerminalPanelProps): React.JSX.Element {
         <kbd className="terminal-shortcut" title={t('terminal.toggleHint')}>
           {props.shortcut}
         </kbd>
+        {/*
+          A mark rather than the word "Hide".
+
+          The header is 38px of chrome above a shell, and a text button in it
+          reads as another thing to consider. The chord beside it already says
+          how to do this from the keyboard; the accessible name still says the
+          word.
+        */}
         <button
           type="button"
           className="terminal-action"
+          aria-label={t('terminal.hide')}
           onClick={() => {
             props.onFocusAway()
             props.onClose()
           }}
           title={t('terminal.hide')}
         >
-          {t('terminal.hide')}
+          <span aria-hidden="true">×</span>
         </button>
       </div>
       <TerminalView

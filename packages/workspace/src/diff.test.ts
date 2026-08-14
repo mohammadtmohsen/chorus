@@ -142,3 +142,86 @@ rename to new.ts
     expect(parseDiff('')).toEqual([])
   })
 })
+
+/**
+ * The letter a change gets in a `Changes` card.
+ *
+ * From the headers git writes, never from the shape of the hunks: a rewritten
+ * file is all-additions too, so counting `+` lines calls it new. Each of these
+ * is a header that has to be read rather than skipped as noise.
+ */
+describe('file status', () => {
+  it('reads a created file from its mode line', () => {
+    const created = `diff --git a/new.ts b/new.ts
+new file mode 100644
+--- /dev/null
++++ b/new.ts
+@@ -0,0 +1,2 @@
++one
++two
+`
+    expect(parseDiff(created)[0]).toMatchObject({ status: 'added', added: 2, removed: 0 })
+  })
+
+  it('reads a deleted file from its mode line', () => {
+    const deleted = `diff --git a/gone.ts b/gone.ts
+deleted file mode 100644
+--- a/gone.ts
++++ /dev/null
+@@ -1,2 +0,0 @@
+-one
+-two
+`
+    expect(parseDiff(deleted)[0]).toMatchObject({ status: 'removed', added: 0, removed: 2 })
+  })
+
+  it('reads a rename from the two paths in the header', () => {
+    const renamed = `diff --git a/old.ts b/new.ts
+similarity index 92%
+rename from old.ts
+rename to new.ts
+`
+    expect(parseDiff(renamed)[0]).toMatchObject({
+      status: 'renamed',
+      oldPath: 'old.ts',
+      path: 'new.ts',
+    })
+  })
+
+  it('letters the exact patch adapter-claude synthesizes for a create', () => {
+    /*
+     * Byte-for-byte what `toUnifiedDiff(…, created)` writes, asserted there as a
+     * string. The two halves of one convention live in two packages that must
+     * not import each other — an adapter may not depend on the workspace — so
+     * the text is the contract, and this is the end that reads it.
+     */
+    const synthesized =
+      'diff --git a//repo/fresh.ts b//repo/fresh.ts\n' +
+      'new file mode 100644\n' +
+      '--- /dev/null\n' +
+      '+++ b//repo/fresh.ts\n' +
+      '@@ -0,0 +1,1 @@\n' +
+      '+a\n'
+    expect(parseDiff(synthesized)[0]).toMatchObject({ status: 'added', added: 1, removed: 0 })
+  })
+
+  it('calls an ordinary edit modified', () => {
+    const edited = `diff --git a/x.ts b/x.ts
+@@ -1 +1 @@
+-a
++b
+`
+    expect(parseDiff(edited)[0]).toMatchObject({ status: 'modified' })
+  })
+
+  it('does not call a rewritten file new just because every line is an addition', () => {
+    // The distinction the mode line exists for: same path, no mode line, all
+    // additions. Guessing from the hunks would letter this `A`.
+    const rewritten = `diff --git a/x.ts b/x.ts
+@@ -1,0 +1,2 @@
++one
++two
+`
+    expect(parseDiff(rewritten)[0]).toMatchObject({ status: 'modified' })
+  })
+})

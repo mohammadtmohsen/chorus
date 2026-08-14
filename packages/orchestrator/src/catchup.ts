@@ -159,12 +159,28 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
         break
       }
 
+      /*
+       * A proposal is not a change.
+       *
+       * This case used to be the one that reported files, and it fires when the
+       * operation *starts* — so a patch the user declined, or one that failed to
+       * apply, was replayed to the other agent as a file that had changed.
+       * `file.change.completed` carries the outcome, and it is what gets told.
+       */
       case 'file.change.proposed':
-        lines.push({
-          seq: event.seq,
-          kind: 'activity',
-          text: `· ${who} changed ${describeFiles(payload.files.map((f) => f.path))}`,
-        })
+        break
+
+      case 'file.change.completed':
+        // Only what landed. A declined patch is a file the other agent will find
+        // exactly as it left it, and saying otherwise sends it looking for work
+        // that was never done.
+        if (payload.outcome === 'applied') {
+          lines.push({
+            seq: event.seq,
+            kind: 'activity',
+            text: `· ${who} changed ${describeFiles(payload.files.map((f) => f.path))}`,
+          })
+        }
         break
 
       /*

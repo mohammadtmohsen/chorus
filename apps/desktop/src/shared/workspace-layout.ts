@@ -34,11 +34,27 @@ export type WorkspacePane = z.infer<typeof WorkspacePane>
  * Renderer-owned workspace state that is safe to write beside the open-session
  * note. It contains no transcript or draft content.
  */
-/** Matches `--sidebar` in `styles.css`, and the clamp the resize handle uses. */
-export const SIDEBAR_WIDTH = { default: 336, min: 240, max: 640 } as const
+/**
+ * Matches `--sidebar` in `styles.css`, and the clamp the resize handle uses.
+ *
+ * Narrowed from 336/240/640 when the drawer stopped being the daily state. It
+ * holds names, a search field and one overflow button now — everything that
+ * used to need 336px moved to the preview or the menu — and the ceiling is a
+ * ceiling because a temporary management panel should not be able to take half
+ * the window and stay there. A width persisted from the old range is clamped
+ * into this one on the way in.
+ */
+export const SIDEBAR_WIDTH = { default: 248, min: 220, max: 320 } as const
 
-/** Matches `--terminal-height` and the clamp the panel's grip uses. */
-export const TERMINAL_HEIGHT = { default: 240, min: 96, max: 720 } as const
+/**
+ * Matches `--terminal-height` and the clamp the panel's grip uses.
+ *
+ * 212 rather than 240: in a 900px window the panel sits between a transcript
+ * and a composer that is itself 180px, and 240 left the transcript with less
+ * room than the two things framing it. 212 holds ten lines of shell output at
+ * the terminal's own size, which is what the approved composition shows.
+ */
+export const TERMINAL_HEIGHT = { default: 212, min: 96, max: 720 } as const
 
 /** One panel's visibility and size. Not the shell — that lives in main. */
 export const TerminalPanelState = z.object({

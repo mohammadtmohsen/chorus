@@ -49,6 +49,24 @@ function printed(ref: string, chunk: string): StoredEvent {
   return did('command.output', { type: 'command.output', itemRef: ref, stream: 'stdout', chunk })
 }
 
+/** Files an agent actually changed, with how the patch ended. */
+function changed(n: number, outcome: 'applied' | 'failed' | 'declined' = 'applied'): StoredEvent {
+  return did('file.change.completed', {
+    type: 'file.change.completed',
+    itemRef: 'i1',
+    files: Array.from({ length: n }, (_, i) => ({
+      path: `src/f${String(i)}.ts`,
+      change: 'modified' as const,
+      added: 1,
+      removed: 0,
+      // Catch-up names files and never draws one, but the payload carries the
+      // diff the card renders — so the fixture has to be a real payload.
+      patch: `diff --git a/src/f${String(i)}.ts b/src/f${String(i)}.ts\n@@ -1 +1 @@\n-a\n+b\n`,
+    })),
+    outcome,
+  })
+}
+
 const PARTICIPANTS: AgentId[] = ['codex', 'claude']
 
 function catchup(
@@ -158,13 +176,25 @@ describe('composeCatchup', () => {
   })
 
   it('lists changed files, and counts them once the list gets long', () => {
-    const files = (n: number): { path: string; patch: string }[] =>
-      Array.from({ length: n }, (_, i) => ({ path: `src/f${String(i)}.ts`, patch: '' }))
-    const changed = (n: number): StoredEvent =>
-      did('file.change.proposed', { type: 'file.change.proposed', itemRef: 'i1', files: files(n) })
-
     expect(catchup([changed(2)])).toContain('· claude changed src/f0.ts, src/f1.ts')
     expect(catchup([changed(9)])).toContain('and 6 more')
+  })
+
+  it('reports what landed, not what was offered', () => {
+    /*
+     * `file.change.proposed` fires when the operation *starts*. Replaying it
+     * sent the other agent looking for edits the user had declined and edits
+     * that failed — both of which leave the file exactly as it was.
+     */
+    const proposed = did('file.change.proposed', {
+      type: 'file.change.proposed',
+      itemRef: 'i1',
+      files: [{ path: 'src/only.ts', patch: '' }],
+    })
+    expect(catchup([proposed])).not.toContain('src/only.ts')
+    expect(catchup([changed(1, 'declined')])).not.toContain('src/f0.ts')
+    expect(catchup([changed(1, 'failed')])).not.toContain('src/f0.ts')
+    expect(catchup([changed(1)])).toContain('· claude changed src/f0.ts')
   })
 
   it('replays a permission change, which is a fact about the room', () => {

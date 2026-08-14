@@ -122,6 +122,19 @@ export default tseslint.config(
     },
   },
 
+  /* A renderer *test* is not the renderer.
+     The rule above exists because an import that typechecks and then fails in a
+     sandboxed window is the worst possible failure mode. A `*.test.ts` has no
+     such window: vitest runs it in Node and it is never in the bundle. The one
+     thing that needs this is `theme.test.ts`, which reads `styles.css` off disk
+     so the contrast floors are checked against the sheet the app actually ships
+     rather than against a copy of its values kept in a test — which is exactly
+     how a palette drifts below AA with a passing suite. */
+  {
+    files: ['apps/desktop/src/renderer/**/*.test.{ts,tsx}'],
+    rules: { 'no-restricted-imports': 'off' },
+  },
+
   /* Tests may use console and loosen a few rules that fight fixtures. */
   {
     files: ['**/*.test.ts', '**/*.test.tsx', '**/test/**/*.ts'],

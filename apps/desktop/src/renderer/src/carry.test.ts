@@ -12,6 +12,7 @@ function carryOf(chars: number): SessionCarry {
         {
           key: 'm1',
           eventId: 'e1',
+          at: 0,
           actor: 'claude',
           kind: 'message',
           text: 'x'.repeat(chars),

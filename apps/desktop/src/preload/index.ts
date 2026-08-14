@@ -79,6 +79,7 @@ const api: ChorusApi = {
   renameConversation: invoke('conversation:rename'),
   chooseProjectDirectory: invoke('conversation:chooseCwd'),
   setProjectDirectory: invoke('conversation:setCwd'),
+  chooseDirectory: invoke('files:chooseDirectory'),
   readSettings: () => invoke('settings:read')({}),
   writeSettings: invoke('settings:write'),
   history: invoke('conversation:history'),

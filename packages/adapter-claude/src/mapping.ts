@@ -769,8 +769,24 @@ interface PatchHunk {
  * An absolute path makes the header read `a//tmp/x`, which looks odd and parses
  * correctly — `FILE_HEADER` captures everything after `a/`.
  */
-function toUnifiedDiff(filePath: string, hunks: readonly PatchHunk[]): string {
+function toUnifiedDiff(
+  filePath: string,
+  hunks: readonly PatchHunk[],
+  /**
+   * A created file has to *say* it was created.
+   *
+   * Without the mode line a new file is a diff whose every line is an addition,
+   * which is indistinguishable from rewriting an existing one — so anything
+   * deriving a status letter from the patch reads `M` where the file is new.
+   * `/dev/null` on the old side is the other half of the convention, and both
+   * are what `git` itself writes.
+   */
+  created = false
+): string {
   const out: string[] = [`diff --git a/${filePath} b/${filePath}`]
+  if (created) {
+    out.push('new file mode 100644', '--- /dev/null', `+++ b/${filePath}`)
+  }
   for (const h of hunks) {
     out.push(
       `@@ -${String(h.oldStart)},${String(h.oldLines)} ` +
@@ -834,15 +850,19 @@ function readPatch(result: unknown): { patch: string; omittedLines?: number } | 
   const omitted = all.length - shown.length
 
   return {
-    patch: toUnifiedDiff(filePath, [
-      {
-        oldStart: 0,
-        oldLines: 0,
-        newStart: 1,
-        newLines: shown.length,
-        lines: shown.map((l) => `+${l}`),
-      },
-    ]),
+    patch: toUnifiedDiff(
+      filePath,
+      [
+        {
+          oldStart: 0,
+          oldLines: 0,
+          newStart: 1,
+          newLines: shown.length,
+          lines: shown.map((l) => `+${l}`),
+        },
+      ],
+      true
+    ),
     ...(omitted > 0 ? { omittedLines: omitted } : {}),
   }
 }

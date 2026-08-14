@@ -20,13 +20,26 @@ import { nextShown, paceFor } from './typewriter.js'
  */
 const STALL_MS = 1_000
 
-export function useTypewriter(text: string, startWhole: boolean): string {
+/**
+ * @param complete The message has finished arriving, so there is nothing left
+ *   to smooth. The authoritative text is shown at once rather than paced out:
+ *   a reveal that continues after the agent has stopped is the app saying it is
+ *   behind, and it is behind *nothing* — the text is already here. This is the
+ *   half of the contract that used to be missing, and `DRAIN_MS` was carrying
+ *   it by being small rather than by being right.
+ */
+export function useTypewriter(text: string, startWhole: boolean, complete = false): string {
   const [shown, setShown] = useState(startWhole ? text.length : 0)
   const position = useRef(shown)
   /** Fixed when new text arrives, so the tail does not crawl. */
   const perSecond = useRef(paceFor(text.length))
 
   useEffect(() => {
+    if (complete && position.current < text.length) {
+      position.current = text.length
+      setShown(text.length)
+      return
+    }
     if (position.current >= text.length) {
       // Nothing new, or the message was replaced by a shorter one.
       position.current = Math.min(position.current, text.length)
@@ -98,7 +111,7 @@ export function useTypewriter(text: string, startWhole: boolean): string {
       cancelAnimationFrame(frame)
       clearInterval(watchdog)
     }
-  }, [text])
+  }, [text, complete])
 
   return text.slice(0, shown)
 }

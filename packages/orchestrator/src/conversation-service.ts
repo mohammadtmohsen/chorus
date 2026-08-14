@@ -645,6 +645,23 @@ export class ConversationService {
         })
         return
 
+      case 'file.change.completed':
+        this.lifecycle({
+          type: 'file.change.completed',
+          itemRef: event.itemRef,
+          files: event.files.map((f) => ({
+            path: f.path,
+            ...(f.oldPath === undefined ? {} : { oldPath: f.oldPath }),
+            change: f.change,
+            added: f.added,
+            removed: f.removed,
+            patch: f.patch,
+            ...(f.omittedLines === undefined ? {} : { omittedLines: f.omittedLines }),
+          })),
+          outcome: event.outcome,
+        })
+        return
+
       case 'diff.updated':
         this.lifecycle({ type: 'diff.updated', unifiedDiff: event.unifiedDiff })
         return

@@ -7,6 +7,8 @@ import {
   type UserInputResponse,
 } from '@chorus/agent-protocol'
 import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
+import type { PatchApplyStatus } from './generated/v2/PatchApplyStatus.js'
+import type { PatchChangeKind } from './generated/v2/PatchChangeKind.js'
 
 /**
  * Codex notifications → the normalized `AgentEvent` union.
@@ -37,7 +39,18 @@ export interface ThreadItem {
   command?: string[] | string
   cwd?: string
   exitCode?: number | null
-  changes?: { path: string; diff?: string; patch?: string }[]
+  /*
+   * `kind` and `status` are typed by the generated bindings rather than restated
+   * here, which is the point: they are the two fields this file used to drop on
+   * the floor, and a hand-written copy of an enum is how that happens. If Codex
+   * adds an arm to either, regenerating turns the switches below into compile
+   * errors instead of into a silent default.
+   *
+   * Everything else stays optional and loosely read, because the CLI on the
+   * machine can be older or newer than the bindings in the repo.
+   */
+  changes?: { path: string; diff?: string; patch?: string; kind?: PatchChangeKind }[]
+  status?: PatchApplyStatus
   summary?: string[]
   steps?: { text?: string; step?: string; completed?: boolean; status?: string }[]
 }
@@ -245,7 +258,13 @@ function mapItem(
               patch: c.diff ?? c.patch ?? '',
             })),
           }
-        : null
+        : {
+            ...base,
+            type: 'file.change.completed',
+            itemRef: item.id,
+            files: (item.changes ?? []).map(normalizeChange),
+            outcome: mapPatchStatus(item.status),
+          }
 
     // userMessage echoes what we already logged; reasoning and plan arrive as
     // their own delta streams.
@@ -456,6 +475,197 @@ function record(value: unknown): Record<string, unknown> {
 
 function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
+}
+
+/**
+ * One of Codex's file changes, in the protocol's own terms.
+ *
+ * Two things stop here rather than crossing the adapter boundary.
+ *
+ * **`PatchChangeKind`**, because it is a tagged object whose rename is expressed
+ * as an `update` carrying `move_path`. Letting it through would put Codex's
+ * spelling of "rename" into everyone's types.
+ *
+ * **The direction of a rename**, which is the easy thing to get backwards:
+ * `path` is where the file *was* and `move_path` is where it *went*, so the two
+ * cross on the way out. Both are strings, so swapping them fails nothing at the
+ * type level and everything on screen.
+ */
+function normalizeChange(change: {
+  path: string
+  diff?: string
+  patch?: string
+  kind?: PatchChangeKind
+}): {
+  path: string
+  oldPath?: string
+  change: 'added' | 'removed' | 'modified' | 'renamed'
+  added: number
+  removed: number
+  patch: string
+  omittedLines?: number
+} {
+  const body = change.diff ?? change.patch ?? ''
+  const kind = change.kind
+
+  if (kind?.type === 'add') {
+    return {
+      path: change.path,
+      change: 'added',
+      ...countBody(body, 'added'),
+      ...wholeFilePatch(change.path, body, 'added'),
+    }
+  }
+  if (kind?.type === 'delete') {
+    return {
+      path: change.path,
+      change: 'removed',
+      ...countBody(body, 'removed'),
+      ...wholeFilePatch(change.path, body, 'removed'),
+    }
+  }
+  if (kind?.type === 'update' && typeof kind.move_path === 'string' && kind.move_path !== '') {
+    return {
+      path: kind.move_path,
+      oldPath: change.path,
+      change: 'renamed',
+      ...countDiff(body),
+      patch: withHeader(change.path, kind.move_path, body),
+    }
+  }
+  // No `kind` at all is an older CLI than the bindings: an edit is the safe
+  // reading, and the counts still come out of whatever body arrived.
+  return {
+    path: change.path,
+    change: 'modified',
+    ...countDiff(body),
+    patch: withHeader(change.path, change.path, body),
+  }
+}
+
+/**
+ * How much of a whole file is worth showing when it was added or deleted.
+ *
+ * The same number and the same reasoning as `adapter-claude`'s create path: a
+ * long block fills the pane and scrolls the row that says which file it belongs
+ * to off the top, so the diff loses the one thing identifying it. Enough to
+ * recognise a file beats enough to read it, and the omitted count carries the
+ * rest honestly.
+ */
+const MAX_WHOLE_FILE_LINES = 12
+
+/**
+ * A header, so `parseDiff` can read what Codex sent.
+ *
+ * An `update` arrives as a bare unified body — hunks and nothing else — and
+ * `parseDiff` skips every line until it sees `diff --git`. Without this the diff
+ * is not "wrong", it is *absent*: zero files, zero counts, an empty card.
+ *
+ * A body that already carries its own header is left alone, because a future CLI
+ * sending a complete diff should not have a second one stapled to it.
+ */
+function withHeader(oldPath: string, path: string, body: string): string {
+  if (body === '') return ''
+  if (/^diff --git /m.test(body)) return body
+  const header = [`diff --git a/${oldPath} b/${path}`]
+  if (oldPath !== path) header.push(`rename from ${oldPath}`, `rename to ${path}`)
+  return `${header.join('\n')}\n${body}`
+}
+
+/**
+ * A whole file, as a diff of it appearing or disappearing.
+ *
+ * Codex sends the file's *content* for an add or a delete, not a diff — so the
+ * one has to be built from the other, with the mode line that lets a status
+ * letter be read back off it. Bounded, and the bound is reported: a card that
+ * silently showed the first twelve lines of a four-hundred-line file would be
+ * lying about what the turn wrote.
+ */
+function wholeFilePatch(
+  path: string,
+  body: string,
+  side: 'added' | 'removed'
+): { patch: string; omittedLines?: number } {
+  if (body === '') return { patch: '' }
+  if (/^@@ /m.test(body)) return { patch: withHeader(path, path, body) }
+
+  const all = body.replace(/\n$/, '').split('\n')
+  const shown = all.slice(0, MAX_WHOLE_FILE_LINES)
+  const omitted = all.length - shown.length
+  const sign = side === 'added' ? '+' : '-'
+  const mode = side === 'added' ? 'new file mode 100644' : 'deleted file mode 100644'
+  const from = side === 'added' ? '/dev/null' : `a/${path}`
+  const to = side === 'added' ? `b/${path}` : '/dev/null'
+  const range =
+    side === 'added'
+      ? `@@ -0,0 +1,${String(shown.length)} @@`
+      : `@@ -1,${String(shown.length)} +0,0 @@`
+
+  return {
+    patch: [
+      `diff --git a/${path} b/${path}`,
+      mode,
+      `--- ${from}`,
+      `+++ ${to}`,
+      range,
+      ...shown.map((line) => `${sign}${line}`),
+      '',
+    ].join('\n'),
+    ...(omitted > 0 ? { omittedLines: omitted } : {}),
+  }
+}
+
+/**
+ * The `+`/`−` lines of a unified diff.
+ *
+ * `+++`/`---` are file headers rather than content — counting them adds one to
+ * every file that happens to arrive with them, which is a number nobody can
+ * explain later.
+ */
+function countDiff(body: string): { added: number; removed: number } {
+  let added = 0
+  let removed = 0
+  for (const line of body.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('+')) added += 1
+    else if (line.startsWith('-')) removed += 1
+  }
+  return { added, removed }
+}
+
+/**
+ * A whole file's worth of lines, on the side the change happened.
+ *
+ * An `add` and a `delete` carry the file's *content* where an `update` carries
+ * hunks — so parsing the body as a diff would return zero for exactly the two
+ * kinds whose numbers are the largest. A body that does turn out to be a diff is
+ * counted as one, since which of the two arrives has changed between CLI
+ * versions before.
+ */
+function countBody(body: string, side: 'added' | 'removed'): { added: number; removed: number } {
+  if (/^@@ /m.test(body)) return countDiff(body)
+  const lines = body === '' ? 0 : body.replace(/\n$/, '').split('\n').length
+  return side === 'added' ? { added: lines, removed: 0 } : { added: 0, removed: lines }
+}
+
+/** Whether the patch landed. Anything not `completed` did not. */
+function mapPatchStatus(status: PatchApplyStatus | undefined): 'applied' | 'failed' | 'declined' {
+  switch (status) {
+    case 'completed':
+      return 'applied'
+    case 'declined':
+      return 'declined'
+    case 'failed':
+      return 'failed'
+    /*
+     * `inProgress` on a *completed* item means the CLI told us the operation
+     * finished without saying how. Reporting that as applied would put a file in
+     * a card on the strength of a missing field.
+     */
+    case 'inProgress':
+    case undefined:
+      return 'failed'
+  }
 }
 
 function normalizeCommand(command: unknown): string[] {

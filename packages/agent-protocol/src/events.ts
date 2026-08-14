@@ -76,6 +76,48 @@ export interface FileChangeProposed extends AgentEventBase {
 }
 
 /**
+ * What a file operation actually did, as opposed to what it offered to do.
+ *
+ * `file.change.proposed` is raised when the operation *starts*, so a patch the
+ * user declined or one that failed to apply looks exactly like one that landed.
+ * Anything claiming to show what a turn changed has to read this instead.
+ *
+ * **The counts are computed in the adapter, and the patch is normalized there
+ * too.** Codex's own `diff` field is not uniformly a diff — an `add` and a
+ * `delete` carry the raw file, and only an `update` carries hunks, without the
+ * `diff --git` header `parseDiff` needs. Parsed downstream it yields nothing at
+ * all: no files, no counts, an empty card. So the adapter does the arithmetic
+ * and hands on a patch that is git-format by construction, which is what lets
+ * one renderer draw both providers' edits.
+ *
+ * `change` is provider-neutral for the same reason `kind` does not appear here:
+ * Codex's `PatchChangeKind` is a tagged object carrying `move_path`, and letting
+ * it through would put one provider's spelling of "rename" in everyone's types.
+ */
+export interface FileChangeCompleted extends AgentEventBase {
+  readonly type: 'file.change.completed'
+  readonly itemRef: string
+  readonly files: readonly {
+    readonly path: string
+    /** Set only for a rename: where the file was before it moved. */
+    readonly oldPath?: string
+    readonly change: 'added' | 'removed' | 'modified' | 'renamed'
+    readonly added: number
+    readonly removed: number
+    /** git-format, so one parser reads every provider's edits. */
+    readonly patch: string
+    /** Lines left out of `patch` to keep a whole added or deleted file bounded. */
+    readonly omittedLines?: number
+  }[]
+  /**
+   * `failed` and `declined` are kept apart deliberately. A patch the user
+   * refused and one that broke are the same to a card that draws neither, and
+   * completely different to anyone asking why the file is unchanged.
+   */
+  readonly outcome: 'applied' | 'failed' | 'declined'
+}
+
+/**
  * Codex emits an aggregate turn diff natively; for Claude the workspace service
  * derives it from git. Same event either way (plan §4.2).
  */
@@ -322,6 +364,7 @@ export type AgentEvent =
   | CommandOutput
   | CommandCompleted
   | FileChangeProposed
+  | FileChangeCompleted
   | DiffUpdated
   | ApprovalRequested
   | UserInputRequested
@@ -349,6 +392,10 @@ const UNDROPPABLE = new Set<AgentEventType>([
   'command.started',
   'command.completed',
   'file.change.proposed',
+  // The proposal is already undroppable, so dropping the result would leave the
+  // one pairing worse than losing both: "about to change this file", and never
+  // whether it did.
+  'file.change.completed',
   'error',
   // A dropped start leaves a row that never appears; a dropped completion
   // leaves one spinning forever. `tool.progress` is the only part that repeats.

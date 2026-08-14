@@ -146,6 +146,35 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     itemRef,
     files: z.array(z.object({ path: z.string(), patch: z.string() })),
   }),
+  /*
+   * What the operation did, as opposed to what it offered to do.
+   *
+   * Counts rather than a patch: an adapter is the last place that still knows
+   * how its provider spells a diff, and Codex's is raw file content for an add
+   * and headerless hunks for an update — so counting downstream produces zeros.
+   * The diff for a turn is `diff.updated`.
+   */
+  z.object({
+    type: z.literal('file.change.completed'),
+    itemRef,
+    files: z.array(
+      z.object({
+        path: z.string(),
+        oldPath: z.string().optional(),
+        change: z.enum(['added', 'removed', 'modified', 'renamed']),
+        added: z.number().int(),
+        removed: z.number().int(),
+        /*
+         * Defaulted, not required: rows appended before the card drew diffs
+         * carry none, and the log is append-only — a schema that refused them
+         * would refuse the conversations that are already on disk.
+         */
+        patch: z.string().default(''),
+        omittedLines: z.number().int().optional(),
+      })
+    ),
+    outcome: z.enum(['applied', 'failed', 'declined']),
+  }),
   z.object({ type: z.literal('diff.updated'), unifiedDiff: z.string() }),
 
   z.object({

@@ -19,6 +19,9 @@
     "thinking": "thinking",
     "messageLabel": "Message",
     "placeholder": "Say something. Type @ to choose who answers.",
+    "attach": "Attach a file",
+    "mentionCast": "Choose who answers",
+    "mentionFile": "Refer to a file",
     "send": "Send",
     "steer": "Send — the agent keeps working and takes this in",
     "moreLines": "+{{count}} more",
@@ -51,7 +54,17 @@
     "translateThis": "Translate",
     "lookingUp": "Looking…",
     "noneFound": "Nothing to offer yet",
-    "lookupUnavailable": "No file search here — this folder is not a git repository"
+    "lookupUnavailable": "No file search here — this folder is not a git repository",
+    "placeholderOne": "Ask {{agent}}…",
+    "placeholderTwo": "Ask {{first}} or {{second}}…",
+    "addContext": "Add context",
+    "addFile": "File…",
+    "addFolder": "Folder…",
+    "addSelection": "Current selection",
+    "addSelectionDetail": "Include what VS Code has open",
+    "settings": "Session settings",
+    "endArmed": "An agent is working — press again to end this session",
+    "includedMenu": "What goes with this message"
   },
   "workspace": {
     "sessions": "Sessions",
@@ -75,7 +88,7 @@
     "restart": "Restart Session",
     "end": "End Session",
     "endConfirm": "An agent is still working. End this session?",
-    "moveHere": "MOVE HERE",
+    "moveHere": "Move here",
     "split": {
       "up": "Split Up",
       "down": "Split Down",
@@ -83,11 +96,12 @@
       "right": "Split Right"
     },
     "dropSplit": {
-      "up": "SPLIT UP",
-      "down": "SPLIT DOWN",
-      "left": "SPLIT LEFT",
-      "right": "SPLIT RIGHT"
-    }
+      "up": "Split up",
+      "down": "Split down",
+      "left": "Split left",
+      "right": "Split right"
+    },
+    "noMatches": "No session matches that."
   },
   "settings": {
     "open": "Settings",
@@ -120,6 +134,9 @@
     "show": "Show sessions",
     "hide": "Hide sessions",
     "usage": "{{agent}}: {{percent}}% of the {{window}} window used — resets {{reset}}",
+    "usageUnreported": "{{agent}}: the {{window}} window has not been reported yet",
+    "week": "Week",
+    "notReported": "not reported yet",
     "refresh": "Re-check account usage"
   },
   "attachments": {
@@ -238,8 +255,15 @@
     "send": "Send answer",
     "dismiss": "Dismiss"
   },
+  "actor": {
+    "user": "You",
+    "codex": "Codex",
+    "claude": "Claude",
+    "system": "System"
+  },
   "ide": {
     "heading": "VS Code context",
+    "editor": "VS Code",
     "unsaved": "unsaved buffer",
     "on": "Included",
     "off": "Excluded",
@@ -302,6 +326,25 @@
     },
     "hooksFolded_one": "{{count}} hook spoke",
     "hooksFolded_other": "{{count}} hooks spoke"
+  },
+  "summaryCard": {
+    "heading": "Summary"
+  },
+  "changes": {
+    "heading": "Changes",
+    "letter": {
+      "added": "A",
+      "removed": "D",
+      "modified": "M",
+      "renamed": "R"
+    },
+    "of": {
+      "added": "Added",
+      "removed": "Deleted",
+      "modified": "Modified",
+      "renamed": "Renamed from {{from}}"
+    },
+    "wrote": "{{added}} added, {{removed}} removed — what this turn wrote, not the net diff"
   },
   "tool": {
     "running": "Running",
@@ -403,5 +446,40 @@
     "toggleHint": "Toggle this terminal",
     "shortcutSession": "⌘J",
     "shortcutGlobal": "⌘⇧J"
+  },
+  "rail": {
+    "label": "Sessions, terminal and settings"
+  },
+  "state": {
+    "idle": "idle",
+    "working": "working",
+    "waiting": "waiting for you",
+    "failed": "last turn failed",
+    "active": "showing now"
+  },
+  "preview": {
+    "participants": "Agents",
+    "profile": "May do",
+    "plan": "Plan mode",
+    "planOn": "Plan only",
+    "planOff": "Off",
+    "spend": "Used",
+    "context": "Context",
+    "tasks": "Running"
+  },
+  "menu": {
+    "label": "Actions for {{title}}",
+    "more": "More actions for {{title}}",
+    "settings": "Session settings",
+    "back": "Back",
+    "openInPane": "Open in Pane",
+    "moveUp": "Move Up",
+    "moveDown": "Move Down"
+  },
+  "arrange": {
+    "toggle": "Arrange sessions",
+    "hint": "Drag a session by its grip to reorder. Escape leaves Arrange.",
+    "notWhileSearching": "Clear the search to arrange sessions",
+    "moved": "{{title}} moved to position {{position}} of {{count}}"
   }
 }

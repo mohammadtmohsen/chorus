@@ -599,6 +599,20 @@ export const IPC_CONTRACT = {
     response: z.object({ path: z.string() }),
   },
 
+  /**
+   * A folder to attach, chosen from a real dialog.
+   *
+   * Deliberately not `conversation:chooseCwd`, which opens the same dialog and
+   * then **sets the project directory**. Attaching a folder and moving the
+   * project are different intentions, and one control doing both silently is the
+   * kind of thing nobody notices until an agent is working in the wrong tree.
+   * This one takes no conversation and changes no state; it returns a path.
+   */
+  'files:chooseDirectory': {
+    request: z.void(),
+    response: z.object({ path: z.string().nullable() }),
+  },
+
   /** Enough to show an attachment: its name, its size, and a preview if it has one. */
   'files:preview': {
     request: z.object({ path: z.string() }),
@@ -1234,6 +1248,8 @@ export interface ChorusApi {
     request: IpcRequest<'files:preview'>
   ) => Promise<IpcResponse<'files:preview'>>
   readonly stashFile: (request: IpcRequest<'files:stash'>) => Promise<IpcResponse<'files:stash'>>
+  /** Opens a folder chooser and returns what was picked, or null if cancelled. */
+  readonly chooseDirectory: () => Promise<IpcResponse<'files:chooseDirectory'>>
   /** The real path of a dropped file; `File.path` was removed in Electron 32. */
   readonly pathForFile: (file: File) => string
   readonly writeConversationLayout: (

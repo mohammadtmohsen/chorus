@@ -23,11 +23,19 @@ export type SplitDirection = 'left' | 'right' | 'up' | 'down'
 /** Four readable editor groups; conversations beyond this remain available as tabs. */
 export const MAX_PANES = 4
 
+/*
+ * A fresh install opens collapsed.
+ *
+ * The 60px rail is the primary state, not the fallback one: every session is
+ * reachable from it in a stable place, and the drawer is opened to search or
+ * manage and closed again. Starting with the drawer open would teach the
+ * opposite on the one launch that teaches anything.
+ */
 export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   layout: null,
   panes: {},
   focusedPaneId: null,
-  sidebarHidden: false,
+  sidebarHidden: true,
   sidebarWidth: SIDEBAR_WIDTH.default,
   terminals: {},
   globalTerminal: { open: false, height: TERMINAL_HEIGHT.default },
@@ -379,6 +387,76 @@ export function splitTab(
     panes: {
       ...workspace.panes,
       [source.paneId]: withoutTab(sourcePane, conversationId),
+      [newPaneId]: { id: newPaneId, tabs: [conversationId], activeTabId: conversationId },
+    },
+    focusedPaneId: newPaneId,
+  })
+}
+
+/**
+ * Put a session in a pane, whether or not it is already open.
+ *
+ * The rail and the drawer can drag a session that has no tab anywhere, which
+ * `moveTab` cannot express — it starts by looking the tab up and gives up when
+ * there isn't one. Splitting the difference at the call site would mean the
+ * drag handler deciding which of two operations a drop is, and the invariant
+ * that matters ("one live session appears once") would then live in a component.
+ *
+ * So it lives here. An open session moves; a closed one is inserted. Neither
+ * path can produce two tabs for one conversation, because the moving path is
+ * still `moveTab` and the inserting path only runs when there is no tab to find.
+ */
+export function placeSession(
+  workspace: WorkspaceSnapshot,
+  conversationId: string,
+  targetPaneId: string,
+  slotBefore: number
+): WorkspaceSnapshot {
+  if (tabLocation(workspace, conversationId) !== null) {
+    return moveTab(workspace, conversationId, targetPaneId, slotBefore)
+  }
+  const target = workspace.panes[targetPaneId]
+  if (target === undefined) return workspace
+  const tabs = [...target.tabs]
+  tabs.splice(Math.max(0, Math.min(slotBefore, tabs.length)), 0, conversationId)
+  return {
+    ...workspace,
+    panes: {
+      ...workspace.panes,
+      [targetPaneId]: { ...target, tabs, activeTabId: conversationId },
+    },
+    focusedPaneId: targetPaneId,
+  }
+}
+
+/**
+ * Split a pane and put a session — open or not — in the new group.
+ *
+ * The four-pane ceiling is enforced here rather than by the caller, and the
+ * arithmetic differs from `splitTab`'s: a closed session leaves no pane behind,
+ * so nothing can disappear to make room. A fourth pane is therefore the last
+ * one a rail drag can create, which is what the disabled drop target says.
+ */
+export function splitWithSession(
+  workspace: WorkspaceSnapshot,
+  conversationId: string,
+  targetPaneId: string,
+  direction: SplitDirection,
+  requestedNewPaneId?: string
+): WorkspaceSnapshot {
+  if (tabLocation(workspace, conversationId) !== null) {
+    return splitTab(workspace, conversationId, targetPaneId, direction, requestedNewPaneId)
+  }
+  if (workspace.panes[targetPaneId] === undefined || workspace.layout === null) return workspace
+  if (leafPaneIds(workspace.layout).length + 1 > MAX_PANES) return workspace
+
+  const newPaneId = requestedNewPaneId ?? nextPaneId(workspace)
+  if (workspace.panes[newPaneId] !== undefined) return workspace
+  return normalizeWorkspace({
+    ...workspace,
+    layout: insertSplit(workspace.layout, targetPaneId, newPaneId, direction),
+    panes: {
+      ...workspace.panes,
       [newPaneId]: { id: newPaneId, tabs: [conversationId], activeTabId: conversationId },
     },
     focusedPaneId: newPaneId,

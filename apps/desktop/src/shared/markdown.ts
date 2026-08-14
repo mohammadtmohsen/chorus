@@ -767,3 +767,92 @@ function continuesBlock(opener: string | undefined, lines: readonly string[], at
     matchListItem(expandLeadingTabs(next)) !== null || leadingWidth(expandLeadingTabs(next)) >= 2
   )
 }
+
+/**
+ * A trailing `## Summary` section, lifted out of a reply.
+ *
+ * The approved composition draws a `Summary` card under an agent's answer, and
+ * nothing in the event log can produce one: `SummaryPanel`'s own comment says
+ * the log cannot answer "was the work any good, what is missing, what next".
+ * So the card is a **convention** — an agent that ends its reply with a
+ * `Summary` heading and a bullet list gets one — rather than a contract the app
+ * can enforce. Most turns will have none, and that is the honest cost of not
+ * inventing an event.
+ *
+ * Three rules, and each exists because a looser one is wrong:
+ *
+ * - **The heading is at column zero.** `HEADING` allows three leading spaces,
+ *   and an indented heading is a child of the list item above it — so
+ *   `- Example:` / `  ## Summary` / `  - not a summary` would be lifted out of a
+ *   list. A scanner cannot establish "top level" by looking at the tail, and
+ *   requiring column zero is what makes the tail's parse trustworthy.
+ * - **Fences are matched, not toggled.** The opening marker's character and
+ *   length are remembered, so a longer or different fence inside a block does
+ *   not close it early and leave the rest read as prose.
+ * - **The tail must parse as exactly a heading and an unordered list.** That
+ *   rejects a heading with prose after it, a numbered list (a different thing,
+ *   which should stay in the body), and `> ## Summary`, which parses as a quote
+ *   and never as a heading.
+ *
+ * Returns the **cut offset** rather than a rebuilt body: the caller keeps
+ * `source.slice(0, cut)`, an exact prefix of what the agent wrote, so nothing is
+ * re-serialized and no blank line can be lost.
+ */
+export function trailingSummary(source: string): { cut: number; items: string[] } | null {
+  const lines = source.split('\n')
+  let offset = 0
+  let fence: { char: string; length: number } | null = null
+  let candidate: number | null = null
+
+  for (const line of lines) {
+    const opener = FENCE.exec(line)
+    if (opener !== null) {
+      const marker = opener[1] ?? ''
+      const char = marker[0] ?? ''
+      if (fence === null) fence = { char, length: marker.length }
+      else if (char === fence.char && marker.length >= fence.length) fence = null
+    } else if (fence === null && SUMMARY_HEADING.test(line)) {
+      candidate = offset
+    }
+    offset += line.length + 1
+  }
+  if (candidate === null) return null
+
+  const blocks = parseMarkdown(source.slice(candidate))
+  const [heading, list, ...rest] = blocks
+  if (heading?.kind !== 'heading' || list?.kind !== 'list' || rest.length > 0) return null
+  if (list.ordered) return null
+
+  return { cut: candidate, items: list.items.map((item) => inlineText(item.content)) }
+}
+
+/** A heading whose text is exactly "Summary", starting in column zero. */
+const SUMMARY_HEADING = /^#{1,6}[ \t]+summary[ \t]*$/i
+
+/**
+ * Inline content as plain text.
+ *
+ * A bullet in the card is a line, not a document: it is drawn as text rather
+ * than re-parsed, so emphasis inside one is flattened to the words it wrapped.
+ * That is a deliberate limit — carrying the tree would mean the card renders
+ * arbitrary agent markup in a second place, and the words are the whole content
+ * of a summary line.
+ */
+function inlineText(content: readonly Inline[]): string {
+  return content
+    .map((node) => {
+      switch (node.kind) {
+        case 'text':
+        case 'code':
+          return node.text
+        case 'image':
+          return node.alt
+        case 'strong':
+        case 'em':
+        case 'del':
+        case 'link':
+          return inlineText(node.content)
+      }
+    })
+    .join('')
+}

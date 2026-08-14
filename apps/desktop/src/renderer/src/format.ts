@@ -27,6 +27,22 @@ export function money(usd: number): string {
 }
 
 /**
+ * The clock time a message carries, in the reader's own conventions.
+ *
+ * `Intl` rather than a hand-rolled `:` join, because 9:14 AM and 09:14 are the
+ * same instant written the way two different people expect to read it, and the
+ * one thing a transcript may not do is make someone convert.
+ *
+ * The locale argument exists for tests: asserting against the machine's own
+ * locale is asserting against whatever CI happens to be set to.
+ */
+export function clockTime(at: number, locale?: string): string {
+  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(
+    new Date(at)
+  )
+}
+
+/**
  * How long until a moment, in the largest unit that still says something.
  *
  * "2h" rather than "2h 14m 3s": a limit resetting is something you plan around,

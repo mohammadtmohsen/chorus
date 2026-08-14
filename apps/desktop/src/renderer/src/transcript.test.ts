@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { TranscriptEvent } from '../../shared/ipc.js'
-import { answersThinking, EMPTY_VIEW, reduceEvents, type TranscriptMessage } from './transcript.js'
+import {
+  answersThinking,
+  EMPTY_VIEW,
+  groupedWith,
+  reduceEvents,
+  type TranscriptMessage,
+} from './transcript.js'
 
 let seq = 0
 function event(
@@ -681,5 +687,429 @@ describe('questions', () => {
   it('drops a set with nothing answerable in it', () => {
     const view = reduceEvents(EMPTY_VIEW, [ask({ questions: [] })])
     expect(view.questions).toHaveLength(0)
+  })
+})
+
+/**
+ * The card that says what a turn wrote.
+ *
+ * Every test here folds events the way production does — one `reduceEvents` per
+ * push, not one call holding the whole turn — because the state that keeps a
+ * card open between events is the part that can be got wrong.
+ */
+describe('changes card', () => {
+  const wrote = (
+    files: { path: string; change?: string; added?: number; removed?: number; oldPath?: string }[],
+    outcome = 'applied'
+  ): TranscriptEvent =>
+    event('file.change.completed', {
+      itemRef: 'i1',
+      outcome,
+      files: files.map((f) => ({
+        change: 'modified',
+        added: 1,
+        removed: 0,
+        ...f,
+      })),
+    })
+
+  const card = (view: { messages: readonly TranscriptMessage[] }): TranscriptMessage | undefined =>
+    view.messages.find((m) => m.kind === 'changes')
+
+  it('holds one card open across separate reductions', () => {
+    // A push can deliver the change, the reply and the turn's end in three
+    // calls. Folding them in one proves nothing about the case production hits.
+    const a = reduceEvents(EMPTY_VIEW, [wrote([{ path: 'src/a.ts', added: 4, removed: 1 }])])
+    const b = reduceEvents(a, [wrote([{ path: 'src/b.ts', added: 2 }])])
+    const c = reduceEvents(b, [event('agent.message.completed', { itemRef: 'm1', text: 'done' })])
+    const d = reduceEvents(c, [event('turn.completed', { turnRef: 't1', status: 'completed' })])
+
+    expect(d.messages.filter((m) => m.kind === 'changes')).toHaveLength(1)
+    expect(card(d)?.changes).toMatchObject([
+      { path: 'src/a.ts', added: 4, removed: 1 },
+      { path: 'src/b.ts', added: 2 },
+    ])
+  })
+
+  it('replays to exactly the view the pushes built', () => {
+    // The property a card built out of hidden state would fail.
+    const events = [
+      wrote([{ path: 'src/a.ts', added: 4 }]),
+      event('agent.message.completed', { itemRef: 'm1', text: 'done' }),
+      wrote([{ path: 'src/b.ts', added: 2 }]),
+      event('turn.completed', { turnRef: 't1', status: 'completed' }),
+    ]
+    const incremental = events.reduce((view, e) => reduceEvents(view, [e]), EMPTY_VIEW)
+    const replayed = reduceEvents(EMPTY_VIEW, events)
+    expect(replayed).toEqual(incremental)
+  })
+
+  it('sits below the reply even when the edits came first', () => {
+    // Agents edit before they narrate, so the card is written before the words
+    // that explain it. The composition puts it underneath.
+    const view = [
+      wrote([{ path: 'src/a.ts' }]),
+      event('agent.message.completed', { itemRef: 'm1', text: 'I changed a file' }),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(view.messages.map((m) => m.kind)).toEqual(['message', 'changes'])
+  })
+
+  it('sums a file edited twice in one turn', () => {
+    const view = [
+      wrote([{ path: 'src/a.ts', added: 3, removed: 1 }]),
+      wrote([{ path: 'src/a.ts', added: 2, removed: 4 }]),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(card(view)?.changes).toMatchObject([{ path: 'src/a.ts', added: 5, removed: 5 }])
+  })
+
+  it('starts a second card for a second turn', () => {
+    const view = [
+      wrote([{ path: 'src/a.ts' }]),
+      event('turn.completed', { turnRef: 't1', status: 'completed' }),
+      wrote([{ path: 'src/b.ts' }]),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(view.messages.filter((m) => m.kind === 'changes')).toHaveLength(2)
+  })
+
+  it('closes the card on session.ended, which is appended as the system', () => {
+    /*
+     * `reconcileOrphanedSessions` appends this with `actor: 'system'` and the
+     * agent in the payload. Clearing by actor would clear an entry under
+     * `system` that never existed, and the agent's card would stay open across
+     * a crash recovery and grow into the next session's work.
+     */
+    // Built inline, in order: `event` stamps an increasing seq, and
+    // `reduceEvents` skips anything at or below the last one it saw — so an
+    // event hoisted into a `const` above the array is silently dropped.
+    const view = [
+      wrote([{ path: 'src/a.ts' }]),
+      {
+        ...event('session.ended', { agentId: 'codex', sessionRef: 's1', reason: 'crashed' }),
+        actor: 'system' as const,
+      },
+      wrote([{ path: 'src/b.ts' }]),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(view.messages.filter((m) => m.kind === 'changes')).toHaveLength(2)
+  })
+
+  it('draws nothing for a patch that never landed', () => {
+    const declined = reduceEvents(EMPTY_VIEW, [wrote([{ path: 'src/a.ts' }], 'declined')])
+    const failed = reduceEvents(EMPTY_VIEW, [wrote([{ path: 'src/a.ts' }], 'failed')])
+    expect(card(declined)).toBeUndefined()
+    expect(card(failed)).toBeUndefined()
+  })
+
+  it('ignores a proposal, which is not a change', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('file.change.proposed', { itemRef: 'i1', files: [{ path: 'src/a.ts', patch: '' }] }),
+    ])
+    expect(card(view)).toBeUndefined()
+  })
+
+  it('reads a renamed file onto the row it already had', () => {
+    const view = [
+      wrote([{ path: 'src/was.ts', added: 2 }]),
+      wrote([{ path: 'src/is.ts', oldPath: 'src/was.ts', change: 'renamed', added: 1 }]),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(card(view)?.changes).toMatchObject([
+      { path: 'src/is.ts', oldPath: 'src/was.ts', change: 'renamed', added: 3 },
+    ])
+  })
+
+  it('counts an edit that arrived as a tool result, which is how Claude reports one', () => {
+    /*
+     * Claude emits no file-change event at all — an edit is a tool result, and
+     * the patch on it is the only record of what it did. Both halves of the card
+     * come out of different events for that reason.
+     */
+    const view = [
+      event('tool.started', { itemRef: 't1', name: 'Edit' }),
+      event('tool.completed', {
+        itemRef: 't1',
+        status: 'ok',
+        patch: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1,2 @@\n-old\n+new\n+more\n',
+      }),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(card(view)?.changes).toMatchObject([
+      { path: 'src/a.ts', change: 'modified', added: 2, removed: 1 },
+    ])
+  })
+
+  it('letters a file Claude created as added, not modified', () => {
+    // The mode line adapter-claude now writes is what makes this an `A`; without
+    // it a new file is indistinguishable from a rewritten one.
+    const view = [
+      event('tool.started', { itemRef: 't1', name: 'Write' }),
+      event('tool.completed', {
+        itemRef: 't1',
+        status: 'ok',
+        patch:
+          'diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1,2 @@\n+one\n+two\n',
+      }),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(card(view)?.changes).toMatchObject([{ path: 'src/new.ts', change: 'added', added: 2 }])
+  })
+
+  it('does not count a tool call that failed', () => {
+    const view = [
+      event('tool.started', { itemRef: 't1', name: 'Edit' }),
+      event('tool.completed', {
+        itemRef: 't1',
+        status: 'error',
+        patch: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n',
+      }),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(card(view)).toBeUndefined()
+  })
+
+  it('carries each file its own diff', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('file.change.completed', {
+        itemRef: 'i1',
+        outcome: 'applied',
+        files: [
+          {
+            path: 'src/a.ts',
+            change: 'modified',
+            added: 1,
+            removed: 1,
+            patch: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n',
+          },
+        ],
+      }),
+    ])
+    expect(card(view)?.changes?.[0]?.patch).toContain('@@ -1 +1 @@')
+  })
+
+  it('shows the latest diff for a file edited twice, and the summed counts', () => {
+    /*
+     * Counts are what the turn wrote and add up. A patch does not: two hunks
+     * from two edits stitched together would describe a file that never existed,
+     * so the most recent one is the honest single answer.
+     */
+    const patchOf = (line: string): string =>
+      `diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+${line}\n`
+    const view = [
+      wrote([{ path: 'src/a.ts', added: 1, removed: 1 }]),
+      event('file.change.completed', {
+        itemRef: 'i1',
+        outcome: 'applied',
+        files: [
+          { path: 'src/a.ts', change: 'modified', added: 2, removed: 0, patch: patchOf('second') },
+        ],
+      }),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(card(view)?.changes?.[0]).toMatchObject({ added: 3, removed: 1 })
+    expect(card(view)?.changes?.[0]?.patch).toContain('+second')
+  })
+
+  it('gives a Claude edit the tool patch as its own diff', () => {
+    const patch = 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1,2 @@\n-old\n+new\n+more\n'
+    const view = [
+      event('tool.started', { itemRef: 't1', name: 'Edit' }),
+      event('tool.completed', { itemRef: 't1', status: 'ok', patch }),
+    ].reduce((v, e) => reduceEvents(v, [e]), EMPTY_VIEW)
+
+    expect(card(view)?.changes?.[0]?.patch).toBe(patch)
+  })
+
+  it('leaves a row from an older log without a diff rather than an empty frame', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('file.change.completed', {
+        itemRef: 'i1',
+        outcome: 'applied',
+        files: [{ path: 'src/a.ts', change: 'modified', added: 1, removed: 0 }],
+      }),
+    ])
+    expect(card(view)?.changes?.[0]?.patch).toBeUndefined()
+  })
+
+  it('survives a payload from an older build', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('file.change.completed', {
+        itemRef: 'i1',
+        outcome: 'applied',
+        files: [{ path: 'src/a.ts' }, { nothing: true }, 'rubbish'],
+      }),
+    ])
+    expect(card(view)?.changes).toMatchObject([
+      { path: 'src/a.ts', change: 'modified', added: 0, removed: 0 },
+    ])
+  })
+})
+
+/**
+ * The `Summary` card, lifted out of the reply that carried it.
+ *
+ * The scanner's own rules are covered in `markdown.test.ts`; these are about the
+ * reducer — when it runs, and what it leaves behind in the body.
+ */
+describe('summary lift', () => {
+  it('cuts a trailing summary off a completed message', () => {
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.message.completed', {
+        itemRef: 'm1',
+        text: 'Did the work.\n\n## Summary\n- one\n- two\n',
+      }),
+    ])
+    expect(view.messages[0]?.summary).toEqual(['one', 'two'])
+    expect(view.messages[0]?.text).toBe('Did the work.')
+  })
+
+  it('leaves a streaming message alone', () => {
+    // A card that appeared mid-stream would arrive as the bullets were written
+    // and then move as the rest of the reply landed under it.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.message.delta', { itemRef: 'm1', text: 'Did it.\n\n## Summary\n- one\n' }),
+    ])
+    expect(view.messages[0]?.status).toBe('streaming')
+    expect(view.messages[0]?.summary).toBeUndefined()
+    expect(view.messages[0]?.text).toContain('## Summary')
+  })
+
+  it('carries no summary field when a reply has none', () => {
+    // Absent, not empty: an empty card and no card are different things.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.message.completed', { itemRef: 'm1', text: 'Just an answer.' }),
+    ])
+    expect(view.messages[0]?.summary).toBeUndefined()
+    expect(view.messages[0]?.text).toBe('Just an answer.')
+  })
+
+  it('does not lift an example out of a fenced block', () => {
+    const said = 'Write it like this:\n\n```md\n## Summary\n- one\n```\n'
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.message.completed', { itemRef: 'm1', text: said }),
+    ])
+    expect(view.messages[0]?.summary).toBeUndefined()
+    expect(view.messages[0]?.text).toBe(said)
+  })
+})
+
+/**
+ * When a row says it happened.
+ *
+ * The row shows when it *began*. Completion rebuilds the message from scratch,
+ * so the only thing keeping the opening time is this carry — and a test that
+ * only asserts "a time is present" passes with it removed, which is why each of
+ * these asserts the specific event's `createdAt`.
+ */
+describe('message times', () => {
+  it('keeps the first delta time through completion', () => {
+    const opened = event('agent.message.delta', { itemRef: 'm1', text: 'Hel' })
+    const view = reduceEvents(EMPTY_VIEW, [
+      opened,
+      event('agent.message.delta', { itemRef: 'm1', text: 'lo' }),
+      event('agent.message.completed', { itemRef: 'm1', text: 'Hello' }),
+    ])
+    expect(view.messages).toHaveLength(1)
+    expect(view.messages[0]?.status).toBe('complete')
+    expect(view.messages[0]?.at).toBe(opened.createdAt)
+  })
+
+  it('carries the opening time across separate reductions', () => {
+    // Production folds each push into the previous view; a carry that only works
+    // inside one call is not a carry.
+    const opened = event('agent.message.delta', { itemRef: 'm1', text: 'Hi' })
+    const streaming = reduceEvents(EMPTY_VIEW, [opened])
+    const done = reduceEvents(streaming, [
+      event('agent.message.completed', { itemRef: 'm1', text: 'Hi there' }),
+    ])
+    expect(done.messages[0]?.at).toBe(opened.createdAt)
+  })
+
+  it('takes its own time when a message completes without streaming', () => {
+    const done = event('agent.message.completed', { itemRef: 'm1', text: 'Short' })
+    const view = reduceEvents(EMPTY_VIEW, [done])
+    expect(view.messages[0]?.at).toBe(done.createdAt)
+  })
+
+  it('keeps the opening time of a run of reasoning', () => {
+    const opened = event('agent.reasoning.delta', { text: 'first' })
+    const view = reduceEvents(EMPTY_VIEW, [
+      opened,
+      event('agent.reasoning.delta', { text: ' second' }),
+    ])
+    expect(view.messages).toHaveLength(1)
+    expect(view.messages[0]?.at).toBe(opened.createdAt)
+  })
+
+  it('stamps a user message with its own time', () => {
+    const said = event('user.message', { text: 'hi' }, 'user')
+    const view = reduceEvents(EMPTY_VIEW, [said])
+    expect(view.messages[0]?.at).toBe(said.createdAt)
+  })
+
+  it('leaves a run of reasoning streaming forever, which is what the dot must not follow', () => {
+    /*
+     * Nothing completes a reasoning row — no case sets it to `complete`. A
+     * pulse bound to `status` alone would therefore pulse on every block of
+     * thinking in the conversation, for the life of the session. `Entry` scopes
+     * the pulse to `kind === 'message'`, and this is the fact that makes that
+     * necessary rather than defensive.
+     */
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('agent.reasoning.delta', { text: 'thinking' }),
+      event('agent.message.completed', { itemRef: 'm1', text: 'answer' }),
+    ])
+    expect(view.messages[0]?.kind).toBe('reasoning')
+    expect(view.messages[0]?.status).toBe('streaming')
+  })
+})
+
+/**
+ * A run of one agent's work reads as one block.
+ *
+ * Eleven rows each captioned "Claude" is what a long turn actually looked like:
+ * a command, a tool call, a notice, another command — every one repeating a name
+ * that had not changed, with a rule drawn between them.
+ */
+describe('groupedWith', () => {
+  const row = (over: Partial<TranscriptMessage>): TranscriptMessage => ({
+    key: 'k',
+    eventId: 'e',
+    at: 0,
+    actor: 'claude',
+    kind: 'tool',
+    text: '',
+    status: 'complete',
+    ...over,
+  })
+
+  it('groups a step under the same speaker', () => {
+    expect(groupedWith(row({ kind: 'command' }), row({ kind: 'tool' }))).toBe(true)
+  })
+
+  it('does not group across speakers', () => {
+    expect(groupedWith(row({ actor: 'codex' }), row({ actor: 'claude' }))).toBe(false)
+    // A system notice between two of an agent's own rows breaks the run, which
+    // is right: something else spoke.
+    expect(groupedWith(row({ actor: 'system', kind: 'notice' }), row({}))).toBe(false)
+  })
+
+  it('never groups a message, however many rows precede it', () => {
+    /*
+     * The avatar, the name and the time *are* the message row, and the time is
+     * the one thing in it that cannot be recovered from the row above.
+     */
+    expect(groupedWith(row({ kind: 'tool' }), row({ kind: 'message' }))).toBe(false)
+    expect(groupedWith(row({ kind: 'message' }), row({ kind: 'message' }))).toBe(false)
+  })
+
+  it('never groups a handoff, which is a seam by definition', () => {
+    expect(groupedWith(row({}), row({ kind: 'handoff' }))).toBe(false)
+  })
+
+  it('leaves the first row of a transcript alone', () => {
+    expect(groupedWith(undefined, row({}))).toBe(false)
   })
 })

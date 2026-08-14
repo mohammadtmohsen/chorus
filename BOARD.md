@@ -645,6 +645,38 @@ with the VSIX carrying its bundle, or the extension is written down as English-o
 with the reason — and in that case the diagnostics dump is named as the thing that
 stays English on purpose.
 
+### C-037 · A session spawns codex app-servers and reaps none
+
+Observed 2026-08-13, 21:50. One `pnpm dev` Electron process (pid 41382) held **26
+children, 16 of them `node codex.js app-server`**, spawned in a roughly
+twenty-second burst and then idle at **0% CPU** for seventeen minutes. The codex
+agent in that session stopped answering and never recovered; `SIGTERM` was
+ignored by all sixteen and `SIGKILL` was needed. Six more, aged two to twelve
+hours, were sitting under a different parent, so this had already happened at
+least twice earlier the same day without anyone noticing.
+
+Killing them was enough to un-wedge the app — codex then reported `codex
+app-server exited (code=null signal=SIGKILL)` and could be restarted — which says
+the pile-up is the failure rather than a symptom of one.
+
+**Why it matters:** a wedged agent looks exactly like a slow one. There is no
+surface anywhere in Chorus that shows how many provider processes a session owns,
+so the only way this was found was `ps`. The user's read on it was "why does every
+task take hours", and for the last seventeen minutes of that, the honest answer
+was that nothing was running at all.
+
+**What is not yet known:** which side leaks. It could be the supervisor spawning a
+fresh app-server per turn or per reconnect and dropping the handle, or the adapter
+failing to close one whose turn was interrupted, or a restart loop that races
+itself. Sixteen in twenty seconds looks like a retry loop rather than one per
+turn, but that is inference from a process table, not from a log — nobody has read
+`packages/orchestrator`'s supervisor against this yet.
+
+**Done when:** a session's provider processes are bounded and reaped — one live
+app-server per agent, with the previous one killed before a replacement is
+spawned — and something fails loudly when it is not. A count in the pulse would
+be enough to make the next occurrence visible in a second instead of an hour.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets

@@ -302,6 +302,26 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
 
     'files:preview': (request: { path: string }) => Promise.resolve(previewFile(request.path)),
 
+    /*
+     * A folder to attach, and nothing else.
+     *
+     * `conversation:chooseCwd` below opens the same dialog and then moves the
+     * project. This one takes no conversation id precisely so it cannot: an
+     * agent silently starting to work in another tree because someone attached
+     * a folder is a failure nobody would think to look for.
+     */
+    'files:chooseDirectory': async () => {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      const options: OpenDialogOptions = {
+        properties: ['openDirectory'],
+        buttonLabel: 'Attach this folder',
+      }
+      const result = await (window === undefined
+        ? dialog.showOpenDialog(options)
+        : dialog.showOpenDialog(window, options))
+      return { path: result.canceled ? null : (result.filePaths[0] ?? null) }
+    },
+
     'conversation:layout': (request: { order: string[]; workspace: WorkspaceSnapshot }) => {
       runtime.setConversationLayout(request.order, request.workspace)
       return Promise.resolve(OK)

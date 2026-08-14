@@ -119,6 +119,166 @@ describe('items', () => {
   })
 })
 
+/**
+ * What the file change actually did.
+ *
+ * The started phase is a *proposal* — it fires when the operation begins, so a
+ * declined or failed patch looks exactly like one that landed. The completed
+ * phase carries `kind` and `status`, and this file used to drop both.
+ *
+ * Every count here is asserted as a number rather than as "present". A card of
+ * `+0 −0` is what this mapping produces if the body is parsed as a diff when it
+ * is really file content, and nothing but a count assertion catches it.
+ */
+describe('applied file changes', () => {
+  const completed = (changes: unknown[], status = 'completed') =>
+    map('item/completed', { item: { type: 'fileChange', id: 'f1', changes, status } })
+
+  const UPDATE = ['@@ -1,2 +1,3 @@', ' keep', '-gone', '+new', '+also'].join('\n')
+
+  /** The first file of a completed change, for the assertions about patches. */
+  const fileOf = (
+    event: ReturnType<typeof map>
+  ): { patch: string; added: number; omittedLines?: number } => {
+    if (event?.type !== 'file.change.completed') throw new Error('not a change')
+    const file = event.files[0]
+    if (file === undefined) throw new Error('no files')
+    return file
+  }
+
+  it('counts an update from its hunks', () => {
+    expect(
+      completed([{ path: 'a.ts', kind: { type: 'update', move_path: null }, diff: UPDATE }])
+    ).toMatchObject({
+      type: 'file.change.completed',
+      outcome: 'applied',
+      files: [{ path: 'a.ts', change: 'modified', added: 2, removed: 1 }],
+    })
+  })
+
+  it('counts an add from the file it carries, not from hunks it has none of', () => {
+    // Codex sends raw content for an add. Parsed as a diff this is zero lines,
+    // which is the bug: the largest number in the card reads as nothing.
+    expect(
+      completed([{ path: 'new.ts', kind: { type: 'add' }, diff: 'one\ntwo\nthree\n' }])
+    ).toMatchObject({ files: [{ change: 'added', added: 3, removed: 0 }] })
+  })
+
+  it('counts a delete on the removed side', () => {
+    expect(completed([{ path: 'old.ts', kind: { type: 'delete' }, diff: 'a\nb\n' }])).toMatchObject(
+      { files: [{ change: 'removed', added: 0, removed: 2 }] }
+    )
+  })
+
+  it('crosses a rename: path is where it went, oldPath where it was', () => {
+    // Both are strings, so getting this backwards fails nothing at the type
+    // level and everything on screen.
+    expect(
+      completed([
+        { path: 'src/was.ts', kind: { type: 'update', move_path: 'src/is.ts' }, diff: UPDATE },
+      ])
+    ).toMatchObject({
+      files: [{ path: 'src/is.ts', oldPath: 'src/was.ts', change: 'renamed', added: 2 }],
+    })
+  })
+
+  it('keeps failed and declined apart', () => {
+    const one = [{ path: 'a.ts', kind: { type: 'update', move_path: null }, diff: UPDATE }]
+    expect(completed(one, 'declined')).toMatchObject({ outcome: 'declined' })
+    expect(completed(one, 'failed')).toMatchObject({ outcome: 'failed' })
+    expect(completed(one, 'completed')).toMatchObject({ outcome: 'applied' })
+  })
+
+  it('refuses to call a patch applied when the CLI did not say it was', () => {
+    // A completed item still reading `inProgress` is a missing field, and a card
+    // must not claim a file changed on the strength of one.
+    const one = [{ path: 'a.ts', kind: { type: 'update', move_path: null }, diff: UPDATE }]
+    expect(completed(one, 'inProgress')).toMatchObject({ outcome: 'failed' })
+    expect(
+      map('item/completed', { item: { type: 'fileChange', id: 'f1', changes: one } })
+    ).toMatchObject({ outcome: 'failed' })
+  })
+
+  it('reads a change with no kind as an edit, which is what an older CLI sends', () => {
+    expect(completed([{ path: 'a.ts', diff: UPDATE }])).toMatchObject({
+      files: [{ change: 'modified', added: 2 }],
+    })
+  })
+
+  it('gives an update the header parseDiff needs', () => {
+    /*
+     * Codex sends a bare unified body for an update. `parseDiff` skips every
+     * line until it sees `diff --git`, so without this the diff is not wrong,
+     * it is *absent* — no files, no counts, an empty card.
+     */
+    const file = fileOf(
+      completed([{ path: 'a.ts', kind: { type: 'update', move_path: null }, diff: UPDATE }])
+    )
+    expect(file.patch.startsWith('diff --git a/a.ts b/a.ts\n')).toBe(true)
+    expect(file.patch).toContain(UPDATE)
+  })
+
+  it('builds a diff for an added file out of the content it sends', () => {
+    // There is no diff to relay: an add carries the file. The mode line is what
+    // lets the status letter be read back off the patch downstream.
+    const patch = fileOf(
+      completed([{ path: 'new.ts', kind: { type: 'add' }, diff: 'one\ntwo\n' }])
+    ).patch
+    expect(patch).toContain('new file mode 100644')
+    expect(patch).toContain('--- /dev/null')
+    expect(patch).toContain('@@ -0,0 +1,2 @@')
+    expect(patch).toContain('+one')
+  })
+
+  it('builds one for a deleted file the other way round', () => {
+    const patch = fileOf(
+      completed([{ path: 'old.ts', kind: { type: 'delete' }, diff: 'a\n' }])
+    ).patch
+    expect(patch).toContain('deleted file mode 100644')
+    expect(patch).toContain('+++ /dev/null')
+    expect(patch).toContain('-a')
+  })
+
+  it('caps a whole file and says how much it left out', () => {
+    // A long block fills the pane and scrolls off the row naming the file, so
+    // the diff loses the one thing identifying it. Silently truncating would be
+    // worse than either.
+    const body = Array.from({ length: 40 }, (_, i) => `line ${String(i + 1)}`).join('\n')
+    const file = fileOf(completed([{ path: 'big.ts', kind: { type: 'add' }, diff: body }]))
+    expect(file.added).toBe(40)
+    expect(file.omittedLines).toBe(28)
+    expect(file.patch).toContain('+line 12')
+    expect(file.patch).not.toContain('+line 13')
+  })
+
+  it('names both paths in the patch for a rename', () => {
+    const file = fileOf(
+      completed([
+        { path: 'src/was.ts', kind: { type: 'update', move_path: 'src/is.ts' }, diff: UPDATE },
+      ])
+    )
+    expect(file.patch).toContain('diff --git a/src/was.ts b/src/is.ts')
+    expect(file.patch).toContain('rename from src/was.ts')
+  })
+
+  it('leaves a body that already has a header alone', () => {
+    // A future CLI sending a complete diff must not get a second header stapled
+    // to the front of it.
+    const whole = 'diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-a\n+b\n'
+    expect(
+      fileOf(completed([{ path: 'a.ts', kind: { type: 'update', move_path: null }, diff: whole }]))
+        .patch
+    ).toBe(whole)
+  })
+
+  it('does not count a diff header as a changed line', () => {
+    const withHeaders = ['--- a/a.ts', '+++ b/a.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n')
+    expect(
+      completed([{ path: 'a.ts', kind: { type: 'update', move_path: null }, diff: withHeaders }])
+    ).toMatchObject({ files: [{ added: 1, removed: 1 }] })
+  })
+})
+
 describe('deliberate silence', () => {
   it.each([
     'mcpServer/startupStatus/updated',

@@ -4,6 +4,7 @@ import {
   parseInline,
   parseMarkdown,
   splitBlocks,
+  trailingSummary,
   type Block,
   type Inline,
 } from './markdown.js'
@@ -417,5 +418,84 @@ describe('splitBlocks', () => {
       const viaSplit = splitBlocks(source).flatMap((b) => parseMarkdown(b))
       expect(viaSplit).toEqual(parseMarkdown(source))
     }
+  })
+})
+
+/**
+ * The `Summary` card's source.
+ *
+ * A convention rather than a contract, so the rules are narrow on purpose: every
+ * test below is a shape that *looks* like a summary and must not become a card,
+ * except the two that must.
+ */
+describe('trailingSummary', () => {
+  it('lifts a heading and its bullets off the end', () => {
+    const source = 'Did the work.\n\n## Summary\n- one\n- two\n'
+    const found = trailingSummary(source)
+    expect(found?.items).toEqual(['one', 'two'])
+    // A cut offset, not a rebuilt body: the prefix is what the agent wrote.
+    expect(source.slice(0, found?.cut ?? 0)).toBe('Did the work.\n\n')
+  })
+
+  it('lifts it with a blank line between the heading and the list', () => {
+    // `splitBlocks` splits on blank lines, so this and the form above are one
+    // raw block and two — which is why the scanner works on offsets instead.
+    const found = trailingSummary('Did the work.\n\n## Summary\n\n- one\n- two\n')
+    expect(found?.items).toEqual(['one', 'two'])
+  })
+
+  it('takes the last summary when a reply has two', () => {
+    const found = trailingSummary('## Summary\n- early\n\nMore words.\n\n## Summary\n- late\n')
+    expect(found?.items).toEqual(['late'])
+  })
+
+  it('ignores bullets with no heading', () => {
+    expect(trailingSummary('Some points:\n\n- one\n- two\n')).toBeNull()
+  })
+
+  it('ignores a summary followed by more prose', () => {
+    expect(trailingSummary('## Summary\n- one\n\nAnd another thing.\n')).toBeNull()
+  })
+
+  it('ignores a numbered list, which is a different thing', () => {
+    expect(trailingSummary('## Summary\n1. one\n2. two\n')).toBeNull()
+  })
+
+  it('ignores a summary inside a fenced example', () => {
+    // An agent explaining this very convention would otherwise have its own
+    // example lifted out of its reply and redrawn as a card.
+    const source = 'Write it like this:\n\n```md\n## Summary\n- one\n```\n'
+    expect(trailingSummary(source)).toBeNull()
+  })
+
+  it('matches the fence by character and length, so a nested one does not end it', () => {
+    const source = ['Here:', '', '````md', '```', '## Summary', '- one', '```', '````', ''].join(
+      '\n'
+    )
+    expect(trailingSummary(source)).toBeNull()
+  })
+
+  it('ignores a summary inside a block quote', () => {
+    expect(trailingSummary('They wrote:\n\n> ## Summary\n> - one\n')).toBeNull()
+  })
+
+  it('ignores a heading indented under a list item', () => {
+    // Parsing only the tail returns [heading, list] here, which is exactly why
+    // the scanner requires column zero rather than trusting that parse.
+    expect(trailingSummary('- Example:\n  ## Summary\n  - not a real summary\n')).toBeNull()
+  })
+
+  it('ignores a heading that only starts with the word', () => {
+    expect(trailingSummary('## Summary of the day\n- one\n')).toBeNull()
+  })
+
+  it('reads any heading level, and any case', () => {
+    expect(trailingSummary('#### summary\n- one\n')?.items).toEqual(['one'])
+  })
+
+  it('flattens emphasis in a bullet to the words it wrapped', () => {
+    expect(trailingSummary('## Summary\n- **Throughput**: `+3.2x`\n')?.items).toEqual([
+      'Throughput: +3.2x',
+    ])
   })
 })

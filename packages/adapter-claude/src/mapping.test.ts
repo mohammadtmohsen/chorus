@@ -1297,6 +1297,36 @@ describe('mapping: edit patches', () => {
     expect(event.patch).toContain('@@ -0,0 +1,2 @@')
   })
 
+  it('says a created file was created, so it is not lettered as an edit', () => {
+    /*
+     * Without the mode line a new file is a diff whose every line is an
+     * addition — which is exactly what rewriting an existing file looks like.
+     * Anything deriving a status from the patch reads `M` where the file is new,
+     * and no assertion about hunks or counts catches it.
+     */
+    const event = first({
+      type: 'create',
+      filePath: '/repo/fresh.ts',
+      content: 'a\n',
+      originalFile: null,
+      structuredPatch: [],
+      userModified: false,
+    })
+
+    expect(event.patch).toBe(
+      'diff --git a//repo/fresh.ts b//repo/fresh.ts\n' +
+        'new file mode 100644\n' +
+        '--- /dev/null\n' +
+        '+++ b//repo/fresh.ts\n' +
+        '@@ -0,0 +1,1 @@\n' +
+        '+a\n'
+    )
+  })
+
+  it('leaves an ordinary edit without a mode line, so it stays an edit', () => {
+    expect(first(EDIT).patch).not.toContain('new file mode')
+  })
+
   it('carries no patch for a failed edit, which changed nothing', () => {
     const event = first(EDIT, { isError: true })
     expect(event.status).toBe('error')

@@ -199,6 +199,39 @@ function makeSession(socket) {
       })
     },
     /**
+     * Makes the window frontmost, and reports whether it took.
+     *
+     * Needed by anything that drives *focus* rather than clicks, and the reason
+     * is not cosmetic. In a window Chromium does not consider focused,
+     * `element.focus()` moves `document.activeElement` and fires no `focus`
+     * event at all — so a handler that opens a preview on focus never runs — and
+     * `setTimeout` is throttled to about a second, which is longer than most
+     * dwell delays in this app. Both were reported as "never became true", which
+     * names neither.
+     *
+     * A suite that launches this many Electron windows cannot promise any of
+     * them is frontmost, so a spec that needs one has to ask.
+     */
+    async bringToFront() {
+      /*
+       * Asked again on every pass, not once and then waited on.
+       *
+       * A single request is enough when this window is the only one — which is
+       * how it was written and how it passed, alone. In a full serial run the
+       * previous spec's app is still quitting while this one launches, and the
+       * window server can hand the activation to the process on its way out; the
+       * request is then simply lost and no amount of polling recovers it. Six
+       * seconds of re-asking covers that, and still fails rather than pretending
+       * on a machine that genuinely will not focus the window.
+       */
+      for (let i = 0; i < 30; i++) {
+        await send('Page.bringToFront')
+        if ((await evaluate('document.hasFocus()')) === true) return true
+        await wait(200)
+      }
+      return false
+    },
+    /**
      * Waits for something to become true in the page.
      *
      * Every check here is written this way rather than with a fixed sleep: a

@@ -24,12 +24,19 @@ export const MIN_CHARS_PER_SECOND = 320
 /**
  * How long a fresh backlog should take to clear.
  *
- * This is the lag, near enough: whatever arrives in the final delta is still
- * being drawn for this long after the turn is over. Measured at 500 it was a
- * 399ms tail on a four-sentence reply — small enough to sound harmless, long
- * enough to read as the app being behind the agent.
+ * This is the lag while a reply is still arriving. It was 500, then 140, and is
+ * now 80: at 500 a four-sentence reply carried a 399ms tail — small enough to
+ * sound harmless, long enough to read as the app being behind the agent — and
+ * 140 still spent a tenth of a second saying nothing new.
+ *
+ * It is no longer the number that decides what happens at the *end* of a turn.
+ * `useTypewriter` flushes the whole authoritative text the moment a message is
+ * complete, so this only ever paces text that is still being written. That is
+ * what a smoothing window should do; before the flush existed, this constant
+ * was also a promise that the app would keep animating after the agent had
+ * finished, which is the opposite of what it was for.
  */
-export const DRAIN_MS = 140
+export const DRAIN_MS = 80
 
 /**
  * The rate to clear `remaining` within the drain window.

@@ -34,6 +34,19 @@ export interface DiffFile {
   readonly removed: number
   /** True when git reported a binary file rather than a textual diff. */
   readonly binary: boolean
+  /**
+   * What happened to the file, for anything drawing a status letter.
+   *
+   * Read from the headers git writes — `new file mode`, `deleted file mode`, and
+   * a `diff --git` whose two paths differ — rather than guessed from the shape
+   * of the hunks. A rewritten file is all-additions too, so counting `+` lines
+   * would call it new.
+   *
+   * Only for patches that carry no better answer: where a provider states the
+   * change itself (`file.change.completed`), that is authoritative and this is
+   * not consulted.
+   */
+  readonly status: 'added' | 'removed' | 'modified' | 'renamed'
 }
 
 const FILE_HEADER = /^diff --git a\/(.+?) b\/(.+)$/
@@ -53,6 +66,7 @@ export function parseDiff(source: string): DiffFile[] {
     added: number
     removed: number
     binary: boolean
+    status: DiffFile['status']
   } | null = null
   let hunk: { header: string; lines: DiffLine[] } | null = null
   let before = 0
@@ -72,17 +86,31 @@ export function parseDiff(source: string): DiffFile[] {
     const header = FILE_HEADER.exec(line)
     if (header !== null) {
       closeFile()
+      const oldPath = header[1] ?? ''
+      const path = header[2] ?? ''
       current = {
-        oldPath: header[1] ?? '',
-        path: header[2] ?? '',
+        oldPath,
+        path,
         hunks: [],
         added: 0,
         removed: 0,
         binary: false,
+        // The header alone settles a rename; a mode line below can still make
+        // this an add or a delete.
+        status: oldPath === path ? 'modified' : 'renamed',
       }
       continue
     }
     if (current === null) continue
+
+    if (line.startsWith('new file mode')) {
+      current.status = 'added'
+      continue
+    }
+    if (line.startsWith('deleted file mode')) {
+      current.status = 'removed'
+      continue
+    }
 
     if (line.startsWith('Binary files ')) {
       current.binary = true

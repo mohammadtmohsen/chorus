@@ -212,6 +212,8 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
 
     // Streamed detail that the transcript reads back off the log directly.
     // Giving each of these a table would add write cost for no query we make.
+    // `file.change.completed` is here for that reason and no other: its only
+    // reader folds it into a card while replaying the log it replays anyway.
     case 'turn.started':
     case 'turn.completed':
     case 'agent.reasoning.delta':
@@ -219,6 +221,7 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
     case 'command.output':
     case 'command.completed':
     case 'file.change.proposed':
+    case 'file.change.completed':
     case 'diff.updated':
     case 'usage.updated':
     case 'aside.promoted': {

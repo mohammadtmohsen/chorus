@@ -22,13 +22,35 @@ const GROUP = '[data-workspace-pane]'
 const TAB = '[data-workspace-tab]'
 const started = (page) => page.until(`document.querySelectorAll('${PANE}').length > 0`)
 
-/** The ＋ in the sidenav header. It left the masthead when the shell arrived. */
+/** The ＋ on the quick rail. It is part of the daily loop, so it never collapses. */
 const newSession = (page) =>
   page.evaluate(`(() => {
-    // The activity bar's plus, the head having gone.
-    document.querySelectorAll('.activity-group:first-child .activity-item')[1].click()
+    document.querySelector('[data-rail-new]').click()
     return true
   })()`)
+
+/**
+ * The drawer, opened.
+ *
+ * The app starts collapsed now — the rail is the primary state — so anything
+ * asserting about rows, search or Arrange has to ask for the drawer first. A
+ * spec that assumed it was open would find an empty list rather than a failure
+ * it could read.
+ */
+const openDrawer = async (page) => {
+  if (
+    (await page.evaluate(`document.querySelector('.session-drawer').dataset.hidden`)) !== 'true'
+  ) {
+    return
+  }
+  await page.evaluate(
+    `(() => { document.querySelector('[data-rail-drawer]').click(); return true })()`
+  )
+  await page.until(`document.querySelector('.session-drawer').dataset.hidden !== 'true'`, {
+    timeout: 10_000,
+    label: 'the drawer opened',
+  })
+}
 
 /**
  * A shortcut, as the app's own listener sees it.
@@ -73,6 +95,15 @@ const pressIn = (page, key) =>
     return true
   })()`)
 
+/**
+ * A token's hex as `getComputedStyle` reports a colour, so the two can be
+ * compared without writing either theme's palette into a spec.
+ */
+const hexToRgb = (hex) => {
+  const [r, g, b] = [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16))
+  return `rgb(${String(r)}, ${String(g)}, ${String(b)})`
+}
+
 const tabIds = (page) =>
   page.evaluate(`Array.from(document.querySelectorAll('${TAB}')).map(t => t.dataset.workspaceTab)`)
 
@@ -82,9 +113,10 @@ const clickTab = (page, conversationId) =>
     return true
   })()`)
 
+/** Opens a session from the rail, which is reachable whether or not the drawer is. */
 const clickSidebarRow = (page, conversationId) =>
   page.evaluate(`(() => {
-    document.querySelector('[data-sidebar-conversation="${conversationId}"] .workspace-session-main').click()
+    document.querySelector('[data-rail-session="${conversationId}"]').click()
     return true
   })()`)
 
@@ -368,12 +400,13 @@ export const specs = [
       try {
         await started(app)
         /*
-         * The spend is on the session's card, not under the composer.
+         * The spend answers for a session rather than for a message, so it is
+         * neither under the composer nor permanently on a row. It is in the
+         * preview, shown on demand — a figure that reads the same all day is one
+         * you stop seeing, and a list of six of them is six things not to read.
          *
-         * It moved with the rest of what describes a session rather than a
-         * message, and it had to be reduced a second time to get there: the
-         * transcript belongs to a mounted pane, and most cards in the list are
-         * for sessions that do not have one.
+         * It still has to be reduced separately from the transcript: the
+         * transcript belongs to a mounted pane and most sessions do not have one.
          */
         await app.evaluate(`(() => {
           const ta = document.querySelector('.composer textarea')
@@ -383,40 +416,59 @@ export const specs = [
           document.querySelector('.composer').requestSubmit()
           return true
         })()`)
-        await app.until(`!!document.querySelector('.workspace-session-spend')`, {
+        await app.until(`document.querySelectorAll('.said').length > 0`, {
           timeout: 180_000,
-          label: 'the card learns what the session cost',
+          label: 'the agent answered',
         })
-        const shown = await app.evaluate(
-          `document.querySelector('.workspace-session-spend').textContent`
-        )
-        assert(/\d/.test(shown), `spend reads as a number: ${shown}`)
         await app.settle()
 
-        const both = await app.evaluate(`(() => ({
-          card: document.querySelector('.workspace-session-spend')?.textContent ?? null,
-          buttons: [...document.querySelectorAll('.workspace-session-output-button')]
-            .map(b => b.textContent),
-          leftInComposer: document.querySelectorAll(
-            '.composer-actions .spend, .composer-actions .voice, .composer-actions .path,' +
-            ' .composer-actions .profile-chip, .composer-actions .summary-open'
-          ).length,
-        }))()`)
-        assert(
-          both.buttons.length === 2,
-          `the card offers both ways to read it, got ${both.buttons.join(',')}`
+        const conversationId = (await tabIds(app))[0]
+        await app.evaluate(`(() => {
+          document.querySelector('[data-rail-session="${conversationId}"]')
+            .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-preview .session-preview-figure')`, {
+          timeout: 30_000,
+          label: 'the preview learns what the session cost',
+        })
+        const shown = await app.evaluate(
+          `document.querySelector('.session-preview .session-preview-figure').textContent`
         )
+        assert(/\d/.test(shown), `spend reads as a number: ${shown}`)
+
         /*
          * The composer keeps the one control that acts on what is typed in it.
          *
-         * Everything else answers for a session rather than for a message, and
-         * a session is what the sidenav lists — so those controls belong to a
-         * card, where they exist for all six sessions rather than the one on
-         * screen.
+         * Everything else answers for a session, and a session is what the rail
+         * lists — so those live in the menu, where they exist for every session
+         * rather than only the one on screen.
          */
+        const leftInComposer = await app.evaluate(`document.querySelectorAll(
+          '.composer-actions .spend, .composer-actions .voice, .composer-actions .path,' +
+          ' .composer-actions .profile-chip, .composer-actions .summary-open'
+        ).length`)
         assert(
-          both.leftInComposer === 0,
-          `and the composer kept none of them, found ${String(both.leftInComposer)}`
+          leftInComposer === 0,
+          `and the composer kept none of them, found ${String(leftInComposer)}`
+        )
+
+        // Summary and Review are both still reachable, from the one menu.
+        await openDrawer(app)
+        await app.evaluate(`(() => {
+          document.querySelector('[data-session-more="${conversationId}"]').click()
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-menu')`, {
+          timeout: 10_000,
+          label: 'the session menu opened',
+        })
+        const outputs = await app.evaluate(
+          `[...document.querySelectorAll('.session-menu button')].map((b) => b.textContent)`
+        )
+        assert(
+          outputs.includes('Summary') && outputs.includes('Review changes'),
+          `both ways to read it are in the menu, got ${outputs.join(' / ')}`
         )
       } finally {
         await app.quit()
@@ -440,14 +492,15 @@ export const specs = [
     /*
      * Skips rather than asserting `true`, and that is C-027.
      *
-     * Both branches below are legitimate — an API-key account genuinely has no
-     * plan window to check — but written as `assert(true, …)` they printed a
-     * tick, which made "all 28 passed" a claim nobody could check.
+     * The remaining branch is legitimate — an API-key account genuinely has no
+     * plan window to check — but written as `assert(true, …)` it printed a tick,
+     * which made "all 30 passed" a claim nobody could check.
      *
-     * Two sites, at most one skip: the first `skip` throws, so reaching the
-     * second means the first did not fire. A run therefore reports `28 passed`
-     * or `27 passed, 1 skipped`, never two. Worth stating because the arithmetic
-     * is easy to get wrong from a grep, and it was.
+     * There used to be two skip sites. The first checked whether the control
+     * existed at all, and it cannot fire now: the four slots are always mounted
+     * and an unreported one says so, which is the fix this spec was updated for.
+     * The second is the real one, and a run reports `30 passed` or
+     * `29 passed, 1 skipped`.
      */
     async run(assert, skip) {
       const app = await launch()
@@ -455,15 +508,15 @@ export const specs = [
         await started(app)
         await wait(6_000)
 
-        // No panel at all is the API-key case, and saying nothing is right.
-        if (!(await app.evaluate(`!!document.querySelector('.activity-usage')`))) {
-          skip('no plan window on this account, and nothing claimed')
-        }
+        assert(
+          (await app.evaluate(`!!document.querySelector('.rail-usage')`)) === true,
+          'the account column is mounted whether or not the account has plan windows'
+        )
 
         await app.evaluate(`(() => {
           // React derives enter/leave from delegated pointerover/pointerout, so
           // a synthetic pointerenter never reaches the handler.
-          document.querySelector('.activity-usage')
+          document.querySelector('.rail-usage')
             .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
           return true
         })()`)
@@ -471,19 +524,37 @@ export const specs = [
           timeout: 10_000,
           label: 'the usage detail opened',
         })
-        const windows = await app.evaluate(`(() =>
+        const rows = await app.evaluate(`(() =>
           Array.from(document.querySelectorAll('.usage-tip .limit')).map((l) => ({
-            percent: parseInt(l.querySelector('.limit-percent').textContent, 10),
+            agent: l.dataset.agent,
+            window: l.dataset.window,
+            reported: l.dataset.reported === 'true',
+            percent: parseInt(l.querySelector('.limit-percent')?.textContent ?? '', 10),
             reset: l.querySelector('.limit-reset')?.textContent ?? null,
             resetsAt: Number(l.querySelector('.limit-reset')?.dataset.resetsAt ?? 0) || null,
+            unreported: l.querySelector('.limit-unreported')?.textContent ?? null,
           })))()`)
 
+        /* The detail keeps the same four rows in the same order as the rail. */
+        assert(
+          JSON.stringify(rows.map((r) => `${r.agent}:${r.window}`)) ===
+            JSON.stringify(['codex:short', 'codex:long', 'claude:short', 'claude:long']),
+          `the detail lists the same four windows in the same order, got ${rows
+            .map((r) => `${r.agent}:${r.window}`)
+            .join(' / ')}`
+        )
+        assert(
+          rows.every((r) => r.reported || (r.unreported !== null && r.percent !== 0)),
+          `an unreported window says so rather than reading 0%: ${JSON.stringify(rows)}`
+        )
+
+        const windows = rows.filter((r) => r.reported)
         if (windows.length === 0) {
-          skip('the panel is there but carries no plan window')
+          skip('the panel is there but this account carries no plan window')
         }
         assert(
-          windows.every((w) => Number.isNaN(w.percent) || (w.percent >= 0 && w.percent <= 100)),
-          `every percentage in range: ${JSON.stringify(windows)}`
+          windows.every((w) => w.percent >= 0 && w.percent <= 100),
+          `every reported percentage in range: ${JSON.stringify(windows)}`
         )
         /*
          * Checked as a moment, not as a phrase.
@@ -510,25 +581,45 @@ export const specs = [
   },
 
   {
-    name: 'the voice rail runs through its own dots',
-    // It sat 15px to the left for months: the rail was measured from the
-    // scroller and every dot from its entry.
+    name: 'every dot sits on the mark it belongs to',
+    /*
+     * This spec used to assert that every dot was centred on the vertical rail,
+     * which it was — the rail was measured from the scroller and every dot from
+     * its entry, and they disagreed by 15px for months.
+     *
+     * There is no rail now. The approved composition draws none, so a message is
+     * an avatar with the dot on its corner and a step is a small mark in the same
+     * column. The invariant that replaces "on the line" is "inside the thing it
+     * marks": a dot that escapes its avatar is the same class of mistake in the
+     * new layout, and it is the only geometry here worth pinning.
+     */
     async run(assert) {
       const app = await launch()
       try {
         await started(app)
         await app.until(`document.querySelectorAll('.tick').length > 0`)
-        const offsets = await app.evaluate(`(() => {
-          const rail = document.querySelector('.rail').getBoundingClientRect()
-          const centre = rail.left + rail.width / 2
+        const escaped = await app.evaluate(`(() => {
           return Array.from(document.querySelectorAll('.tick')).map(t => {
+            const holder = t.closest('.entry-avatar, .entry-mark')
+            if (holder === null) return { orphan: true }
+            const h = holder.getBoundingClientRect()
             const r = t.getBoundingClientRect()
-            return Math.abs(r.left + r.width / 2 - centre)
+            return {
+              orphan: false,
+              // Half the dot may overhang the disc's edge — that is the corner
+              // treatment. Wholly outside it is the failure.
+              out: r.left > h.right || r.right < h.left || r.top > h.bottom || r.bottom < h.top,
+            }
           })
         })()`)
+        assert(escaped.length > 0, `there are dots to check (${String(escaped.length)})`)
         assert(
-          offsets.every((off) => off <= 1),
-          `every dot on the rail (worst ${String(Math.max(...offsets))}px)`
+          escaped.every((d) => !d.orphan),
+          'every dot hangs off an avatar or a mark, not off the entry'
+        )
+        assert(
+          escaped.every((d) => !d.out),
+          'no dot has escaped the thing it marks'
         )
       } finally {
         await app.quit()
@@ -612,7 +703,7 @@ export const specs = [
           label: '⌘W closed the tab',
         })
         const state = await app.evaluate(
-          `document.querySelector('[data-sidebar-conversation="${first}"]').dataset.state`
+          `document.querySelector('[data-rail-session="${first}"]').dataset.placement`
         )
         assert(state === 'offscreen', `the closed session is still listed, got ${state}`)
 
@@ -842,267 +933,485 @@ export const specs = [
   },
 
   {
-    name: 'a sidenav row renames inline and drags into a new order',
+    name: 'the collapsed rail runs the day on its own',
     /*
-     * Both gestures live on the same element and can smother each other: the
-     * row is a button that opens a session on click, so a rename that did not
-     * replace it would have the button eating the caret, and a drag that did
-     * not suppress its click would open the session it was only being moved
-     * past. Asserted together for that reason.
+     * The 60px rail is the primary state, so everything the daily loop needs has
+     * to survive the drawer being shut: reaching any session in a stable place,
+     * starting one, opening a terminal, reading both accounts, and settings.
+     *
+     * This is the spec that replaced "a sidenav row shows its path, profile, two
+     * agent switches, Plan, Summary, Review, Restart and End". That one asserted
+     * the density on purpose; the density was the problem.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        const [first, second] = await twoSessions(app)
+
+        const rail = await app.evaluate(`(() => {
+          const rail = document.querySelector('.quick-rail')
+          const shortcuts = [...rail.querySelectorAll('[data-rail-session]')]
+          const box = (el) => el.getBoundingClientRect()
+          return {
+            width: Math.round(box(rail).width),
+            drawerHidden: document.querySelector('.session-drawer').dataset.hidden,
+            editorLeft: Math.round(box(document.querySelector('.workspace-editor')).left),
+            shortcuts: shortcuts.length,
+            monograms: shortcuts.map((s) => s.querySelector('.rail-session-monogram').textContent),
+            names: shortcuts.map((s) => s.getAttribute('aria-label')),
+            marks: shortcuts.map((s) => s.querySelector('.state-mark')?.dataset.state ?? null),
+            /* One tab stop for the group, not one per session. */
+            tabStops: shortcuts.filter((s) => s.tabIndex === 0).length,
+            sizes: shortcuts.map((s) => Math.round(box(s).height)),
+            drawerToggle: !!rail.querySelector('[data-rail-drawer]'),
+            newSession: !!rail.querySelector('[data-rail-new]'),
+            terminal: !!rail.querySelector('[data-rail-terminal]'),
+            settings: !!rail.querySelector('[data-rail-settings]'),
+            /* No More, no grip, no destructive control at this width. */
+            menus: rail.querySelectorAll('[data-session-more]').length,
+            /*
+             * Four readings, always, in one order — Codex 5-hour, Codex weekly,
+             * Claude 5-hour, Claude weekly. Asserting only that a usage control
+             * "may exist" is what let the old version through: it derived its
+             * rows from the pushes that had arrived and sorted the agent ids, so
+             * a fresh window showed nothing, then two, then four with Claude
+             * above Codex.
+             */
+            usage: !!rail.querySelector('[data-rail-usage]'),
+            slots: [...rail.querySelectorAll('.rail-window')].map((w) => ({
+              agent: w.dataset.agent,
+              window: w.dataset.window,
+              reported: w.dataset.reported,
+              text: w.querySelector('.rail-window-percent').textContent,
+            })),
+            /*
+             * The shape the reference composition is drawn in, and the shape the
+             * first implementation was rejected for not being. Every number here
+             * is a geometry a screenshot would show and a behaviour test would
+             * not: an unbordered mark reads as texture, a 40px header row eats a
+             * transcript, and a provider name set on its side cannot be read.
+             */
+            masthead: (() => {
+              const bar = document.querySelector('.masthead')
+              if (bar === null) return null
+              const r = bar.getBoundingClientRect()
+              return {
+                height: Math.round(r.height),
+                top: Math.round(r.top),
+                wordmark: !!bar.querySelector('.wordmark-logo'),
+                version: bar.querySelector('[data-app-version]')?.textContent ?? null,
+                /* Quiet: a name and a build, and nothing to press. */
+                buttons: bar.querySelectorAll('button, a, input').length,
+              }
+            })(),
+            /* Bordered tiles, not marks floating on the chrome. */
+            tiles: shortcuts.map((s) => {
+              const style = getComputedStyle(s)
+              return {
+                size: [Math.round(box(s).width), Math.round(box(s).height)],
+                border: Math.round(Number.parseFloat(style.borderTopWidth)),
+                radius: Math.round(Number.parseFloat(style.borderTopLeftRadius)),
+                gutter: Math.round(box(s).left - box(rail).left),
+              }
+            }),
+            /* The account blocks read across, so nothing in them is rotated. */
+            accountUpright: [...rail.querySelectorAll('.rail-account-name')].every(
+              (n) => getComputedStyle(n).writingMode === 'horizontal-tb'
+            ),
+            meters: rail.querySelectorAll('.rail-meter').length,
+          }
+        })()`)
+
+        /* 64 now: a 44px tile needs a 10px gutter either side to read as a card. */
+        assert(rail.width === 64, `the rail is 64px, got ${String(rail.width)}`)
+        assert(
+          rail.drawerHidden === 'true' && rail.editorLeft === 64,
+          `and it starts collapsed with the editor against it (${String(rail.editorLeft)})`
+        )
+        assert(rail.shortcuts === 2, `every session has a shortcut, got ${String(rail.shortcuts)}`)
+        assert(
+          rail.sizes.every((h) => h >= 44),
+          `each is at least 44px tall, got ${rail.sizes.join(',')}`
+        )
+        assert(rail.tabStops === 1, `one roving tab stop, got ${String(rail.tabStops)}`)
+        assert(
+          rail.marks.every((m) => m !== null),
+          `each carries a state mark, got ${rail.marks.join(',')}`
+        )
+        /*
+         * The monogram is two letters and two sessions in one folder produce the
+         * same two. The suffix is what distinguishes them without using colour,
+         * and the accessible name is the whole title regardless.
+         */
+        assert(
+          new Set(rail.monograms).size === rail.monograms.length,
+          `duplicate titles still get distinct marks, got ${rail.monograms.join(',')}`
+        )
+        assert(
+          rail.names.every((n) => typeof n === 'string' && n.length > 0),
+          `and each says what it is in words: ${rail.names.join(' / ')}`
+        )
+        assert(
+          rail.drawerToggle && rail.newSession && rail.terminal && rail.settings,
+          'the drawer toggle, new session, terminal and settings all survive the collapse'
+        )
+        assert(rail.menus === 0, 'and nothing destructive or overflowing sits in the rail')
+
+        /*
+         * The account column, whatever the machine's accounts happen to be. This
+         * runs on a build machine that may have no plan window at all, which is
+         * exactly the case the old code hid the whole control for.
+         */
+        assert(rail.usage, 'the account column is there before anything has been pushed')
+        assert(
+          rail.slots.length === 4,
+          `four readings, got ${String(rail.slots.length)}: ${JSON.stringify(rail.slots)}`
+        )
+        assert(
+          JSON.stringify(rail.slots.map((s) => `${s.agent}:${s.window}`)) ===
+            JSON.stringify(['codex:short', 'codex:long', 'claude:short', 'claude:long']),
+          `in the locked order, got ${rail.slots.map((s) => `${s.agent}:${s.window}`).join(' / ')}`
+        )
+        /*
+         * And an empty slot says nothing rather than zero. `0%` claims the
+         * account is empty, which is the opposite of "nobody has answered".
+         */
+        assert(
+          rail.slots.every((s) => (s.reported === 'true' ? /^\d+%$/.test(s.text) : s.text === '—')),
+          `an unreported window reads as an em dash and never as 0%: ${JSON.stringify(rail.slots)}`
+        )
+
+        /*
+         * The composition, as geometry. These are the readings the first
+         * implementation was rejected on, so each is asserted as a number rather
+         * than left to a screenshot nobody diffs.
+         */
+        assert(
+          rail.masthead !== null && rail.masthead.top === 0,
+          'the compact header is the first row in the window'
+        )
+        assert(
+          rail.masthead.height >= 30 && rail.masthead.height <= 32,
+          `and it is 30–32px, got ${String(rail.masthead.height)}`
+        )
+        assert(
+          rail.masthead.wordmark && rail.masthead.version !== null,
+          `carrying the wordmark and the real version, got ${String(rail.masthead.version)}`
+        )
+        assert(
+          rail.masthead.buttons === 0,
+          `and nothing else — no actions, no widgets (${String(rail.masthead.buttons)} controls)`
+        )
+        assert(
+          rail.width >= 60 && rail.width <= 64,
+          `the rail is 60–64px, got ${String(rail.width)}`
+        )
+        assert(
+          rail.tiles.every((t) => t.size[0] === 44 && t.size[1] === 44),
+          `every shortcut is 44×44, got ${JSON.stringify(rail.tiles.map((t) => t.size))}`
+        )
+        assert(
+          rail.tiles.every((t) => t.border >= 1 && t.radius >= 6 && t.radius <= 8),
+          `each with a 1px boundary and a 6–8px radius, got ${JSON.stringify(rail.tiles.map((t) => [t.border, t.radius]))}`
+        )
+        assert(
+          rail.tiles.every((t) => t.gutter >= 8 && t.gutter <= 10),
+          `and an 8–10px gutter, got ${JSON.stringify(rail.tiles.map((t) => t.gutter))}`
+        )
+        assert(
+          rail.accountUpright,
+          'the provider names are set horizontally rather than on their side'
+        )
+        assert(rail.meters === 2, `one progress bar per provider, got ${String(rail.meters)}`)
+
+        // Clicking a shortcut opens or focuses that session.
+        await app.evaluate(`(() => {
+          document.querySelector('[data-rail-session="${second}"]').click()
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          (await app.evaluate(
+            `document.querySelector('[data-rail-session="${second}"]').getAttribute('aria-current')`
+          )) === 'true',
+          'clicking a shortcut makes that session the active one'
+        )
+
+        /*
+         * Arrow keys move within the group and Home/End reach its ends, which is
+         * what one roving tab stop buys: the settings gear stays two presses
+         * away rather than twenty-two.
+         */
+        await app.evaluate(`(() => {
+          const first = document.querySelector('[data-rail-session="${first}"]')
+          first.focus()
+          first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.activeElement?.dataset.railSession`)) === second,
+          'ArrowDown moves to the next shortcut'
+        )
+
+        // Twenty sessions scroll the middle and leave the fixed groups alone.
+        const footTop = () =>
+          app.evaluate(
+            `Math.round(document.querySelector('.quick-rail-group--foot').getBoundingClientRect().top)`
+          )
+        const restingFoot = await footTop()
+        await app.evaluate(`(() => {
+          const scroller = document.querySelector('[data-rail-scroll]')
+          scroller.scrollTop = scroller.scrollHeight
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          (await footTop()) === restingFoot,
+          'scrolling the shortcut list does not move the foot group'
+        )
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'a session is one row, one preview and one menu',
+    /*
+     * The drawer row has a single primary target and a single overflow. Every
+     * fact that used to be a permanent control on the card is now either in the
+     * read-only preview or in the menu, and the preview is *read-only* on
+     * purpose — a surface that closes when the pointer crosses a 6px gap is the
+     * wrong home for "End session".
      */
     async run(assert) {
       const app = await launch()
       try {
         const [first] = await twoSessions(app)
-        const order = () =>
-          app.evaluate(
-            `Array.from(document.querySelectorAll('[data-sidebar-conversation]'))
-               .map(r => r.dataset.sidebarConversation)`
-          )
-        const before = await order()
-        assert(before.length === 2, `both sessions are listed flat, got ${before.length}`)
-        assert(
-          (await app.evaluate(`document.querySelectorAll('.workspace-group-label').length`)) === 0,
-          'and not under a folder heading'
-        )
+        await openDrawer(app)
 
-        /*
-         * The card carries what the composer's footer says about a session, and
-         * its own Restart and End — the tab's context menu is gone, so this is
-         * where those live. A wrapper with a button inside it, because a button
-         * cannot contain buttons; the nesting check is the part that would fail
-         * silently in the DOM rather than loudly in a test.
-         */
-        const card = await app.evaluate(`(() => {
+        const row = await app.evaluate(`(() => {
           const row = document.querySelector('[data-sidebar-conversation="${first}"]')
-          const main = row.querySelector('.workspace-session-main')
+          const main = row.querySelector('.session-row-main')
           return {
-            path: row.querySelector('.workspace-session-path')?.textContent ?? null,
-            profile: row.querySelector('.workspace-session-profile')?.textContent ?? null,
-            actions: [...row.querySelectorAll('.workspace-session-action')].length,
-            agents: row.querySelectorAll('.workspace-session-agents .voice').length,
-            agentsAreButtons: [...row.querySelectorAll('.workspace-session-agents .voice')]
-              .every(b => b.tagName === 'BUTTON' && b.hasAttribute('aria-pressed')),
+            height: Math.round(row.getBoundingClientRect().height),
+            primaryTargets: row.querySelectorAll('.session-row-main').length,
+            overflow: row.querySelectorAll('[data-session-more]').length,
             nestedButtons: main.querySelectorAll('button').length,
-            actionsVisible:
-              getComputedStyle(row.querySelector('.workspace-session-actions')).opacity === '1',
-            /* clientWidth, not the bounding box: the card is border-box, so
-               the head spans its inner width and is 2px narrower. */
-            headIsFullWidth:
-              Math.round(row.querySelector('.workspace-session-main').getBoundingClientRect().width) ===
-              row.clientWidth,
-            headCursor: getComputedStyle(row.querySelector('.workspace-session-main')).cursor,
-            menus: document.querySelectorAll('.workspace-context-menu').length,
+            name: main.getAttribute('aria-label'),
+            /* Nothing that configures or ends a session lives on the row. */
+            leftovers: row.querySelectorAll(
+              '.path, .profile-chip, .voice, [aria-label*="End"], [aria-label*="Restart"]'
+            ).length,
+            moreReachable: row.querySelector('[data-session-more]').tabIndex !== -1,
+            titleSize: getComputedStyle(row.querySelector('.session-row-title')).fontSize,
           }
         })()`)
-        assert(card.path !== null && card.profile !== null, 'the row shows its path and profile')
-        assert(card.agents === 2, `and every agent, seated or not (${String(card.agents)})`)
-        assert(card.agentsAreButtons, "as the composer's own switches, not labels")
+        assert(row.height === 44, `a row is 44px, got ${String(row.height)}`)
+        assert(row.primaryTargets === 1, 'with exactly one primary target')
+        assert(row.overflow === 1, 'and exactly one overflow action')
+        assert(row.nestedButtons === 0, 'and no button nested inside another')
+        assert(row.leftovers === 0, 'no folder, profile, cast switch, restart or end on the row')
+        assert(row.moreReachable, 'the overflow is keyboard reachable rather than hover-only')
+        assert(row.titleSize === '13px', `the title is 13px, got ${row.titleSize}`)
 
         /*
-         * Three lines, and every one of them fits at the narrowest the sidebar
-         * can be dragged to.
-         *
-         * On two lines the agents shared a row with the path and the profile,
-         * which overflowed a 240px card by 31px — the action buttons hold their
-         * width at rest, so the row does not jump when a pointer crosses it, and
-         * that is what squeezed it. A line each removed the need for the
-         * container query that had been shedding the agents' names to fit.
-         * Setting the variable stands in for the drag the resize spec covers.
+         * The preview opens from hover *and* from keyboard focus, survives the
+         * pointer travelling into it, and closes on Escape. WCAG 2.2 asks for
+         * all three of hoverable, dismissible and persistent.
          */
-        const narrow = await app.evaluate(`(() => {
-          document.documentElement.style.setProperty('--sidebar', '240px')
-          const row = document.querySelector('.workspace-session-row')
-          const over = (s) => {
-            const e = row.querySelector(s)
-            return e.scrollWidth - e.clientWidth
-          }
-          return {
-            lines: [
-              over('.workspace-session-line'),
-              over('.workspace-session-agents'),
-              over('.workspace-session-body'),
-            ],
-            namesStillShown:
-              getComputedStyle(row.querySelector('.workspace-session-agents .voice')).fontSize !==
-              '0px',
-          }
-        })()`)
-        assert(
-          narrow.lines.every((n) => n === 0),
-          `at 240px no line overflows (${narrow.lines.join(',')})`
-        )
-        assert(narrow.namesStillShown, 'and the agents keep their names')
-        await app.evaluate(`(document.documentElement.style.removeProperty('--sidebar'), true)`)
-        assert(card.actions === 2, `Restart and End sit on it, got ${String(card.actions)}`)
-        assert(card.nestedButtons === 0, 'and no button is nested inside another')
-        assert(card.actionsVisible, 'and are visible without hovering the row')
-        assert(
-          card.headIsFullWidth,
-          'the head is the whole band, so a click near the name lands on it'
-        )
-        assert(card.headCursor === 'pointer', 'and says so with the pointer')
-
-        /*
-         * A folder can be typed, and a session can have none.
-         *
-         * The runtime has always read an empty directory as "start at home" — a
-         * directory is a starting point, not a boundary — but it resolved that
-         * before the renderer saw it, so a session that was never given a
-         * project looked exactly like one deliberately pointed at home, and
-         * there was no way to say "no particular folder" back. The card names
-         * that state and can return to it.
-         */
-        const folder = () =>
+        const listGeometry = () =>
           app.evaluate(`(() => {
-            const el = document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path')
-            return { tag: el.tagName, text: el.textContent || el.value, empty: el.dataset.empty ?? null }
+            const rows = [...document.querySelectorAll('.session-rows .session-row')]
+            return rows.map((r) => Math.round(r.getBoundingClientRect().top))
           })()`)
-        const editFolder = async (value) => {
-          await app.evaluate(`(() => {
-            document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path')
-              .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-            return true
-          })()`)
-          await app.until(
-            `document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path').tagName === 'INPUT'`,
-            { timeout: 15_000, label: 'the folder field opened' }
-          )
-          await app.evaluate(`(() => {
-            const f = document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path')
-            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
-              .set.call(f, ${JSON.stringify(value)})
-            f.dispatchEvent(new Event('input', { bubbles: true }))
-            f.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-            return true
-          })()`)
-        }
+        const beforePreview = await listGeometry()
 
-        const atStart = await folder()
-        assert(
-          atStart.empty === 'true',
-          `a session starts with no folder of its own, got ${atStart.text}`
-        )
-
-        await editFolder('/tmp')
-        await app.until(
-          `document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path').dataset.empty === 'false'`,
-          { timeout: 20_000, label: 'the typed folder took' }
-        )
-        assert(true, 'and a path can be typed rather than only picked')
-
-        /*
-         * And one click gives it back.
-         *
-         * Emptying the field works and nobody finds it — "double-click, select
-         * all, delete, Enter" is not a gesture. The × only exists when there is
-         * a folder to drop, and sits beside the path rather than in the actions
-         * column, because the card's other × ends the session.
-         */
-        const clear = await app.evaluate(`(() => {
-          const row = document.querySelector('[data-sidebar-conversation="${first}"]')
-          const x = row.querySelector('.workspace-session-folder-clear')
-          const end = row.querySelector('.workspace-session-action--end')
+        await app.evaluate(`(() => {
+          // React derives enter/leave from delegated pointerover, so a synthetic
+          // pointerenter never reaches the handler.
+          document.querySelector('[data-sidebar-conversation="${first}"] .session-row-main')
+            .dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-preview')`, {
+          timeout: 10_000,
+          label: 'the preview opened on hover',
+        })
+        const preview = await app.evaluate(`(() => {
+          const card = document.querySelector('.session-preview')
+          const box = card.getBoundingClientRect()
           return {
-            present: x !== null,
-            clearOfTheEndButton:
-              x && end ? end.getBoundingClientRect().left - x.getBoundingClientRect().right > 40 : false,
+            portalled: !document.querySelector('.session-drawer').contains(card),
+            fitsWindow:
+              box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight,
+            facts: [...card.querySelectorAll('dt')].map((d) => d.textContent),
+            hasPath: !!card.querySelector('.session-preview-path'),
+            /* Read-only: nothing in it can be pressed. */
+            controls: card.querySelectorAll('button, input, select, a').length,
           }
         })()`)
-        assert(clear.present, 'a folder can be dropped without editing anything')
-        assert(clear.clearOfTheEndButton, 'and its × is nowhere near the one that ends the session')
+        assert(preview.portalled, 'the preview is portalled clear of the drawer')
+        assert(preview.fitsWindow, 'and placed inside the window')
+        assert(preview.hasPath, 'it names the project path the row no longer shows')
+        assert(
+          preview.facts.length >= 3,
+          `and the facts that left the card: ${preview.facts.join(', ')}`
+        )
+        assert(preview.controls === 0, 'and it is read-only — every action is in the menu')
+        assert(
+          JSON.stringify(await listGeometry()) === JSON.stringify(beforePreview),
+          'opening it does not reflow the list'
+        )
 
         await app.evaluate(`(() => {
-          document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-folder-clear').click()
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
           return true
         })()`)
-        await app.until(
-          `document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-path').dataset.empty === 'true'`,
-          { timeout: 20_000, label: 'the folder went back to none' }
-        )
+        await app.settle()
         assert(
-          (await app.evaluate(
-            `!document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-folder-clear')`
-          )) === true,
-          'and the × goes with it, there being nothing left to clear'
+          (await app.evaluate(`document.querySelectorAll('.session-preview').length`)) === 0,
+          'Escape dismisses it'
         )
 
         /*
-         * The profile menu has to leave the sidebar's subtree entirely.
+         * And the same card from keyboard focus alone.
          *
-         * The sidebar carries a `transform` for its slide, which makes it the
-         * containing block for anything `position: fixed` inside it — so a
-         * fixed menu was positioned against the sidebar and then clipped by its
-         * `overflow`. Being wider than the sidebar, it lost its right-hand
-         * half. Only a portal escapes both that and the list's own scrolling.
+         * Blurred first, because `focus()` on the element that already has it
+         * fires no event — and whether it already has it depends on what the
+         * step before happened to leave focused, which is not what this is
+         * asserting. A person arriving by Tab always generates the event.
+         *
+         * Frontmost first, for a larger version of the same problem. In a window
+         * Chromium does not consider focused, `focus()` fires *no* event however
+         * this is sequenced, and `setTimeout` is throttled past the preview's
+         * 200ms dwell — so this step failed two runs in three on a machine where
+         * another window happened to be in front, and reported it as "never
+         * became true". That is the driver, not the app: the same path was
+         * driven by hand and works.
          */
+        assert(await app.bringToFront(), 'the window can be brought to the front to drive focus')
         await app.evaluate(`(() => {
-          const chip = document.querySelector('.workspace-session-profile .profile-chip')
-          chip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-          chip.click()
+          document.activeElement?.blur()
+          document.querySelector('[data-sidebar-conversation="${first}"] .session-row-main').focus()
           return true
         })()`)
-        await app.until(`!!document.querySelector('.workspace-session-profile-menu')`, {
-          timeout: 15_000,
-          label: 'the profile menu opened',
+        await app.until(`!!document.querySelector('.session-preview')`, {
+          timeout: 10_000,
+          label: 'the preview opened from focus',
+        })
+        assert(true, 'focus opens the same preview as hover')
+        await app.evaluate(`(() => {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+          return true
+        })()`)
+
+        /*
+         * The menu is the durable route, and End is at the bottom behind a
+         * divider rather than an icon beside the thing that opens the session.
+         */
+        await app.evaluate(`(() => {
+          document.querySelector('[data-session-more="${first}"]').click()
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-menu')`, {
+          timeout: 10_000,
+          label: 'the menu opened',
         })
         const menu = await app.evaluate(`(() => {
-          const el = document.querySelector('.workspace-session-profile-menu')
-          const m = el.getBoundingClientRect()
-          const side = document.querySelector('.workspace-sidebar').getBoundingClientRect()
+          const menu = document.querySelector('.session-menu')
+          const items = [...menu.querySelectorAll('button')]
+          const box = menu.getBoundingClientRect()
+          const danger = menu.querySelector('.session-menu-danger')
+          const ordinary = items.find((b) => b.textContent === 'Rename')
           return {
-            inSidebar: document.querySelector('.workspace-sidebar').contains(el),
-            spillsPastSidebar: m.right > side.right,
-            fitsWindow: m.left >= 0 && m.right <= innerWidth && m.top >= 0 && m.bottom <= innerHeight,
-            options: el.querySelectorAll('.profile-option-summary').length,
+            portalled: !document.querySelector('.session-drawer').contains(menu),
+            fitsWindow:
+              box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight,
+            labels: items.map((b) => b.textContent),
+            endIsLast: items.at(-1) === danger,
+            separators: menu.querySelectorAll('.session-menu-separator').length,
+            role: menu.getAttribute('role'),
+            /*
+             * The colour the app actually paints, not the one the sheet asks
+             * for. \`.session-menu button\` is a class and a type and
+             * \`.session-menu-danger\` was one class, so End resolved to
+             * --text-primary and read exactly like Rename. Compared against the
+             * token and against a neighbouring item, because a hard-coded hex
+             * here would only re-assert whatever the theme happens to be.
+             */
+            endColour: getComputedStyle(danger).color,
+            ordinaryColour: getComputedStyle(ordinary).color,
+            dangerToken: getComputedStyle(document.documentElement)
+              .getPropertyValue('--danger').trim(),
           }
         })()`)
-        assert(!menu.inSidebar, 'the profile menu is portalled clear of the sidebar')
+        assert(menu.portalled && menu.fitsWindow, 'the menu is portalled and inside the window')
+        assert(menu.role === 'menu', 'and says what it is')
+        assert(menu.endIsLast, 'End is the last thing in it')
+        assert(menu.separators >= 1, 'behind a divider')
         assert(
-          menu.spillsPastSidebar,
-          'reaching past its right edge, which is what used to be cut off'
+          menu.endColour !== menu.ordinaryColour,
+          `End does not read like Rename (End ${menu.endColour}, Rename ${menu.ordinaryColour})`
         )
-        assert(menu.fitsWindow, 'and it is placed inside the window')
         assert(
-          menu.options >= 2,
-          `with what each profile permits, not just its name (${String(menu.options)})`
+          menu.endColour === hexToRgb(menu.dangerToken),
+          `End is painted in --danger (${menu.dangerToken} → ${hexToRgb(menu.dangerToken)}), got ${menu.endColour}`
         )
+        for (const wanted of [
+          'Rename',
+          'Session settings',
+          'Move Up',
+          'Move Down',
+          'Open in Pane',
+        ]) {
+          assert(
+            menu.labels.some((label) => label === wanted),
+            `the menu offers ${wanted}, got ${menu.labels.join(' / ')}`
+          )
+        }
+
+        // Escape closes it and gives focus back to the control that opened it.
         await app.evaluate(`(() => {
-          document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
           return true
         })()`)
         await app.settle()
         assert(
-          (await app.evaluate(
-            `document.querySelectorAll('.workspace-session-profile-menu').length`
-          )) === 0,
-          'and a click anywhere else closes it'
+          (await app.evaluate(`document.querySelectorAll('.session-menu').length`)) === 0,
+          'Escape closes the menu'
         )
-
-        // Right-clicking a tab used to open a menu. It should do nothing now.
-        await app.evaluate(`(() => {
-          document.querySelector('${TAB}')
-            .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
-          return true
-        })()`)
-        await app.settle()
         assert(
-          (await app.evaluate(`document.querySelectorAll('.workspace-context-menu').length`)) === 0,
-          'and the tab context menu is gone'
+          (await app.evaluate(`document.activeElement?.dataset.sessionMore ?? null`)) === first,
+          'and focus returns to the button that opened it'
         )
 
-        // Double-click swaps the row for a field, which is the only way a
-        // caret can land inside what is otherwise a button.
+        /*
+         * Double-click still renames in place.
+         *
+         * The plan keeps the fast path as well as the menu command, and the two
+         * gestures live on the same element: the row is a button that opens a
+         * session on click, so a rename that did not *replace* the button would
+         * have the button eating the caret.
+         */
         await app.evaluate(`(() => {
-          document.querySelector('[data-sidebar-conversation="${first}"] .workspace-session-main')
+          document.querySelector('[data-sidebar-conversation="${first}"] .session-row-main')
             .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
           return true
         })()`)
-        await app.until(`!!document.querySelector('.workspace-session-rename')`, {
+        await app.until(`!!document.querySelector('.session-row-rename')`, {
+          timeout: 10_000,
           label: 'the rename field opened',
         })
+        assert(
+          (await app.evaluate(
+            `document.querySelector('[data-sidebar-conversation="${first}"] .session-row-main') === null`
+          )) === true,
+          'the field replaces the button rather than nesting inside it'
+        )
         await app.evaluate(`(() => {
-          const field = document.querySelector('.workspace-session-rename')
+          const field = document.querySelector('.session-row-rename')
           field.value = 'renamed-inline'
           field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
           return true
@@ -1113,37 +1422,302 @@ export const specs = [
           { label: 'the new name reached the row' }
         )
 
-        // Drag the first row past the second. The row midpoints are snapshotted
-        // at drag start, so the pointer only has to clear the lower one.
+        /*
+         * Search filters and never reorders, and Arrange refuses to run while it
+         * is live — a gap index between two *visible* rows does not describe a
+         * position in the real list, and committing one would shuffle rows the
+         * user cannot see.
+         */
         await app.evaluate(`(() => {
-          const rows = document.querySelectorAll('[data-sidebar-conversation]')
+          const input = document.querySelector('.session-drawer input[type="search"]')
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+            .set.call(input, 'renamed-inline')
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          return true
+        })()`)
+        await app.until(`document.querySelectorAll('.session-drawer .session-row').length === 1`, {
+          timeout: 10_000,
+          label: 'the search filtered the list',
+        })
+        assert(
+          (await app.evaluate(`document.querySelector('[data-arrange-toggle]').disabled`)) === true,
+          'Arrange is refused while a search is filtering the list'
+        )
+        await app.evaluate(`(() => {
+          const input = document.querySelector('.session-drawer input[type="search"]')
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+            .set.call(input, '')
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          return true
+        })()`)
+        await app.until(`document.querySelectorAll('.session-drawer .session-row').length === 2`, {
+          timeout: 10_000,
+          label: 'clearing the search brought the list back',
+        })
+
+        // Session settings mounts for the selected session only.
+        await app.evaluate(`(() => {
+          document.querySelector('[data-session-more="${first}"]').click()
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-menu')`, { timeout: 10_000 })
+        await app.evaluate(`(() => {
+          const open = [...document.querySelectorAll('.session-menu button')]
+            .find((b) => b.textContent === 'Session settings')
+          open.click()
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-settings')`, {
+          timeout: 10_000,
+          label: 'session settings opened',
+        })
+        const settings = await app.evaluate(`(() => ({
+          panels: document.querySelectorAll('.session-settings').length,
+          agents: document.querySelectorAll('.session-settings-agents .voice').length,
+          path: !!document.querySelector('.session-settings-path'),
+          profiles: document.querySelectorAll('.session-settings-profiles .profile-option').length,
+          plan: !!document.querySelector('.session-settings-plan'),
+        }))()`)
+        assert(settings.panels === 1, 'one settings panel, not one per session')
+        assert(settings.agents === 2, 'it carries the cast')
+        assert(settings.path, 'the folder')
+        assert(settings.profiles >= 2, 'the profiles')
+        assert(settings.plan, 'and Plan mode')
+      } finally {
+        await app.quit()
+      }
+    },
+  },
+
+  {
+    name: 'a rail drag places a session, and only Arrange reorders',
+    /*
+     * The same source, two deliberately different destinations. Outside Arrange
+     * a drag reaches the workspace through the existing tab-drag target
+     * language — insert, move, and four edge splits — and cannot change the
+     * list's order. Inside Arrange it reorders and cannot reach the workspace.
+     *
+     * The old behaviour was that any pointer movement over any part of a card
+     * reordered the list, which is why "drag a session into a pane" did not
+     * exist at all.
+     */
+    async run(assert) {
+      const app = await launch()
+      try {
+        const ids = await twoSessions(app)
+        const [first, second] = ids
+        const order = () =>
+          app.evaluate(
+            `[...document.querySelectorAll('.quick-rail [data-rail-session]')]
+               .map((s) => s.dataset.railSession)`
+          )
+        const before = await order()
+
+        /*
+         * A drag from the rail to a pane's right edge splits.
+         *
+         * Started on the element, finished on the document: the drag's document
+         * listeners are attached by an effect, so React has to have rendered in
+         * between. A test that dispatched all four events in one tick would find
+         * the pointerup landing before anything was listening for it — and would
+         * pass as "no split", which is the wrong answer for the right reason.
+         */
+        const dragTo = async (railId, point) => {
+          await app.evaluate(`(() => {
+            const s = document.querySelector('[data-rail-session="${railId}"]')
+            const from = s.getBoundingClientRect()
+            const content = document.querySelector('[data-pane-content]').getBoundingClientRect()
+            const to = ${point}
+            window.__drop = to
+            s.dispatchEvent(new PointerEvent('pointerdown', {
+              pointerId: 9, button: 0, isPrimary: true, bubbles: true, cancelable: true,
+              clientX: Math.round(from.left + from.width / 2),
+              clientY: Math.round(from.top + from.height / 2),
+            }))
+            s.dispatchEvent(new PointerEvent('pointermove', {
+              pointerId: 9, bubbles: true, clientX: to.x, clientY: to.y,
+            }))
+            return true
+          })()`)
+          await app.settle()
+          const feedback = await app.evaluate(`(() => {
+            const overlay = document.querySelector('.workspace-drop-overlay')
+            const ghost = document.querySelector('.workspace-drag-ghost')
+            const content = document.querySelector('[data-pane-content]').getBoundingClientRect()
+            return {
+              ghost: document.querySelectorAll('.workspace-drag-ghost').length,
+              overlay: overlay?.textContent ?? null,
+              disabled: overlay?.dataset.disabled ?? null,
+              /*
+               * The painted target is a strip on the edge, not the half-pane the
+               * drop will make. A translucent slab over half a transcript reads
+               * as a selection; a strip reads as the seam a pane opens along —
+               * which is what the approved composition draws.
+               */
+              strip:
+                overlay === null
+                  ? null
+                  : {
+                      width: Math.round(overlay.getBoundingClientRect().width),
+                      paneWidth: Math.round(content.width),
+                      dashed: getComputedStyle(overlay).borderLeftStyle,
+                    },
+              /* And what is being carried is drawn as what it is. */
+              shape: ghost?.dataset.shape ?? null,
+              inWindow:
+                ghost === null
+                  ? null
+                  : Math.round(ghost.getBoundingClientRect().right) <= window.innerWidth,
+            }
+          })()`)
+          await app.evaluate(`(() => {
+            const to = window.__drop
+            document.dispatchEvent(new PointerEvent('pointermove', {
+              pointerId: 9, bubbles: true, clientX: to.x, clientY: to.y,
+            }))
+            document.dispatchEvent(new PointerEvent('pointerup', {
+              pointerId: 9, bubbles: true, clientX: to.x, clientY: to.y,
+            }))
+            return true
+          })()`)
+          await app.settle()
+          return feedback
+        }
+
+        const split = await dragTo(
+          second,
+          `{ x: Math.round(content.right - 20), y: Math.round(content.top + content.height / 2) }`
+        )
+        assert(split.ghost === 1, 'the drag shows a ghost that follows the pointer')
+        assert(
+          split.overlay !== null && /split/i.test(split.overlay),
+          `and names the target it is over, got ${String(split.overlay)}`
+        )
+        assert(
+          split.strip.width <= 56 && split.strip.width < split.strip.paneWidth / 3,
+          `the target is painted as an edge strip, not half the pane (${String(split.strip.width)} of ${String(split.strip.paneWidth)})`
+        )
+        assert(
+          split.strip.dashed === 'dashed',
+          `with the seam dashed along the edge the split opens on, got ${String(split.strip.dashed)}`
+        )
+        assert(
+          split.shape === 'tile' && split.inWindow === true,
+          `and a session tile carried inside the window (${String(split.shape)}, in window: ${String(split.inWindow)})`
+        )
+        assert(
+          (await app.evaluate(`document.querySelectorAll('${GROUP}').length`)) === 2,
+          'dropping on an edge splits the workspace'
+        )
+        assert(
+          (await app.evaluate(
+            `new Set([...document.querySelectorAll('${TAB}')].map((t) => t.dataset.workspaceTab)).size`
+          )) === 2,
+          'and the session moved rather than being duplicated'
+        )
+        assert(
+          JSON.stringify(await order()) === JSON.stringify(before),
+          'and the list order is untouched — a workspace drop is not a reorder'
+        )
+
+        // A closed session can be dropped into a pane and opens there.
+        await press(app, 'w', { meta: true })
+        await app.until(`document.querySelectorAll('${TAB}').length === 1`, {
+          label: 'one session closed',
+        })
+        const closed = (await tabIds(app))[0] === first ? second : first
+        await dragTo(
+          closed,
+          `{ x: Math.round(content.left + content.width / 2), y: Math.round(content.top + content.height / 2) }`
+        )
+        assert(
+          (await app.evaluate(
+            `new Set([...document.querySelectorAll('${TAB}')].map((t) => t.dataset.workspaceTab)).size`
+          )) === 2,
+          'a closed session dropped into a pane opens there, exactly once'
+        )
+
+        /*
+         * Arrange is the only state in which the list reorders, and it exposes a
+         * grip and Move Up/Move Down so dragging is never the only way.
+         */
+        await openDrawer(app)
+        await app.evaluate(`(() => {
+          document.querySelector('[data-arrange-toggle]').click()
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelectorAll('[data-arrange-grip]').length`)) === 2,
+          'Arrange gives every row a grip'
+        )
+
+        const listOrder = () =>
+          app.evaluate(
+            `[...document.querySelectorAll('.session-drawer [data-sidebar-conversation]')]
+               .map((r) => r.dataset.sidebarConversation)`
+          )
+        const listBefore = await listOrder()
+        await app.evaluate(`(() => {
+          const rows = document.querySelectorAll('.session-drawer .session-row')
           const from = rows[0].getBoundingClientRect()
           const to = rows[1].getBoundingClientRect()
           const x = from.left + from.width / 2
-          /*
-           * Grabbed by the body, not the head.
-           *
-           * The grip used to be the head alone — a third of the card — so the
-           * other two thirds looked draggable and were not, and a spec that
-           * always grabbed the head could never see it.
-           */
-          rows[0].querySelector('.workspace-session-body').dispatchEvent(new PointerEvent('pointerdown', {
-            pointerId: 1, button: 0, bubbles: true, cancelable: true,
+          const grip = rows[0].querySelector('[data-arrange-grip]')
+          grip.dispatchEvent(new PointerEvent('pointerdown', {
+            pointerId: 3, button: 0, bubbles: true, cancelable: true,
             clientX: x, clientY: from.top + from.height / 2,
           }))
           document.dispatchEvent(new PointerEvent('pointermove', {
-            pointerId: 1, bubbles: true, clientX: x, clientY: to.bottom + 4,
+            pointerId: 3, bubbles: true, clientX: x, clientY: to.bottom + 4,
           }))
           document.dispatchEvent(new PointerEvent('pointerup', {
-            pointerId: 1, bubbles: true, clientX: x, clientY: to.bottom + 4,
+            pointerId: 3, bubbles: true, clientX: x, clientY: to.bottom + 4,
           }))
           return true
         })()`)
         await app.settle()
-        const after = await order()
+        const listAfter = await listOrder()
         assert(
-          after[0] === before[1] && after[1] === before[0],
-          `the dragged row took the other's place, got ${after.join(',')}`
+          listAfter[0] === listBefore[1] && listAfter[1] === listBefore[0],
+          `an Arrange drag reorders the list, got ${listAfter.join(',')}`
+        )
+
+        // Escape leaves the mode.
+        await app.evaluate(`(() => {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          (await app.evaluate(`document.querySelectorAll('[data-arrange-grip]').length`)) === 0,
+          'Escape leaves Arrange'
+        )
+
+        // And the non-drag alternative puts it back.
+        await app.evaluate(`(() => {
+          document.querySelector('[data-session-more="${listAfter[1]}"]').click()
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-menu')`, { timeout: 10_000 })
+        await app.evaluate(`(() => {
+          const up = [...document.querySelectorAll('.session-menu button')]
+            .find((b) => b.textContent === 'Move Up')
+          up.click()
+          return true
+        })()`)
+        await app.settle()
+        assert(
+          JSON.stringify(await listOrder()) === JSON.stringify(listBefore),
+          'Move Up does by menu what the drag does by pointer'
+        )
+        assert(
+          (
+            await app.evaluate(
+              `document.querySelector('.session-drawer [role="status"]')?.textContent ?? ''`
+            )
+          ).length > 0,
+          'and says so, for anything that cannot see the list move'
         )
       } finally {
         await app.quit()
@@ -1152,106 +1726,290 @@ export const specs = [
   },
 
   {
-    name: 'the sidenav docks at every width and never floats over the editor',
+    name: 'a terminal belongs to one session, and the global one is a different thing',
     /*
-     * It used to go over the editor below 760px. That is gone: a panel that
-     * changes what it *is* at a width boundary is a second layout to learn, and
-     * the one it changed into covered the thing you were reading.
+     * The requirement was a terminal for *one session*, not a terminal for the
+     * workspace, and the two are separate panels with separate shells: `⌘J`
+     * opens the focused pane's, `⌘⇧J` opens the one that belongs to nobody.
      *
-     * What replaces it is arithmetic rather than a second mode — `fitSidebar`
-     * holds the width to half the window on every resize, so a narrow window
-     * gets a narrower sidenav instead of a sidenav and nowhere to read.
+     * Everything here is a claim the plan makes about the composite review state
+     * and nothing else checked: that the session panel mounts inside its own
+     * pane between that session's transcript and its composer, that it stops at
+     * the pane divider so a split neighbour keeps its full height, that the
+     * global panel opens and closes without touching it, and that the owning
+     * composer still shows which VS Code selection will be sent with a message.
+     *
+     * The last of those is why the fake IDE is here: collapsing the drawer must
+     * not be able to take the path with it, and a terminal appearing between the
+     * transcript and the composer must not either.
      */
     async run(assert) {
+      const before = existingDescriptors()
       const app = await launch()
+      let ide = null
       try {
-        await started(app)
-        const shell = () =>
+        const [first] = await twoSessions(app)
+
+        // A project for the owning session, so it has a root to follow.
+        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-term-'))
+        mkdirSync(join(project, 'src'), { recursive: true })
+        writeFileSync(join(project, 'src/a.ts'), 'const a = 1\n')
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(first)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
+        )
+
+        // Two panes, one session each.
+        await press(app, '\\', { meta: true })
+        await app.until(`document.querySelectorAll('${GROUP}').length === 2`, {
+          label: 'the split made a second group',
+        })
+
+        /* Focus the pane that holds `first`, which is what ⌘J resolves against. */
+        await clickTab(app, first)
+        await app.settle()
+        assert(
+          (await app.evaluate(`(() => {
+            const pane = document.querySelector('${GROUP}[data-focused="true"]')
+            return pane?.querySelector('${PANE}')?.dataset.conversation ?? null
+          })()`)) === first,
+          'the pane holding the first session has the focus'
+        )
+
+        const geometry = () =>
           app.evaluate(`(() => {
-            const side = document.querySelector('.workspace-sidebar')
-            const editor = document.querySelector('.workspace-editor')
-            const handle = document.querySelector('.workspace-sidebar-resize')
+            const groups = [...document.querySelectorAll('${GROUP}')]
+            const box = (el) => {
+              const r = el?.getBoundingClientRect()
+              return r === undefined ? null : {
+                top: Math.round(r.top), bottom: Math.round(r.bottom),
+                height: Math.round(r.height),
+              }
+            }
             return {
-              window: innerWidth,
-              editorLeft: Math.round(editor.getBoundingClientRect().left),
-              sidebarRight: Math.round(side.getBoundingClientRect().right),
-              sidebar: Math.round(side.getBoundingClientRect().width),
-              handle: handle === null ? 'absent' : getComputedStyle(handle).display,
+              session: document.querySelectorAll('.terminal-panel--session').length,
+              global: document.querySelectorAll('.terminal-panel--global').length,
+              panes: groups.map((group) => {
+                const tab = group.querySelector('[data-workspace-tab]')?.parentElement
+                const tabStyle = tab === undefined || tab === null ? null : getComputedStyle(tab)
+                const bodyStyle = getComputedStyle(group.querySelector('[data-pane-content]'))
+                return {
+                  conversationId: group.querySelector('${PANE}')?.dataset.conversation ?? null,
+                  terminals: group.querySelectorAll('.terminal-panel').length,
+                  pane: box(group.querySelector('${PANE}')),
+                  transcript: box(group.querySelector('.score')),
+                  terminal: box(group.querySelector('.terminal-panel')),
+                  terminalHead: box(group.querySelector('.terminal-head')),
+                  composer: box(group.querySelector('.composer')),
+                  pill: group.querySelector('.ide-pill-what')?.textContent ?? null,
+                  /*
+                   * The header is a tab-shaped card, not a strip across the pane:
+                   * rounded at the top, square at the bottom where it meets the
+                   * body, and narrower than the pane it sits on.
+                   */
+                  tab:
+                    tab === null || tab === undefined
+                      ? null
+                      : {
+                          width: Math.round(tab.getBoundingClientRect().width),
+                          paneWidth: Math.round(group.getBoundingClientRect().width),
+                          radius: [
+                            Math.round(Number.parseFloat(tabStyle.borderTopLeftRadius)),
+                            Math.round(Number.parseFloat(tabStyle.borderBottomLeftRadius)),
+                          ],
+                          title: Math.round(
+                            Number.parseFloat(
+                              getComputedStyle(tab.querySelector('.workspace-tab-title')).fontSize
+                            )
+                          ),
+                          icon: tab.querySelectorAll('.workspace-tab-icon').length,
+                          close: tab.querySelectorAll('.workspace-tab-close').length,
+                        },
+                  /* A bounded body, which is what stops the panes reading as one page. */
+                  bodyBorder: Math.round(Number.parseFloat(bodyStyle.borderTopWidth)),
+                  bodyRadius: Math.round(Number.parseFloat(bodyStyle.borderBottomRightRadius)),
+                }
+              }),
             }
           })()`)
 
+        const closed = await geometry()
+        assert(closed.session === 0 && closed.global === 0, 'no terminal is open to begin with')
+        const neighbourBefore = closed.panes.find((p) => p.conversationId !== first)
+        assert(neighbourBefore !== undefined, 'the split produced a second, different session')
+
+        // ⌘J opens the focused pane's own terminal.
+        await press(app, 'j', { meta: true })
+        await app.until(`!!document.querySelector('.terminal-panel--session')`, {
+          timeout: 20_000,
+          label: 'the session terminal opened',
+        })
+        await app.settle()
+        const open = await geometry()
+
+        assert(
+          open.session === 1 && open.global === 0,
+          `exactly one terminal, and it is not the global one (session ${String(open.session)}, global ${String(open.global)})`
+        )
+        const owner = open.panes.find((p) => p.conversationId === first)
+        const neighbour = open.panes.find((p) => p.conversationId !== first)
+        assert(
+          owner?.terminals === 1 && neighbour?.terminals === 0,
+          `it is inside the owning pane only (owner ${String(owner?.terminals)}, other ${String(neighbour?.terminals)})`
+        )
         /*
-         * Waits for the width the *new* window allows, not merely for the
-         * column to agree with the variable.
-         *
-         * Agreement is already true the instant the viewport changes — nothing
-         * has moved yet — so waiting on it measured the old width and passed
-         * whenever the refit happened to land first. It did in isolation and
-         * did not in a full run, which is the failure telling the truth.
+         * Between the transcript and the composer, measured rather than read off
+         * the DOM order: what matters is where it is drawn.
          */
-        const settled = async () => {
-          await app.until(
-            `(() => {
-              const ceiling = Math.max(240, Math.round(innerWidth / 2))
-              const want = Math.min(
-                Math.round(parseFloat(
-                  getComputedStyle(document.documentElement).getPropertyValue('--sidebar'))),
-                ceiling
-              )
-              const have = Math.round(
-                document.querySelector('.workspace-sidebar').getBoundingClientRect().width)
-              return have <= ceiling && Math.abs(have - want) <= 2
-            })()`,
-            { timeout: 15_000, label: 'the column refitted to the window' }
+        assert(
+          owner.terminal.top >= owner.transcript.bottom - 1 &&
+            owner.terminal.bottom <= owner.composer.top + 1,
+          `between the transcript and the composer (transcript ends ${String(owner.transcript.bottom)}, terminal ${String(owner.terminal.top)}–${String(owner.terminal.bottom)}, composer starts ${String(owner.composer.top)})`
+        )
+        /*
+         * And it stops at the pane divider. The neighbour keeps the height it
+         * had — it does not inherit the panel, mirror it, or make room for it.
+         */
+        assert(
+          neighbour.pane.height === neighbourBefore.pane.height &&
+            neighbour.pane.bottom === neighbourBefore.pane.bottom,
+          `the other pane keeps its full height (${String(neighbourBefore.pane.height)} → ${String(neighbour.pane.height)})`
+        )
+        assert(
+          owner.transcript.height < neighbourBefore.pane.height,
+          'and the room came out of the owning transcript'
+        )
+
+        /*
+         * The composition, as geometry.
+         *
+         * Every reading here is one the approved reference fixes and the first
+         * implementation missed — a terminal at an arbitrary height with an
+         * unreadable header, and a pane header drawn as a hairline strip across
+         * the whole width.
+         *
+         * The composer used to be pinned at 175–195px here, on the reading that
+         * "a place to write, not a line" meant holding four lines open. Driven,
+         * that came out the other way: an empty box four lines tall is mostly
+         * emptiness with a placeholder in it. It now starts at one line and grows
+         * with what is typed, so what is asserted is the ceiling — it must not go
+         * back to reserving the room — and the growth itself is driven in
+         * `shots-composer.mjs`.
+         */
+        assert(
+          owner.terminal.height >= 205 && owner.terminal.height <= 220,
+          `the terminal is 205–220px tall, got ${String(owner.terminal.height)}`
+        )
+        assert(
+          owner.terminalHead.height >= 36 && owner.terminalHead.height <= 40,
+          `with a 36–40px header, got ${String(owner.terminalHead.height)}`
+        )
+        assert(
+          owner.composer.height <= 120,
+          `an empty composer holds no room it is not using — got ${String(owner.composer.height)}px`
+        )
+        for (const pane of open.panes) {
+          assert(
+            pane.tab.width < pane.tab.paneWidth - 40,
+            `a header is a card, not a strip (tab ${String(pane.tab.width)} of ${String(pane.tab.paneWidth)})`
           )
-          return shell()
+          assert(
+            pane.tab.radius[0] >= 6 && pane.tab.radius[1] === 0,
+            `rounded on top and square where it meets the body, got ${JSON.stringify(pane.tab.radius)}`
+          )
+          assert(
+            pane.tab.title >= 13 && pane.tab.title <= 14,
+            `its title is 13–14px, got ${String(pane.tab.title)}`
+          )
+          assert(
+            pane.tab.icon === 1 && pane.tab.close === 1,
+            'with the conversation mark and a close affordance on it'
+          )
+          assert(
+            pane.bodyBorder >= 1 && pane.bodyRadius >= 8,
+            `and the body below it is bounded (${String(pane.bodyBorder)}px, r${String(pane.bodyRadius)})`
+          )
         }
 
-        for (const width of [1280, 700, 480]) {
-          if (width !== 1280) await app.viewport(width, 800)
-          const now = await settled()
-          assert(
-            now.editorLeft === now.sidebarRight && now.sidebarRight > 0,
-            `at ${String(now.window)}px the editor still starts where the sidenav ends (${String(now.editorLeft)} vs ${String(now.sidebarRight)})`
-          )
-          assert(
-            now.handle === 'block',
-            `and its edge is still draggable at ${String(now.window)}px`
-          )
-          /*
-           * Half the window or the 240px floor, whichever is larger — the floor
-           * wins on the narrowest windows, which is deliberate: a sidenav too
-           * narrow to read a session name in is not worth the space it saves.
-           */
-          const ceiling = Math.max(240, Math.round(now.window / 2))
-          assert(
-            now.sidebar <= ceiling,
-            `and it leaves room to read: ${String(now.sidebar)} of ${String(now.window)}`
-          )
-        }
+        /*
+         * The global terminal is a separate panel with a separate shell, opened
+         * and closed by its own chord, and it leaves the session's alone.
+         */
+        await press(app, 'j', { meta: true, shift: true })
+        await app.until(`!!document.querySelector('.terminal-panel--global')`, {
+          timeout: 20_000,
+          label: 'the global terminal opened',
+        })
+        await app.settle()
+        const both = await geometry()
+        assert(
+          both.session === 1 && both.global === 1,
+          `the global terminal is a second, separate panel (session ${String(both.session)}, global ${String(both.global)})`
+        )
+        assert(
+          both.panes.every((p) => p.terminals <= 1),
+          'and it is not inside either pane — it belongs to no conversation'
+        )
 
-        await app.viewport()
+        await press(app, 'j', { meta: true, shift: true })
+        await app.until(`!document.querySelector('.terminal-panel--global')`, {
+          timeout: 20_000,
+          label: 'the global terminal closed',
+        })
+        await app.settle()
+        const afterGlobal = await geometry()
+        assert(
+          afterGlobal.global === 0 && afterGlobal.session === 1,
+          'closing the global one leaves the session terminal open'
+        )
+
+        /*
+         * The composer still says which selection will be sent. The pill is
+         * beneath the terminal now, which is exactly why it is checked here.
+         */
+        const descriptor = await waitForDescriptor(before)
+        ide = await FakeIde.connect(descriptor)
+        const roots = await ide.awaitRoots()
+        const root = roots.find((candidate) => candidate.endsWith(project.split('/').pop()))
+        assert(
+          root !== undefined,
+          `Chorus published the owning session's root, got ${roots.join()}`
+        )
+        ide.report(root, { file: join(root, 'src/a.ts'), startLine: 11, endLine: 13 })
+        await app.until(`!!document.querySelector('.ide-pill')`, {
+          timeout: 20_000,
+          label: 'the pill appears',
+        })
+        await app.settle()
+
+        const withPill = await geometry()
+        const owning = withPill.panes.find((p) => p.conversationId === first)
+        assert(
+          owning?.pill === 'src/a.ts:12-14',
+          `the owning composer still names the file and lines, got ${String(owning?.pill)}`
+        )
+        assert(withPill.session === 1, 'and the session terminal is still the only one of its kind')
       } finally {
+        ide?.close()
         await app.quit()
       }
     },
   },
 
   {
-    name: 'the sidenav resizes, clamps, and comes back that width',
+    name: 'the drawer docks, resizes within its range, and comes back that width',
     /*
-     * The width is the one piece of sidebar state that does not go through
-     * React while it is changing — the drag writes `--sidebar` straight onto
-     * the document element so a live transcript is not re-rendered sixty times
-     * a second, and only commits to the store on release. That split is easy to
-     * get half right: an edge that moves and never persists, or one that
-     * persists and does not move.
+     * The drawer is a temporary panel now, so its range is 220–320 rather than
+     * 240–640, and below 700px it covers the editor rather than squeezing it.
+     * That last part is a reversal of the old rule and it is deliberate: what
+     * made covering unacceptable before was that closing the panel left nothing
+     * to navigate with. The rail is that something.
      */
     async run(assert) {
       const first = await launch({ keepData: true })
       const dataPath = first.dataPath
       try {
         await started(first)
+        await openDrawer(first)
         const drag = (toX) =>
           first.evaluate(`(() => {
             const h = document.querySelector('.workspace-sidebar-resize')
@@ -1264,15 +2022,8 @@ export const specs = [
             document.dispatchEvent(new PointerEvent('pointermove', {
               pointerId: 1, bubbles: true, clientX: ${String(toX)}, clientY: y,
             }))
-            /*
-             * Where the card's edge actually landed, not what the variable
-             * says. The variable is the column's own width and the pointer is a
-             * window coordinate; those stopped being the same number when the
-             * activity bar took the first 60px, and asserting on the variable
-             * quietly encoded the old geometry.
-             */
             const during = Math.round(
-              document.querySelector('.workspace-sidebar').getBoundingClientRect().right)
+              document.querySelector('.session-drawer').getBoundingClientRect().right)
             document.dispatchEvent(new PointerEvent('pointerup', {
               pointerId: 1, bubbles: true, clientX: ${String(toX)}, clientY: y,
             }))
@@ -1282,83 +2033,51 @@ export const specs = [
           first.evaluate(
             `Math.round(document.querySelector('.workspace-editor').getBoundingClientRect().left)`
           )
-
-        const sidebarRight = () =>
+        const drawerRight = () =>
           first.evaluate(
-            `Math.round(document.querySelector('.workspace-sidebar').getBoundingClientRect().right)`
+            `Math.round(document.querySelector('.session-drawer').getBoundingClientRect().right)`
           )
 
         const before = await editorLeft()
-        const during = await drag(500)
+        // 64px rail plus a 276px drawer, which is inside the range.
+        const during = await drag(340)
         assert(
-          Math.abs(during - 500) <= 2,
-          `the edge lands under the pointer mid-drag, got ${String(during)} for 500`
+          Math.abs(during - 340) <= 2,
+          `the edge lands under the pointer mid-drag, got ${String(during)} for 340`
         )
         await first.settle()
         const after = await editorLeft()
         assert(after !== before, `the editor moved with it (${before} → ${after})`)
-        /*
-         * Against the card's own edge rather than a fixed number: the editor
-         * starts after the activity bar as well as the card now, so the pixel
-         * the drag asked for is no longer the pixel the editor lands on. The
-         * invariant that survives the layout is that they meet.
-         */
-        assert(
-          after === (await sidebarRight()),
-          `and lands against it, not at some absolute (${after})`
-        )
+        assert(after === (await drawerRight()), `and lands against it (${after})`)
 
-        // Well past the maximum: a width nobody can read past is refused.
+        // Well past the maximum: a temporary panel does not get to take over.
         await drag(2000)
         await first.settle()
-        /*
-         * The stored width itself, rather than a number derived from where the
-         * editor starts: the editor's left is the bar, plus the column's
-         * margin, plus the card — so deriving the width back out of it merely
-         * re-states the layout arithmetic, and gets it wrong by a margin.
-         */
-        const clampedWidth = await first.evaluate(
+        const clamped = await first.evaluate(
           `Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar')))`
         )
-        assert(
-          clampedWidth === 640,
-          `dragged past the limit, the column clamps to 640, got ${String(clampedWidth)}`
-        )
+        assert(clamped === 320, `dragged past the limit it clamps to 320, got ${String(clamped)}`)
 
         /*
-         * A width remembered from a wide window must not swallow a narrow one.
-         * An unfitted 640 in a 900px window leaves the editor a sliver — the
-         * stored value is kept, but what is shown is fitted to the room, which
-         * is half the window.
+         * Narrow: the drawer floats over the editor and the rail keeps its 64px.
+         * Nothing becomes unreachable, which is the condition that makes this an
+         * acceptable trade rather than the old bug.
          */
-        await first.viewport(900, 800)
-        /*
-         * Wait on the editor, which is the last link in the chain.
-         *
-         * The refit runs off a resize listener and writes the sidebar variable,
-         * which the column reads through a 300ms width transition. Waiting for
-         * the variable and then measuring the editor
-         * catches it mid-animation — which is a slower, quieter version of the
-         * fixed sleep this replaced.
-         */
+        await first.viewport(560, 800)
         await first.until(
           `(() => {
-            const side = document.querySelector('.workspace-sidebar').getBoundingClientRect()
+            const drawer = document.querySelector('.session-drawer').getBoundingClientRect()
             const editor = document.querySelector('.workspace-editor').getBoundingClientRect()
-            // Half of 900, with the editor against its edge.
-            return Math.abs(Math.round(side.width) - 450) <= 2 &&
-              Math.round(editor.left) === Math.round(side.right)
+            return Math.round(editor.left) === 64 && drawer.width <= Math.max(220, innerWidth / 2)
           })()`,
-          { timeout: 15_000, label: 'the sidebar refitted and the editor followed it' }
+          { timeout: 15_000, label: 'the drawer floated and fitted to the narrow window' }
         )
-        const fitted = await first.evaluate(
-          `getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim()`
-        )
-        assert(fitted === '450px', `fitted to half a narrower window, got ${fitted}`)
-        // Against the column's edge — the editor starts after the bar as well.
+        assert(true, 'below 700px the drawer covers the editor rather than squeezing it')
         assert(
-          (await editorLeft()) === (await sidebarRight()),
-          `and the editor keeps the rest (${String(await editorLeft())})`
+          (await first.evaluate(
+            `Math.round(document.querySelector('.quick-rail').getBoundingClientRect().width)`
+          )) === 64,
+          'and the rail keeps its full width, so every session is still reachable'
         )
         await first.viewport()
         await wait(300)
@@ -1373,9 +2092,7 @@ export const specs = [
         const restored = await again.evaluate(
           `getComputedStyle(document.documentElement).getPropertyValue('--sidebar').trim()`
         )
-        // 640 rather than the 450 it was fitted to: what gets remembered is
-        // the width chosen, not the compromise a smaller window imposed.
-        assert(restored === '640px', `the width survived the relaunch, got ${restored}`)
+        assert(restored === '320px', `the width survived the relaunch, got ${restored}`)
       } finally {
         await again.quit()
       }
@@ -1465,8 +2182,6 @@ export const specs = [
           const head = document.querySelector('.turn-head')
           const asked = head.querySelector('.entry--user')
           const think = head.querySelectorAll('.entry--thinking')
-          const rail = document.querySelector('.rail').getBoundingClientRect()
-          const mine = document.querySelector('.rail--turn')?.getBoundingClientRect() ?? null
           return {
             heads: document.querySelectorAll('.turn-head').length,
             says: asked.innerText.includes('markdown numbered list'),
@@ -1474,9 +2189,6 @@ export const specs = [
             gaps: Array.from(think).map(t =>
               t.getBoundingClientRect().top - asked.getBoundingClientRect().bottom),
             speakers: Array.from(think).map(t => t.querySelector('.speaker').textContent),
-            offRail: mine === null
-              ? null
-              : Math.abs(rail.left + rail.width / 2 - (mine.left + mine.width / 2)),
           }
         })()`)
 
@@ -1493,11 +2205,6 @@ export const specs = [
         assert(
           waiting.speakers.every((name) => /CODEX|CLAUDE/i.test(name)),
           `each says who is waiting: ${JSON.stringify(waiting.speakers)}`
-        )
-        assert(waiting.offRail !== null, 'the rail is redrawn through the pinned header')
-        assert(
-          waiting.offRail <= 1,
-          `and on the same line as the rest of it (${String(waiting.offRail)}px off)`
         )
 
         // An answer past a viewful of its own: the held-open room is spent, which
@@ -1616,16 +2323,16 @@ export const specs = [
           const box = score.getBoundingClientRect()
           const head = document.querySelector('.turn-head')
           const asked = head.querySelector('.entry--user')
-          const rail = document.querySelector('.rail--turn')?.getBoundingClientRect() ?? null
-          const tick = asked.querySelector('.tick').getBoundingClientRect()
+          const avatar = asked.querySelector('.entry-avatar').getBoundingClientRect()
+          const said = asked.querySelector('.said').getBoundingClientRect()
           return {
             width: score.clientWidth,
             offTop: Math.abs(head.getBoundingClientRect().top - box.top),
             sideways: score.scrollWidth - score.clientWidth,
             spills: asked.getBoundingClientRect().right - box.right,
-            offRail: rail === null
-              ? null
-              : Math.abs(rail.left + rail.width / 2 - (tick.left + tick.width / 2)),
+            // The words start beside the face, never under it: the compact
+            // gutter is where a column layout collapses into an overlap.
+            overlaps: Math.round(avatar.right - said.left),
           }
         })()`)
         await app.viewport()
@@ -1638,8 +2345,8 @@ export const specs = [
           `the question stays inside the pane (${String(narrow.spills)}px over)`
         )
         assert(
-          narrow.offRail !== null && narrow.offRail <= 1,
-          `the rail still runs through its dot in the compact gutter (${String(narrow.offRail)}px off)`
+          narrow.overlaps <= 0,
+          `the words clear the avatar at phone width (${String(narrow.overlaps)}px into it)`
         )
       } finally {
         await app.quit()
@@ -1683,9 +2390,16 @@ export const specs = [
          * this line, rather than further down where `@claude` goes unanswered
          * and the timeout blames the question path.
          */
+        /*
+         * Read off the active tab's voice dots.
+         *
+         * The cast used to be a pair of switches on every sidenav card, which is
+         * where this looked. Those moved into the session menu, and a menu that
+         * has to be opened is a poor precondition check — so this asks the one
+         * place that names a session's participants without being opened.
+         */
         const inTheRoom = await app.evaluate(
-          `Array.from(document.querySelectorAll('.workspace-session-agents .voice'))
-             .some(b => b.textContent.trim() === 'claude' && b.dataset.on === 'true')`
+          `document.querySelector('.workspace-tab[data-active="true"] .voice-dot.voice--claude') !== null`
         )
         assert(inTheRoom, 'claude is in the room, as a fresh session gives it')
 
@@ -1833,10 +2547,27 @@ export const specs = [
         const typed = await app.evaluate(`(() => ({
           stop: !!document.querySelector('.send--stop'),
           send: !!document.querySelector('.composer-tools button[type="submit"]'),
-          buttons: document.querySelectorAll('.composer-tools button').length,
+          /*
+           * The primary action, not every button on the row.
+           *
+           * This counted every button under .composer-tools and expected one,
+           * which was true while Send was the only thing in the row. The row
+           * also carries the @ and # mention triggers now — utilities that put a
+           * character in the box, and never a second way to send. Counting them
+           * made a passing product look like a regression, which is the failure
+           * mode a count over a container always has. The .send class is carried
+           * by the submit button and by the stop button, and by nothing else.
+           *
+           * No backticks in here: this comment lives inside a template literal,
+           * and one quoting a selector ends the string. Same trap as the SQL one.
+           */
+          primary: document.querySelectorAll('.composer-tools .send').length,
         }))()`)
         assert(typed.send && !typed.stop, 'and typing turns that same button into Send')
-        assert(typed.buttons === 1, `never two of them, got ${String(typed.buttons)}`)
+        assert(
+          typed.primary === 1,
+          `never two of them — one Send-or-Stop and no more, got ${String(typed.primary)}`
+        )
 
         await say(app, 'Change of plan: stop counting and reply with exactly STEERED')
         await app.until(
@@ -1932,21 +2663,25 @@ export const specs = [
           const agentMessages = [...document.querySelectorAll('.entry--message')]
             .filter(e => e.classList.contains('entry--codex') || e.classList.contains('entry--claude'))
           const said = getComputedStyle(final.querySelector('.said'))
+          const muted = document.querySelector('.entry--message:not([data-final="true"]) .said .md-p')
           return {
             isLast: final === agentMessages.at(-1),
             count: document.querySelectorAll('.entry[data-final="true"]').length,
-            /* Must out-rank \`data-answer\`, which every reply after a block of
-               thinking already carries — a filled panel, not a hairline. */
-            border: said.borderLeftWidth,
-            filled: said.backgroundColor !== 'rgba(0, 0, 0, 0)',
+            /* The panel and its edge went with the bubble — a message is an
+               unboxed row now. What marks the answer is brightness, so the test
+               is that its prose is lit where the working around it is not. */
+            boxed: said.borderLeftWidth !== '0px' || said.backgroundColor !== 'rgba(0, 0, 0, 0)',
+            lit: getComputedStyle(final.querySelector('.said .md-p')).color,
+            around: muted === null ? null : getComputedStyle(muted).color,
           }
         })()`)
         assert(answer !== null, 'the finished turn marks a final answer')
         assert(answer.count === 1, `exactly one, got ${String(answer?.count)}`)
         assert(answer.isLast, 'and it is the last thing the agent said')
+        assert(!answer.boxed, 'the answer is a row, not a panel with an edge')
         assert(
-          answer.filled && answer.border === '3px',
-          `drawn as a panel rather than another bordered line (${String(answer?.border)}, filled ${String(answer?.filled)})`
+          answer.around === null || answer.lit !== answer.around,
+          `and it is lit where the working around it is not (${String(answer?.lit)} vs ${String(answer?.around)})`
         )
       } finally {
         await app.quit()
@@ -2077,7 +2812,7 @@ export const specs = [
 
         const descriptor = await waitForDescriptor(before)
         ide = await FakeIde.connect(descriptor)
-        const [root] = await ide.awaitRoots()
+        const [root] = await ide.awaitRoots(project)
 
         ide.report(root, {
           file: join(root, 'src/a.ts'),
@@ -2132,7 +2867,7 @@ export const specs = [
 
         const descriptor = await waitForDescriptor(before)
         ide = await FakeIde.connect(descriptor)
-        const [root] = await ide.awaitRoots()
+        const [root] = await ide.awaitRoots(project)
 
         // The pill says lines 1-3 ...
         ide.report(root, { file: join(root, 'src/b.ts'), startLine: 0, endLine: 2 })
@@ -2466,8 +3201,8 @@ export const specs = [
           `window.chorus.sendMessage({ conversationId: ${JSON.stringify(background)}, text: 'Reply with exactly: ok' }).then(() => true)`
         )
         await first.until(
-          `document.querySelector('[data-sidebar-conversation="${background}"] .workspace-session-badge') !== null`,
-          { timeout: 180_000, label: 'the background card counted an unread' }
+          `document.querySelector('[data-rail-session="${background}"] .rail-badge') !== null`,
+          { timeout: 180_000, label: 'the background session counted an unread' }
         )
       } finally {
         await first.stop()
@@ -2478,7 +3213,7 @@ export const specs = [
         await started(again)
         await again.settle()
         const badge = await again.evaluate(`(() => {
-          const el = document.querySelector('[data-sidebar-conversation="${background}"] .workspace-session-badge')
+          const el = document.querySelector('[data-rail-session="${background}"] .rail-badge')
           return el === null ? null : el.textContent
         })()`)
         assert(
@@ -2509,10 +3244,27 @@ export const specs = [
         const ids = await twoSessions(app)
         const ended = ids[0]
 
+        /*
+         * Through the menu, because that is the only route now.
+         *
+         * End used to be an icon button on every row, two pixels from the one
+         * that opens the session. It is the last item in one menu, behind a
+         * divider — which is the whole of why an accidental click can no longer
+         * end a conversation.
+         */
+        await openDrawer(app)
+        await app.evaluate(`(() => {
+          document.querySelector('[data-session-more="${ended}"]').click()
+          return true
+        })()`)
+        await app.until(`!!document.querySelector('.session-menu-danger')`, {
+          timeout: 10_000,
+          label: 'the session menu offered End',
+        })
         // Idle, so End takes one press — it only asks twice while an agent is
         // working, which is the one moment there is anything to lose.
         await app.evaluate(`(() => {
-          document.querySelector('[data-sidebar-conversation="${ended}"] .workspace-session-action--end').click()
+          document.querySelector('.session-menu-danger').click()
           return true
         })()`)
         await app.until(`document.querySelectorAll('${TAB}').length === 1`, {
@@ -2526,7 +3278,9 @@ export const specs = [
         )
 
         await app.evaluate(`(() => {
-          document.querySelector('.workspace-history').click()
+          const history = [...document.querySelectorAll('.session-drawer-tool')]
+            .find((b) => b.getAttribute('aria-label') === 'Past conversations')
+          history.click()
           return true
         })()`)
         await app.until(`document.querySelector('.history-row') !== null`, {

@@ -9,10 +9,12 @@ import {
   moveTab,
   normalizeWorkspace,
   openSession,
+  placeSession,
   reconcileWorkspace,
   reorderTab,
   setBranchSizes,
   splitTab,
+  splitWithSession,
   tabLocation,
 } from './layout.js'
 
@@ -22,7 +24,6 @@ function onePane(...tabs: string[]): WorkspaceSnapshot {
     layout: { kind: 'leaf', paneId: 'pane-1' },
     panes: { 'pane-1': { id: 'pane-1', tabs, activeTabId: tabs[0] ?? null } },
     focusedPaneId: 'pane-1',
-    sidebarHidden: false,
     sidebarWidth: SIDEBAR_WIDTH.default,
   }
 }
@@ -34,7 +35,6 @@ function withActive(tabs: string[], activeTabId: string | null): WorkspaceSnapsh
     layout: { kind: 'leaf', paneId: 'pane-1' },
     panes: { 'pane-1': { id: 'pane-1', tabs, activeTabId } },
     focusedPaneId: 'pane-1',
-    sidebarHidden: false,
     sidebarWidth: SIDEBAR_WIDTH.default,
   }
 }
@@ -225,7 +225,9 @@ describe('workspace layout', () => {
     expect(clampSidebarWidth(9_000)).toBe(SIDEBAR_WIDTH.max)
     expect(clampSidebarWidth(-40)).toBe(SIDEBAR_WIDTH.min)
     expect(clampSidebarWidth(Number.NaN)).toBe(SIDEBAR_WIDTH.default)
-    expect(clampSidebarWidth(401.6)).toBe(402)
+    // Rounded, not floored, and inside the range — 320 is the ceiling now that
+    // the drawer is a temporary panel rather than the permanent column.
+    expect(clampSidebarWidth(261.6)).toBe(262)
     expect(normalizeWorkspace({ ...onePane('a'), sidebarWidth: 9_000 }).sidebarWidth).toBe(
       SIDEBAR_WIDTH.max
     )
@@ -291,5 +293,64 @@ describe('terminal panels across a restore', () => {
     const restored = reconcileWorkspace(null, ['a'])
     expect(restored.terminals).toEqual({})
     expect(restored.globalTerminal.open).toBe(false)
+  })
+
+  /*
+   * Dropping a session from the rail into the workspace.
+   *
+   * These are the operations the drag lands on, and the invariant they exist to
+   * hold is that a live session appears once — the reason splitting is not
+   * "copy the tab into a new pane" anywhere in this file.
+   */
+  describe('placing a session that is not open', () => {
+    it('inserts a closed session at the slot it was dropped on', () => {
+      const placed = placeSession(onePane('a', 'b'), 'c', 'pane-1', 1)
+      expect(placed.panes['pane-1']?.tabs).toEqual(['a', 'c', 'b'])
+      expect(placed.panes['pane-1']?.activeTabId).toBe('c')
+      expect(placed.focusedPaneId).toBe('pane-1')
+    })
+
+    it('moves an already-open session rather than duplicating it', () => {
+      const split = splitTab(onePane('a', 'b'), 'b', 'pane-1', 'right')
+      const moved = placeSession(split, 'b', 'pane-1', 0)
+      expect(leafPaneIds(moved.layout)).toEqual(['pane-1'])
+      expect(moved.panes['pane-1']?.tabs).toEqual(['b', 'a'])
+      expect(tabLocation(moved, 'b')).toEqual({ paneId: 'pane-1', index: 0 })
+    })
+
+    it('splits into a new group for a closed session', () => {
+      const split = splitWithSession(onePane('a'), 'b', 'pane-1', 'right')
+      expect(leafPaneIds(split.layout)).toHaveLength(2)
+      expect(split.panes['pane-1']?.tabs).toEqual(['a'])
+      expect(split.panes[leafPaneIds(split.layout)[1] ?? '']?.tabs).toEqual(['b'])
+    })
+
+    /*
+     * A one-tab pane cannot split *itself*, because the tab would only move and
+     * normalisation would collapse the source back away. A closed session
+     * dropped on that same pane is a different question and must be allowed.
+     */
+    it('lets a closed session split a pane holding a single tab', () => {
+      const split = splitWithSession(onePane('a'), 'b', 'pane-1', 'down')
+      expect(leafPaneIds(split.layout)).toHaveLength(2)
+      expect(splitTab(onePane('a'), 'a', 'pane-1', 'down')).toEqual(onePane('a'))
+    })
+
+    it('refuses a fifth pane', () => {
+      let workspace = onePane('a', 'b', 'c', 'd')
+      workspace = splitWithSession(workspace, 'b', 'pane-1', 'right')
+      workspace = splitWithSession(workspace, 'c', 'pane-1', 'down')
+      workspace = splitWithSession(workspace, 'd', 'pane-1', 'up')
+      expect(leafPaneIds(workspace.layout)).toHaveLength(MAX_PANES)
+      const refused = splitWithSession(workspace, 'e', 'pane-1', 'right')
+      expect(leafPaneIds(refused.layout)).toHaveLength(MAX_PANES)
+      expect(tabLocation(refused, 'e')).toBeNull()
+    })
+
+    it('ignores a pane that is not there', () => {
+      const workspace = onePane('a')
+      expect(placeSession(workspace, 'b', 'pane-9', 0)).toBe(workspace)
+      expect(splitWithSession(workspace, 'b', 'pane-9', 'right')).toBe(workspace)
+    })
   })
 })

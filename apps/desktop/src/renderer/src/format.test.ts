@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compactTokens, money, untilReset } from './format.js'
+import { clockTime, compactTokens, money, untilReset } from './format.js'
 
 describe('compactTokens', () => {
   it('leaves small counts exact', () => {
@@ -58,5 +58,25 @@ describe('untilReset', () => {
   it('counts days past one', () => {
     expect(untilReset(now + 3 * 86_400_000, now)).toBe('3d')
     expect(untilReset(now + 26 * 3_600_000, now)).toBe('1d 2h')
+  })
+})
+
+describe('clockTime', () => {
+  // A fixed instant, and an explicit locale: the machine's own would make this
+  // assert whatever CI is set to rather than what the function does.
+  const at = new Date(2026, 7, 13, 9, 14).getTime()
+
+  it('writes a twelve-hour clock the way en-US reads one', () => {
+    expect(clockTime(at, 'en-US')).toMatch(/^9:14\s?AM$/)
+  })
+
+  it('writes the same instant on a twenty-four-hour clock elsewhere', () => {
+    // No leading zero on the hour: `numeric` is what the approved composition
+    // shows (`9:14 AM`), and `2-digit` would read as a duration.
+    expect(clockTime(at, 'en-GB')).toBe('9:14')
+  })
+
+  it('pads the minute, which is the whole reason for 2-digit', () => {
+    expect(clockTime(new Date(2026, 7, 13, 9, 4).getTime(), 'en-GB')).toBe('9:04')
   })
 })

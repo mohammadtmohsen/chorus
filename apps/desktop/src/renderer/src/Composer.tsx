@@ -11,6 +11,8 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { IdeContextPush } from '../../shared/ipc.js'
 import { quotePath } from './attach.js'
+import { ComposerMenu, type MenuItem } from './ComposerMenu.js'
+import { useSessionMenu } from './workspace/session-menu-context.js'
 import { Attachments, type Attachment } from './Attachments.js'
 import { formatContextBlock, markFor, versionFor, withEditorContext } from './editor-context.js'
 import {
@@ -61,8 +63,15 @@ export interface ComposerHandle {
    * evidence for it.
    */
   insert: (text: string) => void
-  /** A drop lands on the whole pane, not on the box. */
-  attach: (items: DataTransfer) => Promise<void>
+  /**
+   * A drop lands on the whole pane, not on the box.
+   *
+   * Files rather than the `DataTransfer` they arrived in: a paste and a drop
+   * both carry one, and the composer's own attach button carries none — it has
+   * an `<input type="file">` behind it, whose `files` is a `FileList`. All three
+   * have files, which is the only thing this ever wanted.
+   */
+  attach: (files: readonly File[]) => Promise<void>
 }
 
 /** What the pane has to carry across an unmount on the composer's behalf. */
@@ -80,6 +89,16 @@ export interface ComposerProps {
   readonly working: readonly string[]
   /** What VS Code is showing for this pane's project. Metadata only. */
   readonly ide: IdeContextPush | null
+  /**
+   * The session's own actions, in the row where the work happens.
+   *
+   * They are in the drawer's menu too, and deliberately: that menu serves every
+   * session in the list, including the ones open in no pane and therefore having
+   * no composer to press. This is the copy for the session you are typing in.
+   */
+  readonly onOpenPanel?: ((panel: 'review' | 'summary') => void) | undefined
+  readonly onRestart?: (() => void) | undefined
+  readonly onEnd?: (() => void) | undefined
   readonly initial?: {
     readonly draft?: string
     readonly attached?: readonly Attachment[]
@@ -170,6 +189,35 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     }, [])
     const [attached, setAttached] = useState<Attachment[]>([...(props.initial?.attached ?? [])])
     const [ideIncluded, setIncluded] = useState(props.initial?.ideIncluded ?? true)
+    /*
+     * Which of the composer's own menus is open, and where it hangs from.
+     *
+     * One slot rather than one flag each: two of these open from controls a
+     * centimetre apart, and two independent booleans is how both end up on
+     * screen at once.
+     */
+    const [menu, setMenu] = useState<{
+      kind: 'add' | 'included'
+      anchor: DOMRect
+      trigger: HTMLElement | null
+    } | null>(null)
+    /*
+     * Ending asks twice while a turn is in flight — the one moment there is
+     * anything to lose, and the same rule the session menu follows. Disarmed
+     * whenever the agent stops, so a stale arming cannot end a quiet session on
+     * one click an hour later.
+     */
+    const [armedEnd, setArmedEnd] = useState(false)
+    useEffect(() => {
+      if (!props.busy) setArmedEnd(false)
+    }, [props.busy])
+    /** The shell's one session menu — the chips and the sliders both open it. */
+    const openSessionMenu = useSessionMenu()
+
+    const openMenuFrom = (kind: 'add' | 'included', event: React.MouseEvent<HTMLElement>): void => {
+      const trigger = event.currentTarget
+      setMenu({ kind, anchor: trigger.getBoundingClientRect(), trigger })
+    }
     /**
      * The mention being typed, stamped with the text it was read from.
      *
@@ -277,6 +325,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const recalled = useRef(0)
     const [highlighted, setHighlighted] = useState(0)
     const input = useRef<HTMLTextAreaElement | null>(null)
+    /* The file chooser behind the attach button. Hidden, and never focusable. */
+    const picker = useRef<HTMLInputElement | null>(null)
 
     /*
      * Everything downstream reads this, never `mention` — that is the invariant.
@@ -724,8 +774,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
      * no change to what a message is. A clipboard image has no path — only bytes —
      * so those are written down first and the path is what you get.
      */
-    const attach = useCallback(async (items: DataTransfer): Promise<void> => {
-      const files = [...items.files]
+    const attach = useCallback(async (dropped: readonly File[]): Promise<void> => {
+      const files = [...dropped]
       if (files.length === 0) return
 
       const paths = await Promise.all(
@@ -744,6 +794,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         })
       )
 
+      await addPaths(paths)
+    }, [])
+
+    /**
+     * Paths become attachments, whatever produced them.
+     *
+     * A drop and a paste arrive as `File`s; a folder arrives as a path from a
+     * native dialog and has no `File` at all. Both end here, so an attachment
+     * means the same thing however it was added.
+     */
+    const addPaths = useCallback(async (paths: readonly string[]): Promise<void> => {
+      if (paths.length === 0) return
       const previews = await Promise.all(
         paths.map(async (path) => ({ path, ...(await window.chorus.previewFile({ path })) }))
       )
@@ -753,6 +815,81 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       ])
       input.current?.focus()
     }, [])
+
+    /*
+     * What the `+` offers.
+     *
+     * `Current selection` appears only when there is one — a disabled row
+     * promising context that does not exist is worse than no row — and it is
+     * inert when the selection is already going, so the menu reports the state
+     * as well as setting it.
+     */
+    const ide = props.ide
+    const addItems: MenuItem[] = [
+      {
+        key: 'file',
+        label: t('conversation.addFile'),
+        onChoose: () => {
+          picker.current?.click()
+        },
+      },
+      {
+        key: 'folder',
+        label: t('conversation.addFolder'),
+        onChoose: () => {
+          void window.chorus.chooseDirectory().then((chosen) => {
+            // A dialog that changes nothing when cancelled, and a path when not:
+            // this one never touches the project directory, unlike the chooser
+            // in the session menu that shares its look.
+            if (chosen.path !== null) void addPaths([chosen.path])
+          })
+        },
+      },
+      ...(ide !== null && ide.status === 'ready'
+        ? [
+            {
+              key: 'selection',
+              label: t('conversation.addSelection'),
+              detail: t('conversation.addSelectionDetail'),
+              checked: ideIncluded,
+              disabled: ideIncluded,
+              onChoose: () => {
+                setIncluded(true)
+              },
+            },
+          ]
+        : []),
+    ]
+
+    /*
+     * What will actually be sent, and one way to drop each of them.
+     *
+     * The toggle comes first and is focused on open, so the chip still answers a
+     * click-then-Enter the way the plain toggle it replaced did. Attachments are
+     * *removed* rather than excluded: an inclusion flag per item would have to
+     * survive a tab unmount through `SessionCarry`, and an excluded file that
+     * silently came back would be the worst failure available to a control whose
+     * whole job is "do not send this".
+     */
+    const includedItems: MenuItem[] = [
+      {
+        key: 'selection',
+        label: ideIncluded ? t('ide.exclude') : t('ide.include'),
+        checked: ideIncluded,
+        onChoose: () => {
+          // Once excluded it stays excluded: a live selection change must never
+          // silently re-enable context the user turned off.
+          setIncluded((on) => !on)
+        },
+      },
+      ...attached.map((item) => ({
+        key: item.path,
+        label: t('attachments.remove', { name: item.name }),
+        onChoose: () => {
+          setAttached((current) => current.filter((one) => one.path !== item.path))
+        },
+      })),
+    ]
 
     const ideAttached = props.ide !== null && props.ide.status === 'ready' && ideIncluded
     const { onError, onSending, onSendFailed } = props
@@ -840,8 +977,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       [attach]
     )
 
-    const ide = props.ide
-
     return (
       <form
         ref={anchor}
@@ -922,54 +1057,153 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
           send()
         }}
       >
-        {ide !== null && ide.status !== 'unavailable' && (
-          <div className="ide-pill" data-status={ide.status}>
-            <span className="ide-pill-what">
-              {ide.status === 'ready' && ide.file !== null
-                ? `${ide.file.relativePath}:${String(ide.file.startLine)}${
-                    ide.file.isEmpty || ide.file.startLine === ide.file.endLine
-                      ? ''
-                      : `-${String(ide.file.endLine)}`
-                  }`
-                : t(`ide.status.${ide.status}`)}
-            </span>
-            {/*
-             * Which selection this is, when the path does not already say it: a
-             * merge request commit, a git ref, or that these lines are
-             * remembered rather than live. Separate from the path so it can be
-             * dimmed, and so a long branch name cannot be mistaken for part of
-             * the file name.
-             */}
-            {ide.status === 'ready' && ide.file !== null && (
-              <span className="ide-pill-mark">
-                {[
-                  ide.file.source === 'cached' ? t('ide.mark.cached') : null,
-                  ...(() => {
-                    const mark = markFor(ide.file.provenance)
-                    return mark === null ? [] : [t(mark.key, mark.params)]
-                  })(),
-                ]
-                  .filter((part) => part !== null)
-                  .join(' · ')}
+        {/*
+         * The context row: what will be sent with the message, and the two ways
+         * to add to it.
+         *
+         * It was the pill alone, floating above the box on a line of its own —
+         * so the composer was a path and a field, and everything a person does
+         * before pressing Send had no home. The row is the home: the selection
+         * on the left, the ways to add on the right.
+         */}
+        <div className="composer-context">
+          {ide !== null && ide.status !== 'unavailable' && (
+            <div className="ide-pill" data-status={ide.status}>
+              <span className="ide-pill-what">
+                {ide.status === 'ready' && ide.file !== null
+                  ? `${ide.file.relativePath}:${String(ide.file.startLine)}${
+                      ide.file.isEmpty || ide.file.startLine === ide.file.endLine
+                        ? ''
+                        : `-${String(ide.file.endLine)}`
+                    }`
+                  : t(`ide.status.${ide.status}`)}
               </span>
-            )}
-            {ide.status === 'ready' && (
-              <button
-                type="button"
-                className="ide-pill-toggle"
-                aria-pressed={ideIncluded}
-                title={ideIncluded ? t('ide.exclude') : t('ide.include')}
-                onClick={() => {
-                  // Once excluded it stays excluded: a live selection change
-                  // must never silently re-enable context the user turned off.
-                  setIncluded((on) => !on)
-                }}
-              >
-                {ideIncluded ? t('ide.on') : t('ide.off')}
-              </button>
-            )}
-          </div>
-        )}
+              {/*
+               * Which selection this is, when the path does not already say it: a
+               * merge request commit, a git ref, or that these lines are
+               * remembered rather than live. Separate from the path so it can be
+               * dimmed, and so a long branch name cannot be mistaken for part of
+               * the file name.
+               */}
+              {ide.status === 'ready' && ide.file !== null && (
+                <span className="ide-pill-mark">
+                  {[
+                    ide.file.source === 'cached' ? t('ide.mark.cached') : null,
+                    ...(() => {
+                      const mark = markFor(ide.file.provenance)
+                      return mark === null ? [] : [t(mark.key, mark.params)]
+                    })(),
+                  ]
+                    .filter((part) => part !== null)
+                    .join(' · ')}
+                </span>
+              )}
+            </div>
+          )}
+          {/*
+           * Where the selection came from, as its own chip.
+           *
+           * It was inside the pill, where "VS Code" read as part of the path.
+           * Provenance and inclusion are two different questions — which editor
+           * is this, and is it going with the message — and the approved
+           * composition asks them separately.
+           */}
+          {ide !== null && ide.status === 'ready' && (
+            <span className="ide-source">
+              <svg className="ide-source-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M17 3.5 9.5 11 5 7.5 3 9l4 3-4 3 2 1.5L9.5 13l7.5 7.5 4-2v-13l-4-2Zm0 4.2v8.6L12 12l5-4.3Z" />
+              </svg>
+              {t('ide.editor')}
+            </span>
+          )}
+          {ide !== null && ide.status === 'ready' && (
+            /*
+             * A chip that opens what will be sent, rather than a bare toggle.
+             *
+             * The toggle is still the first thing in the menu and still takes
+             * one keystroke, so the old gesture — click, Enter — does what it
+             * always did. What the caret adds is the list: the selection and
+             * every attachment, each removable, in the one place that claims to
+             * say what goes with the message.
+             */
+            <button
+              type="button"
+              className="ide-included"
+              aria-haspopup="menu"
+              aria-expanded={menu?.kind === 'included'}
+              data-on={ideIncluded}
+              title={t('ide.includedMenu')}
+              onClick={(event) => {
+                openMenuFrom('included', event)
+              }}
+            >
+              <span className="ide-included-mark" aria-hidden="true" />
+              {ideIncluded ? t('ide.on') : t('ide.off')}
+              <span className="composer-caret" aria-hidden="true" />
+            </button>
+          )}
+
+          {/*
+           * The way to add a file that is not the one open in the editor.
+           *
+           * A real picker behind a real button: dropping and pasting have always
+           * worked and neither is discoverable, so the affordance the approved
+           * composition shows is the one thing that says attaching is possible.
+           * The input is the control; the button is its label, because a bare
+           * `<input type="file">` cannot be styled and its own text is the
+           * browser's.
+           */}
+          <input
+            ref={picker}
+            className="sr-only"
+            type="file"
+            multiple
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={(event) => {
+              const chosen = [...(event.target.files ?? [])]
+              // Cleared so choosing the same file twice still fires a change.
+              event.target.value = ''
+              void attach(chosen)
+            }}
+          />
+          <button
+            type="button"
+            className="composer-add"
+            aria-label={t('conversation.attach')}
+            title={t('conversation.attach')}
+            onClick={() => {
+              picker.current?.click()
+            }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7.5-7.5" />
+            </svg>
+          </button>
+          {/*
+            Everything else that can be added, behind one button.
+
+            The paperclip stays the one-click file picker it has always been;
+            this is the menu for the things that have no `<input type="file">` —
+            a folder, which only a native dialog can choose, and the editor's
+            selection, which is context rather than a file at all.
+          */}
+          <button
+            type="button"
+            className="composer-more"
+            aria-haspopup="menu"
+            aria-expanded={menu?.kind === 'add'}
+            aria-label={t('conversation.addContext')}
+            title={t('conversation.addContext')}
+            onClick={(event) => {
+              openMenuFrom('add', event)
+            }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
         {menuOpen &&
           /*
            * Portalled, and the reason is the dock's clip — see `menuAt` above.
@@ -1043,6 +1277,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             </ul>,
             document.body
           )}
+        {menu !== null && (
+          <ComposerMenu
+            anchor={menu.anchor}
+            trigger={menu.trigger}
+            label={t(menu.kind === 'add' ? 'conversation.addContext' : 'ide.includedMenu')}
+            items={menu.kind === 'add' ? addItems : includedItems}
+            onClose={() => {
+              setMenu(null)
+            }}
+          />
+        )}
         <Attachments
           items={attached}
           onRemove={(path) => {
@@ -1064,10 +1309,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             value={draft}
             rows={1}
             aria-label={t('conversation.messageLabel')}
+            /*
+             * Named, when there is somebody to name.
+             *
+             * The composition reads `Ask Codex or Claude…`, which is the cast
+             * rather than a slogan — so it is interpolated from who is actually
+             * seated. Hardcoding the golden's words would say "or Claude" to a
+             * room Claude had left.
+             */
             placeholder={
               participants.length === 0
                 ? t('conversation.nobodyHere')
-                : t('conversation.placeholder')
+                : participants.length === 1
+                  ? t('conversation.placeholderOne', {
+                      agent: t(`actor.${participants[0] ?? ''}`),
+                    })
+                  : participants.length === 2
+                    ? t('conversation.placeholderTwo', {
+                        first: t(`actor.${participants[0] ?? ''}`),
+                        second: t(`actor.${participants[1] ?? ''}`),
+                      })
+                    : t('conversation.placeholder')
             }
             role="combobox"
             aria-expanded={menuOpen}
@@ -1082,7 +1344,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
               // Text pastes as text; anything else becomes a path.
               if (e.clipboardData.files.length === 0) return
               e.preventDefault()
-              void attach(e.clipboardData)
+              void attach([...e.clipboardData.files])
             }}
             /*
              * These two say only where the caret is, and that is the fix for
@@ -1216,6 +1478,135 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         */}
           <div className="composer-tools">
             {/*
+              The two triggers, as buttons as well as characters.
+
+              `@` and `#` already open the cast and the file picker when typed;
+              nothing said so. These insert the character at the caret and hand
+              the box back, so the menu that opens is the same menu — one code
+              path, discoverable from the row rather than from documentation.
+            */}
+            {(['@', '#'] as const).map((trigger) => (
+              <button
+                key={trigger}
+                type="button"
+                className="composer-trigger"
+                aria-label={t(
+                  trigger === '@' ? 'conversation.mentionCast' : 'conversation.mentionFile'
+                )}
+                title={t(trigger === '@' ? 'conversation.mentionCast' : 'conversation.mentionFile')}
+                onClick={() => {
+                  const box = input.current
+                  const at = box?.selectionStart ?? draft.length
+                  writeDraft(`${draft.slice(0, at)}${trigger}${draft.slice(at)}`)
+                  box?.focus()
+                  window.requestAnimationFrame(() => {
+                    box?.setSelectionRange(at + 1, at + 1)
+                    refreshMention()
+                  })
+                }}
+              >
+                <span aria-hidden="true">{trigger}</span>
+              </button>
+            ))}
+            {/*
+              What this session may do, from where the message is written.
+
+              Opens the shell's own session menu on its settings — the cast, the
+              folder, the permission profile, plan mode. Not a second menu that
+              does the same job: the one that exists is the one that opens.
+            */}
+            {/*
+              What this session is, beside what it may do.
+
+              Summary and Review changes read the conversation; Restart and End
+              act on it. Same handlers as the menu's rows — one action, two
+              places to reach it, rather than two implementations.
+            */}
+            {props.onOpenPanel !== undefined && (
+              <>
+                <button
+                  type="button"
+                  className="composer-trigger"
+                  aria-label={t('summary.open')}
+                  title={t('summary.open')}
+                  onClick={() => {
+                    props.onOpenPanel?.('summary')
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 5h14M5 10h14M5 15h9M5 20h6" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="composer-trigger"
+                  aria-label={t('review.open')}
+                  title={t('review.open')}
+                  onClick={() => {
+                    props.onOpenPanel?.('review')
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 6h7M4 12h7M4 18h7M17 4v16M13.5 7.5 17 4l3.5 3.5" />
+                  </svg>
+                </button>
+              </>
+            )}
+            {props.onRestart !== undefined && (
+              <button
+                type="button"
+                className="composer-trigger"
+                aria-label={t('conversation.restartLabel')}
+                title={t('conversation.restartLabel')}
+                onClick={props.onRestart}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4h-4" />
+                </svg>
+              </button>
+            )}
+            {props.onEnd !== undefined && (
+              <button
+                type="button"
+                className="composer-trigger composer-end"
+                data-armed={armedEnd ? 'true' : undefined}
+                aria-label={armedEnd ? t('conversation.endArmed') : t('conversation.endLabel')}
+                title={armedEnd ? t('conversation.endArmed') : t('conversation.endLabel')}
+                onClick={() => {
+                  // Armed only while an agent is working, exactly as the menu
+                  // does it: the one moment ending costs something.
+                  if (props.busy && !armedEnd) {
+                    setArmedEnd(true)
+                    return
+                  }
+                  props.onEnd?.()
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 4v9M7.5 6.8a7.5 7.5 0 1 0 9 0" />
+                </svg>
+              </button>
+            )}
+            <button
+              type="button"
+              className="composer-trigger composer-settings"
+              aria-haspopup="menu"
+              aria-label={t('conversation.settings')}
+              title={t('conversation.settings')}
+              onClick={(event) => {
+                const trigger = event.currentTarget
+                openSessionMenu({
+                  conversationId,
+                  anchor: trigger.getBoundingClientRect(),
+                  trigger,
+                })
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 4v6M8 14v6" />
+              </svg>
+            </button>
+            {/*
             One button, and what it does is decided by what you have typed.
 
             Sending mid-turn steers rather than restarts — the message reaches
@@ -1248,7 +1639,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                 type="submit"
                 className="send"
                 aria-label={props.busy ? t('conversation.steer') : t('conversation.send')}
-                title={props.busy ? t('conversation.steer') : undefined}
+                /* Titled in both states. It carried one only while an agent was
+                   working, so the app's primary action was the one button with
+                   nothing to say for itself on hover. */
+                title={props.busy ? t('conversation.steer') : t('conversation.send')}
                 disabled={!hasDraft || participants.length === 0}
               >
                 <span aria-hidden="true">↑</span>

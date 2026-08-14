@@ -23,6 +23,7 @@ import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
   answersThinking,
+  groupedWith,
   EMPTY_VIEW,
   reduceEvents,
   type PendingApproval,
@@ -110,6 +111,9 @@ export function Session(props: {
   onPromoteAside: (asideId: string, profileId: string) => void
   /** Set when the sidenav asked for a panel this pane owns. */
   panelRequest?: 'review' | 'summary' | undefined
+  /** Starting over and ending, offered in the composer as well as in the menu. */
+  onRestart?: (() => void) | undefined
+  onEnd?: (() => void) | undefined
   onPanelOpened: () => void
   /*
    * Undefined is spelled out because `exactOptionalPropertyTypes` is on: the
@@ -303,19 +307,16 @@ export function Session(props: {
    * lift it — which reads as the layout waiting for the agent's permission.
    *
    * Spare rather than fixed: exactly what the turn is short of, so it is gone
-   * the moment a reply fills the view. The rail is pulled up by the same amount,
-   * because a line drawn down through deliberate emptiness is a line drawn
-   * through nothing.
+   * the moment a reply fills the view. It used to publish the same figure as
+   * `--spare`, which held the rail up out of the emptiness; the rail went with
+   * the bubble when the transcript became rows, and nothing reads it now.
    */
   const makeRoom = useCallback(() => {
     const el = score.current
     const content = transcript.current
     const spacer = tail.current
     if (el === null || content === null) return
-    if (spacer === null) {
-      content.style.removeProperty('--spare')
-      return
-    }
+    if (spacer === null) return
     const block = turn.current
     // The turn's own height, less whatever room was added last time — measuring
     // the block whole would feed the spacer its own size.
@@ -335,7 +336,6 @@ export function Session(props: {
     const below = parseFloat(getComputedStyle(el).paddingBottom) || 0
     const spare = Math.max(0, el.clientHeight - below - said)
     spacer.style.height = `${String(spare)}px`
-    content.style.setProperty('--spare', `${String(spare)}px`)
   }, [])
 
   useEffect(() => {
@@ -815,8 +815,22 @@ export function Session(props: {
     <Entry
       key={message.key}
       message={message}
+      /* So a `Changes` card can print `src/rate.ts` rather than the whole
+         absolute path an agent reports. Stable per session, so it costs the
+         memoisation nothing. */
+      cwd={props.session.cwd}
       final={message.key === finalKey}
       answersThinking={answersThinking(view.messages[index - 1], message)}
+      /*
+       * A run of steps by one agent is one speaker, not eleven.
+       *
+       * Only the *steps* group: a message keeps its avatar, its name and its
+       * time however many rows precede it, because those are what the row is.
+       * A command, a tool call or a notice under the same agent is that agent
+       * still working, and repeating the name down the column says nothing while
+       * costing a line each time.
+       */
+      grouped={groupedWith(view.messages[index - 1], message)}
       onHandOff={
         // Only offered when there is somebody to hand to, and only for an
         // agent's own words — handing the user's message back is noise.
@@ -858,8 +872,15 @@ export function Session(props: {
   const waitingRow =
     awaiting && view.working.length === 0 ? (
       <article key="awaiting" className={`entry entry--${soleAgent ?? 'system'} entry--thinking`}>
-        <span className="tick" aria-hidden="true" />
-        <span className="speaker">{soleAgent ?? ''}</span>
+        {/* The same mark-and-head a step wears in `Entry`: these two rows are
+            built here rather than by the reducer, so they have to follow the
+            row structure by hand or they land in the wrong grid cells. */}
+        <span className="entry-mark" aria-hidden="true">
+          <span className="tick" />
+        </span>
+        <div className="entry-head">
+          <span className="speaker">{soleAgent === undefined ? '' : t(`actor.${soleAgent}`)}</span>
+        </div>
         <p className="said thinking" role="status">
           <span className="thinking-word">{t('conversation.waiting')}</span>
           <span className="thinking-dots" aria-hidden="true">
@@ -875,8 +896,12 @@ export function Session(props: {
     .filter((agent) => !streaming.has(agent))
     .map((agent) => (
       <article key={`thinking:${agent}`} className={`entry entry--${agent} entry--thinking`}>
-        <span className="tick" aria-hidden="true" />
-        <span className="speaker">{agent}</span>
+        <span className="entry-mark" aria-hidden="true">
+          <span className="tick" />
+        </span>
+        <div className="entry-head">
+          <span className="speaker">{t(`actor.${agent}`)}</span>
+        </div>
         <p className="said thinking" role="status">
           <span className="thinking-word">{t('conversation.thinking')}</span>
           <span className="thinking-dots" aria-hidden="true">
@@ -941,7 +966,7 @@ export function Session(props: {
         setFileOver(false)
         if (e.dataTransfer.files.length > 0) {
           e.preventDefault()
-          void composer.current?.attach(e.dataTransfer)
+          void composer.current?.attach([...e.dataTransfer.files])
           return
         }
       }}
@@ -1004,18 +1029,6 @@ export function Session(props: {
         }}
       >
         <div className="score-content" ref={transcript}>
-          {/*
-            Inside the entries, not beside them.
-            
-            Positioned against the scroller it was measured from the padding
-            edge, while every dot is measured from its own entry — so the line
-            sat 15px to the left of the dots it was supposed to run through, and
-            carried on into empty space below the last message. Sharing an origin
-            with the entries fixes both: it lines up, and it is exactly as long as
-            the conversation.
-          */}
-          <div className="rail" aria-hidden="true" />
-
           {/* History: everything said before the question now being answered. */}
           {(currentTurn === undefined ? view.messages : view.messages.slice(0, turnAt)).map(entry)}
 
@@ -1038,9 +1051,6 @@ export function Session(props: {
             */
             <div className="turn" ref={turn}>
               <div className="turn-head" data-turn={currentTurn.key}>
-                {/* The rail passes behind an opaque header, so the header carries
-                    its own length of it — otherwise the line breaks at the pin. */}
-                <div className="rail rail--turn" aria-hidden="true" />
                 {entry(currentTurn, turnAt)}
                 {thinking}
                 {waitingRow}
@@ -1234,7 +1244,15 @@ export function Session(props: {
       {terminal.open && (
         <TerminalPanel
           terminal={terminalRef}
-          title={t('terminal.sessionTitle', { project: shortenPath(props.session.cwd) })}
+          /*
+           * The room's name, not its path.
+           *
+           * It read `Terminal — /var/folders/lh/…/T/chorus-abc123` in any
+           * scratch workspace, which is the one string on screen that says
+           * nothing about which session you are looking at. The title is what
+           * the tab, the rail tile and the composition all call it.
+           */
+          title={t('terminal.sessionTitle', { project: props.session.title })}
           height={terminal.height}
           onHeightChange={(height) => {
             /*
@@ -1352,6 +1370,20 @@ export function Session(props: {
           onSendFailed={() => {
             setAwaiting(false)
           }}
+          /*
+           * The four session actions, in the row where the work happens.
+           *
+           * The panels are opened here rather than through the session menu's
+           * `onOpenPanel`, because this component already owns whether they are
+           * showing — the menu's route exists for a session that is *not* the
+           * one you are typing in.
+           */
+          onOpenPanel={(panel) => {
+            if (panel === 'review') setReviewing(true)
+            else setSummarising(true)
+          }}
+          {...(props.onRestart === undefined ? {} : { onRestart: props.onRestart })}
+          {...(props.onEnd === undefined ? {} : { onEnd: props.onEnd })}
         />
       </div>
     </section>

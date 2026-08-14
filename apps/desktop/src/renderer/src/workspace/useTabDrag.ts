@@ -19,13 +19,33 @@ interface PaneGeometry {
   readonly tabCount: number
 }
 
+/** The rail's scrollport and the cards in it, in the order they are drawn. */
+interface RailGeometry {
+  readonly rect: DOMRect
+  readonly cards: readonly { readonly conversationId: string; readonly rect: DOMRect }[]
+}
+
 interface DragGeometry {
   readonly panes: readonly PaneGeometry[]
   readonly paneCount: number
   readonly sourceTabCount: number
+  readonly rail: RailGeometry | null
 }
 
 export type TabDropTarget =
+  | {
+      /**
+       * A new place in the rail's own order.
+       *
+       * Only ever resolved for a gesture that started in the rail: dragging a
+       * *tab* over the rail should not silently reorder a list the gesture was
+       * never about.
+       */
+      kind: 'rail-insert'
+      slot: number
+      line: { left: number; top: number; width: number }
+      disabled: false
+    }
   | {
       kind: 'insert'
       paneId: string
@@ -51,7 +71,25 @@ export type TabDropTarget =
 export interface ActiveTabDrag {
   readonly conversationId: string
   readonly title: string
-  readonly sourcePaneId: string
+  /**
+   * The pane the drag started in, or null when it started in the rail or the
+   * drawer and the session has no tab anywhere.
+   *
+   * Null is not "unknown". It is the fact that decides two things: nothing can
+   * disappear to make room for a split, and the drop has to open the session
+   * rather than move it.
+   */
+  readonly sourcePaneId: string | null
+  /**
+   * Where the gesture started, which is not what `sourcePaneId` says.
+   *
+   * That field is *resolved* — a rail drag of a session that happens to be open
+   * is given the pane it is open in, so the drop rules can treat it exactly like
+   * its own tab being dragged. Which is right for the rules and wrong for the
+   * ghost: the thing under the pointer is the 44px tile the rail draws, whether
+   * or not the session also has a tab somewhere.
+   */
+  readonly fromRail: boolean
   readonly x: number
   readonly y: number
   readonly target: TabDropTarget | null
@@ -88,7 +126,43 @@ function geometry(): DragGeometry {
       ]
     }
   )
-  return { panes, paneCount: panes.length, sourceTabCount: 0 }
+  const scroller = document.querySelector<HTMLElement>('[data-rail-scroll]')
+  const rail: RailGeometry | null =
+    scroller === null
+      ? null
+      : {
+          rect: scroller.getBoundingClientRect(),
+          cards: [...scroller.querySelectorAll<HTMLElement>('[data-reorder-id]')].flatMap(
+            (card) => {
+              const conversationId = card.dataset['reorderId']
+              return conversationId === undefined
+                ? []
+                : [{ conversationId, rect: card.getBoundingClientRect() }]
+            }
+          ),
+        }
+  return { panes, paneCount: panes.length, sourceTabCount: 0, rail }
+}
+
+/**
+ * The gap a pointer at `y` is pointing at, by the cards' own midpoints.
+ *
+ * Pure and exported so the arithmetic can be tested without a DOM: the geometry
+ * around it is the part that needs a running app, and this is the part that gets
+ * the answer wrong.
+ *
+ * Returns a *gap* index in `reorderSessions`' terms — 0 is above the first card,
+ * `cards.length` is below the last.
+ */
+export function railSlotAt(midpoints: readonly number[], y: number): number {
+  let slot = midpoints.length
+  for (const [index, midpoint] of midpoints.entries()) {
+    if (y < midpoint) {
+      slot = index
+      break
+    }
+  }
+  return slot
 }
 
 function edgeTarget(
@@ -121,11 +195,38 @@ function edgeTarget(
 
 function resolveTarget(
   dragGeometry: DragGeometry,
-  sourcePaneId: string,
+  sourcePaneId: string | null,
   conversationId: string,
   x: number,
-  y: number
+  y: number,
+  fromRail: boolean
 ): TabDropTarget | null {
+  /*
+   * The rail answers first, and only for its own gestures.
+   *
+   * One gesture does both jobs: while the pointer is still over the list it is a
+   * reorder, and the moment it leaves for a pane the existing move/split rules
+   * take over unchanged.
+   */
+  const rail = dragGeometry.rail
+  if (fromRail && rail !== null && contains(rail.rect, x, y) && rail.cards.length > 0) {
+    const slot = railSlotAt(
+      rail.cards.map((card) => card.rect.top + card.rect.height / 2),
+      y
+    )
+    const before = rail.cards[slot]
+    const last = rail.cards.at(-1)
+    const top = before?.rect.top ?? (last === undefined ? rail.rect.top : last.rect.bottom)
+    const left = (before ?? last)?.rect.left ?? rail.rect.left
+    const width = (before ?? last)?.rect.width ?? rail.rect.width
+    return {
+      kind: 'rail-insert',
+      slot,
+      line: { left, top: Math.round(top) - 1, width },
+      disabled: false,
+    }
+  }
+
   for (const pane of dragGeometry.panes) {
     if (!contains(pane.stripRect, x, y)) continue
     let slot = pane.tabs.length
@@ -175,15 +276,34 @@ function resolveTarget(
   return null
 }
 
+/**
+ * Keeps a long rail moving under a drag that has reached its edge.
+ *
+ * Without it a card can only be moved within the part of the list already on
+ * screen, which is the case the feature is for: a rail short enough to see whole
+ * is a rail you can reorder in one gesture anyway.
+ */
+function railAutoScroll(rail: RailGeometry | null, y: number): void {
+  if (rail === null) return
+  const scroller = document.querySelector<HTMLElement>('[data-rail-scroll]')
+  if (scroller === null) return
+  const zone = 48
+  if (y < rail.rect.top + zone) scroller.scrollTop -= Math.max(4, (rail.rect.top + zone - y) / 3)
+  else if (y > rail.rect.bottom - zone)
+    scroller.scrollTop += Math.max(4, (y - (rail.rect.bottom - zone)) / 3)
+}
+
 export function useTabDrag(options: {
   onInsert: (conversationId: string, paneId: string, slot: number) => void
   onSplit: (conversationId: string, paneId: string, direction: SplitDirection) => void
+  /** A card dropped back into the rail, at a gap in its own order. */
+  onReorder: (conversationId: string, slot: number) => void
 }): {
   drag: ActiveTabDrag | null
   onPointerDown: (
     conversationId: string,
     title: string,
-    paneId: string,
+    paneId: string | null,
     event: ReactPointerEvent<HTMLElement>
   ) => void
   consumeSuppressedClick: () => boolean
@@ -191,7 +311,9 @@ export function useTabDrag(options: {
   const pending = useRef<{
     conversationId: string
     title: string
-    paneId: string
+    paneId: string | null
+    /** Whether the gesture began on a rail shortcut or a drawer row. */
+    fromRail: boolean
     pointerId: number
     x: number
     y: number
@@ -218,9 +340,12 @@ export function useTabDrag(options: {
             current.paneId,
             current.conversationId,
             event.clientX,
-            event.clientY
+            event.clientY,
+            current.fromRail
           )
-          if (target?.kind === 'insert' || target?.kind === 'move') {
+          if (target?.kind === 'rail-insert') {
+            options.onReorder(current.conversationId, target.slot)
+          } else if (target?.kind === 'insert' || target?.kind === 'move') {
             options.onInsert(current.conversationId, target.paneId, target.slot)
           } else if (target?.kind === 'split' && !target.disabled) {
             options.onSplit(current.conversationId, target.paneId, target.direction)
@@ -246,12 +371,15 @@ export function useTabDrag(options: {
         current.paneId,
         current.conversationId,
         event.clientX,
-        event.clientY
+        event.clientY,
+        current.fromRail
       )
+      railAutoScroll(current.geometry.rail, event.clientY)
       setDrag({
         conversationId: current.conversationId,
         title: current.title,
         sourcePaneId: current.paneId,
+        fromRail: current.fromRail,
         x: event.clientX,
         y: event.clientY,
         target,
@@ -284,7 +412,7 @@ export function useTabDrag(options: {
     (
       conversationId: string,
       title: string,
-      paneId: string,
+      paneId: string | null,
       event: ReactPointerEvent<HTMLElement>
     ) => {
       if (event.button !== 0) return
@@ -292,6 +420,8 @@ export function useTabDrag(options: {
         conversationId,
         title,
         paneId,
+        /* Read before `paneId` is resolved against the panes; see `fromRail`. */
+        fromRail: paneId === null,
         pointerId: event.pointerId,
         x: event.clientX,
         y: event.clientY,
@@ -309,9 +439,27 @@ export function useTabDrag(options: {
         }
         cleanup()
         const measured = geometry()
-        const source = measured.panes.find((pane) => pane.paneId === paneId)
+        /*
+         * A rail drag has no pane of its own, but the session might still have
+         * one — you can drag an already-open session out of the list.
+         *
+         * Resolving that here rather than at the call site is what lets the
+         * target rules below stay one set: an open session dragged from the rail
+         * behaves exactly like its own tab being dragged, including the rule
+         * that a one-tab pane disappears when its only tab leaves. A closed
+         * session resolves to no source pane and no source tabs, which is the
+         * honest description of a session that is nowhere.
+         */
+        const sourcePaneId =
+          paneId ??
+          measured.panes.find((pane) =>
+            pane.tabs.some((tab) => tab.conversationId === conversationId)
+          )?.paneId ??
+          null
+        const source = measured.panes.find((pane) => pane.paneId === sourcePaneId)
         const captured = {
           ...start,
+          paneId: sourcePaneId,
           geometry: { ...measured, sourceTabCount: source?.tabCount ?? 0 },
         }
         active.current = captured
@@ -324,15 +472,17 @@ export function useTabDrag(options: {
         setDrag({
           conversationId,
           title,
-          sourcePaneId: paneId,
+          sourcePaneId,
+          fromRail: start.fromRail,
           x: move.clientX,
           y: move.clientY,
           target: resolveTarget(
             captured.geometry,
-            paneId,
+            sourcePaneId,
             conversationId,
             move.clientX,
-            move.clientY
+            move.clientY,
+            start.fromRail
           ),
         })
       }

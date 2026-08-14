@@ -100,6 +100,9 @@ export function ReviewPanel({
                   key={f.path}
                   type="button"
                   className="review-file"
+                  /* The row shows a shortened path; the tooltip is where the
+                     whole one lives. */
+                  title={f.path}
                   data-on={f.path === selected}
                   onClick={() => {
                     setSelected(f.path)

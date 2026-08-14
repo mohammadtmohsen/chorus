@@ -1,0 +1,127 @@
+{
+  "sessions": 6,
+  "budgets": {
+    "interaction": 100,
+    "ceiling": 200,
+    "preview": 100,
+    "droppedFrames": 1
+  },
+  "readings": {
+    "shortcutCount": 0,
+    "rowCount": 6,
+    "railSwitch": {
+      "paintedMs": 10,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 25.82,
+      "ScriptDuration": 4.55,
+      "LayoutDuration": 0.49,
+      "RecalcStyleDuration": 1.78,
+      "renders": {}
+    },
+    "railScroll": {
+      "paintedMs": 10,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 4.37,
+      "ScriptDuration": 0.06,
+      "LayoutDuration": 0,
+      "RecalcStyleDuration": 2.44,
+      "renders": {}
+    },
+    "drawerToggle": {
+      "paintedMs": 15,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 19.43,
+      "ScriptDuration": 4.24,
+      "LayoutDuration": 4.34,
+      "RecalcStyleDuration": 3.11,
+      "renders": {}
+    },
+    "drawerToggleBack": {
+      "paintedMs": 10,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 10.71,
+      "ScriptDuration": 4.18,
+      "LayoutDuration": 1.98,
+      "RecalcStyleDuration": 1.49,
+      "renders": {}
+    },
+    "search": {
+      "paintedMs": 11,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 8.48,
+      "ScriptDuration": 2.03,
+      "LayoutDuration": 1.88,
+      "RecalcStyleDuration": 0.44,
+      "renders": {}
+    },
+    "previewOpen": {
+      "paintedMs": 10,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 5.12,
+      "ScriptDuration": 0.11,
+      "LayoutDuration": 0,
+      "RecalcStyleDuration": 0.53,
+      "renders": {}
+    },
+    "previewPresent": false,
+    "previewClose": {
+      "paintedMs": 10,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 4.69,
+      "ScriptDuration": 2.32,
+      "LayoutDuration": 0,
+      "RecalcStyleDuration": 0,
+      "renders": {}
+    },
+    "splitPane": {
+      "paintedMs": 16,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 18.46,
+      "ScriptDuration": 10.82,
+      "LayoutDuration": 1.92,
+      "RecalcStyleDuration": 1.62,
+      "renders": {}
+    },
+    "paneCount": 2,
+    "terminalOpen": {
+      "paintedMs": 41,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 47.3,
+      "ScriptDuration": 33.25,
+      "LayoutDuration": 2.55,
+      "RecalcStyleDuration": 3.79,
+      "renders": {}
+    },
+    "terminalClose": {
+      "paintedMs": 9,
+      "withinTarget": true,
+      "withinCeiling": true,
+      "TaskDuration": 8.6,
+      "ScriptDuration": 3.96,
+      "LayoutDuration": 0.44,
+      "RecalcStyleDuration": 0.61,
+      "renders": {}
+    },
+    "idleFrames": {
+      "frames": 241,
+      "dropped": 0,
+      "droppedPercent": 0,
+      "p95": 9.2
+    },
+    "idleCost": {
+      "TaskDuration": 7.88,
+      "ScriptDuration": 0,
+      "LayoutDuration": 0,
+      "RecalcStyleDuration": 0
+    }
+  }
+}

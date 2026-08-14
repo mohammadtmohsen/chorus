@@ -9,6 +9,7 @@ const said = (over: Partial<TranscriptMessage>): TranscriptMessage => ({
   text: '',
   status: 'complete',
   eventId: 'e',
+  at: 0,
   ...over,
 })
 

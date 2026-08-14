@@ -1,3 +1,6 @@
+import { parseDiff } from '@chorus/workspace/diff'
+import type { AgentId } from '@chorus/shared'
+import { trailingSummary } from '../../shared/markdown.js'
 import type { TranscriptEvent } from '../../shared/ipc.js'
 
 /**
@@ -8,14 +11,56 @@ import type { TranscriptEvent } from '../../shared/ipc.js'
  * the same view as the live push stream.
  */
 
+/**
+ * One file in a `Changes` card.
+ *
+ * Counts, not a patch. They arrive already counted from
+ * `file.change.completed`, because only the adapter still knows how its provider
+ * spells a diff — Codex sends raw file content for an add, so counting here
+ * would report zero for exactly the largest changes.
+ *
+ * They count **what the turn wrote**, not the net result: a line added and then
+ * removed in the same turn appears in both columns. The card says so in its own
+ * words rather than implying it is `git diff --numstat`, which it can
+ * legitimately disagree with.
+ */
+export interface ChangedFile {
+  readonly path: string
+  /** Set only for a rename: where the file was before it moved. */
+  readonly oldPath?: string
+  readonly change: 'added' | 'removed' | 'modified' | 'renamed'
+  readonly added: number
+  readonly removed: number
+  /**
+   * The file's own diff, git-format, drawn under its row.
+   *
+   * Carried as text and parsed by the component — the reducer counts, the view
+   * renders. Empty for a row from a log written before the card drew diffs, and
+   * the row then shows its counts and nothing else rather than an empty frame.
+   */
+  readonly patch?: string
+  /** Lines left out of `patch` to keep a whole added or deleted file bounded. */
+  readonly omittedLines?: number
+}
+
 export interface TranscriptMessage {
   readonly key: string
   readonly actor: TranscriptEvent['actor']
-  readonly kind: 'message' | 'reasoning' | 'command' | 'notice' | 'handoff' | 'tool'
+  readonly kind: 'message' | 'reasoning' | 'command' | 'notice' | 'handoff' | 'tool' | 'changes'
   readonly text: string
   readonly status: 'streaming' | 'complete'
   /** The log event this came from — what a handoff selects. */
   readonly eventId: string
+  /**
+   * When this row *began*, from the event's `createdAt`.
+   *
+   * First delta, not completion, and the difference is visible: a reply that
+   * starts at 9:14 and finishes at 9:18 would print 9:18 above the tool rows it
+   * spawned at 9:15, so the column would read backwards down the screen.
+   * `agent.message.completed` rebuilds the row from scratch, so this has to be
+   * carried across that boundary rather than re-read from the event.
+   */
+  readonly at: number
   /** Set on a handoff card: who it went to. */
   readonly handoffTo?: TranscriptEvent['actor']
   /**
@@ -77,6 +122,16 @@ export interface TranscriptMessage {
    * than as a group of one.
    */
   readonly folded?: readonly { readonly text: string; readonly detail?: string }[]
+  /** `changes` only: the files this turn wrote, one row each. */
+  readonly changes?: readonly ChangedFile[]
+  /**
+   * Messages only: the bullets of a trailing `Summary` section, lifted out.
+   *
+   * A convention an agent follows rather than a contract the app enforces —
+   * nothing prompts for it, so most replies have none. Absent, not empty, when
+   * there was no summary: an empty card and no card are different things.
+   */
+  readonly summary?: readonly string[]
 }
 
 export interface PendingApproval {
@@ -136,6 +191,20 @@ export interface TranscriptView {
   readonly spend: Spend
   /** The latest total each agent reported, which `spend` is the sum of. */
   readonly usageByActor: Readonly<Record<string, Spend>>
+  /**
+   * The `changes` row currently open for each agent, by key.
+   *
+   * In the view rather than in a local, because `reduceEvents` is incremental —
+   * `Session.tsx` folds each push into the previous view — and a push can deliver
+   * the file change, the reply and `turn.completed` in three separate calls.
+   * Anything held between events has to live somewhere that survives the call,
+   * and this is the only such place. It replays for free: the same events from
+   * `EMPTY_VIEW` rebuild it exactly.
+   *
+   * `Partial`, not `Record`: `EMPTY_VIEW` holds none of them, and a full
+   * `Record` initialised to `{}` would be lying about its keys.
+   */
+  readonly openChanges: Readonly<Record<AgentId, string | null>>
 }
 
 export const EMPTY_VIEW: TranscriptView = {
@@ -147,11 +216,13 @@ export const EMPTY_VIEW: TranscriptView = {
   lastSeq: 0,
   spend: { inputTokens: 0, outputTokens: 0, costUsd: null },
   usageByActor: {},
+  openChanges: { codex: null, claude: null },
 }
 
 interface Mutable {
   spend: Spend
   usageByActor: Record<string, Spend>
+  openChanges: Record<AgentId, string | null>
   messages: TranscriptMessage[]
   approvals: PendingApproval[]
   questions: PendingQuestion[]
@@ -173,6 +244,7 @@ export function reduceEvents(
     lastSeq: view.lastSeq,
     spend: view.spend,
     usageByActor: { ...view.usageByActor },
+    openChanges: { ...view.openChanges },
   }
 
   for (const event of events) {
@@ -197,6 +269,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'user',
         kind: 'message',
         text: str('text'),
@@ -215,16 +288,58 @@ function apply(view: Mutable, event: TranscriptEvent): void {
     case 'agent.message.completed': {
       const key = str('itemRef')
       const existing = view.messages.findIndex((m) => m.key === key)
+      /*
+       * Only a finished message is read for a summary.
+       *
+       * A card that appeared mid-stream would arrive the moment the bullets were
+       * written and then move as the rest of the reply landed under it. It also
+       * costs nothing to wait: the text is scanned once, here, not per render.
+       */
+      const said = str('text')
+      const summary = trailingSummary(said)
       const message: TranscriptMessage = {
         key,
         eventId: event.id,
+        /*
+         * The streamed row's time, not this event's.
+         *
+         * This case replaces the row wholesale, so re-reading `createdAt` here
+         * would stamp every reply with the moment it *finished* — see `at` on
+         * `TranscriptMessage`. A completion with no prior delta (a short turn
+         * that never streamed) has nothing to carry and takes its own.
+         */
+        at: existing === -1 ? event.createdAt : (view.messages[existing]?.at ?? event.createdAt),
         actor: event.actor,
         kind: 'message',
-        text: str('text'),
+        // The prefix the agent wrote, exactly — never a rebuilt body.
+        text: summary === null ? said : said.slice(0, summary.cut).trimEnd(),
         status: 'complete',
+        ...(summary === null ? {} : { summary: summary.items }),
       }
       if (existing === -1) view.messages.push(message)
       else view.messages[existing] = message
+      moveChangesBelow(view, event.actor)
+      return
+    }
+
+    /*
+     * What the turn actually wrote, as a card that grows.
+     *
+     * Merged into an open row rather than pushed each time, the way
+     * `tool.started` merges by ref — a turn that edits four files is one card,
+     * not four. The row's key lives in `view.openChanges`, which is what lets
+     * this survive the pushes arriving in separate `reduceEvents` calls.
+     *
+     * `file.change.proposed` is deliberately not handled: it fires when the
+     * operation *starts*, so a declined or failed patch would draw a row saying
+     * the file changed.
+     */
+    case 'file.change.completed': {
+      if (p['outcome'] !== 'applied') return
+      const files = readChangedFiles(p['files'])
+      if (files.length === 0) return
+
+      openChanges(view, event, files)
       return
     }
 
@@ -232,6 +347,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: event.actor,
         kind: 'command',
         text: `$ ${(Array.isArray(p['command']) ? p['command'] : []).join(' ')}`,
@@ -260,6 +376,8 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       const message: TranscriptMessage = {
         key: prev?.key ?? event.id,
         eventId: prev?.eventId ?? event.id,
+        // The row's own time survives the refining event, like its key does.
+        at: prev?.at ?? event.createdAt,
         actor: event.actor,
         kind: 'tool',
         text: str('name'),
@@ -297,8 +415,8 @@ function apply(view: Mutable, event: TranscriptEvent): void {
        * what is there keeps the row identifying.
        */
       const summary = str('summary')
-      // The patch is carried, not parsed. Parsing is the component's job; the
-      // reducer stays a pure fold over payloads.
+      // Carried whole for the row's own diff — rendering it is the component's
+      // job, and `ToolPatch` parses it there.
       const patch = str('patch')
       const omitted = num('omittedLines')
       view.messages[at] = {
@@ -308,6 +426,21 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         ...(patch === '' ? {} : { patch }),
         ...(omitted > 0 ? { omittedLines: omitted } : {}),
       }
+      /*
+       * The other half of the `Changes` card, and the asymmetry is the
+       * providers', not ours.
+       *
+       * Codex reports a file change as its own item, which arrives as
+       * `file.change.completed` already counted. Claude has no such event at
+       * all — an edit is a *tool result*, and the only record of what it did is
+       * the patch on it. So the card is fed from both, and this end has to
+       * count.
+       *
+       * `parseDiff` is pure, so folding it in here keeps the reducer a pure
+       * fold; what it must not do is parse for *rendering*, which stays in the
+       * component. A patch is parsed once, when its event arrives.
+       */
+      if (str('status') !== 'error' && patch !== '') foldPatch(view, event, patch)
       return
     }
 
@@ -319,10 +452,14 @@ function apply(view: Mutable, event: TranscriptEvent): void {
 
     case 'turn.completed':
       view.working = view.working.filter((a) => a !== event.actor)
+      // The turn's card is finished. The next turn opens its own rather than
+      // growing this one, which is what makes a card mean "this turn".
+      if (isAgent(event.actor)) view.openChanges[event.actor] = null
       if (p['status'] === 'interrupted') {
         view.messages.push({
           key: event.id,
           eventId: event.id,
+          at: event.createdAt,
           actor: 'system',
           kind: 'notice',
           text: p['userInitiated'] === true ? 'Stopped.' : 'Interrupted.',
@@ -369,6 +506,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text:
@@ -411,6 +549,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         view.messages.push({
           key: event.id,
           eventId: event.id,
+          at: event.createdAt,
           actor: 'system',
           kind: 'notice',
           text:
@@ -446,6 +585,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text: `${str('agentId')} joined`,
@@ -453,22 +593,35 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       })
       return
 
-    case 'session.ended':
+    case 'session.ended': {
+      /*
+       * Closed by the payload's `agentId`, never by the event's actor.
+       *
+       * A session ending is appended as `actor: 'system'` — `reconcileOrphaned
+       * Sessions` does exactly that after a crash — so clearing by actor would
+       * clear an entry under `system` that never existed and leave the agent's
+       * card open, growing into whatever the next session does.
+       */
+      const ended = str('agentId')
+      if (isAgent(ended)) view.openChanges[ended] = null
       if (str('reason') === 'shutdown') return
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text: `${str('agentId')} left`,
         status: 'complete',
       })
       return
+    }
 
     case 'project.changed':
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text: `Project directory: ${str('cwd')}`,
@@ -489,6 +642,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text: 'Context compacted — the agent kept a summary of everything above.',
@@ -500,6 +654,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text: `Permissions changed: ${str('previousProfileId')} → ${str('profileId')}`,
@@ -544,6 +699,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text: str('message'),
@@ -601,6 +757,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: event.actor,
         kind: 'notice',
         text: line.text,
@@ -621,6 +778,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: str('from') as TranscriptEvent['actor'],
         kind: 'handoff',
         handoffTo: str('to') as TranscriptEvent['actor'],
@@ -641,6 +799,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       view.messages.push({
         key: event.id,
         eventId: event.id,
+        at: event.createdAt,
         actor: 'system',
         kind: 'notice',
         text: 'Opened as a conversation. It can now act, with your approval.',
@@ -677,11 +836,34 @@ function appendReasoning(view: Mutable, event: TranscriptEvent, text: string): v
     // more of it arrives.
     key: `reasoning:${event.id}`,
     eventId: event.id,
+    at: event.createdAt,
     actor: event.actor,
     kind: 'reasoning',
     text,
     status: 'streaming',
   })
+}
+
+/**
+ * True when this row carries on from the one above it, under the same speaker.
+ *
+ * Derived from the pair rather than stored on either, exactly like
+ * `answersThinking` — whether a row repeats its header is a fact about what
+ * precedes it.
+ *
+ * Only steps group. A message keeps its avatar, name and time however many rows
+ * come before it: that treatment *is* the message row, and the time is the one
+ * thing in it that cannot be recovered from the row above. A command, tool call
+ * or notice under the same agent is that agent still working, and eleven rows
+ * each saying "Claude" say nothing eleven times.
+ */
+export function groupedWith(
+  previous: TranscriptMessage | undefined,
+  current: TranscriptMessage
+): boolean {
+  if (previous === undefined) return false
+  if (current.kind === 'message' || current.kind === 'handoff') return false
+  return previous.actor === current.actor
 }
 
 /**
@@ -702,6 +884,163 @@ export function answersThinking(
   return previous?.kind === 'reasoning' && previous.actor === current.actor
 }
 
+/**
+ * Reads the files off a `file.change.completed` payload.
+ *
+ * Defensive for the reason every payload read in this file is: this comes off
+ * disk, and a log written by an older build must produce a card with a row
+ * missing rather than a renderer that throws.
+ */
+/**
+ * A tool's patch, folded into the turn's `Changes` card.
+ *
+ * Only for a provider that reports edits as tool results rather than as file
+ * changes — in practice Claude. A file it created carries `new file mode`, which
+ * is what lets `parseDiff` letter it `A` instead of `M`.
+ */
+function foldPatch(view: Mutable, event: TranscriptEvent, patch: string): void {
+  if (!isAgent(event.actor)) return
+  const parsed = parseDiff(patch)
+  const files = parsed.map((file): ChangedFile => ({
+    path: file.path,
+    ...(file.status === 'renamed' ? { oldPath: file.oldPath } : {}),
+    change: file.status,
+    added: file.added,
+    removed: file.removed,
+    /*
+     * The whole tool patch is this file's diff — `readPatch` builds one from a
+     * single `filePath`, so a Claude edit is always one file. Claimed only
+     * when there is exactly one, because a patch covering two would otherwise
+     * be handed to both rows.
+     */
+    ...(parsed.length === 1 ? { patch } : {}),
+  }))
+  if (files.length === 0) return
+  openChanges(view, event, files)
+}
+
+/** Adds files to the actor's open card, or opens one. */
+function openChanges(view: Mutable, event: TranscriptEvent, files: readonly ChangedFile[]): void {
+  if (!isAgent(event.actor)) return
+  const open = view.openChanges[event.actor]
+  const at = open === null ? -1 : view.messages.findIndex((m) => m.key === open)
+  const prev = at === -1 ? undefined : view.messages[at]
+
+  if (prev === undefined) {
+    const key = `changes:${event.id}`
+    view.openChanges[event.actor] = key
+    view.messages.push({
+      key,
+      eventId: event.id,
+      at: event.createdAt,
+      actor: event.actor,
+      kind: 'changes',
+      text: '',
+      status: 'complete',
+      changes: [...files],
+    })
+    return
+  }
+  view.messages[at] = { ...prev, changes: mergeChanges(prev.changes ?? [], files) }
+}
+
+/** Only an agent writes files, so only an agent can have a card open. */
+function isAgent(actor: string): actor is AgentId {
+  return actor === 'codex' || actor === 'claude'
+}
+
+function readChangedFiles(value: unknown): ChangedFile[] {
+  if (!Array.isArray(value)) return []
+  const files: ChangedFile[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const file = entry as Record<string, unknown>
+    const path = typeof file['path'] === 'string' ? file['path'] : ''
+    if (path === '') continue
+    const change = file['change']
+    const omitted = file['omittedLines']
+    files.push({
+      path,
+      ...(typeof file['oldPath'] === 'string' ? { oldPath: file['oldPath'] } : {}),
+      change:
+        change === 'added' || change === 'removed' || change === 'renamed' ? change : 'modified',
+      added: typeof file['added'] === 'number' ? file['added'] : 0,
+      removed: typeof file['removed'] === 'number' ? file['removed'] : 0,
+      ...(typeof file['patch'] === 'string' && file['patch'] !== ''
+        ? { patch: file['patch'] }
+        : {}),
+      ...(typeof omitted === 'number' && omitted > 0 ? { omittedLines: omitted } : {}),
+    })
+  }
+  return files
+}
+
+/**
+ * Folds a turn's later edits into the card already on screen.
+ *
+ * Summed per path, so a file edited three times is one row carrying the total.
+ * That total is **what the turn wrote**, not the net result — a line added and
+ * then taken out again counts on both sides, and the card says as much rather
+ * than claiming to be `git diff --numstat`.
+ *
+ * A later `change` wins: a file created and then edited in one turn is still a
+ * file that was created, but a file edited and then *renamed* should read as the
+ * rename, and taking the last one said is the only rule that gets both right
+ * without inventing a precedence table.
+ */
+function mergeChanges(
+  existing: readonly ChangedFile[],
+  arriving: readonly ChangedFile[]
+): ChangedFile[] {
+  const merged = [...existing]
+  for (const file of arriving) {
+    const at = merged.findIndex((m) => m.path === file.path || m.path === file.oldPath)
+    const prev = at === -1 ? undefined : merged[at]
+    if (prev === undefined) {
+      merged.push(file)
+      continue
+    }
+    merged[at] = {
+      ...prev,
+      path: file.path,
+      ...(file.oldPath === undefined ? {} : { oldPath: prev.oldPath ?? file.oldPath }),
+      change: file.change,
+      added: prev.added + file.added,
+      removed: prev.removed + file.removed,
+      /*
+       * The latest diff for the file, not the sum of them.
+       *
+       * The counts are what the turn *wrote* and add up; a patch does not — two
+       * hunks from two edits stitched together would describe a file that never
+       * existed. Showing the most recent one is the honest single answer, and
+       * the counts beside it still say the whole turn.
+       */
+      ...(file.patch === undefined ? {} : { patch: file.patch }),
+      ...(file.omittedLines === undefined ? {} : { omittedLines: file.omittedLines }),
+    }
+  }
+  return merged
+}
+
+/**
+ * Puts the open `Changes` card under the reply it belongs to.
+ *
+ * An agent usually edits *before* it narrates, so a card that stayed where its
+ * first file landed would sit above the words explaining it — the reverse of the
+ * approved composition. Moving it on completion keeps the row's identity (it is
+ * still merged into as more files land) and is driven entirely by logged events,
+ * so a replay produces the same order.
+ */
+function moveChangesBelow(view: Mutable, actor: TranscriptEvent['actor']): void {
+  if (!isAgent(actor)) return
+  const key = view.openChanges[actor]
+  if (key === null) return
+  const at = view.messages.findIndex((m) => m.key === key)
+  if (at === -1 || at === view.messages.length - 1) return
+  const [card] = view.messages.splice(at, 1)
+  if (card !== undefined) view.messages.push(card)
+}
+
 function appendStreamed(
   view: Mutable,
   event: TranscriptEvent,
@@ -714,6 +1053,8 @@ function appendStreamed(
     view.messages.push({
       key,
       eventId: event.id,
+      // Set once, when the row is opened: every later delta spreads over this.
+      at: event.createdAt,
       actor: event.actor,
       kind,
       text,

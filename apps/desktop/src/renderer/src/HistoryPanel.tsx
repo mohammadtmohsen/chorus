@@ -99,6 +99,9 @@ export function HistoryPanel(props: {
                 <button
                   type="button"
                   className="history-row"
+                  // The row shortens the folder it was held in; hovering gives
+                  // the path back.
+                  title={conversation.cwd}
                   // Named the way sidebar rows are, so a row can be found by the
                   // conversation it is for rather than by its position in a list
                   // whose order is "most recent" and therefore moves.
