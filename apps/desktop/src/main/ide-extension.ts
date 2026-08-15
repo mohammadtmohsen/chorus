@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { compare, findExecutable } from './which.js'
+import { spawnSpec, type ResolvedCommand } from './command.js'
+import { compare, resolveCommand } from './which.js'
 
 /**
  * Installing and updating the companion VS Code extension (plan §6).
@@ -30,7 +31,15 @@ export interface ExtensionStatus {
 }
 
 export interface ExtensionDeps {
-  readonly findCode: () => Promise<string | null>
+  /**
+   * The `code` launcher, resolved to something spawnable.
+   *
+   * A `ResolvedCommand` rather than a path because on Windows VS Code installs
+   * `code.cmd`, and every `exec` below would otherwise be handed a shim that
+   * `spawn` refuses to run — the VSIX install being the one that matters, since
+   * a failed install is how the extension silently never appears.
+   */
+  readonly findCode: () => Promise<ResolvedCommand | null>
   readonly exec: (bin: string, args: readonly string[]) => Promise<{ stdout: string }>
   readonly vsixPath: () => string | null
   readonly bundledVersion: () => string | null
@@ -82,7 +91,8 @@ export async function extensionStatus(deps: ExtensionDeps): Promise<ExtensionSta
 
   let installedVersion: string | null
   try {
-    const { stdout } = await deps.exec(code, ['--list-extensions', '--show-versions'])
+    const listing = spawnSpec(code, ['--list-extensions', '--show-versions'])
+    const { stdout } = await deps.exec(listing.file, listing.args)
     installedVersion = parseInstalledVersion(stdout, EXTENSION_ID)
   } catch {
     // A `code` that cannot list extensions cannot install one either; report it
@@ -126,7 +136,8 @@ export async function installBundledExtension(deps: ExtensionDeps): Promise<Acti
   try {
     // An argument array, never a shell string: a project path with a space or a
     // quote in it would otherwise be a command injection.
-    await deps.exec(code, ['--install-extension', vsix, '--force'])
+    const install = spawnSpec(code, ['--install-extension', vsix, '--force'])
+    await deps.exec(install.file, install.args)
     return { ok: true, reason: null }
   } catch {
     return { ok: false, reason: 'install-failed' }
@@ -147,7 +158,8 @@ export async function openProjectInEditor(
   const code = await deps.findCode()
   if (code === null) return { ok: false, reason: 'cli-missing' }
   try {
-    await deps.exec(code, [cwd])
+    const open = spawnSpec(code, [cwd])
+    await deps.exec(open.file, open.args)
     return { ok: true, reason: null }
   } catch {
     return { ok: false, reason: 'open-failed' }
@@ -211,7 +223,7 @@ export function defaultDeps(options: {
   readonly bundledVersion: () => string | null
 }): ExtensionDeps {
   return {
-    findCode: () => findExecutable('code'),
+    findCode: () => resolveCommand('code'),
     exec: async (bin, args) => {
       const { stdout } = await run(bin, [...args], { timeout: 60_000 })
       return { stdout }

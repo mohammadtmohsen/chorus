@@ -81,8 +81,19 @@ export interface CodexAdapterOptions {
    * Asked once, lazily. A packaged app inherits a minimal PATH from the Finder
    * and would otherwise fail with "spawn codex ENOENT" — which reads as "not
    * installed" for something the user can run in their terminal.
+   *
+   * Returns a file *and* the arguments that precede ours, not a path. On Windows
+   * npm installs `codex` as a `.cmd` shim, which `spawn` refuses to run without
+   * a shell, so the launchable form is `cmd.exe /d /s /c <shim>` — a pair, not a
+   * string. `args` is empty on macOS and this collapses to what it always was.
+   *
+   * The shape is structural on purpose: the resolver lives in the desktop app
+   * and this package cannot import from it.
    */
-  readonly resolveCommand?: () => Promise<string | null>
+  readonly resolveCommand?: () => Promise<{
+    readonly file: string
+    readonly args: readonly string[]
+  } | null>
   readonly approvalTtlMs?: number
   readonly createTransport?: () => Transport
   readonly now?: () => number
@@ -445,7 +456,10 @@ export class CodexAdapter implements AgentAdapter {
 
   /** Mutable: replaced by an absolute path the first time one is found. */
   private command: string
-  private readonly resolveCommand: (() => Promise<string | null>) | undefined
+  /** Whatever must precede our own arguments — `cmd.exe /d /s /c <shim>`, or nothing. */
+  private commandArgs: readonly string[] = []
+  private readonly resolveCommand:
+    (() => Promise<{ readonly file: string; readonly args: readonly string[] } | null>) | undefined
   private resolving: Promise<void> | null = null
   /** True once a lookup ran and came back with nothing. */
   private lookupFoundNothing = false
@@ -463,7 +477,12 @@ export class CodexAdapter implements AgentAdapter {
     this.approvalTtlMs = options.approvalTtlMs ?? 5 * 60_000
     this.now = options.now ?? (() => Date.now())
     this.createTransport =
-      options.createTransport ?? (() => createStdioTransport({ command: this.command }))
+      options.createTransport ??
+      (() =>
+        createStdioTransport({
+          command: this.command,
+          args: [...this.commandArgs, 'app-server'],
+        }))
   }
 
   async health(): Promise<HealthStatus> {
@@ -471,7 +490,9 @@ export class CodexAdapter implements AgentAdapter {
     // "spawn codex ENOENT" when the command has not been resolved yet.
     await this.resolveCommandOnce()
     try {
-      const { stdout } = await run(this.command, ['--version'], { timeout: 10_000 })
+      const { stdout } = await run(this.command, [...this.commandArgs, '--version'], {
+        timeout: 10_000,
+      })
       const version = /\d+\.\d+\.\d+[\w.-]*/.exec(stdout.trim())?.[0]
       return version === undefined
         ? { state: 'unavailable', reason: `could not parse version from "${stdout.trim()}"` }
@@ -576,7 +597,10 @@ export class CodexAdapter implements AgentAdapter {
     if (lookup === undefined) return Promise.resolve()
     this.resolving ??= lookup()
       .then((found) => {
-        if (found !== null) this.command = found
+        if (found !== null) {
+          this.command = found.file
+          this.commandArgs = found.args
+        }
         this.lookupFoundNothing = found === null
       })
       .catch(() => {

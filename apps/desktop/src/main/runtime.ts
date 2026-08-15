@@ -55,7 +55,8 @@ import {
   type TerminalRef,
 } from './terminal.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
-import { findExecutable } from './which.js'
+import { sdkExecutablePath, spawnSpec } from './command.js'
+import { resolveCommand } from './which.js'
 
 /**
  * Wires the domain to real agents inside the main process.
@@ -3281,7 +3282,15 @@ function defaultAdapters(): Map<AgentId, AgentAdapter> {
     // The command is resolved lazily, on first use: asking a login shell at
     // module load would delay the window for something not needed until a
     // session starts.
-    ['codex', new CodexAdapter({ resolveCommand: () => findExecutable('codex') })],
+    [
+      'codex',
+      new CodexAdapter({
+        resolveCommand: async () => {
+          const resolved = await resolveCommand('codex')
+          return resolved === null ? null : spawnSpec(resolved)
+        },
+      }),
+    ],
     ['claude', new ClaudeAdapter(claudeOptions())],
   ])
 }
@@ -3294,9 +3303,21 @@ function defaultAdapters(): Map<AgentId, AgentAdapter> {
  * happens to exist is what picked a `codex` too old to start, and there is no
  * reason `claude` cannot end up in the same state. Falls back to the SDK's own
  * lookup when nothing is found.
+ *
+ * `sdkExecutablePath` rather than the resolved file, because this is the one
+ * consumer that cannot take an argument prefix: `pathToClaudeCodeExecutable` is
+ * a plain string and `executableArgs` is flags for the JS runtime, not a
+ * command prefix. On Windows that means the script behind the `.cmd` shim, and
+ * null when the shim could not be read — which surfaces as the adapter's own
+ * "could not find the claude CLI" rather than an EINVAL from inside the SDK.
  */
 function claudeOptions(): { resolveExecutablePath: () => Promise<string | null> } {
-  return { resolveExecutablePath: () => findExecutable('claude') }
+  return {
+    resolveExecutablePath: async () => {
+      const resolved = await resolveCommand('claude')
+      return resolved === null ? null : sdkExecutablePath(resolved)
+    },
+  }
 }
 
 export interface Diagnostics {

@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { AgentProbeResult } from '../shared/ipc.js'
-import { findExecutable } from './which.js'
+import { spawnSpec } from './command.js'
+import { resolveCommand } from './which.js'
 
 const run = promisify(execFile)
 
@@ -21,9 +22,20 @@ export async function probeAgents(): Promise<AgentProbeResult[]> {
 
 async function probeOne(probe: (typeof PROBES)[number]): Promise<AgentProbeResult> {
   try {
-    // By absolute path: a packaged app has no terminal's PATH to inherit.
-    const command = (await findExecutable(probe.command)) ?? probe.command
-    const { stdout } = await run(command, [...probe.args], { timeout: 10_000 })
+    /*
+     * By absolute path: a packaged app has no terminal's PATH to inherit.
+     *
+     * Through `spawnSpec` rather than by taking `.file`, so a Windows `.cmd`
+     * shim arrives as `cmd.exe /d /s /c <shim> --version` instead of as a bare
+     * shim path that `spawn` rejects. Nothing found still falls back to the bare
+     * name — the resulting ENOENT is what tells the user it is not installed.
+     */
+    const resolved = await resolveCommand(probe.command)
+    const { file, args } =
+      resolved === null
+        ? { file: probe.command, args: [...probe.args] }
+        : spawnSpec(resolved, probe.args)
+    const { stdout } = await run(file, args, { timeout: 10_000 })
     return {
       id: probe.id,
       installed: true,

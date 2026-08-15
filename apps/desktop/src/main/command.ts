@@ -34,11 +34,24 @@ import { posix, win32 } from 'node:path'
  * it will run under node.
  */
 export interface ResolvedCommand {
-  /** The thing to spawn — or, for `node-script`, the thing to hand the SDK. */
+  /**
+   * Always spawnable as-is, with `argsPrefix` in front of the caller's own.
+   *
+   * Never the `.js` for a shim, even though the SDK wants that: a `.js` is not
+   * executable on Windows, so a probe that spawned it would fail where the same
+   * command through `cmd.exe` succeeds. The script travels in `scriptPath`
+   * instead, and the two consumers ask different questions of the same answer.
+   */
   readonly file: string
   /** Arguments that must come before the caller's own. Empty except for a shim. */
   readonly argsPrefix: readonly string[]
   readonly kind: 'native' | 'cmd-shim' | 'node-script'
+  /**
+   * The JavaScript entry point the SDK should be handed, when this is a shim we
+   * could read. Absent for a native command, and absent for a shim whose format
+   * `parseShimTarget` did not recognise — which is the degrade path, not a bug.
+   */
+  readonly scriptPath?: string
 }
 
 /** `path` for the platform being resolved *for*, which in tests is not this one. */
@@ -154,7 +167,11 @@ export function executableCandidates(
  */
 export function classify(
   executablePath: string,
-  options: { readonly platform: NodeJS.Platform; readonly comspec?: string | undefined }
+  options: {
+    readonly platform: NodeJS.Platform
+    readonly comspec?: string | undefined
+    readonly nodeExecutable?: string | undefined
+  }
 ): ResolvedCommand {
   const { platform } = options
   if (platform !== 'win32') {
@@ -173,10 +190,39 @@ export function classify(
   }
 
   if (extension === '.js' || extension === '.mjs' || extension === '.cjs') {
-    return { file: executablePath, argsPrefix: [], kind: 'node-script' }
+    /*
+     * `node` in front, because Windows cannot exec a `.js`.
+     *
+     * The same trap `which.ts` already documents for the Unix side, one platform
+     * over: a resolved script is not a runnable command until something knows to
+     * run it. `file` is therefore the interpreter and the script rides in the
+     * prefix, so `spawnSpec` stays true for every kind. `scriptPath` keeps the
+     * bare path for the SDK, which wants the opposite thing.
+     */
+    const node =
+      options.nodeExecutable !== undefined && options.nodeExecutable !== ''
+        ? options.nodeExecutable
+        : 'node'
+    return {
+      file: node,
+      argsPrefix: [executablePath],
+      kind: 'node-script',
+      scriptPath: executablePath,
+    }
   }
 
   return { file: executablePath, argsPrefix: [], kind: 'native' }
+}
+
+/**
+ * Attach the script a shim was found to point at.
+ *
+ * Separate from `classify` because reading the shim is I/O and `classify` is
+ * not — the resolver does the read, this records the answer, and a shim that
+ * could not be parsed simply never comes through here.
+ */
+export function withScriptPath(resolved: ResolvedCommand, scriptPath: string): ResolvedCommand {
+  return { ...resolved, scriptPath }
 }
 
 /**
@@ -230,11 +276,16 @@ export function spawnSpec(
 /**
  * The path-only answer, for the Claude SDK and nothing else.
  *
- * Null for a `cmd-shim`, deliberately: handing the SDK a `.cmd` it will try to
- * spawn without a shell is the EINVAL this module exists to avoid, and a null
- * lets the adapter raise its own "could not find the claude CLI" message rather
- * than surfacing a spawn error from inside the SDK.
+ * Three cases, and the middle one is the reason this module exists:
+ *
+ * - `native` — the executable itself, which is every macOS session.
+ * - `cmd-shim` — the script it was found to point at, or **null**. Handing the
+ *   SDK the `.cmd` is the EINVAL this module exists to avoid, so an unreadable
+ *   shim returns nothing and lets the adapter raise its own "could not find the
+ *   claude CLI" rather than surfacing a spawn failure from inside the SDK.
+ * - `node-script` — the script, not `file`, because `file` is the interpreter.
  */
 export function sdkExecutablePath(resolved: ResolvedCommand): string | null {
-  return resolved.kind === 'cmd-shim' ? null : resolved.file
+  if (resolved.kind === 'cmd-shim') return resolved.scriptPath ?? null
+  return resolved.scriptPath ?? resolved.file
 }

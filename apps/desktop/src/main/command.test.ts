@@ -6,6 +6,7 @@ import {
   pathExtensions,
   sdkExecutablePath,
   spawnSpec,
+  withScriptPath,
 } from './command.js'
 
 /**
@@ -163,6 +164,23 @@ describe('classify', () => {
     }
   })
 
+  it('puts node in front of a script, because Windows cannot exec a .js', () => {
+    // The bug this guards: `file` being the .js makes spawnSpec return something
+    // unspawnable, and the failure surfaces in agent-probe as "claude missing".
+    expect(classify('C:\\npm\\cli.js', { platform: WINDOWS })).toEqual({
+      file: 'node',
+      argsPrefix: ['C:\\npm\\cli.js'],
+      kind: 'node-script',
+      scriptPath: 'C:\\npm\\cli.js',
+    })
+  })
+
+  it('honours an explicit node executable, for a Finder launch with none on PATH', () => {
+    expect(
+      classify('C:\\npm\\cli.js', { platform: WINDOWS, nodeExecutable: 'C:\\node\\node.exe' })
+    ).toMatchObject({ file: 'C:\\node\\node.exe', argsPrefix: ['C:\\npm\\cli.js'] })
+  })
+
   it('is always native on macOS, whatever the name looks like', () => {
     // A macOS file called `codex.cmd` is not a shim; the extension means nothing
     // here, and treating it as one would prepend cmd.exe on a machine with none.
@@ -270,14 +288,26 @@ describe('spawnSpec', () => {
 })
 
 describe('sdkExecutablePath', () => {
-  it('refuses a cmd shim, because the SDK spawns it without a shell', () => {
+  it('refuses an unreadable cmd shim, because the SDK spawns it without a shell', () => {
     expect(sdkExecutablePath(classify('C:\\npm\\claude.cmd', { platform: WINDOWS }))).toBeNull()
   })
 
-  it('hands over a script or a real executable unchanged', () => {
+  it('hands over the script a shim pointed at, never the shim itself', () => {
+    const shim = classify('C:\\npm\\claude.cmd', { platform: WINDOWS })
+    const withScript = withScriptPath(shim, 'C:\\npm\\node_modules\\claude-code\\cli.js')
+    expect(sdkExecutablePath(withScript)).toBe('C:\\npm\\node_modules\\claude-code\\cli.js')
+    // ...while the spawnable form is still cmd.exe, not the script.
+    expect(spawnSpec(withScript, ['--version']).file).toBe('cmd.exe')
+  })
+
+  it('gives the script rather than the interpreter for a node-script', () => {
+    // `file` is `node` here, and handing the SDK `node` would be nonsense.
     expect(sdkExecutablePath(classify('C:\\npm\\cli.js', { platform: WINDOWS }))).toBe(
       'C:\\npm\\cli.js'
     )
+  })
+
+  it('hands over a real executable unchanged', () => {
     expect(sdkExecutablePath(classify('/usr/local/bin/claude', { platform: MAC }))).toBe(
       '/usr/local/bin/claude'
     )
