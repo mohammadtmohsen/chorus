@@ -30,9 +30,7 @@ if (command === undefined) {
 
 // Built by filtering rather than by `delete`: same result, and it keeps the
 // linter's no-dynamic-delete rule satisfied without an exception comment.
-const env = Object.fromEntries(
-  Object.entries(process.env).filter(([key]) => !names.includes(key))
-)
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !names.includes(key)))
 
 /*
  * `shell: true` on Windows, because the command is a package-manager binary
