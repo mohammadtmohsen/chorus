@@ -12,7 +12,7 @@ import { HistoryPanel } from './HistoryPanel.js'
 import { Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { ConfirmSessionAction } from './workspace/ConfirmSessionAction.js'
-import { useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
+import { sameWorkspaceSnapshot, useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
 import { reorderSessions } from './workspace/session-row.js'
 
 /**
@@ -278,13 +278,19 @@ export function App(): React.JSX.Element {
         }, 180)
       },
       {
+        /*
+         * Compare every field the write above sends, not a list of them.
+         *
+         * This was six fields typed out by hand, and it silently stopped
+         * matching what `workspaceSnapshot` carries: `terminals` and
+         * `globalTerminal` were never added, so opening or resizing a terminal
+         * panel compared *equal* and was never written. `sameWorkspaceSnapshot`
+         * reads its keys off the schema, so the next field is covered by
+         * construction. `hydrated` stays explicit because it is not part of the
+         * snapshot — it is the guard that stops hydration echoing back to disk.
+         */
         equalityFn: (left, right) =>
-          left.hydrated === right.hydrated &&
-          left.layout === right.layout &&
-          left.panes === right.panes &&
-          left.focusedPaneId === right.focusedPaneId &&
-          left.sidebarHidden === right.sidebarHidden &&
-          left.sidebarWidth === right.sidebarWidth,
+          left.hydrated === right.hydrated && sameWorkspaceSnapshot(left, right),
       }
     )
     return () => {

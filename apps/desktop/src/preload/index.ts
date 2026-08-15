@@ -69,6 +69,7 @@ const api: ChorusApi = {
   attachTerminal: invoke('terminal:attach'),
   detachTerminal: invoke('terminal:detach'),
   disposeTerminal: invoke('terminal:dispose'),
+  killTerminal: invoke('terminal:kill'),
   writeTerminal: invoke('terminal:write'),
   resizeTerminal: invoke('terminal:resize'),
   ackTerminal: invoke('terminal:ack'),

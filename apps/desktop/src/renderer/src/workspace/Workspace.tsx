@@ -114,8 +114,18 @@ function directionalPane(paneId: string, direction: SplitDirection): string | nu
   return candidates[0]?.id ?? null
 }
 
-/** Stable, so `TerminalView`'s effect does not tear down on every render. */
-const GLOBAL_TERMINAL: TerminalRefShape = { scope: 'global' }
+/**
+ * How the global panel names one of its shells.
+ *
+ * The panel holds the roster and asks for a ref per tab, so scope construction
+ * stays out here — `TerminalPanel` is shared by both scopes and must not learn
+ * to build either. This replaced a module constant that existed to keep
+ * `TerminalView`'s effect from tearing down; that reason expired when the effect
+ * started depending on the ref's *parts* rather than on the object.
+ */
+function globalTerminalRef(id: string): TerminalRefShape {
+  return { scope: 'global', id }
+}
 
 export function Workspace(props: WorkspaceProps): React.JSX.Element {
   const { t } = useTranslation()
@@ -131,6 +141,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
     setGlobalTerminalOpen,
     toggleGlobalTerminal,
     setGlobalTerminalHeight,
+    addGlobalTerminal,
+    activateGlobalTerminal,
+    removeGlobalTerminalTab,
   } = useWorkspaceActions()
   const globalTerminal = useGlobalTerminal()
   const sessions = useMemo(
@@ -203,6 +216,51 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         if (document.activeElement?.closest('.terminal-panel--global') != null) return
         if (activeId === null) return
         state.toggleSessionTerminal(activeId)
+        return
+      }
+
+      /*
+       * ⌃⇧` — another terminal in whichever panel you are in. VS Code's binding.
+       *
+       * **`event.code`, not `event.key`**, and it is the one place in this
+       * handler where that matters. Every other chord here reads
+       * `event.key.toLowerCase()`, which is right for a letter and wrong for
+       * this one: with Shift held, `key` is `~`. Copying the surrounding style
+       * produces a shortcut that silently never fires.
+       *
+       * **`event.repeat` is rejected**, because this creates a *process*. No
+       * other chord here does, so no other chord needs the guard — holding this
+       * one would otherwise spawn shells at the OS key-repeat rate, which is the
+       * only way a person reaches forty terminals by accident.
+       */
+      if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        event.code === 'Backquote'
+      ) {
+        /*
+         * Not from inside a sheet, and this one spawns a process.
+         *
+         * `useDialog` traps Tab and claims Escape and nothing else, so every
+         * other key reaches this handler while Settings, History or a
+         * confirmation is on screen. Most chords here rearrange panes, which is
+         * merely surprising behind an overlay; this one starts a **shell** in
+         * whichever session was last focused, out of sight, and the person who
+         * pressed it has no way to know. `preventDefault` comes after the guard
+         * so a sheet that grows its own use for the chord still gets it.
+         */
+        if (document.activeElement?.closest('.sheet-backdrop') != null) return
+        event.preventDefault()
+        if (event.repeat) return
+        // Same "which panel" question as ⌘J, answered the same way.
+        if (document.activeElement?.closest('.terminal-panel--global') != null) {
+          state.addGlobalTerminal()
+          return
+        }
+        if (activeId === null) return
+        state.addSessionTerminal(activeId)
         return
       }
       if (
@@ -373,9 +431,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
           */}
           {globalTerminal.open && (
             <TerminalPanel
-              terminal={GLOBAL_TERMINAL}
+              panel={globalTerminal}
+              refFor={globalTerminalRef}
               title={t('terminal.globalTitle')}
-              height={globalTerminal.height}
               onHeightChange={(height) => {
                 setGlobalTerminalHeight(height)
                 props.onCommitLayout()
@@ -383,6 +441,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
               onClose={() => {
                 setGlobalTerminalOpen(false)
               }}
+              onAddTerminal={addGlobalTerminal}
+              onActivateTerminal={activateGlobalTerminal}
+              onRemoveTerminal={removeGlobalTerminalTab}
               onFocusAway={() => undefined}
               variant="global"
               shortcut={t('terminal.shortcutGlobal')}
@@ -681,6 +742,7 @@ function PaneTabStrip(
               data-active={active}
               data-dragging={props.drag?.conversationId === conversationId}
             >
+              {active && <TabJoin />}
               {/*
                 No rename here any more; it lives on the hover card's title.
 
@@ -830,6 +892,85 @@ function DragFeedback({ drag }: { drag: ActiveTabDrag | null }): React.JSX.Eleme
       >
         {fromRail ? monogramOf(drag.title) : drag.title}
       </div>
+    </>
+  )
+}
+
+/**
+ * The curve that joins the active tab to the pane below it.
+ *
+ * Ported from `example-app`'s `TabStrip`, which solves this the way browsers do:
+ * the tab and the panel are one surface, and where the tab's rounded top meets
+ * the panel's flat edge there is a *concave* quarter-round turning outward on
+ * each side. Without it a tab is a rounded rectangle sitting on a line — which
+ * is what Chorus drew, and why the join read as two shapes touching rather than
+ * one shape with a tab on it.
+ *
+ * Three layers, and each is load-bearing:
+ *
+ *  - **the bridge**, a 1px bar running from one curve's outer edge to the
+ *    other's, painting over the pane body's top border for the tab's whole
+ *    width plus both curves. Chorus already erased that border under the tab
+ *    itself with `border-bottom-color`; the curves widen the erasure and this is
+ *    what keeps it continuous across them.
+ *  - **two curves**, each an SVG rather than a CSS pseudo-element, because the
+ *    corner needs a *fill* — the pane's surface, flooding into the notch — and a
+ *    *stroke* on the same arc, in the tab's border colour. A `border-radius`
+ *    trick gives one or the other, not both, which is why the original reached
+ *    for SVG too.
+ *
+ * Authored at 11px with a radius of 8 rather than scaling their 14px artwork:
+ * their tab is `rounded-t-xl` with a 2px border and Chorus's is 9px with a 1px
+ * one, so a scaled copy would have arrived with a 1.4px stroke that renders
+ * soft. The control points are the usual quarter-arc constant — 8 × 0.5523 — so
+ * the arc meets both straight edges tangentially.
+ *
+ * **11px and half-pixel coordinates, because 10px left visible breaks.** A 1px
+ * stroke is centred on its path, so a path along the box's own edge renders half
+ * outside it. The box is one pixel wider than the curve to hold that half, the
+ * arc sits on `x = 10.5` — the centre of the tab's 1px border, not its inside
+ * face — and the path carries a straight segment at each end that runs *into*
+ * the lines it joins rather than stopping at them. Butting two strokes end to
+ * end leaves a hairline at any fractional device-pixel offset; overlapping them
+ * cannot.
+ *
+ * `currentColor` on the stroke and `--bg-pane-active` on the fill, so the curve
+ * follows the tab it belongs to rather than restating either value.
+ */
+function TabJoin(): React.JSX.Element {
+  return (
+    <>
+      <span className="workspace-tab-bridge" aria-hidden="true" />
+      <svg
+        className="workspace-tab-curve workspace-tab-curve--left"
+        viewBox="0 0 11 11"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="M11 0H10.5V2.5C10.5 6.92 6.92 10.5 2.5 10.5H0V11H11Z" fill="var(--tab-join)" />
+        <path
+          className="workspace-tab-curve-line"
+          d="M10.5 0V2.5C10.5 6.92 6.92 10.5 2.5 10.5H0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1"
+        />
+      </svg>
+      <svg
+        className="workspace-tab-curve workspace-tab-curve--right"
+        viewBox="0 0 11 11"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="M0 0H0.5V2.5C0.5 6.92 4.08 10.5 8.5 10.5H11V11H0Z" fill="var(--tab-join)" />
+        <path
+          className="workspace-tab-curve-line"
+          d="M0.5 0V2.5C0.5 6.92 4.08 10.5 8.5 10.5H11"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1"
+        />
+      </svg>
     </>
   )
 }

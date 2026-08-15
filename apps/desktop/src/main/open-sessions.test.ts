@@ -45,7 +45,12 @@ describe('open session persistence', () => {
         ...workspace,
         sidebarWidth: SIDEBAR_WIDTH.default,
         terminals: {},
-        globalTerminal: { open: false, height: TERMINAL_HEIGHT.default },
+        globalTerminal: {
+          open: false,
+          height: TERMINAL_HEIGHT.default,
+          tabs: [],
+          activeId: null,
+        },
       },
     })
   })
@@ -80,8 +85,116 @@ describe('open session persistence', () => {
     expect(parsed.workspace?.globalTerminal).toEqual({
       open: false,
       height: TERMINAL_HEIGHT.default,
+      tabs: [],
+      activeId: null,
     })
     expect(parsed.workspace?.terminals).toEqual({})
+  })
+
+  /*
+   * The same guard, one field later, and the failure is identical: making `tabs`
+   * or `activeId` required sends this envelope down the legacy bare-array parse,
+   * which also fails, and returns `{ sessions: [] }` — every open conversation
+   * gone, once, silently.
+   *
+   * What it asserts is deliberately narrow. `parseOpenSessions` applies **schema
+   * defaults only**; it hands back `current.data.workspace` untouched. The
+   * backfill — an open panel with no tabs getting one — happens in the
+   * renderer's `normalizeTerminalPanel`, and asking for it here would be
+   * asserting a behaviour main does not have.
+   */
+  it('still restores the sessions from a workspace written before the roster existed', () => {
+    const beforeRoster = {
+      version: 2,
+      sessions: [session],
+      workspace: {
+        layout: { kind: 'leaf' as const, paneId: 'pane-1' },
+        panes: {
+          'pane-1': { id: 'pane-1', tabs: ['conversation-1'], activeTabId: 'conversation-1' },
+        },
+        focusedPaneId: 'pane-1',
+        sidebarHidden: false,
+        sidebarWidth: 248,
+        terminals: { 'conversation-1': { open: true, height: 310 } },
+        globalTerminal: { open: true, height: 180 },
+      },
+    }
+    const parsed = parseOpenSessions(beforeRoster)
+    expect(parsed.sessions).toHaveLength(1)
+    // The panel itself survives, at the height it was left.
+    expect(parsed.workspace?.terminals['conversation-1']).toEqual({
+      open: true,
+      height: 310,
+      tabs: [],
+      activeId: null,
+    })
+    expect(parsed.workspace?.globalTerminal).toEqual({
+      open: true,
+      height: 180,
+      tabs: [],
+      activeId: null,
+    })
+  })
+
+  /*
+   * A hand-edited or corrupted roster must not be refused, for the reason above:
+   * rejection here costs the conversations, not the roster. Duplicates, blanks
+   * and a dangling `activeId` all parse, and the renderer repairs them.
+   */
+  it('parses a roster it will have to repair rather than refusing it', () => {
+    const parsed = parseOpenSessions({
+      version: 2,
+      sessions: [session],
+      workspace: {
+        layout: { kind: 'leaf' as const, paneId: 'pane-1' },
+        panes: {
+          'pane-1': { id: 'pane-1', tabs: ['conversation-1'], activeTabId: 'conversation-1' },
+        },
+        focusedPaneId: 'pane-1',
+        sidebarHidden: false,
+        sidebarWidth: 248,
+        terminals: {
+          'conversation-1': {
+            open: true,
+            height: 212,
+            tabs: [{ id: 'a' }, { id: 'a' }, { id: '' }],
+            activeId: 'nothing-by-this-name',
+          },
+        },
+        globalTerminal: { open: false, height: 212 },
+      },
+    })
+    expect(parsed.sessions).toHaveLength(1)
+    expect(parsed.workspace?.terminals['conversation-1']?.tabs).toHaveLength(3)
+  })
+
+  it('keeps a stored roster intact when there is nothing to repair', () => {
+    const parsed = parseOpenSessions({
+      version: 2,
+      sessions: [session],
+      workspace: {
+        layout: { kind: 'leaf' as const, paneId: 'pane-1' },
+        panes: {
+          'pane-1': { id: 'pane-1', tabs: ['conversation-1'], activeTabId: 'conversation-1' },
+        },
+        focusedPaneId: 'pane-1',
+        sidebarHidden: false,
+        sidebarWidth: 248,
+        terminals: {},
+        globalTerminal: {
+          open: true,
+          height: 300,
+          tabs: [{ id: 'g1' }, { id: 'g2' }],
+          activeId: 'g2',
+        },
+      },
+    })
+    expect(parsed.workspace?.globalTerminal).toEqual({
+      open: true,
+      height: 300,
+      tabs: [{ id: 'g1' }, { id: 'g2' }],
+      activeId: 'g2',
+    })
   })
 
   it('keeps a stored panel rather than defaulting over it', () => {
@@ -100,8 +213,18 @@ describe('open session persistence', () => {
         globalTerminal: { open: true, height: 180 },
       },
     })
-    expect(parsed.workspace?.terminals['conversation-1']).toEqual({ open: true, height: 310 })
-    expect(parsed.workspace?.globalTerminal).toEqual({ open: true, height: 180 })
+    expect(parsed.workspace?.terminals['conversation-1']).toEqual({
+      open: true,
+      height: 310,
+      tabs: [],
+      activeId: null,
+    })
+    expect(parsed.workspace?.globalTerminal).toEqual({
+      open: true,
+      height: 180,
+      tabs: [],
+      activeId: null,
+    })
   })
 
   it('keeps a draft that was never sent', () => {

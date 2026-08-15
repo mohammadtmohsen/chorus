@@ -463,9 +463,20 @@
     "hide": "Hide",
     "resize": "Resize the terminal",
     "exited": "exited with code {{code}}",
+    "processExited": "[process exited with code {{code}}]",
+    "openFailed": "[the terminal could not be opened]",
     "toggleHint": "Toggle this terminal",
     "shortcutSession": "⌘J",
-    "shortcutGlobal": "⌘⇧J"
+    "shortcutGlobal": "⌘⇧J",
+    "shortcutNew": "⌃⇧`",
+    "tabs": "Terminals in this panel",
+    "tabLabel": "Terminal {{n}}",
+    "add": "New terminal",
+    "kill": "Kill terminal",
+    "confirmKillTitle": "Kill this terminal?",
+    "confirmKillBody": "{{process}} is still running in it. Killing the terminal stops it.",
+    "confirmKillCancel": "Cancel",
+    "confirmKill": "Kill"
   },
   "rail": {
     "label": "Sessions, terminal and settings"

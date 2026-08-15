@@ -7,9 +7,14 @@ import {
   type Attachment,
 } from './terminal-stream.js'
 
-const GLOBAL: TerminalRefShape = { scope: 'global' }
-const C1: TerminalRefShape = { scope: 'session', conversationId: 'c1' }
-const C2: TerminalRefShape = { scope: 'session', conversationId: 'c2' }
+const GLOBAL: TerminalRefShape = { scope: 'global', id: 't1' }
+const C1: TerminalRefShape = { scope: 'session', conversationId: 'c1', id: 't1' }
+const C2: TerminalRefShape = { scope: 'session', conversationId: 'c2', id: 't1' }
+
+/** C1's sibling: same conversation, different shell. Only `id` separates them. */
+const C1B: TerminalRefShape = { scope: 'session', conversationId: 'c1', id: 't2' }
+/** The global panel's second shell. */
+const GLOBAL_B: TerminalRefShape = { scope: 'global', id: 't2' }
 
 const at = (ref: TerminalRefShape, epoch: number, seq: number): Attachment => ({ ref, epoch, seq })
 
@@ -41,6 +46,41 @@ describe('sameTerminal', () => {
     expect(sameTerminal(GLOBAL, C1)).toBe(false)
     expect(sameTerminal(C1, GLOBAL)).toBe(false)
   })
+
+  /*
+   * The case that arrives with several terminals per panel, and the one a
+   * conversation-only comparison gets wrong.
+   *
+   * Two tabs in the same session differ by `id` and nothing else. The output
+   * channel is a broadcast, so a comparison that stopped at `conversationId`
+   * would print terminal 2's output into terminal 1's screen and mark terminal 1
+   * dead when terminal 2 exited.
+   */
+  it('tells two terminals in the same conversation apart', () => {
+    expect(sameTerminal(C1, C1B)).toBe(false)
+    expect(sameTerminal(C1B, C1)).toBe(false)
+    expect(sameTerminal(C1B, C1B)).toBe(true)
+  })
+
+  it('tells two global terminals apart', () => {
+    expect(sameTerminal(GLOBAL, GLOBAL_B)).toBe(false)
+    expect(sameTerminal(GLOBAL_B, GLOBAL_B)).toBe(true)
+  })
+
+  /*
+   * The mirror-image mistake, and the reason `id` is *added* to the tuple rather
+   * than substituted for it.
+   *
+   * Ids are minted by the renderer, typed as a bare string at the IPC boundary,
+   * and persisted in a file a person can edit — so the same id in two different
+   * conversations is reachable, and during Phase 1 it is not merely reachable
+   * but *guaranteed*: every session's terminal is minted as `'primary'`.
+   * Comparing on `id` alone would have made every session share one terminal.
+   */
+  it('does not merge two conversations that mint the same id', () => {
+    expect(sameTerminal(C1, C2)).toBe(false)
+    expect(sameTerminal(C1, { scope: 'global', id: 't1' })).toBe(false)
+  })
 })
 
 describe('shouldApply', () => {
@@ -51,6 +91,28 @@ describe('shouldApply', () => {
   it("ignores another terminal's output, since the channel is a broadcast", () => {
     expect(shouldApply(push(GLOBAL, 2, 11), at(C1, 2, 10))).toBe(false)
     expect(shouldApply(push(C2, 2, 11), at(C1, 2, 10))).toBe(false)
+  })
+
+  /*
+   * The sibling case, at the level that actually decides what gets drawn.
+   *
+   * `sameTerminal` being right is necessary and not sufficient — this is the
+   * function `TerminalView` calls, and the bug it prevents is visible: a `pnpm
+   * build` scrolling past inside the tab you opened to run `git status`.
+   */
+  it("ignores a sibling tab's output in the same conversation", () => {
+    expect(shouldApply(push(C1B, 2, 11), at(C1, 2, 10))).toBe(false)
+  })
+
+  /*
+   * And the exit, separately, because it takes a different route through
+   * `shouldApply` — it returns before the sequence check, so a terminal filter
+   * that let a sibling through would mark the wrong tab dead with no other
+   * symptom.
+   */
+  it("ignores a sibling tab's exit in the same conversation", () => {
+    const exit: TerminalPush = { kind: 'exit', ref: C1B, epoch: 2, code: 1 }
+    expect(shouldApply(exit, at(C1, 2, 10))).toBe(false)
   })
 
   it('ignores a push aimed at an attachment this view has superseded', () => {

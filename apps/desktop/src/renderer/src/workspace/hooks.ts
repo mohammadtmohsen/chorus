@@ -3,14 +3,11 @@ import { useShallow } from 'zustand/react/shallow'
 import type { AgentId } from '@chorus/shared'
 import type { SessionRowState } from './session-row.js'
 import {
-  TERMINAL_HEIGHT,
+  CLOSED_TERMINAL_PANEL,
   type TerminalPanelState,
   type WorkspaceLayoutNode,
   type WorkspacePane,
 } from '../../../shared/workspace-layout.js'
-
-/** Stable identity, so a selector returning it compares equal to itself. */
-const CLOSED_PANEL: TerminalPanelState = { open: false, height: TERMINAL_HEIGHT.default }
 import { leafPaneIds, tabLocation } from './layout.js'
 import {
   useWorkspaceStore,
@@ -69,6 +66,12 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     setGlobalTerminalHeight,
     toggleSessionTerminal,
     setSessionTerminalHeight,
+    addGlobalTerminal,
+    addSessionTerminal,
+    removeGlobalTerminalTab,
+    removeSessionTerminalTab,
+    activateGlobalTerminal,
+    activateSessionTerminal,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -97,6 +100,12 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     setGlobalTerminalHeight,
     toggleSessionTerminal,
     setSessionTerminalHeight,
+    addGlobalTerminal,
+    addSessionTerminal,
+    removeGlobalTerminalTab,
+    removeSessionTerminalTab,
+    activateGlobalTerminal,
+    activateSessionTerminal,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -147,12 +156,12 @@ export function useGlobalTerminal(): TerminalPanelState {
 /**
  * One conversation's panel.
  *
- * `CLOSED_PANEL` is a module constant rather than an object literal in the
+ * `CLOSED_TERMINAL_PANEL` is a module constant rather than an object literal in the
  * selector: returning a fresh object each call would make the selector never
  * equal itself and re-render the pane on every store change.
  */
 export function useSessionTerminal(conversationId: string): TerminalPanelState {
-  return useWorkspaceStore((state) => state.terminals[conversationId] ?? CLOSED_PANEL)
+  return useWorkspaceStore((state) => state.terminals[conversationId] ?? CLOSED_TERMINAL_PANEL)
 }
 
 export function useSidebarHidden(): boolean {

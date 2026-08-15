@@ -93,8 +93,13 @@ function build(): Harness {
   }
 }
 
-const GLOBAL: TerminalRef = { scope: 'global' }
-const SESSION: TerminalRef = { scope: 'session', conversationId: 'c1' }
+const GLOBAL: TerminalRef = { scope: 'global', id: 't1' }
+const SESSION: TerminalRef = { scope: 'session', conversationId: 'c1', id: 't1' }
+
+/** SESSION's sibling: same conversation, second shell. */
+const SESSION_B: TerminalRef = { scope: 'session', conversationId: 'c1', id: 't2' }
+/** The global panel's second shell. */
+const GLOBAL_B: TerminalRef = { scope: 'global', id: 't2' }
 
 /** xterm's write callback lands on a later tick; nothing here is synchronous. */
 const settled = async (): Promise<void> => {
@@ -157,7 +162,7 @@ describe('separate storage for global and session', () => {
     const { service, spawned } = build()
     await service.attach(GLOBAL)
     await service.attach(SESSION)
-    await service.attach({ scope: 'session', conversationId: 'c2' })
+    await service.attach({ scope: 'session', conversationId: 'c2', id: 't1' })
     service.disposeSession('c1')
     service.disposeSession('c2')
     expect(spawned[0]?.killed).toBe(false)
@@ -170,6 +175,198 @@ describe('separate storage for global and session', () => {
     await service.attach(SESSION)
     service.close()
     expect(spawned.every((p) => p.killed)).toBe(true)
+  })
+})
+
+describe('several terminals in one scope', () => {
+  it('gives each id its own shell rather than reusing one', async () => {
+    const { service, spawned } = build()
+    await service.attach(SESSION)
+    await service.attach(SESSION_B)
+    expect(spawned).toHaveLength(2)
+  })
+
+  it('keeps the global panel’s shells separate from each other too', async () => {
+    const { service, spawned } = build()
+    await service.attach(GLOBAL)
+    await service.attach(GLOBAL_B)
+    expect(spawned).toHaveLength(2)
+  })
+
+  /*
+   * Writing to one sibling must not reach the other. The whole reason `id` is
+   * part of the lookup rather than decoration on the ref.
+   */
+  it('routes a write to the shell it names', async () => {
+    const { service, spawned } = build()
+    const first = await service.attach(SESSION)
+    const second = await service.attach(SESSION_B)
+    service.write(SESSION, first.epoch, 'one')
+    service.write(SESSION_B, second.epoch, 'two')
+    expect(spawned[0]?.written).toEqual(['one'])
+    expect(spawned[1]?.written).toEqual(['two'])
+  })
+
+  /*
+   * Three, not two, and not because of an iteration hazard — a Map iterator
+   * visits every key even as each is deleted, which was checked rather than
+   * assumed. Three because the old `disposeSession` was a single `dispose` call
+   * with no loop at all, and a two-terminal fixture cannot tell "kills all of
+   * them" from "kills the one it happened to look up first" as clearly.
+   */
+  it('ending a conversation kills every one of its terminals', async () => {
+    const { service, spawned } = build()
+    await service.attach(SESSION)
+    await service.attach(SESSION_B)
+    await service.attach({ scope: 'session', conversationId: 'c1', id: 't3' })
+    service.disposeSession('c1')
+    expect(spawned).toHaveLength(3)
+    expect(spawned.every((p) => p.killed)).toBe(true)
+    expect(service.describe(SESSION_B)).toBeNull()
+  })
+
+  it('and still leaves every global one running', async () => {
+    const { service } = build()
+    await service.attach(GLOBAL)
+    await service.attach(GLOBAL_B)
+    await service.attach(SESSION)
+    service.disposeSession('c1')
+    expect(service.describe(GLOBAL)?.running).toBe(true)
+    expect(service.describe(GLOBAL_B)?.running).toBe(true)
+  })
+
+  it('quitting drains every shell in both scopes', async () => {
+    const { service, spawned } = build()
+    await service.attach(GLOBAL)
+    await service.attach(GLOBAL_B)
+    await service.attach(SESSION)
+    await service.attach(SESSION_B)
+    service.close()
+    expect(spawned).toHaveLength(4)
+    expect(spawned.every((p) => p.killed)).toBe(true)
+  })
+
+  /*
+   * Killing one sibling leaves the other addressable. The failure this catches
+   * is a `forget` that drops the conversation's whole inner map instead of one
+   * entry — which passes "the killed one is gone" and loses the other.
+   */
+  it('killing one sibling leaves the other running and reachable', async () => {
+    const { service, spawned } = build()
+    await service.attach(SESSION)
+    const second = await service.attach(SESSION_B)
+    service.dispose(SESSION)
+    expect(spawned[0]?.killed).toBe(true)
+    expect(spawned[1]?.killed).toBe(false)
+    expect(service.describe(SESSION_B)?.running).toBe(true)
+    service.write(SESSION_B, second.epoch, 'still here')
+    expect(spawned[1]?.written).toEqual(['still here'])
+  })
+})
+
+describe('killing a shell nothing is attached to', () => {
+  /*
+   * `dispose` with no epoch is what `terminal:kill` runs, and its caller is a tab
+   * strip rather than a mounted view — a background tab has no attachment to
+   * quote an epoch from. The epoch guard stays on `disposeIfCurrent`, whose only
+   * caller *is* a mounted view.
+   */
+  it('kills a detached terminal that no view could speak for', async () => {
+    const { service, spawned } = build()
+    const opened = await service.attach(SESSION)
+    service.detach(SESSION, opened.epoch)
+    service.dispose(SESSION)
+    expect(spawned[0]?.killed).toBe(true)
+    expect(service.describe(SESSION)).toBeNull()
+  })
+
+  /* A stale click on a tab whose shell already exited must not throw. */
+  it('forgets a shell that had already exited, without killing twice', async () => {
+    const { service, spawned } = build()
+    await service.attach(SESSION)
+    spawned[0]?.finish(0)
+    service.dispose(SESSION)
+    service.dispose(SESSION)
+    expect(service.describe(SESSION)).toBeNull()
+  })
+
+  /*
+   * The guarded path still refuses a superseded epoch, which is the whole reason
+   * `kill` is a separate channel rather than `dispose` with the guard relaxed.
+   */
+  it('still ignores a dispose carrying a superseded epoch', async () => {
+    const { service, spawned } = build()
+    const first = await service.attach(SESSION)
+    await service.attach(SESSION)
+    service.disposeIfCurrent(SESSION, first.epoch)
+    expect(spawned[0]?.killed).toBe(false)
+    expect(service.describe(SESSION)?.running).toBe(true)
+  })
+})
+
+describe('an exit that nobody was watching', () => {
+  /*
+   * `exit` is a one-shot push and only the active tab of a panel is mounted, so
+   * a shell that dies in the background emits to no view at all. Without the
+   * code being kept, reopening that tab shows a dead shell looking alive.
+   */
+  it('reports the code to a view that attaches afterwards', async () => {
+    const { service, spawned } = build()
+    const first = await service.attach(SESSION)
+    service.detach(SESSION, first.epoch)
+    spawned[0]?.finish(3)
+    const second = await service.attach(SESSION)
+    expect(second.exitCode).toBe(3)
+  })
+
+  it('says nothing about a shell that is still running', async () => {
+    const { service } = build()
+    const opened = await service.attach(SESSION)
+    expect(opened.exitCode).toBeNull()
+    expect(service.describe(SESSION)?.exitCode).toBeNull()
+  })
+
+  it('describes the code as well, for a tab that is not mounted', async () => {
+    const { service, spawned } = build()
+    await service.attach(SESSION)
+    spawned[0]?.finish(130)
+    expect(service.describe(SESSION)?.exitCode).toBe(130)
+    expect(service.describe(SESSION)?.running).toBe(false)
+  })
+
+  /*
+   * A dead pty has no foreground process to report, and on darwin node-pty
+   * answers `undefined` through a getter its own types declare as `string` —
+   * there is no `|| this._file` on that branch, unlike every other platform.
+   * The `nodePty` adapter turns that into `''`; this is the other half, and
+   * without it `terminal:describe` returns a `foreground` the response schema
+   * rejects, throwing across IPC for any terminal that exited and was not
+   * disposed. Which is precisely the state an exited tab sits in.
+   */
+  it('still names a shell after the process behind it is gone', async () => {
+    const { service, spawned } = build()
+    await service.attach(SESSION)
+    const pty = spawned[0]
+    if (pty === undefined) throw new Error('no pty')
+    pty.finish(1)
+    // What the adapter hands us once the child is gone.
+    pty.process = ''
+    const described = service.describe(SESSION)
+    expect(typeof described?.foreground).toBe('string')
+    expect(described?.foreground).toBe('zsh')
+    expect(described?.busy).toBe(false)
+  })
+
+  /*
+   * A zero is a real exit code and `?? null` on a falsy number is the classic way
+   * to lose it — a clean `exit` would read as a shell still running.
+   */
+  it('keeps a zero exit rather than treating it as absent', async () => {
+    const { service, spawned } = build()
+    const first = await service.attach(SESSION)
+    service.detach(SESSION, first.epoch)
+    spawned[0]?.finish(0)
+    expect((await service.attach(SESSION)).exitCode).toBe(0)
   })
 })
 

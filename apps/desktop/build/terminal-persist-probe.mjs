@@ -45,9 +45,11 @@ async function main() {
     await first.until(`document.querySelector('.terminal-panel--session') !== null`, {
       timeout: 30_000,
     })
+    // `[data-rail-terminal]`, not `.activity-bar button`: the activity bar became
+    // the QuickRail in readable-control-rail-2026-08-13 and this spike was never
+    // updated, so it threw on `undefined.click()` rather than reporting anything.
     await first.evaluate(`(() => {
-      const b = [...document.querySelectorAll('.activity-bar button')].find(x => /terminal/i.test(x.title))
-      b.click()
+      document.querySelector('[data-rail-terminal]').click()
       return true
     })()`)
     await first.until(`document.querySelector('.terminal-panel--global') !== null`, {

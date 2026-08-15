@@ -26,10 +26,10 @@ describe('IPC contract', () => {
 
 describe('the terminal reference', () => {
   it('accepts both scopes', () => {
-    expect(TerminalRefShape.safeParse({ scope: 'global' }).success).toBe(true)
-    expect(TerminalRefShape.safeParse({ scope: 'session', conversationId: 'c1' }).success).toBe(
-      true
-    )
+    expect(TerminalRefShape.safeParse({ scope: 'global', id: 't1' }).success).toBe(true)
+    expect(
+      TerminalRefShape.safeParse({ scope: 'session', conversationId: 'c1', id: 't1' }).success
+    ).toBe(true)
   })
 
   /*
@@ -39,22 +39,48 @@ describe('the terminal reference', () => {
    * that happens to find the global terminal.
    */
   it('rejects a session reference with no conversation', () => {
-    expect(TerminalRefShape.safeParse({ scope: 'session' }).success).toBe(false)
+    expect(TerminalRefShape.safeParse({ scope: 'session', id: 't1' }).success).toBe(false)
   })
 
   it('rejects a scope it has never heard of', () => {
-    expect(TerminalRefShape.safeParse({ scope: 'pane', paneId: 'p1' }).success).toBe(false)
+    expect(TerminalRefShape.safeParse({ scope: 'pane', paneId: 'p1', id: 't1' }).success).toBe(
+      false
+    )
   })
 
   it('rejects the shape a nullable id would have produced', () => {
     expect(TerminalRefShape.safeParse({ conversationId: null }).success).toBe(false)
+  })
+
+  /*
+   * A ref with no `id` names a scope, not a shell, and a scope now holds several.
+   * Defaulting it to something here would be worse than rejecting: every caller
+   * that forgot one would silently address the same terminal.
+   */
+  it('requires an id in both scopes, since a scope holds several shells', () => {
+    expect(TerminalRefShape.safeParse({ scope: 'global' }).success).toBe(false)
+    expect(TerminalRefShape.safeParse({ scope: 'session', conversationId: 'c1' }).success).toBe(
+      false
+    )
+  })
+
+  /*
+   * `id` is part of the tuple, not the whole of it. Two conversations minting the
+   * same id is reachable — the renderer mints them and they ride through an
+   * editable file — so nothing downstream may treat `id` as globally unique.
+   */
+  it('keeps the conversation in a session reference, alongside the id', () => {
+    const parsed = TerminalRefShape.safeParse({ scope: 'session', conversationId: 'c1', id: 't1' })
+    expect(parsed.success && parsed.data.scope === 'session' && parsed.data.conversationId).toBe(
+      'c1'
+    )
   })
 })
 
 describe('terminal channels', () => {
   it('round-trips an attach request and its answer', () => {
     const request = IPC_CONTRACT['terminal:attach'].request.safeParse({
-      ref: { scope: 'session', conversationId: 'c1' },
+      ref: { scope: 'session', conversationId: 'c1', id: 't1' },
       cols: 80,
       rows: 24,
     })
@@ -66,12 +92,15 @@ describe('terminal channels', () => {
       seq: 7,
       cols: 80,
       rows: 24,
+      exitCode: null,
     })
     expect(response.success).toBe(true)
   })
 
   it('lets attach omit a size, since the panel may not be laid out yet', () => {
-    const parsed = IPC_CONTRACT['terminal:attach'].request.safeParse({ ref: { scope: 'global' } })
+    const parsed = IPC_CONTRACT['terminal:attach'].request.safeParse({
+      ref: { scope: 'global', id: 't1' },
+    })
     expect(parsed.success).toBe(true)
   })
 
@@ -82,7 +111,9 @@ describe('terminal channels', () => {
       'terminal:resize',
       'terminal:ack',
     ] as const) {
-      const parsed = IPC_CONTRACT[channel].request.safeParse({ ref: { scope: 'global' } })
+      const parsed = IPC_CONTRACT[channel].request.safeParse({
+        ref: { scope: 'global', id: 't1' },
+      })
       expect(parsed.success, channel).toBe(false)
     }
   })
@@ -91,21 +122,49 @@ describe('terminal channels', () => {
     expect(
       TerminalPush.safeParse({
         kind: 'data',
-        ref: { scope: 'global' },
+        ref: { scope: 'global', id: 't1' },
         epoch: 2,
         seq: 9,
         data: 'hi\r\n',
       }).success
     ).toBe(true)
     expect(
-      TerminalPush.safeParse({ kind: 'exit', ref: { scope: 'global' }, epoch: 2, code: 0 }).success
+      TerminalPush.safeParse({
+        kind: 'exit',
+        ref: { scope: 'global', id: 't1' },
+        epoch: 2,
+        code: 0,
+      }).success
     ).toBe(true)
   })
 
   it('rejects a data push with no sequence number to align against', () => {
     expect(
-      TerminalPush.safeParse({ kind: 'data', ref: { scope: 'global' }, epoch: 2, data: 'hi' })
-        .success
+      TerminalPush.safeParse({
+        kind: 'data',
+        ref: { scope: 'global', id: 't1' },
+        epoch: 2,
+        data: 'hi',
+      }).success
+    ).toBe(false)
+  })
+
+  /*
+   * `kill` takes no epoch, and that is the contract rather than an oversight.
+   * Only the active tab of a panel is mounted, so a background tab has no
+   * attachment to quote one from — while `dispose` keeps its guard for the
+   * mounted view that is its only caller.
+   */
+  it('takes a kill with no epoch, unlike dispose', () => {
+    const ref = { scope: 'global', id: 't1' }
+    expect(IPC_CONTRACT['terminal:kill'].request.safeParse({ ref }).success).toBe(true)
+    expect(IPC_CONTRACT['terminal:dispose'].request.safeParse({ ref }).success).toBe(false)
+  })
+
+  it('still requires a terminal to kill', () => {
+    expect(IPC_CONTRACT['terminal:kill'].request.safeParse({}).success).toBe(false)
+    expect(
+      IPC_CONTRACT['terminal:kill'].request.safeParse({ ref: { scope: 'global' } }).success
     ).toBe(false)
   })
 

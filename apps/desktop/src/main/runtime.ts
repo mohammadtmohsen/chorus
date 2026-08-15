@@ -359,8 +359,44 @@ export interface SendResult {
   readonly targets: readonly AgentId[]
 }
 
+/** What a restore hands back. Named so the single-flight guard and the work it
+ *  guards cannot drift apart. */
+interface RestoredConversations {
+  sessions: {
+    conversationId: string
+    participants: AgentId[]
+    profileId: string
+    cwd: string
+    title: string
+    unread: number
+    draft: string
+    planning: boolean
+  }[]
+  workspace: WorkspaceSnapshot | null
+}
+
 export class ChorusRuntime {
   private readonly active = new Map<string, ActiveConversation>()
+  /**
+   * The restore in flight, so two callers cannot both perform it.
+   *
+   * `restoreOpenConversations` deduplicates against `this.active`, which only
+   * helps once a conversation has finished reopening and registered itself.
+   * Two *concurrent* calls both find `active` empty and both start agents for
+   * every saved conversation — measured as paired `sessions reopened` log lines
+   * milliseconds apart, and two starts for one conversation at seq 159790 and
+   * 159795.
+   *
+   * The second caller is React's Strict Mode, which invokes the startup effect
+   * twice in development; but the guard belongs here rather than in the renderer
+   * because "start one set of agents per conversation" is main's invariant to
+   * keep, and any other caller — a reload, a second window — would break it the
+   * same way.
+   *
+   * Held only for the duration of the call. A later restore is a real request
+   * and gets its own run, where the `active` check is the right one.
+   */
+  private restoring: Promise<RestoredConversations> | null = null
   /**
    * Live asides, by their own conversation id.
    *
@@ -1371,19 +1407,16 @@ export class ChorusRuntime {
    * deleted is dropped rather than failing the restore — the others are still
    * worth having, and the log keeps the one that could not come back.
    */
-  async restoreOpenConversations(): Promise<{
-    sessions: {
-      conversationId: string
-      participants: AgentId[]
-      profileId: string
-      cwd: string
-      title: string
-      unread: number
-      draft: string
-      planning: boolean
-    }[]
-    workspace: WorkspaceSnapshot | null
-  }> {
+  async restoreOpenConversations(): Promise<RestoredConversations> {
+    /* Single-flight: the second concurrent caller waits on the first rather than
+       starting a duplicate set of agents. See `restoring`. */
+    this.restoring ??= this.runRestore().finally(() => {
+      this.restoring = null
+    })
+    return this.restoring
+  }
+
+  private async runRestore(): Promise<RestoredConversations> {
     const savedState = readOpenSessions(this.userDataPath)
     const saved = savedState.sessions
     this.workspaceSnapshot = savedState.workspace
@@ -2247,6 +2280,20 @@ export class ChorusRuntime {
    */
   disposeTerminal(ref: TerminalRef, epoch: number): void {
     this.terminals.disposeIfCurrent(ref, epoch)
+  }
+
+  /**
+   * Kill a shell the user pointed at in a list, with no epoch to check.
+   *
+   * Not a weakening of the guard above — a different caller. Only the active tab
+   * of a panel is mounted, so a background tab has no attachment and no epoch to
+   * offer; the guard exists to stop a *superseded view* acting, and a tab strip
+   * is mounted at the moment of the gesture. `dispose` on a shell that has
+   * already exited is a no-op that still forgets it, so a stale click here costs
+   * nothing.
+   */
+  killTerminal(ref: TerminalRef): void {
+    this.terminals.dispose(ref)
   }
 
   writeTerminal(ref: TerminalRef, epoch: number, data: string): void {

@@ -5062,8 +5062,20 @@ input::placeholder {
    * until 10px in — and a tab inset by 8px sat over the curve, where there is no
    * straight edge for its bottom to join. The 1px overlap was correct the whole
    * time and looked like a gap.
+   *
+   * 12px was enough while a tab merely sat on that line. It is not enough now
+   * that the first tab turns into the body through a 10px curve of its own: the
+   * curve would begin 2px in and land on the body's corner, two arcs of
+   * different radii meeting, which reads as a dent.
+   *
+   * The inset is 20px in total and it is split, 10 here and 10 on `.workspace-
+   * tabs`. It has to be: that element is an overflow container, so the first
+   * tab's left curve — which hangs 10px *before* the tab — is clipped away
+   * unless those 10px are inside the scrollport. Padding is inside the clip;
+   * anything before it is not. The comment on `.workspace-tabs` records the
+   * same trap costing four attempts once already.
    */
-  padding-left: calc(var(--step) * 4);
+  padding-left: calc(var(--step) * 3 + 1px);
   background: transparent;
   /*
    * The strip's own 16px of padding drags the window; the scrollport below does
@@ -5108,6 +5120,9 @@ input::placeholder {
    * real. Found by the user after four attempts here that each measured correct.
    */
   margin-bottom: -1px;
+  /* The other half of the strip's inset, inside the clip, so the first tab's
+     left curve has somewhere to be. See `.workspace-tab-strip`. */
+  padding-left: calc(var(--step) * 3 + 1px);
   overflow-x: auto;
   overflow-y: hidden;
   /* The tabs are the chrome; a scrollbar under them would be chrome on chrome. */
@@ -5970,6 +5985,109 @@ input::placeholder {
   font-size: 11px;
 }
 
+/*
+ * The roster, in the panel's own header.
+ *
+ * Only drawn when there is more than one, so a single-terminal panel looks
+ * exactly as it did before the roster existed — which is what most panels are.
+ * It takes the slack in the header (`flex: 1`) and scrolls rather than pushing
+ * `+` and Hide off the end, because those two are the controls you always need
+ * and the tabs are the part it is reasonable to have to scroll.
+ */
+.terminal-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  gap: var(--step);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.terminal-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-tab {
+  flex: 0 0 auto;
+  padding: 0 calc(var(--step) * 2);
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-family: var(--ui-font);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.terminal-tab:hover,
+.terminal-tab:focus-visible {
+  border-color: var(--border-default);
+  background: var(--bg-control);
+  color: var(--text-primary);
+}
+
+/*
+ * The selected tab reads as the surface below it rather than as a pressed
+ * button: the terminal it names is the thing filling the panel, so the tab is a
+ * label for what you are looking at, not a control waiting to be used.
+ */
+.terminal-tab[aria-selected='true'] {
+  border-color: var(--border-default);
+  background: var(--sunken);
+  color: var(--text-primary);
+}
+
+/* A dead shell keeps its tab; the mark is what says so at a glance. */
+.terminal-tab[data-exited] {
+  color: var(--text-muted);
+}
+
+.terminal-tab-exit {
+  margin-left: calc(var(--step));
+  color: var(--alert);
+  font-size: 10px;
+}
+
+/*
+ * The tab's own kill mark.
+ *
+ * Hidden until the tab is hovered or selected, and that is the point rather than
+ * decoration: this `×` ends a process and the header's `×` hides a panel, and
+ * two identical marks a few pixels apart in a 38px strip is the confusion the
+ * whole phase is about. Showing it only where the pointer already is means the
+ * one you can reach by accident is almost always the harmless one.
+ *
+ * It stays visible on `:focus-within` so it is reachable without a pointer —
+ * hover-only would put it out of reach of the keyboard entirely.
+ */
+.terminal-tab-kill {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-left: calc(var(--step));
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.terminal-tab:hover .terminal-tab-kill,
+.terminal-tab:focus-within .terminal-tab-kill,
+.terminal-tab[aria-selected='true'] .terminal-tab-kill {
+  opacity: 1;
+}
+
+.terminal-tab-kill:hover {
+  background: var(--bg-control);
+  color: var(--alert);
+}
+
 .terminal-action {
   display: grid;
   place-items: center;
@@ -5992,6 +6110,28 @@ input::placeholder {
   border-color: var(--border-default);
   background: var(--bg-control);
   color: var(--text-primary);
+}
+
+/*
+ * The header's kill control.
+ *
+ * Muted until hovered, and red only then: it sits two controls away from Hide
+ * and a permanently red button in a 38px strip reads as a warning about the
+ * panel rather than as something you may press.
+ */
+.terminal-action--kill svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.terminal-action--kill:hover,
+.terminal-action--kill:focus-visible {
+  color: var(--alert);
 }
 
 /*
@@ -7858,4 +7998,130 @@ input::placeholder {
   margin-top: var(--step);
   padding-top: 0;
   border-top: 0;
+}
+
+/* --------------------------------------------------- the tab/pane join */
+
+/*
+ * The active tab stops being a rounded box on a line.
+ *
+ * `TabJoin` in `Workspace.tsx` explains the three layers; this places them. The
+ * whole group inherits `color` from the tab, which is what lets the curves'
+ * strokes be `currentColor` and follow the tab's own border — including when it
+ * dashes in an unfocused pane.
+ */
+/*
+ * `--tab-join` is the surface the curve floods into, and it is not a constant.
+ *
+ * The tab already switches its own fill between `--bg-pane-active` and
+ * `--bg-canvas` depending on whether its pane holds the caret — the body under
+ * it does the same, and the two have to agree or the join draws a step. The
+ * curves and the bridge were hardcoded to the focused colour, which would have
+ * been right in one pane and wrong in every other one on screen.
+ */
+.workspace-tab[data-active='true'] {
+  --tab-join: var(--bg-pane-active);
+  color: var(--accent-text);
+}
+
+/*
+ * The bar that erases the body's top border under the tab *and* under both
+ * curves.
+ *
+ * It reaches 11px past each side, which is where the curves reach — see below
+ * for why that is 11 and not 10 — so the erasure is continuous from one curve's
+ * outer edge to the other's.
+ *
+ * `bottom: 0` is the padding box's bottom, which is one pixel above the tab's
+ * own bottom border — and that is exactly where the pane body's top border sits.
+ * Measured: body border y71–72, tab border-box bottom y73. At `bottom: -1px`
+ * this bar covered 72–73, which is the tab's own border rather than the body's,
+ * so the body's line stayed visible through the left curve and the join broke
+ * there while the right one looked correct.
+ */
+.workspace-tab-bridge {
+  position: absolute;
+  right: -11px;
+  bottom: 0;
+  left: -11px;
+  height: 1px;
+  background: var(--tab-join);
+  pointer-events: none;
+}
+
+/*
+ * Below the tab's own fill, above the pane body.
+ *
+ * z-index 0 rather than a positive one: the tab is `z-index: 1`, so the curves
+ * must not paint over the tab's border where the two meet, and the body is a
+ * later sibling that would otherwise cover them.
+ */
+/* Landing on the body's border, for the same reason the bridge does. */
+.workspace-tab-curve {
+  position: absolute;
+  bottom: 0;
+  z-index: 0;
+  /* 11, not 10: the extra pixel holds the half of the 1px stroke that falls
+     outside the curve, and overlaps the border it joins. */
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+}
+
+/*
+ * `-11px`, and the extra pixel is the tab's own border.
+ *
+ * `left` on an absolutely positioned child resolves against the padding box,
+ * which begins *inside* the 1px border. At `-10px` the box started at
+ * `tabLeft + 1 - 10`, so the arc — drawn on the box's `x = 10.5` to sit on the
+ * centre of a 1px line — landed at `tabLeft + 1.5` rather than `tabLeft + 0.5`.
+ * One pixel right of the border it was supposed to continue, which rendered as a
+ * small jog where the two met. Visible only at magnification, and wrong at every
+ * size.
+ */
+.workspace-tab-curve--left {
+  left: -11px;
+}
+
+.workspace-tab-curve--right {
+  right: -11px;
+}
+
+/*
+ * The first tab keeps its left curve, which is why the strip's inset moved.
+ *
+ * Hiding it was the first attempt and it was the wrong trade: the leftmost tab
+ * is the one most often active, so the join people would see most was the one
+ * that did not join. The strip now insets 20px instead — see
+ * `.workspace-tab-strip`.
+ */
+
+/*
+ * Active, but its pane does not hold the caret.
+ *
+ * The tab already dashes its three straight edges in this state — the rule is
+ * further up, and the reasoning is that the *line* says which pane is live while
+ * the colour only says "a pane". The curves are part of that outline, so a solid
+ * arc joining a dashed border would read as a rendering fault rather than as a
+ * state.
+ *
+ * `3 3` because that is what Chromium draws for a 1px `border-style: dashed`,
+ * and the arc has to look like the straight edges it continues. Named on the
+ * path rather than the `<svg>`, so the filled path underneath keeps its solid
+ * edge and only the stroke breaks.
+ *
+ * The fill switches with it. `--tab-join` follows the body's own colour in this
+ * state, which is `--bg-canvas`: an unfocused pane does not take the
+ * `.pane[data-active]` tint, so a curve flooding `--bg-pane-active` here would
+ * paint a lighter notch either side of every background tab.
+ */
+.workspace-pane:not([data-focused='true']) .workspace-tab[data-active='true'] {
+  --tab-join: var(--bg-canvas);
+}
+
+.workspace-pane:not([data-focused='true'])
+  .workspace-tab[data-active='true']
+  .workspace-tab-curve-line {
+  stroke-dasharray: 3 3;
+  stroke: color-mix(in srgb, var(--accent-text) 55%, transparent);
 }

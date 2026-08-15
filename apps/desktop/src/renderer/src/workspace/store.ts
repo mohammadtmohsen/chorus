@@ -2,15 +2,13 @@ import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type { ContextUsagePush, TasksPush, TranscriptEvent } from '../../../shared/ipc.js'
 import { countsAsUnread } from '../../../shared/unread.js'
-import type { TerminalPanelState, WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
-import { TERMINAL_HEIGHT } from '../../../shared/workspace-layout.js'
-
-/** A panel nobody has opened yet. */
-const CLOSED_PANEL: TerminalPanelState = { open: false, height: TERMINAL_HEIGHT.default }
+import type { TerminalPanelState } from '../../../shared/workspace-layout.js'
+// `WorkspaceSnapshot` is imported as a value, not a type: `SNAPSHOT_KEYS` below
+// reads its keys off the schema so the list cannot drift from the shape.
+import { CLOSED_TERMINAL_PANEL, WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
 import {
   activateTab,
   clampSidebarWidth,
-  clampTerminalHeight,
   closePane,
   closeTab,
   EMPTY_WORKSPACE,
@@ -20,6 +18,8 @@ import {
   openSession,
   placeSession,
   reconcileWorkspace,
+  newTerminalId,
+  normalizeTerminalPanel,
   reorderTab,
   replaceSession,
   setBranchSizes,
@@ -176,6 +176,18 @@ export interface WorkspaceActions {
   /** Toggles one conversation's panel, leaving every other one alone. */
   toggleSessionTerminal: (conversationId: string) => void
   setSessionTerminalHeight: (conversationId: string, height: number) => void
+  /** Append a terminal to a panel's roster and select it. Opens the panel. */
+  addGlobalTerminal: () => void
+  addSessionTerminal: (conversationId: string) => void
+  /**
+   * Drop a tab from the roster. **Kills nothing** — the shell is in main, and
+   * the caller awaits `terminal:kill` first. Removing the last tab hides the
+   * panel rather than leaving it open with nothing in it.
+   */
+  removeGlobalTerminalTab: (id: string) => void
+  removeSessionTerminalTab: (conversationId: string, id: string) => void
+  activateGlobalTerminal: (id: string) => void
+  activateSessionTerminal: (conversationId: string, id: string) => void
   /** Committed on drop, not on every pointer move; see `useSidebarResize`. */
   setSidebarWidth: (width: number) => void
   ingestEvents: (events: readonly TranscriptEvent[]) => void
@@ -185,6 +197,83 @@ export interface WorkspaceActions {
 }
 
 export type WorkspaceStore = WorkspaceSnapshot & WorkspaceRuntime & WorkspaceActions
+
+/*
+ * Every terminal-panel edit goes through `normalizeTerminalPanel`.
+ *
+ * Not a style choice. The panel invariant — an open panel has at least one tab,
+ * ids are unique, `activeId` names one of them — is what lets `Session` and
+ * `Workspace` render a ref without a null check, and these actions are the only
+ * things besides a persisted file that can break it. Routing them through the
+ * same repair the loader uses means "opening a panel mints its first terminal"
+ * is not a rule anyone has to remember: `toggleSessionTerminal` flips `open` and
+ * the normalizer supplies the tab.
+ *
+ * The two helpers stay scope-explicit — `editGlobal` and `editSession`, not one
+ * function taking a nullable conversation id — for the reason the whole feature
+ * keeps repeating: the global panel belongs to no conversation, and a nullable
+ * id is how it ends up reached by something walking sessions.
+ */
+function editGlobal(
+  state: WorkspaceStore,
+  change: (panel: TerminalPanelState) => TerminalPanelState
+): Pick<WorkspaceSnapshot, 'globalTerminal'> {
+  return { globalTerminal: normalizeTerminalPanel(change(state.globalTerminal)) }
+}
+
+function editSession(
+  state: WorkspaceStore,
+  conversationId: string,
+  change: (panel: TerminalPanelState) => TerminalPanelState
+): Pick<WorkspaceSnapshot, 'terminals'> {
+  const current = state.terminals[conversationId] ?? CLOSED_TERMINAL_PANEL
+  return {
+    terminals: {
+      ...state.terminals,
+      [conversationId]: normalizeTerminalPanel(change(current)),
+    },
+  }
+}
+
+/** A new terminal, appended and selected. Opens the panel if it was hidden. */
+function addTab(panel: TerminalPanelState): TerminalPanelState {
+  const id = newTerminalId()
+  return { ...panel, open: true, tabs: [...panel.tabs, { id }], activeId: id }
+}
+
+/**
+ * Drop one tab from the roster.
+ *
+ * **This does not kill anything** — the PTY is in main, and the caller awaits
+ * `terminal:kill` before calling this. The name says so: a `killTerminal` here
+ * would read at the call site as though the store had done the killing, which is
+ * the same confusion `detach`-versus-`dispose` cost a section of the original
+ * plan.
+ *
+ * Removing the last tab closes the panel, because an open panel with no tabs
+ * violates the invariant and there is nothing to show. `normalizeTerminalPanel`
+ * would otherwise mint a replacement — killing the last terminal would silently
+ * open a new one.
+ */
+function removeTab(panel: TerminalPanelState, id: string): TerminalPanelState {
+  const tabs = panel.tabs.filter((tab) => tab.id !== id)
+  if (tabs.length === 0) return { ...panel, open: false, tabs: [], activeId: null }
+  /*
+   * The neighbour, not the first. Closing the tab you are looking at should land
+   * on the one beside it — the same rule `normalizeWorkspace` already applies to
+   * a pane's `activeTabId`, and the reason it clamps an index rather than
+   * resetting.
+   */
+  const removedAt = panel.tabs.findIndex((tab) => tab.id === id)
+  const next = panel.activeId === id ? tabs[Math.min(removedAt, tabs.length - 1)] : undefined
+  return { ...panel, tabs, activeId: next?.id ?? panel.activeId }
+}
+
+/** Select a tab, ignoring an id this panel does not hold. */
+function activateTerminalTab(panel: TerminalPanelState, id: string): TerminalPanelState {
+  if (!panel.tabs.some((tab) => tab.id === id)) return panel
+  return { ...panel, activeId: id }
+}
 
 function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
   return {
@@ -425,39 +514,41 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         })
       },
       toggleGlobalTerminal: () => {
-        set((state) => ({
-          globalTerminal: { ...state.globalTerminal, open: !state.globalTerminal.open },
-        }))
+        set((state) => editGlobal(state, (panel) => ({ ...panel, open: !panel.open })))
       },
       setGlobalTerminalOpen: (open) => {
-        set((state) => ({ globalTerminal: { ...state.globalTerminal, open } }))
+        set((state) => editGlobal(state, (panel) => ({ ...panel, open })))
       },
       setGlobalTerminalHeight: (height) => {
-        set((state) => ({
-          globalTerminal: { ...state.globalTerminal, height: clampTerminalHeight(height) },
-        }))
+        set((state) => editGlobal(state, (panel) => ({ ...panel, height })))
       },
       toggleSessionTerminal: (conversationId) => {
-        set((state) => {
-          const current = state.terminals[conversationId] ?? CLOSED_PANEL
-          return {
-            terminals: {
-              ...state.terminals,
-              [conversationId]: { ...current, open: !current.open },
-            },
-          }
-        })
+        set((state) =>
+          editSession(state, conversationId, (panel) => ({ ...panel, open: !panel.open }))
+        )
       },
       setSessionTerminalHeight: (conversationId, height) => {
-        set((state) => {
-          const current = state.terminals[conversationId] ?? CLOSED_PANEL
-          return {
-            terminals: {
-              ...state.terminals,
-              [conversationId]: { ...current, height: clampTerminalHeight(height) },
-            },
-          }
-        })
+        set((state) => editSession(state, conversationId, (panel) => ({ ...panel, height })))
+      },
+      addGlobalTerminal: () => {
+        set((state) => editGlobal(state, addTab))
+      },
+      addSessionTerminal: (conversationId) => {
+        set((state) => editSession(state, conversationId, addTab))
+      },
+      removeGlobalTerminalTab: (id) => {
+        set((state) => editGlobal(state, (panel) => removeTab(panel, id)))
+      },
+      removeSessionTerminalTab: (conversationId, id) => {
+        set((state) => editSession(state, conversationId, (panel) => removeTab(panel, id)))
+      },
+      activateGlobalTerminal: (id) => {
+        set((state) => editGlobal(state, (panel) => activateTerminalTab(panel, id)))
+      },
+      activateSessionTerminal: (conversationId, id) => {
+        set((state) =>
+          editSession(state, conversationId, (panel) => activateTerminalTab(panel, id))
+        )
       },
       setSidebarHidden: (sidebarHidden) => {
         set({ sidebarHidden })
@@ -544,3 +635,33 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
  * re-rendering on every pane change to no purpose.
  */
 export const workspaceSnapshot = (state: WorkspaceStore): WorkspaceSnapshot => snapshot(state)
+
+/**
+ * Every field of the snapshot, taken from the schema rather than typed out.
+ *
+ * Derived on purpose. `App`'s persistence subscription used to compare a
+ * hand-written list of six fields, and `terminals` and `globalTerminal` were
+ * added to the snapshot above without ever being added to that list — so a
+ * change to either compared *equal*, the listener never fired, and nothing was
+ * written. Opening a terminal panel and resizing it did not survive a relaunch.
+ *
+ * It looked like it worked because the two other write paths — `reorder` and
+ * `commitLayout` — send the whole snapshot, so a terminal panel was saved as a
+ * side effect of the next unrelated layout change. "Sometimes it persists" is
+ * why nobody caught it.
+ *
+ * Reading the keys off the schema means the next field added cannot be
+ * forgotten here, because there is nothing to remember.
+ */
+const SNAPSHOT_KEYS = Object.keys(WorkspaceSnapshot.shape) as (keyof WorkspaceSnapshot)[]
+
+/**
+ * Whether two snapshots hold the same thing, by reference, field by field.
+ *
+ * Reference equality is sound because every action builds a new object for the
+ * field it touches — that is what the existing `layout` and `panes` comparisons
+ * already relied on.
+ */
+export function sameWorkspaceSnapshot(left: WorkspaceSnapshot, right: WorkspaceSnapshot): boolean {
+  return SNAPSHOT_KEYS.every((key) => left[key] === right[key])
+}
