@@ -16,7 +16,7 @@
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "node ../../scripts/rm.mjs dist *.tsbuildinfo"
   },
   "dependencies": {
     "zod": "^4.4.3"

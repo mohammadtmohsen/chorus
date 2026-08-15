@@ -1,8 +1,16 @@
-import { execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  readFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { zip } from './zip.mjs'
 
 /**
  * Build the VSIX, without `@vscode/vsce`.
@@ -21,12 +29,9 @@ import { fileURLToPath } from 'node:url'
  */
 
 const here = fileURLToPath(new URL('.', import.meta.url))
-const manifest = JSON.parse(
-  execFileSync('node', ['-e', 'process.stdout.write(require("fs").readFileSync("package.json"))'], {
-    cwd: here,
-    encoding: 'utf8',
-  })
-)
+// Was a `node -e` subprocess reading this same file. Nothing needed a child
+// process for it, and spawning one is a portability liability for no gain.
+const manifest = JSON.parse(readFileSync(join(here, 'package.json'), 'utf8'))
 
 /** XML text is attacker-adjacent here only via our own manifest, but escape anyway. */
 function xml(value) {
@@ -97,16 +102,16 @@ try {
 
   const out = join(here, 'chorus-vscode.vsix')
   rmSync(out, { force: true })
-  // `-X` drops the extra macOS attributes, so the archive is the same bytes on
-  // any machine that builds it.
-  execFileSync(
-    'zip',
-    ['-r', '-X', '-q', out, '[Content_Types].xml', 'extension.vsixmanifest', 'extension'],
-    {
-      cwd: staging,
-      stdio: 'inherit',
-    }
-  )
+  /*
+   * Written directly rather than by shelling out to `zip`, which does not exist
+   * on a Windows runner and stopped the whole packaging pipeline there. See
+   * `zip.mjs` for why this is not a dependency, and for how the `-X` flag's
+   * reproducibility is preserved.
+   *
+   * Sorted, so the archive does not depend on directory-listing order — that is
+   * the other half of two machines producing identical bytes.
+   */
+  writeFileSync(out, zip(collect(staging).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))))
   /*
    * The version of *this* archive, written beside it.
    *
@@ -125,4 +130,24 @@ try {
   console.log(`chorus-vscode.vsix  ${manifest.version}`)
 } finally {
   rmSync(staging, { recursive: true, force: true })
+}
+
+/**
+ * Every file under `root`, as `[archiveName, bytes]`.
+ *
+ * Archive names always use `/`. The format requires it, and a Windows build
+ * joining with `\\` would write entries VS Code cannot resolve — the kind of
+ * fault that produces a VSIX which installs and then does nothing.
+ */
+function collect(root) {
+  const out = []
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else out.push([relative(root, full).split(sep).join('/'), readFileSync(full)])
+    }
+  }
+  walk(root)
+  return out
 }

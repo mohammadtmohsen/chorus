@@ -47,6 +47,17 @@ const BUILD = dirname(fileURLToPath(import.meta.url))
  */
 const SVG = join(BUILD, '..', 'src', 'renderer', 'src', 'assets', 'chorus-mark.svg')
 const ICNS = join(BUILD, 'icon.icns')
+const ICO = join(BUILD, 'icon.ico')
+
+/**
+ * What Windows asks for, and it is a different list from macOS.
+ *
+ * 256 is the one electron-builder actually requires and the one Explorer shows
+ * at large-icon sizes; the rest are what the taskbar, Alt-Tab and the installer
+ * pick from. 1024 is deliberately absent — Windows has no slot for it and the
+ * entry would be dead weight in every installer.
+ */
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
 /**
  * `iconutil` reads the size out of the filename and rejects the folder if one is
@@ -377,6 +388,49 @@ function verify(rgba, size, art) {
 
 // ---------------------------------------------------------------------- run
 
+
+/**
+ * An ICO wrapping the same PNGs, rather than a second rasteriser.
+ *
+ * Windows has accepted PNG-compressed icon entries since Vista, which is well
+ * below the Windows 10 floor this release targets, so there is no BMP path here
+ * and no palette arithmetic. The alternative — emitting BMP entries with their
+ * upside-down rows and separate AND mask — is a second encoder to be wrong in,
+ * for an OS nobody is shipping to.
+ *
+ * The directory is fixed-size and simple: a 6-byte header, then one 16-byte
+ * entry per image, then the images themselves.
+ */
+function ico(images) {
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(0, 0) // reserved
+  header.writeUInt16LE(1, 2) // 1 = icon, 2 would be a cursor
+  header.writeUInt16LE(images.length, 4)
+
+  const entries = []
+  const bodies = []
+  let offset = 6 + images.length * 16
+
+  for (const { size, data } of images) {
+    const entry = Buffer.alloc(16)
+    // 0 means 256. The field is one byte, so 256 does not fit and this is the
+    // format's own escape rather than a trick.
+    entry.writeUInt8(size >= 256 ? 0 : size, 0)
+    entry.writeUInt8(size >= 256 ? 0 : size, 1)
+    entry.writeUInt8(0, 2) // palette size: 0 for truecolour
+    entry.writeUInt8(0, 3) // reserved
+    entry.writeUInt16LE(1, 4) // colour planes
+    entry.writeUInt16LE(32, 6) // bits per pixel, RGBA
+    entry.writeUInt32LE(data.length, 8)
+    entry.writeUInt32LE(offset, 12)
+    entries.push(entry)
+    bodies.push(data)
+    offset += data.length
+  }
+
+  return Buffer.concat([header, ...entries, ...bodies])
+}
+
 const art = parse(readFileSync(SVG, 'utf8'))
 const staging = mkdtempSync(join(tmpdir(), 'chorus-icon-'))
 const iconset = join(staging, 'icon.iconset')
@@ -392,6 +446,20 @@ try {
     }
     writeFileSync(join(iconset, name), cache.get(size))
   }
+  /*
+   * `iconutil` is macOS-only, so the .icns half of this script cannot run on a
+   * Windows machine. Both icons are committed artifacts rather than build
+   * outputs, so that costs nothing day to day — but it does mean this script is
+   * a macOS tool, and the .ico is written before it so a future split can keep
+   * the portable half.
+   */
+  const ico_images = ICO_SIZES.map((size) => {
+    if (!cache.has(size)) cache.set(size, png(render(art, size), size))
+    return { size, data: cache.get(size) }
+  })
+  writeFileSync(ICO, ico(ico_images))
+  console.log(`icon.ico written — ${String(ICO_SIZES.length)} sizes at ${ICO_SIZES.join(', ')}px`)
+
   execFileSync('iconutil', ['--convert', 'icns', iconset, '--output', ICNS])
   const sizes = [...cache.keys()].sort((a, b) => a - b).join(', ')
   console.log(`icon.icns written from ${basename(SVG)} — ${String(SLOTS.length)} slots at ${sizes}px`)

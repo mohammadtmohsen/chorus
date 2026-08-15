@@ -185,13 +185,19 @@ export default tseslint.config(
       '**/*.setup.ts',
       'apps/vscode-extension/esbuild.mjs',
       'apps/vscode-extension/package.mjs',
+      'apps/vscode-extension/zip.mjs',
       'scripts/**/*.mjs',
     ],
     languageOptions: {
       parserOptions: { projectService: false, project: null },
       /* Node build scripts. Listed rather than pulled from a globals package,
          for the same reason the e2e block lists its own. */
-      globals: { console: 'readonly', process: 'readonly', URL: 'readonly' },
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        URL: 'readonly',
+        Buffer: 'readonly',
+      },
     },
     rules: {
       ...tseslint.configs.disableTypeChecked.rules,
