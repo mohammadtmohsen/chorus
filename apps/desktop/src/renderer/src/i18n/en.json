@@ -156,6 +156,7 @@
     "usage": "{{agent}}: {{percent}}% of the {{window}} window used — resets {{reset}}",
     "usageUnreported": "{{agent}}: the {{window}} window has not been reported yet",
     "week": "Week",
+    "resetsIn": "in {{time}}",
     "notReported": "not reported yet",
     "refresh": "Re-check account usage"
   },

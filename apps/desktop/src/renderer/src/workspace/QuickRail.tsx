@@ -469,6 +469,32 @@ function RailUsage(): React.JSX.Element {
                   </span>
                 </span>
                 {/*
+                  When the window turns over, under the figure it belongs to.
+
+                  Nothing new is computed: `reading.reset` has existed all along
+                  and was only reachable by hovering, which is a poor place for
+                  the half of the reading that decides what you do next. "96%"
+                  answers whether you can keep working; "in 3h" answers whether
+                  to wait or to switch agent, and that was the question the rail
+                  could not answer without a mouse.
+
+                  Only when a moment was actually reported. `reset` is an em dash
+                  otherwise, and a second dash under the first says nothing the
+                  first has not — the percentage is already the em dash that
+                  means "nobody answered".
+
+                  Between the figure and its bar rather than after it: a line of
+                  type under the bar would sit nearer the next window than to
+                  this one, which is the drift `.rail-window`'s tight gap exists
+                  to prevent. It is quiet enough to read as an annotation of the
+                  figure rather than as a divider.
+                */}
+                {reading.resetsAt !== null && (
+                  <span className="rail-window-reset">
+                    {t('activity.resetsIn', { time: reading.reset })}
+                  </span>
+                )}
+                {/*
                   Each window's own bar, directly under the figure it belongs to.
 
                   There used to be one bar per account, drawing the short window

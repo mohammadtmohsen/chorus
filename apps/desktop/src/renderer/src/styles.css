@@ -6939,6 +6939,31 @@ input::placeholder {
 }
 
 /*
+ * When this window turns over, under the figure it belongs to.
+ *
+ * Right-aligned onto the same edge as the percentage, because the two are one
+ * reading and a left-aligned second line would start under the *label* and read
+ * as belonging to it. `align-self` rather than `text-align`: the span is a flex
+ * item shrunk to its content, so aligning text inside it would move nothing.
+ *
+ * 9px and muted — the same weight as the label, deliberately. This is the
+ * secondary half of the reading and it sits between the figure and its bar; any
+ * heavier and it would break the pair those two make.
+ *
+ * Tabular figures so `in 3h 4m` and `in 3h 14m` do not shuffle the line
+ * sideways every time the minute changes. The countdown re-renders every 30
+ * seconds, so this is a thing that moves.
+ */
+.rail-window-reset {
+  align-self: flex-end;
+  color: var(--text-muted);
+  font-family: var(--ui-font);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/*
  * One bar per provider, and it draws the five-hour window.
  *
  * The bar is the glanceable half of the block — the figure says how much and the
