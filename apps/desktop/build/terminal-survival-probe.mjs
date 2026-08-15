@@ -110,6 +110,19 @@ async function main() {
     const before = await ticks(app)
     check(before >= 2, 'a long command is running in the panel', `at tick-${String(before)}`)
 
+    /*
+     * Remember which shell this is *before* hiding the panel.
+     *
+     * `describe` is asked while there is no panel on screen — that is the whole
+     * point of the check — so the element carrying `data-terminal-id` is gone by
+     * then. This used to hardcode an id, which is why it broke the moment the
+     * roster started minting real ones.
+     */
+    await app.evaluate(`(() => {
+      window.__terminalId = document.querySelector('.terminal-panel--session').dataset.terminalId
+      return true
+    })()`)
+
     // Close the panel. The view unmounts; the shell must not care.
     await press(app, 'j', { meta: true })
     await app.until(`document.querySelector('.terminal-panel--session') === null`, {
@@ -118,7 +131,7 @@ async function main() {
     const busyWhileHidden = JSON.parse(
       await app.evaluate(`
         window.chorus.describeTerminal({
-          ref: { scope: 'session', conversationId: document.querySelector('.pane').dataset.conversation },
+          ref: { scope: 'session', conversationId: document.querySelector('.pane').dataset.conversation, id: window.__terminalId },
         }).then(d => JSON.stringify(d))
       `)
     )
@@ -132,7 +145,7 @@ async function main() {
     const stillBusy = JSON.parse(
       await app.evaluate(`
         window.chorus.describeTerminal({
-          ref: { scope: 'session', conversationId: document.querySelector('.pane').dataset.conversation },
+          ref: { scope: 'session', conversationId: document.querySelector('.pane').dataset.conversation, id: window.__terminalId },
         }).then(d => JSON.stringify(d))
       `)
     )

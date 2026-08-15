@@ -1,6 +1,7 @@
 import {
   SIDEBAR_WIDTH,
   TERMINAL_HEIGHT,
+  type TerminalPanelState,
   type WorkspaceLayoutNode,
   type WorkspacePane,
   type WorkspaceSnapshot,
@@ -16,6 +17,59 @@ export function clampTerminalHeight(height: number): number {
 export function clampSidebarWidth(width: number): number {
   if (!Number.isFinite(width)) return SIDEBAR_WIDTH.default
   return Math.round(Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, width)))
+}
+
+/**
+ * A fresh terminal id.
+ *
+ * A UUID rather than a counter, because the roster outlives the process: a
+ * counter that restarts at 1 on relaunch reuses ids, and a reused id makes a
+ * restored tab address a shell another tab is already attached to. The number
+ * a person sees — "Terminal 2" — is a position in the roster, computed on
+ * render and never stored, so killing the first tab renumbers the rest.
+ */
+export function newTerminalId(): string {
+  return crypto.randomUUID()
+}
+
+/**
+ * The one place a panel's roster is made to hold together.
+ *
+ * Four rules, and each is here rather than in the schema because a schema can
+ * only *reject*, and rejecting a `WorkspaceSnapshot` costs every open
+ * conversation (see its own warning):
+ *
+ * - **An open panel has at least one tab.** A panel written before the roster
+ *   existed parses to `tabs: []`, which must mean "one terminal", not "an open
+ *   panel showing nothing".
+ * - **Ids are non-empty and unique within the panel.** Two tabs sharing an id
+ *   address the **same PTY**, so killing one kills the other's shell and leaves
+ *   its tab pointing at nothing.
+ * - **`activeId` names a tab that is present**, or the first one.
+ * - **The height is clamped**, so a hand-edited file cannot open a panel taller
+ *   than the window.
+ *
+ * A **closed** panel keeps whatever roster it has and is not given one. Hiding a
+ * panel does not kill its shells — that is the distinction the whole feature
+ * rests on — so its tabs have to survive being out of sight.
+ */
+export function normalizeTerminalPanel(panel: TerminalPanelState): TerminalPanelState {
+  const seen = new Set<string>()
+  const kept = panel.tabs.filter((tab) => {
+    if (tab.id === '' || seen.has(tab.id)) return false
+    seen.add(tab.id)
+    return true
+  })
+  const tabs = panel.open && kept.length === 0 ? [{ id: newTerminalId() }] : kept
+  return {
+    open: panel.open,
+    height: clampTerminalHeight(panel.height),
+    tabs,
+    // `seen` holds only the ids that survived, so an `activeId` naming a
+    // duplicate that was just dropped falls through to the first tab too.
+    activeId:
+      panel.activeId !== null && seen.has(panel.activeId) ? panel.activeId : (tabs[0]?.id ?? null),
+  }
 }
 
 export type SplitDirection = 'left' | 'right' | 'up' | 'down'
@@ -38,7 +92,7 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   sidebarHidden: true,
   sidebarWidth: SIDEBAR_WIDTH.default,
   terminals: {},
-  globalTerminal: { open: false, height: TERMINAL_HEIGHT.default },
+  globalTerminal: { open: false, height: TERMINAL_HEIGHT.default, tabs: [], activeId: null },
 }
 
 interface NormalizedNode {
@@ -158,14 +212,26 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
     focusedPaneId,
     sidebarHidden: workspace.sidebarHidden,
     sidebarWidth: clampSidebarWidth(workspace.sidebarWidth),
-    // Carried through untouched: normalising is about panes and tabs, and a
-    // terminal panel is neither. Pruning by conversation happens in
-    // `reconcileWorkspace`, which is the only place that knows what still exists.
-    terminals: workspace.terminals,
-    globalTerminal: {
-      ...workspace.globalTerminal,
-      height: clampTerminalHeight(workspace.globalTerminal.height),
-    },
+    /*
+     * Every panel's roster repaired, both scopes, on the way through.
+     *
+     * This used to carry `terminals` untouched — "normalising is about panes and
+     * tabs, and a terminal panel is neither" — while still clamping the global
+     * panel's height, which already half-contradicted itself. Now a panel has a
+     * roster with an invariant, and this is the funnel every persisted workspace
+     * and every structural action passes through, so it is where the invariant
+     * is made true rather than assumed.
+     *
+     * Pruning *by conversation* is still not here: `reconcileWorkspace` is the
+     * only thing that knows which conversations still exist.
+     */
+    terminals: Object.fromEntries(
+      Object.entries(workspace.terminals).map(([conversationId, panel]) => [
+        conversationId,
+        normalizeTerminalPanel(panel),
+      ])
+    ),
+    globalTerminal: normalizeTerminalPanel(workspace.globalTerminal),
   }
 }
 

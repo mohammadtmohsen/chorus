@@ -34,7 +34,7 @@ async function main() {
     `)
 
     const attached = await app.evaluate(`
-      window.chorus.attachTerminal({ ref: { scope: 'global' }, cols: 80, rows: 24 })
+      window.chorus.attachTerminal({ ref: { scope: 'global', id: 'primary' }, cols: 80, rows: 24 })
         .then(a => { window.__probe.epoch = a.epoch; return JSON.stringify(a) })
     `)
     const info = JSON.parse(attached)
@@ -43,7 +43,7 @@ async function main() {
 
     await app.evaluate(`
       window.chorus.writeTerminal({
-        ref: { scope: 'global' },
+        ref: { scope: 'global', id: 'primary' },
         epoch: window.__probe.epoch,
         data: 'echo chorus-terminal-works\\r',
       })
@@ -72,18 +72,18 @@ async function main() {
 
     const described = JSON.parse(
       await app.evaluate(
-        `window.chorus.describeTerminal({ ref: { scope: 'global' } }).then(d => JSON.stringify(d))`
+        `window.chorus.describeTerminal({ ref: { scope: 'global', id: 'primary' } }).then(d => JSON.stringify(d))`
       )
     )
     check(described?.running === true, 'the shell is described as running', `foreground ${described?.foreground}`)
 
     // Detach must not kill it — the whole reason the PTY lives in main.
     await app.evaluate(`
-      window.chorus.detachTerminal({ ref: { scope: 'global' }, epoch: window.__probe.epoch })
+      window.chorus.detachTerminal({ ref: { scope: 'global', id: 'primary' }, epoch: window.__probe.epoch })
     `)
     const afterDetach = JSON.parse(
       await app.evaluate(
-        `window.chorus.describeTerminal({ ref: { scope: 'global' } }).then(d => JSON.stringify(d))`
+        `window.chorus.describeTerminal({ ref: { scope: 'global', id: 'primary' } }).then(d => JSON.stringify(d))`
       )
     )
     check(afterDetach?.running === true, 'detaching leaves the shell running')
@@ -91,7 +91,7 @@ async function main() {
     // Re-attaching supersedes, and the snapshot carries what was missed.
     const again = JSON.parse(
       await app.evaluate(`
-        window.chorus.attachTerminal({ ref: { scope: 'global' }, cols: 80, rows: 24 })
+        window.chorus.attachTerminal({ ref: { scope: 'global', id: 'primary' }, cols: 80, rows: 24 })
           .then(a => JSON.stringify(a))
       `)
     )
@@ -104,7 +104,7 @@ async function main() {
     // A stale epoch is ignored rather than obeyed.
     const staleAccepted = await app.evaluate(`
       window.chorus.writeTerminal({
-        ref: { scope: 'global' },
+        ref: { scope: 'global', id: 'primary' },
         epoch: ${String(info.epoch)},
         data: 'echo SHOULD-NOT-RUN\\r',
       }).then(() => 'sent')

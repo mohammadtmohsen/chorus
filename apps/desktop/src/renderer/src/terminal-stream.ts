@@ -9,7 +9,18 @@ import type { TerminalPush, TerminalRefShape } from '../../shared/ipc.js'
  * — by terminal, by attachment, and by position in the stream.
  */
 
+/**
+ * Whether two refs name the same shell — the **whole tuple**, every part of it.
+ *
+ * `id` is added to the comparison, never substituted for the rest. Two sibling
+ * terminals in one conversation differ only by `id`, so leaving it out prints
+ * one's output into the other; two conversations can hold the *same* id, so
+ * comparing `id` alone confuses them instead. Both are real: ids are minted by
+ * the renderer, ride through a JSON file a person can edit, and are typed as a
+ * bare string at the IPC boundary. Nothing here may assume they are unique.
+ */
 export function sameTerminal(a: TerminalRefShape, b: TerminalRefShape): boolean {
+  if (a.id !== b.id) return false
   if (a.scope === 'global') return b.scope === 'global'
   return b.scope === 'session' && a.conversationId === b.conversationId
 }

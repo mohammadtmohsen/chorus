@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { SIDEBAR_WIDTH, type WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
+import {
+  CLOSED_TERMINAL_PANEL,
+  SIDEBAR_WIDTH,
+  type TerminalPanelState,
+  type WorkspaceSnapshot,
+} from '../../../shared/workspace-layout.js'
 import {
   clampSidebarWidth,
   closeTab,
@@ -7,6 +12,8 @@ import {
   leafPaneIds,
   MAX_PANES,
   moveTab,
+  newTerminalId,
+  normalizeTerminalPanel,
   normalizeWorkspace,
   openSession,
   placeSession,
@@ -241,7 +248,7 @@ describe('workspace layout', () => {
 })
 
 describe('terminal panels across a restore', () => {
-  const withPanels = (terminals: Record<string, { open: boolean; height: number }>) => ({
+  const withPanels = (terminals: Record<string, TerminalPanelState>) => ({
     ...EMPTY_WORKSPACE,
     layout: { kind: 'leaf' as const, paneId: 'pane-1' },
     panes: { 'pane-1': { id: 'pane-1', tabs: ['a'], activeTabId: 'a' } },
@@ -249,9 +256,18 @@ describe('terminal panels across a restore', () => {
     terminals,
   })
 
+  /** A panel literal with the roster fields filled in, so a fixture stays short. */
+  const panel = (over: Partial<TerminalPanelState>): TerminalPanelState => ({
+    ...CLOSED_TERMINAL_PANEL,
+    ...over,
+  })
+
   it('keeps a panel whose conversation is still open', () => {
-    const restored = reconcileWorkspace(withPanels({ a: { open: true, height: 300 } }), ['a'])
-    expect(restored.terminals['a']).toEqual({ open: true, height: 300 })
+    const restored = reconcileWorkspace(withPanels({ a: panel({ open: true, height: 300 }) }), [
+      'a',
+    ])
+    expect(restored.terminals['a']?.open).toBe(true)
+    expect(restored.terminals['a']?.height).toBe(300)
   })
 
   /*
@@ -261,7 +277,10 @@ describe('terminal panels across a restore', () => {
    */
   it('drops a panel whose conversation is gone', () => {
     const restored = reconcileWorkspace(
-      withPanels({ a: { open: true, height: 300 }, ghost: { open: true, height: 300 } }),
+      withPanels({
+        a: panel({ open: true, height: 300 }),
+        ghost: panel({ open: true, height: 300 }),
+      }),
       ['a']
     )
     expect(restored.terminals['ghost']).toBeUndefined()
@@ -273,18 +292,26 @@ describe('terminal panels across a restore', () => {
    * cannot reach it. A keyed map would lose it the first time anything tidied up.
    */
   it('never prunes the global panel, whatever happens to conversations', () => {
-    const saved = { ...withPanels({ ghost: { open: true, height: 300 } }) }
+    const saved = { ...withPanels({ ghost: panel({ open: true, height: 300 }) }) }
     const restored = reconcileWorkspace(
-      { ...saved, globalTerminal: { open: true, height: 200 } },
+      {
+        ...saved,
+        globalTerminal: panel({ open: true, height: 200, tabs: [{ id: 'g1' }], activeId: 'g1' }),
+      },
       []
     )
-    expect(restored.globalTerminal).toEqual({ open: true, height: 200 })
+    expect(restored.globalTerminal).toEqual({
+      open: true,
+      height: 200,
+      tabs: [{ id: 'g1' }],
+      activeId: 'g1',
+    })
   })
 
   it('clamps a stored height that could not be dragged to', () => {
     const restored = normalizeWorkspace({
       ...EMPTY_WORKSPACE,
-      globalTerminal: { open: true, height: 99_999 },
+      globalTerminal: panel({ open: true, height: 99_999 }),
     })
     expect(restored.globalTerminal.height).toBeLessThanOrEqual(720)
   })
@@ -352,5 +379,151 @@ describe('terminal panels across a restore', () => {
       expect(placeSession(workspace, 'b', 'pane-9', 0)).toBe(workspace)
       expect(splitWithSession(workspace, 'b', 'pane-9', 'right')).toBe(workspace)
     })
+  })
+})
+
+describe('normalizeTerminalPanel', () => {
+  const panel = (over: Partial<TerminalPanelState>): TerminalPanelState => ({
+    ...CLOSED_TERMINAL_PANEL,
+    ...over,
+  })
+
+  /*
+   * The migration. A panel written before the roster existed parses — via the
+   * schema's defaults, in main — to `tabs: []`, and an *open* one has to mean
+   * "one terminal", not "a panel showing nothing". Main does not repair; this is
+   * the only thing that does.
+   */
+  it('backfills a tab for an open panel that has none', () => {
+    const repaired = normalizeTerminalPanel(panel({ open: true, height: 310 }))
+    expect(repaired.tabs).toHaveLength(1)
+    expect(repaired.activeId).toBe(repaired.tabs[0]?.id)
+    expect(repaired.height).toBe(310)
+  })
+
+  /*
+   * A closed panel is not an empty one. Hiding a panel does not kill its shells —
+   * that distinction is what the whole feature rests on — so its roster has to
+   * survive being out of sight, and it must not be handed a terminal nobody
+   * asked for.
+   */
+  it('leaves a closed panel alone rather than giving it a terminal', () => {
+    expect(normalizeTerminalPanel(panel({ open: false })).tabs).toEqual([])
+    expect(normalizeTerminalPanel(panel({ open: false })).activeId).toBeNull()
+  })
+
+  it('keeps a hidden panel’s roster, because its shells are still running', () => {
+    const hidden = normalizeTerminalPanel(
+      panel({ open: false, tabs: [{ id: 'a' }, { id: 'b' }], activeId: 'b' })
+    )
+    expect(hidden.tabs).toEqual([{ id: 'a' }, { id: 'b' }])
+    expect(hidden.activeId).toBe('b')
+  })
+
+  /*
+   * Two tabs sharing an id address the **same PTY**: killing one would kill the
+   * other's shell and leave its tab pointing at nothing. Repaired rather than
+   * rejected, because a stricter schema does not lose the roster — it loses
+   * every open conversation.
+   */
+  it('drops a duplicate id rather than addressing one shell twice', () => {
+    const repaired = normalizeTerminalPanel(
+      panel({ open: true, tabs: [{ id: 'a' }, { id: 'a' }, { id: 'b' }], activeId: 'b' })
+    )
+    expect(repaired.tabs).toEqual([{ id: 'a' }, { id: 'b' }])
+    expect(repaired.activeId).toBe('b')
+  })
+
+  it('drops an empty id, which names no shell at all', () => {
+    const repaired = normalizeTerminalPanel(panel({ open: true, tabs: [{ id: '' }, { id: 'a' }] }))
+    expect(repaired.tabs).toEqual([{ id: 'a' }])
+  })
+
+  it('mints a replacement when every id was unusable', () => {
+    const repaired = normalizeTerminalPanel(panel({ open: true, tabs: [{ id: '' }, { id: '' }] }))
+    expect(repaired.tabs).toHaveLength(1)
+    expect(repaired.tabs[0]?.id).not.toBe('')
+    expect(repaired.activeId).toBe(repaired.tabs[0]?.id)
+  })
+
+  it('repairs an activeId that names no tab', () => {
+    const repaired = normalizeTerminalPanel(
+      panel({ open: true, tabs: [{ id: 'a' }, { id: 'b' }], activeId: 'gone' })
+    )
+    expect(repaired.activeId).toBe('a')
+  })
+
+  /*
+   * The subtle one: the `activeId` pointed at the *duplicate* that was just
+   * dropped. Checking it against the surviving ids rather than the input is what
+   * makes this fall through to the first tab instead of naming a tab that is no
+   * longer there.
+   */
+  it('repairs an activeId that named a duplicate it just removed', () => {
+    const repaired = normalizeTerminalPanel(
+      panel({ open: true, tabs: [{ id: 'a' }, { id: 'a' }], activeId: 'a' })
+    )
+    expect(repaired.tabs).toEqual([{ id: 'a' }])
+    expect(repaired.activeId).toBe('a')
+  })
+
+  /*
+   * Why `TerminalPanel` keys its exit state on a `Map`.
+   *
+   * `id` is `z.string()` at the boundary and rides through a file a person can
+   * edit, so `constructor`, `toString` and `__proto__` are all reachable ids —
+   * and this function deliberately keeps them, because the alternative is
+   * rejecting a workspace and losing every open conversation. Anything indexing
+   * a plain object by one of these reads a truthy value off `Object.prototype`
+   * before the shell has done anything, and draws a live terminal as dead.
+   */
+  it('keeps an id that would be inherited from Object.prototype', () => {
+    const repaired = normalizeTerminalPanel(
+      panel({
+        open: true,
+        tabs: [{ id: 'constructor' }, { id: '__proto__' }],
+        activeId: 'toString',
+      })
+    )
+    expect(repaired.tabs).toEqual([{ id: 'constructor' }, { id: '__proto__' }])
+    // `toString` is not in the roster, so it is repaired to the first tab.
+    expect(repaired.activeId).toBe('constructor')
+  })
+
+  it('leaves a roster that is already sound exactly as it is', () => {
+    const sound = panel({ open: true, tabs: [{ id: 'a' }, { id: 'b' }], activeId: 'b' })
+    expect(normalizeTerminalPanel(sound)).toEqual(sound)
+  })
+
+  it('clamps a height no grip could have produced', () => {
+    expect(normalizeTerminalPanel(panel({ open: true, height: 99_999 })).height).toBe(720)
+    expect(normalizeTerminalPanel(panel({ open: true, height: -5 })).height).toBe(96)
+  })
+
+  /* Every panel in a workspace goes through it, not just the global one. */
+  it('is applied to session panels too, not only the global one', () => {
+    const repaired = normalizeWorkspace({
+      ...EMPTY_WORKSPACE,
+      terminals: { a: panel({ open: true, tabs: [{ id: 'x' }, { id: 'x' }] }) },
+      globalTerminal: panel({ open: true }),
+    })
+    expect(repaired.terminals['a']?.tabs).toEqual([{ id: 'x' }])
+    expect(repaired.globalTerminal.tabs).toHaveLength(1)
+  })
+})
+
+describe('newTerminalId', () => {
+  /*
+   * A UUID rather than a counter, because the roster outlives the process: a
+   * counter restarting at 1 on relaunch reuses ids, and a reused id makes a
+   * restored tab address a shell another tab already holds.
+   */
+  it('never repeats itself', () => {
+    const ids = new Set(Array.from({ length: 500 }, () => newTerminalId()))
+    expect(ids.size).toBe(500)
+  })
+
+  it('is never empty, since an empty id is the thing normalization drops', () => {
+    expect(newTerminalId()).not.toBe('')
   })
 })

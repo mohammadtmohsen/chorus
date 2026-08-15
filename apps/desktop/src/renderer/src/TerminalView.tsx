@@ -1,6 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { TerminalPush, TerminalRefShape } from '../../shared/ipc.js'
 import { pendingUntilAttached, shouldApply, type Attachment } from './terminal-stream.js'
 
@@ -58,6 +59,14 @@ export interface TerminalViewProps {
   /** Given a focus function on mount, so `⌘J` can put the caret in the shell. */
   readonly onReady?: (focus: () => void) => void
   readonly label: string
+  /**
+   * The tablist relationship, when the panel is drawing one.
+   *
+   * Absent with a single terminal, where there is no strip and the surface is a
+   * plain labelled group — which is what it was before the roster and what it
+   * should stay. Present, it becomes the `tabpanel` its tab controls.
+   */
+  readonly surface?: { readonly id: string; readonly labelledBy: string } | undefined
 }
 
 export function TerminalView(props: TerminalViewProps): React.JSX.Element {
@@ -65,21 +74,44 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
   const { onExit, onReady, terminal } = props
 
   /*
+   * The translator, behind a ref rather than in the dependency array.
+   *
+   * Two notices below are written *into the emulator*, so they are words and
+   * belong in `en.json` like every other string. But `t` changes identity when
+   * the language does, and this effect owns a PTY attachment — depending on it
+   * would tear the view down and re-attach on a language change, for two lines
+   * of text. The ref is read at the moment a notice is drawn, which is the only
+   * time it matters.
+   */
+  const { t } = useTranslation()
+  const translate = useRef(t)
+  translate.current = t
+
+  /*
    * Keyed on the terminal's identity, not on the object.
    *
    * `terminal` is a fresh object every render, so depending on it directly would
    * tear the shell's view down and build it again sixty times a second while
    * anything above it re-rendered.
+   *
+   * **All three parts, and `id` is why.** With one terminal per scope, scope and
+   * conversation were the whole identity. They no longer are: two sibling tabs
+   * in one conversation differ only by `id`, so an effect that did not depend on
+   * it would not re-run when you switched between them — the panel would show
+   * tab 2 selected with tab 1's shell underneath. `TerminalPanel` also passes a
+   * `key`, which makes that switch a remount rather than a re-render this has to
+   * notice; the dependency is the belt to the key's braces.
    */
   const scope = terminal.scope
   const conversationId = terminal.scope === 'session' ? terminal.conversationId : null
+  const id = terminal.id
 
   useEffect(() => {
     const element = host.current
     if (element === null) return
 
     const ref: TerminalRefShape =
-      conversationId === null ? { scope: 'global' } : { scope: 'session', conversationId }
+      conversationId === null ? { scope: 'global', id } : { scope: 'session', conversationId, id }
 
     const style = getComputedStyle(document.documentElement)
     const term = new Terminal({
@@ -110,7 +142,9 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
 
     const apply = (push: TerminalPush, current: Attachment): void => {
       if (push.kind === 'exit') {
-        term.write(`\r\n[2m[process exited with code ${String(push.code)}][0m\r\n`)
+        term.write(
+          `\r\n[2m${translate.current('terminal.processExited', { code: push.code })}[0m\r\n`
+        )
         onExit?.(push.code)
         return
       }
@@ -144,6 +178,25 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
         }
         term.write(opened.snapshot)
         attachment = { ref, epoch: opened.epoch, seq: opened.seq }
+        /*
+         * A shell that died while nobody was watching.
+         *
+         * `exit` is a one-shot push and only the active tab of a panel is
+         * mounted, so a background shell emits to no view at all — this is the
+         * only way its tab learns, and without it a dead terminal looks alive
+         * when you switch back to it.
+         *
+         * The line is written here rather than being in the snapshot because
+         * nothing writes it into main's mirror: it is the *renderer's* notice,
+         * so it is redrawn on each mount whether the exit was seen live or not,
+         * and always lands once at the bottom.
+         */
+        if (opened.exitCode !== null) {
+          term.write(
+            `\r\n[2m${translate.current('terminal.processExited', { code: opened.exitCode })}[0m\r\n`
+          )
+          onExit?.(opened.exitCode)
+        }
         for (const push of pendingUntilAttached(queued, attachment)) apply(push, attachment)
         queued = []
         onReady?.(() => {
@@ -152,7 +205,7 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
         term.focus()
       })
       .catch(() => {
-        term.write('[2m[the terminal could not be opened][0m\r\n')
+        term.write(`[2m${translate.current('terminal.openFailed')}[0m\r\n`)
       })
 
     /*
@@ -169,6 +222,29 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
      */
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true
+
+      /*
+       * ⌃⇧` belongs to the app, not to the shell.
+       *
+       * Returning `true` hands the keystroke on, and this is the chord you press
+       * *while standing in a terminal* — so without this arm the one place you
+       * most want "another terminal" is the one place it reaches `zsh` instead.
+       * `Workspace`'s document-capture handler has already acted by the time
+       * this runs; all this does is stop the shell seeing it too.
+       *
+       * On `code` for the same reason as over there: with Shift held, `key` is
+       * `~`.
+       */
+      if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        event.code === 'Backquote'
+      ) {
+        return false
+      }
+
       if (!event.metaKey || event.altKey || event.shiftKey || event.ctrlKey) return true
       if (event.key.toLowerCase() !== 'k') return true
       term.clear()
@@ -220,7 +296,18 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
       }
       term.dispose()
     }
-  }, [scope, conversationId, onExit, onReady])
+  }, [scope, conversationId, id, onExit, onReady])
 
-  return <div className="terminal-surface" ref={host} role="group" aria-label={props.label} />
+  const surface = props.surface
+  return surface === undefined ? (
+    <div className="terminal-surface" ref={host} role="group" aria-label={props.label} />
+  ) : (
+    <div
+      className="terminal-surface"
+      ref={host}
+      id={surface.id}
+      role="tabpanel"
+      aria-labelledby={surface.labelledBy}
+    />
+  )
 }

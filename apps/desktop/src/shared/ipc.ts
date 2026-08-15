@@ -238,10 +238,16 @@ export type IdeSnapshotResult = z.infer<typeof IdeSnapshotResult>
  * it ends up deleted by something iterating conversations. As a union an unknown
  * scope is a parse failure at this boundary rather than a lookup miss three
  * layers in.
+ *
+ * **`id` names one shell within a scope**, because a session and the global
+ * panel each hold several. It is part of the tuple rather than a replacement
+ * for it: a session terminal is `(scope, conversationId, id)`. Minted by the
+ * renderer, which owns the roster — main learns of a terminal when something
+ * attaches to it and spawns the shell then.
  */
 export const TerminalRefShape = z.discriminatedUnion('scope', [
-  z.object({ scope: z.literal('global') }),
-  z.object({ scope: z.literal('session'), conversationId: z.string() }),
+  z.object({ scope: z.literal('global'), id: z.string() }),
+  z.object({ scope: z.literal('session'), conversationId: z.string(), id: z.string() }),
 ])
 export type TerminalRefShape = z.infer<typeof TerminalRefShape>
 
@@ -988,6 +994,15 @@ export const IPC_CONTRACT = {
       seq: z.number().int(),
       cols: z.number().int(),
       rows: z.number().int(),
+      /*
+       * How the shell ended, or null while it is running.
+       *
+       * On the attach rather than only on the push because `exit` fires once and
+       * only the active tab of a panel is mounted: a shell that dies in the
+       * background has no view to tell, and reopening its tab would show a dead
+       * shell looking alive.
+       */
+      exitCode: z.number().int().nullable(),
     }),
   },
 
@@ -1006,6 +1021,25 @@ export const IPC_CONTRACT = {
   /** Kill the shell. A conversation ending, or the user asking explicitly. */
   'terminal:dispose': {
     request: z.object({ ref: TerminalRefShape, epoch: z.number().int() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  /**
+   * Kill a shell the user pointed at in a list. **No epoch.**
+   *
+   * `terminal:dispose` is epoch-guarded because its caller is a mounted
+   * `TerminalView`, and a dispose carrying a superseded epoch is a stale click
+   * from a view that has already been replaced. A tab strip is a different actor
+   * with a different lifetime: only the *active* tab is mounted, so a background
+   * tab has no attachment and therefore no epoch to offer at all.
+   *
+   * Weakening `dispose` to a nullable epoch would take the guard off every
+   * caller to serve this one. A separate channel keeps the guarantee where it
+   * belongs and states, in its name and here, who may call it: a mounted strip
+   * acting on a gesture.
+   */
+  'terminal:kill': {
+    request: z.object({ ref: TerminalRefShape }),
     response: z.object({ ok: z.literal(true) }),
   },
 
@@ -1054,7 +1088,12 @@ export const IPC_CONTRACT = {
   'terminal:describe': {
     request: z.object({ ref: TerminalRefShape }),
     response: z
-      .object({ running: z.boolean(), foreground: z.string(), busy: z.boolean() })
+      .object({
+        running: z.boolean(),
+        foreground: z.string(),
+        busy: z.boolean(),
+        exitCode: z.number().int().nullable(),
+      })
       .nullable(),
   },
 } as const
@@ -1289,6 +1328,9 @@ export interface ChorusApi {
   readonly disposeTerminal: (
     request: IpcRequest<'terminal:dispose'>
   ) => Promise<IpcResponse<'terminal:dispose'>>
+  readonly killTerminal: (
+    request: IpcRequest<'terminal:kill'>
+  ) => Promise<IpcResponse<'terminal:kill'>>
   readonly writeTerminal: (
     request: IpcRequest<'terminal:write'>
   ) => Promise<IpcResponse<'terminal:write'>>

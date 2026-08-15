@@ -32,9 +32,17 @@ import { resolveShell } from './shell.js'
  * ids, is how it ends up deleted by a loop that walks conversations — which is
  * exactly why asides are held in their own map rather than tagged inside
  * `active` (`runtime.ts`, "so nothing that walks sessions finds it").
+ *
+ * **`id` is added to the tuple, not a replacement for the rest of it.** A
+ * session terminal is `(scope, conversationId, id)` and a global one is
+ * `(scope, id)`; nothing may compare on `id` alone. Ids are minted by the
+ * renderer, typed here as a bare string, and travel through a persisted file a
+ * person can edit — so two conversations holding the same id is a thing that
+ * happens, not a thing to assume away.
  */
 export type TerminalRef =
-  { readonly scope: 'global' } | { readonly scope: 'session'; readonly conversationId: string }
+  | { readonly scope: 'global'; readonly id: string }
+  | { readonly scope: 'session'; readonly conversationId: string; readonly id: string }
 
 /** What a caller gets back for mounting a view. */
 export interface TerminalAttachment {
@@ -46,6 +54,15 @@ export interface TerminalAttachment {
   readonly seq: number
   readonly cols: number
   readonly rows: number
+  /**
+   * How the shell ended, or null while it is running.
+   *
+   * Here because `exit` is a **one-shot push** and only the active tab of a
+   * panel is mounted: a shell that dies while its tab is in the background emits
+   * to a view that does not exist, and without this there is no way to find out
+   * afterwards. Reopening the tab would show a dead shell looking alive.
+   */
+  readonly exitCode: number | null
 }
 
 /** What the panel needs to decide whether killing this would lose work. */
@@ -55,6 +72,8 @@ export interface TerminalDescription {
   readonly foreground: string
   /** Whether something other than the shell itself is in the foreground. */
   readonly busy: boolean
+  /** How it ended, or null while it is running. See `TerminalAttachment`. */
+  readonly exitCode: number | null
 }
 
 export type TerminalPush =
@@ -164,12 +183,10 @@ interface Session {
   readonly drained: (() => void)[]
   paused: boolean
   exited: boolean
+  /** How it ended, or null while running. Kept because `exit` fires once. */
+  exitCode: number | null
   cols: number
   rows: number
-}
-
-export function terminalKey(ref: TerminalRef): string {
-  return ref.scope === 'global' ? 'global' : `session:${ref.conversationId}`
 }
 
 export class TerminalService {
@@ -180,9 +197,17 @@ export class TerminalService {
    * once it is a string, anything iterating has to parse ids to know what it is
    * holding. Separate storage makes "walk every session's terminal" incapable of
    * reaching the global one.
+   *
+   * A `terminalKey(ref)` helper used to sit here, exported and called by
+   * nothing — the flattening this comment argues against, written down and
+   * waiting. It was deleted rather than reached for when the maps gained a
+   * level: `disposeSession` now walks one conversation's **inner map**, which
+   * structurally cannot contain a global shell, where a flat map would have made
+   * it a scan that parses ids on the path where a mistake kills the wrong
+   * terminal.
    */
-  private global: Session | null = null
-  private readonly bySession = new Map<string, Session>()
+  private readonly globals = new Map<string, Session>()
+  private readonly bySession = new Map<string, Map<string, Session>>()
   private readonly listeners = new Set<(push: TerminalPush) => void>()
 
   private readonly cwdFor: (ref: TerminalRef) => string
@@ -255,6 +280,7 @@ export class TerminalService {
       seq: session.seq,
       cols: session.cols,
       rows: session.rows,
+      exitCode: session.exitCode,
     }
   }
 
@@ -321,11 +347,18 @@ export class TerminalService {
   describe(ref: TerminalRef): TerminalDescription | null {
     const session = this.find(ref)
     if (session === null) return null
-    const foreground = session.pty.process
+    /*
+     * A dead shell has no foreground process, so it describes as the shell it
+     * was rather than as an empty string. `running: false` is what carries the
+     * truth; this field only ever gets read to name a process in the kill
+     * confirmation, which a dead terminal never reaches.
+     */
+    const foreground = session.pty.process || session.shellName
     return {
       running: !session.exited,
       foreground,
       busy: !session.exited && foreground !== session.shellName,
+      exitCode: session.exitCode,
     }
   }
 
@@ -359,32 +392,55 @@ export class TerminalService {
   }
 
   /**
-   * Every terminal belonging to a conversation that is ending.
+   * Every terminal belonging to a conversation that is ending. **All of them.**
    *
    * Named rather than expressed as `dispose({scope:'session', …})` at the call
    * site so that `runtime.closeConversation` reads as what it means and cannot
    * accidentally be handed the global ref.
+   *
+   * The ids are copied before the loop, and the reason is **not** the one that
+   * first went in this comment. That said a Map skips entries when you delete
+   * during iteration; it does not — a Map iterator visits every key even as each
+   * is deleted, which is what makes it different from an Array and was checked
+   * rather than assumed. The copy stays because `dispose` → `forget` mutates
+   * *two* levels — the inner map, and then `bySession` itself once the inner one
+   * empties — and a loop whose safety depends on which of those the iterator is
+   * pointing at is one refactor away from being wrong quietly.
    */
   disposeSession(conversationId: string): void {
-    this.dispose({ scope: 'session', conversationId })
+    const inner = this.bySession.get(conversationId)
+    if (inner === undefined) return
+    for (const id of [...inner.keys()]) {
+      this.dispose({ scope: 'session', conversationId, id })
+    }
   }
 
-  /** Quit. Everything, including the global one. */
+  /** Quit. Everything, including the global ones. */
   close(): void {
-    for (const key of [...this.bySession.keys()]) {
-      this.disposeSession(key)
+    for (const conversationId of [...this.bySession.keys()]) {
+      this.disposeSession(conversationId)
     }
-    if (this.global !== null) this.dispose({ scope: 'global' })
+    for (const id of [...this.globals.keys()]) {
+      this.dispose({ scope: 'global', id })
+    }
   }
 
   private find(ref: TerminalRef): Session | null {
-    if (ref.scope === 'global') return this.global
-    return this.bySession.get(ref.conversationId) ?? null
+    if (ref.scope === 'global') return this.globals.get(ref.id) ?? null
+    return this.bySession.get(ref.conversationId)?.get(ref.id) ?? null
   }
 
   private forget(ref: TerminalRef): void {
-    if (ref.scope === 'global') this.global = null
-    else this.bySession.delete(ref.conversationId)
+    if (ref.scope === 'global') {
+      this.globals.delete(ref.id)
+      return
+    }
+    const inner = this.bySession.get(ref.conversationId)
+    if (inner === undefined) return
+    inner.delete(ref.id)
+    // The empty inner map goes too, or `bySession` keeps a key for every
+    // conversation ever opened and `close()` walks a map of empty maps.
+    if (inner.size === 0) this.bySession.delete(ref.conversationId)
   }
 
   /** The one place a stale epoch is turned into "ignore this". */
@@ -444,6 +500,7 @@ export class TerminalService {
       drained: [],
       paused: false,
       exited: false,
+      exitCode: null,
       cols,
       rows,
     }
@@ -453,14 +510,24 @@ export class TerminalService {
     })
     pty.onExit(({ exitCode }) => {
       session.exited = true
+      /*
+       * Kept, not just flagged. This push fires once, and only the active tab of
+       * a panel is mounted — so a shell that dies in the background emits to
+       * nobody, and a later `attach` is the only chance to say it happened.
+       */
+      session.exitCode = exitCode
       // Whatever it wrote on the way out goes first, or the last line of a
       // failing command is lost behind the notice that it failed.
       this.drain(session)
       this.emit({ kind: 'exit', ref, epoch: session.epoch, code: exitCode })
     })
 
-    if (ref.scope === 'global') this.global = session
-    else this.bySession.set(ref.conversationId, session)
+    if (ref.scope === 'global') this.globals.set(ref.id, session)
+    else {
+      const inner = this.bySession.get(ref.conversationId) ?? new Map<string, Session>()
+      inner.set(ref.id, session)
+      this.bySession.set(ref.conversationId, inner)
+    }
     return session
   }
 
@@ -577,7 +644,35 @@ export const nodePty: PtySpawner = (options) => {
       return child.pid
     },
     get process() {
-      return child.process
+      /*
+       * `?? ''` because the types say `string` and darwin returns `undefined`.
+       *
+       * node-pty's getter is asymmetric, and only the branch we run on is
+       * missing its guard (`lib/unixTerminal.js:236`):
+       *
+       *   if (process.platform === 'darwin') {
+       *     const title = pty.process(this._fd)
+       *     return title !== 'kernel_task' ? title : this._file   // no fallback
+       *   }
+       *   return pty.process(this._fd, this._pty) || this._file   // guarded
+       *
+       * Once the child is gone there is no fd to read a title from, so a dead
+       * shell answers `undefined` through a `readonly process: string`. That
+       * failed `terminal:describe`'s response schema and threw across IPC —
+       * for *any* terminal that has exited and not been disposed, which is
+       * exactly the state an exited tab sits in.
+       *
+       * Observed, not inferred: `build/terminal-siblings-probe.mjs` crashed on
+       * it. This is the Adapters rule one layer down — read the shape the
+       * binary actually returns, not the one its `.d.ts` claims.
+       *
+       * The cast widens to what it actually returns rather than suppressing the
+       * checker: without it `no-unnecessary-condition` is correct that `??` is
+       * dead code, because it is reading the same wrong declaration. This file
+       * is the one place that knows which driver we use, so it is where the
+       * correction belongs.
+       */
+      return (child.process as string | undefined) ?? ''
     },
     write: (data) => {
       child.write(data)

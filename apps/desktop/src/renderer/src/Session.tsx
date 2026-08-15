@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
 import { fitCard, type AsidePurpose } from './aside.js'
@@ -155,9 +155,22 @@ export function Session(props: {
    * a panel is where you left it after a relaunch.
    */
   const terminal = useSessionTerminal(conversationId)
-  const { toggleSessionTerminal, setSessionTerminalHeight } = useWorkspaceActions()
-  const terminalRef = useMemo<TerminalRefShape>(
-    () => ({ scope: 'session', conversationId }),
+  const {
+    toggleSessionTerminal,
+    setSessionTerminalHeight,
+    addSessionTerminal,
+    activateSessionTerminal,
+    removeSessionTerminalTab,
+  } = useWorkspaceActions()
+  /*
+   * How this session names one of its shells.
+   *
+   * The panel holds the roster and asks for a ref per tab, so scope
+   * construction stays at the call site that knows the conversation — the panel
+   * itself is shared by both scopes and must not learn to build either.
+   */
+  const terminalRefFor = useCallback(
+    (id: string): TerminalRefShape => ({ scope: 'session', conversationId, id }),
     [conversationId]
   )
   const [handoff, setHandoff] = useState<HandoffDraft | null>(null)
@@ -1244,7 +1257,8 @@ export function Session(props: {
        */}
       {terminal.open && (
         <TerminalPanel
-          terminal={terminalRef}
+          panel={terminal}
+          refFor={terminalRefFor}
           /*
            * The room's name, not its path.
            *
@@ -1254,7 +1268,6 @@ export function Session(props: {
            * the tab, the rail tile and the composition all call it.
            */
           title={t('terminal.sessionTitle', { project: props.session.title })}
-          height={terminal.height}
           onHeightChange={(height) => {
             /*
              * No `commitLayout` bypass here, unlike the sash and the sidebar.
@@ -1266,6 +1279,15 @@ export function Session(props: {
           }}
           onClose={() => {
             toggleSessionTerminal(conversationId)
+          }}
+          onAddTerminal={() => {
+            addSessionTerminal(conversationId)
+          }}
+          onActivateTerminal={(id) => {
+            activateSessionTerminal(conversationId, id)
+          }}
+          onRemoveTerminal={(id) => {
+            removeSessionTerminalTab(conversationId, id)
           }}
           onFocusAway={() => {
             /*

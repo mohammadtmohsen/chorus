@@ -56,14 +56,64 @@ export const SIDEBAR_WIDTH = { default: 248, min: 220, max: 320 } as const
  */
 export const TERMINAL_HEIGHT = { default: 212, min: 96, max: 720 } as const
 
-/** One panel's visibility and size. Not the shell — that lives in main. */
+/**
+ * One terminal in a panel's roster. **Not the shell** — that lives in main.
+ *
+ * An object rather than a bare id string, and that is a deliberate hedge rather
+ * than speculative generality: every field added later is defaulted and
+ * therefore cheap, but changing an array's *element type* from `string` to an
+ * object is the migration that is not. One field now is the shape that extends.
+ *
+ * `id` is permissive on purpose — see `normalizeTerminalPanel`. A stricter
+ * schema would reject a hand-edited or duplicated roster, and a rejected
+ * `WorkspaceSnapshot` does not lose the roster, it loses **every open
+ * conversation**. Duplicates and blanks are repaired, never refused.
+ */
+export const TerminalTab = z.object({ id: z.string() })
+export type TerminalTab = z.infer<typeof TerminalTab>
+
+/** One panel's visibility, size and roster. Not the shells — those are in main. */
 export const TerminalPanelState = z.object({
   open: z.boolean().default(false),
   height: z.number().default(TERMINAL_HEIGHT.default),
+  /*
+   * Which terminals this panel holds, in tab order.
+   *
+   * **Defaulted, and this is the line that can lose someone's work.** See the
+   * warning on `WorkspaceSnapshot` below: a required field here sends
+   * `parseOpenSessions` down a legacy path that also fails, and it returns
+   * `{ sessions: [] }` — every open conversation gone, once, silently, with no
+   * error anywhere. `open-sessions.test.ts` carries a fixture per defaulted
+   * field for exactly this reason.
+   *
+   * A panel written before the roster existed parses to `[]` and is backfilled
+   * one tab by `normalizeTerminalPanel` in the renderer — main only applies
+   * schema defaults and does not repair.
+   */
+  tabs: z.array(TerminalTab).default([]),
+  /** Which of `tabs` is on screen. Repaired, not trusted, when it names none. */
+  activeId: z.string().nullable().default(null),
 })
 export type TerminalPanelState = z.infer<typeof TerminalPanelState>
 
-const CLOSED_PANEL: TerminalPanelState = { open: false, height: TERMINAL_HEIGHT.default }
+/**
+ * A panel nobody has opened yet.
+ *
+ * Exported and shared, because it used to be copied into `store.ts` and
+ * `hooks.ts` as well — three literals of the same shape, in three files, and the
+ * roster had to be added to all of them. One definition beside the schema it
+ * mirrors is one place for the next field to land.
+ *
+ * Frozen so a consumer cannot mutate the shared default: it is handed out as the
+ * fallback for *every* conversation with no panel, so a stray write would give
+ * all of them the same one.
+ */
+export const CLOSED_TERMINAL_PANEL: TerminalPanelState = Object.freeze({
+  open: false,
+  height: TERMINAL_HEIGHT.default,
+  tabs: [],
+  activeId: null,
+})
 
 export const WorkspaceSnapshot = z.object({
   layout: WorkspaceLayoutNode.nullable(),
@@ -90,6 +140,6 @@ export const WorkspaceSnapshot = z.object({
    * belongs to no conversation, and anything walking sessions must not reach it.
    */
   terminals: z.record(z.string(), TerminalPanelState).default({}),
-  globalTerminal: TerminalPanelState.default(CLOSED_PANEL),
+  globalTerminal: TerminalPanelState.default(CLOSED_TERMINAL_PANEL),
 })
 export type WorkspaceSnapshot = z.infer<typeof WorkspaceSnapshot>
