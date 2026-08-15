@@ -66,6 +66,33 @@ the version number when the bump is not obvious.
 --delete` of several refs aborts entirely if one does not exist, and prints
     nothing useful about what did not happen.
 
+### Platforms are released separately, and a release names which one
+
+**macOS ARM64 is the only platform that ships today.** Steps 5, 6 and 9 above
+are macOS steps and produce a DMG. A Windows build exists in the repository —
+`win` and `nsis` in `electron-builder.yml`, `verify:package:windows`,
+`docs/install-windows.md` — and has **never been produced or run**. Do not let a
+release note imply otherwise: a Windows section in a changelog for a release
+that shipped only a DMG is the kind of claim someone downloads on.
+
+When Windows does ship, it is a second pass of the same sequence and not a wider
+step 5. Each platform builds on its own runner, runs **its own** verifier —
+`verify:package` for the DMG, `verify:package:windows` for `win-unpacked` — and
+each gets its own asset and its own checksum on the release. Neither verifier
+knows anything about the other's bundle, deliberately; see the header of
+`e2e/packaged-windows.mjs`.
+
+Two things gate a Windows release that have no macOS equivalent, and neither is
+a build step:
+
+- **A code-signing certificate**, which is calendar time rather than
+  engineering. OV keys must live on an HSM or token, and issuance needs
+  organization validation — days to weeks. Nothing downstream can start until it
+  exists.
+- **Installer lifecycle on clean VMs**: install as a standard user, upgrade over
+  a seeded previous version, prove the event log survives, uninstall, reinstall.
+  `verify:package:windows` drives `win-unpacked` and proves none of this.
+
 **What a release does not prove, and must not be reported as proving.** The e2e
 suite is not part of this sequence — it takes ~5 minutes, passes about 6 runs in
 10 (C-029), and has to be run deliberately. (Its size is whatever `specs.mjs`
@@ -73,6 +100,9 @@ holds; this used to say "28-spec" and was wrong by four within the week.) `verif
 covers launch, the native module, the composer and an agent joining. Anything
 about the transcript, tabs, or a menu under load is unverified unless someone
 ran the suite or drove the app. Say which of those happened.
+
+The e2e suite is macOS-only and has not been looked at for Windows. Neither
+platform may claim UI coverage that was not run on it.
 
 ## The one rule everything else follows from
 

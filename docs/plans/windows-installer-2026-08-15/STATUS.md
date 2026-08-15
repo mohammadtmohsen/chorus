@@ -4,12 +4,12 @@
 | -------------------------------------------- | ----------------------------------------- |
 | 0 — Observe Windows                          | CI half shipped; VM observations not done |
 | 1 — Platform-aware command launching         | shipped, unverified on Windows            |
-| 2 — Shell, PTY, and process lifecycle        | not started                               |
-| 3 — Named-pipe IDE bridge and Windows paths  | not started                               |
-| 4 — Renderer and permission policy           | not started                               |
-| 5 — Portable build and unsigned verification | not started                               |
-| 6 — Signing and installer lifecycle          | not started                               |
-| 7 — Release contract and documentation       | not started                               |
+| 2 — Shell, PTY, and process lifecycle        | shipped, unverified on Windows            |
+| 3 — Named-pipe IDE bridge and Windows paths  | shipped, unverified on Windows            |
+| 4 — Renderer and permission policy           | shipped, unverified on Windows            |
+| 5 — Portable build and unsigned verification | code shipped; no Windows artifact built   |
+| 6 — Signing and installer lifecycle          | **blocked** — needs a certificate and VMs |
+| 7 — Release contract and documentation       | shipped                                   |
 
 ## Current state
 
@@ -82,3 +82,67 @@ the SDK, which then reports the CLI as missing rather than failing obscurely.
 Phase 0's VM observations, which now have two specific questions to answer
 rather than a general brief. Then Phase 2 — where `isExecutableFile` is the one
 line to change.
+
+## Phases 2–7
+
+**Phase 2 found two bugs behind the one it was looking for.** `isExecutableFile`
+gated on `stat.mode & 0o111`, which libuv never sets on Windows — but the
+"nothing validated" fallback then returned `COMSPEC` anyway, so a terminal
+opened and nothing looked wrong. Writing the test for it exposed that the
+fallback took `fallbacks()[0]`, the value already rejected, so a `COMSPEC`
+naming a directory came back as the shell to spawn; and that Windows had one
+fallback where unix has three.
+
+Busy/idle turned out to be unavailable rather than wrong. node-pty's
+`WindowsTerminal` returns `this._name` from `.process` — the terminal _type_,
+assigned once at construction — so every Windows terminal reported permanently
+busy and the kill dialog named `xterm-256color` as the process. Reported as
+`false` now, which loses the running-build warning; recovering it needs
+`conpty_console_list`, which is its own piece of work.
+
+`reap.ts` is off on Windows and says so. Per the plan, no strategy was guessed:
+PPID 1 has no Windows equivalent, `SIGKILL` is not a signal there, and a ported
+`pgrep -f` scan would match the user's own `codex`.
+
+**Phase 3's bridge was dead twice over, silently.** `assertPrivateDirectory`
+threw on every Windows launch into a `try`/`catch` that only logs; independently
+the extension's `isPrivate` skipped every descriptor. Two silent failures
+presenting as one missing feature. Containment was also defined twice and had
+already drifted — main used `path.sep`, the extension hardcoded `/` — so the
+rule and the endpoint both moved into `@chorus/ide-protocol`, the package both
+ends already import. Three of the bugs found are **not Windows-only**:
+`safeRealpath` and `projectRelativePath` both sliced `root.length + 1`, which
+eats a character at any root ending in a separator, and `joinInside` split on
+`/` alone so a backslash path walked past its own `..` guard.
+
+**Phase 4's policy half is the one with teeth.** Trusted allows any command by
+profile, so `UNIVERSAL_DENIES` is all that stands between it and an irreversible
+action — and `del /s`, `rd /s`, `Remove-Item -Recurse` and `git.exe push --force`
+were all allowed outright. Denies now match case-insensitively; allows
+deliberately do not, since `i` on `SAFE_READS` would widen an allowlist.
+
+**Phase 5 has no artifact.** The pipeline is portable — `zip`, `env` and `rm`
+are gone, `icon.ico` is generated, the NSIS target is configured, and
+`verify:package:windows` exists — but no Windows machine has run any of it. The
+macOS package still builds and its bundle is unchanged.
+
+**Phase 6 is blocked, not skipped.** It needs a code-signing certificate and
+clean Windows VMs. Neither exists in this environment, and no part of it was
+attempted.
+
+## What is verified, and how
+
+Everything Windows-shaped is asserted from macOS with an injected platform, so
+it proves the _shape_ and not the machine. Where a claim could be checked against
+something real, it was: the VSIX validates with `unzip -t` and rebuilds
+byte-identically, `crc32` matches the standard `0xCBF43926` vector, `file(1)`
+reads `icon.ico` back as a 7-icon resource, and the macOS bundle still carries an
+executable `spawn-helper`.
+
+The security-relevant tests were mutation-checked in both directions — removing
+the Windows deny rule, dropping the `.exe` suffix and restoring case-sensitivity
+each fail the test written for them, and widening the rule to any `del` fails the
+must-not-deny cases.
+
+**Nothing here has run on Windows.** The `windows-latest` probe job has still
+never executed.
