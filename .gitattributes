@@ -1,0 +1,39 @@
+# Line endings are LF in the repository and LF in every working tree.
+#
+# Not a preference, and not cosmetic. `.prettierrc` pins `endOfLine: "lf"` and
+# `pnpm check` runs `prettier --check`, so a checkout that converts to CRLF
+# fails the gate on every file in the repo. GitHub's `windows-latest` runners
+# ship Git for Windows with `core.autocrlf=true` — which is exactly that
+# checkout — so the Windows probe job in `ci.yml` cannot go green without this
+# file, and would go red for a reason that says nothing about Windows.
+#
+# `eol=lf` rather than a bare `text=auto`: `auto` normalises what is *stored*
+# and then leaves the working tree to `core.autocrlf`, which is the setting
+# causing the problem. `eol=lf` overrides it.
+* text=auto eol=lf
+
+# Binary, so never inspected for line endings and never diffed as text.
+#
+# Git infers most of these correctly from content. Stating them means a corrupt
+# icon or an unloadable native module can never be blamed on a heuristic, and
+# the Windows artefacts further down are ones no macOS checkout has seen yet.
+*.png binary
+*.svg text
+*.icns binary
+*.ico binary
+*.node binary
+*.dll binary
+*.exe binary
+*.pdb binary
+*.vsix binary
+
+# The one exception to LF, and it only arrives with the NSIS work in Phase 5.
+#
+# `cmd.exe` reads a batch file a line at a time and has documented failure modes
+# with LF-only endings around labels and `goto`, and the NSIS compiler is
+# stricter still. Neither is worth discovering from a broken installer, so the
+# rule is stated before the first such file exists.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.nsi text eol=crlf
+*.nsh text eol=crlf
