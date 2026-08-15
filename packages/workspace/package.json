@@ -23,6 +23,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@chorus/ide-protocol": "workspace:*",
     "@chorus/shared": "workspace:*"
   },
   "devDependencies": {

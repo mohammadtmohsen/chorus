@@ -19,7 +19,7 @@
  * A scheme we have not parsed yields nothing, which the pill can explain.
  */
 
-import { CHANGE_TYPES, type ChangeType, type Provenance } from '@chorus/ide-protocol'
+import { CHANGE_TYPES, hasRoot, type ChangeType, type Provenance } from '@chorus/ide-protocol'
 
 export type { Provenance }
 
@@ -66,12 +66,36 @@ function stringField(source: Record<string, unknown>, key: string): string | nul
  * boundary.
  */
 export function joinInside(root: string, relative: string): string | null {
-  if (root === '' || !root.startsWith('/')) return null
-  const segments = relative.split('/').filter((s) => s !== '' && s !== '.')
+  /*
+   * `hasRoot`, not `startsWith('/')`. The old check rejected every Windows root
+   * outright — `c:\repo` does not start with `/`, and neither does
+   * `\\server\share\repo` — so this returned null for every GitLab review
+   * pane on Windows.
+   */
+  if (root === '' || !hasRoot(root)) return null
+
+  /*
+   * Split on **both** separators. Splitting on `/` alone left a backslash-
+   * separated path as one opaque segment, which walked straight past the `..`
+   * guard below: `..\..\etc\passwd` contains no element equal to `..`. Main
+   * re-checks the result, so this was disclosure minimisation failing rather
+   * than a hole — but failing silently, and only on Windows.
+   */
+  const segments = relative.split(/[\\/]/).filter((s) => s !== '' && s !== '.')
   if (segments.length === 0) return null
   if (segments.includes('..')) return null
-  const base = root.endsWith('/') ? root.slice(0, -1) : root
-  return `${base}/${segments.join('/')}`
+  // A drive-relative or rooted segment would escape too: `C:x`, or a leading
+  // separator that survived the filter as an absolute-looking first element.
+  if (segments.some((s) => hasRoot(s) || /^[a-zA-Z]:/.test(s))) return null
+
+  const sep = separatorOf(root)
+  const base = root.endsWith(sep) ? root.slice(0, -1) : root
+  return `${base}${sep}${segments.join(sep)}`
+}
+
+/** Whichever separator the root is already written with; `/` when it has none. */
+function separatorOf(root: string): string {
+  return root.includes('\\') && !root.includes('/') ? '\\' : '/'
 }
 
 function isChangeType(value: unknown): value is ChangeType {
@@ -93,7 +117,10 @@ function resolveGit(uri: DocumentUri): ResolvedDocument | null {
   const query = parseQuery(uri.query)
   if (query === null) return null
   const filePath = stringField(query, 'path')
-  if (!filePath?.startsWith('/')) return null
+  // `hasRoot` rather than a leading `/`: on Windows the built-in Git extension
+  // puts `c:\...` here, so the old check made every `git:` diff pane resolve to
+  // null — the exact regression protocol 2 existed to fix, one platform over.
+  if (typeof filePath !== 'string' || !hasRoot(filePath)) return null
 
   const ref = query['ref']
   if (typeof ref !== 'string') return null

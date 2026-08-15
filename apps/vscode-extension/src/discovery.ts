@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { descriptorIsPrivate } from '@chorus/ide-protocol'
 
 /**
  * Finding the Chorus processes this window may talk to (plan §4).
@@ -35,9 +36,10 @@ export function pidIsAlive(pid: number): boolean {
   }
 }
 
-function isPrivate(path: string): boolean {
+function isPrivate(path: string, platform: NodeJS.Platform = process.platform): boolean {
   try {
-    return (statSync(path).mode & 0o077) === 0
+    const stats = statSync(path)
+    return descriptorIsPrivate(stats, process.getuid?.(), platform)
   } catch {
     return false
   }
