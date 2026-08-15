@@ -37,6 +37,31 @@ describe('isExecutableFile', () => {
   it('rejects a path that is not there at all', () => {
     expect(isExecutableFile(join(dir, 'absent'))).toBe(false)
   })
+
+  /*
+   * The Windows half, which was broken and invisible.
+   *
+   * libuv never sets execute bits on Windows — a regular file is 0o666 — so the
+   * mode check rejected every candidate there, including `cmd.exe`. The old
+   * `resolveShell` still returned COMSPEC via its "nothing validated" fallback,
+   * so the terminal opened and nothing looked wrong.
+   *
+   * `plain` is mode 0o644 here, which is exactly what a Windows file looks like
+   * to this function: a file with no execute bit. Asserting it is accepted
+   * under win32 and rejected under darwin is the whole fix in two lines.
+   */
+  it('accepts a file with no execute bit on windows, where none is ever set', () => {
+    expect(isExecutableFile(plain, 'win32')).toBe(true)
+    expect(isExecutableFile(plain, 'darwin')).toBe(false)
+  })
+
+  it('still rejects a directory on windows, which is the check that survives', () => {
+    expect(isExecutableFile(dir, 'win32')).toBe(false)
+  })
+
+  it('still rejects a missing path on windows', () => {
+    expect(isExecutableFile(join(dir, 'absent'), 'win32')).toBe(false)
+  })
 })
 
 describe('resolveShell', () => {
@@ -83,5 +108,22 @@ describe('resolveShell', () => {
   it('reads COMSPEC rather than SHELL on windows', () => {
     const choice = resolveShell({ SHELL: executable, COMSPEC: '' }, 'win32')
     expect(choice.file).not.toBe(executable)
+  })
+
+  /*
+   * The regression this phase exists for, and the one the existing win32 tests
+   * above could not catch: they pass `executable`, a real 0o755 file, so they
+   * went green whether or not the mode check applied. `plain` is 0o644 — the
+   * shape every Windows file has — and selecting it proves COMSPEC is chosen on
+   * its merits rather than arriving through the no-shell-found fallback.
+   */
+  it('selects a COMSPEC with no execute bit, rather than reaching the fallback', () => {
+    expect(resolveShell({ COMSPEC: plain }, 'win32')).toEqual({ file: plain, args: [] })
+  })
+
+  it('still refuses a COMSPEC that is a directory', () => {
+    const choice = resolveShell({ COMSPEC: dir }, 'win32')
+    expect(choice.file).not.toBe(dir)
+    expect(choice.file).toBe('cmd.exe')
   })
 })

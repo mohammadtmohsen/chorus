@@ -94,8 +94,12 @@ void app.whenReady().then(async () => {
   const log = createLogger(app.getPath('userData'))
   log.info('starting', { version: app.getVersion(), electron: process.versions.electron })
 
-  void reapOrphanedAgents().then(({ killed, inspected }) => {
-    if (killed > 0) log.warn('reaped orphaned agents', { killed, inspected })
+  void reapOrphanedAgents().then(({ killed, inspected, skipped }) => {
+    // Said once at startup rather than never: the backstop being unavailable is
+    // a fact about this platform, and a silent `killed: 0` reads as a clean
+    // machine. See `reap.ts` for why Windows has no strategy yet.
+    if (skipped) log.info('orphan backstop unavailable on this platform')
+    else if (killed > 0) log.warn('reaped orphaned agents', { killed, inspected })
   })
 
   runtime = ChorusRuntime.open(app.getPath('userData'), log)

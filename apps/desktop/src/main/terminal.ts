@@ -70,10 +70,65 @@ export interface TerminalDescription {
   readonly running: boolean
   /** The foreground process name, e.g. `zsh` when idle, `ssh` when not. */
   readonly foreground: string
-  /** Whether something other than the shell itself is in the foreground. */
+  /**
+   * Whether something other than the shell itself is in the foreground.
+   *
+   * **Always false on Windows, and that is an admission rather than an answer.**
+   * See `describeForeground`.
+   */
   readonly busy: boolean
   /** How it ended, or null while it is running. See `TerminalAttachment`. */
   readonly exitCode: number | null
+}
+
+/**
+ * What is in the foreground, and whether that counts as busy.
+ *
+ * Pure and exported so the Windows case can be asserted from macOS, because it
+ * is the case that cannot be checked by running the app here.
+ *
+ * ## Why Windows gets `false` rather than a normalised comparison
+ *
+ * The plan called for normalising node-pty's process names before comparing
+ * them. Reading what node-pty actually ships says the comparison has no
+ * operands worth normalising. `UnixTerminal`'s `process` getter calls into the
+ * native binding for the tty's live foreground process, which is what makes
+ * "is something running in there" answerable at all. `WindowsTerminal`'s getter
+ * is `get process() { return this._name }`, and `_name` is assigned once at
+ * construction from the terminal-type option — `xterm-256color`, not a process.
+ * It never changes for the life of the pty.
+ *
+ * So the old expression did not merely risk a wrong answer on Windows, it
+ * guaranteed one: `foreground` was the terminfo string, `shellName` was
+ * `cmd.exe`, they never matched, and every terminal reported permanently busy —
+ * with the kill dialog naming `xterm-256color` as the process it was about to
+ * end.
+ *
+ * Reporting `busy: false` makes the kill confirmation stop crying wolf. It is a
+ * real loss: on Windows the dialog can no longer warn that a build is running.
+ * Recovering that needs a foreground-process lookup Chorus does not have —
+ * walking the console's process list via `conpty_console_list`, which node-pty
+ * exposes but does not wire to this property — and that is a piece of work with
+ * its own Windows verification, not a line in this function.
+ */
+export function describeForeground(
+  ptyProcess: string,
+  shellName: string,
+  platform: NodeJS.Platform = process.platform
+): { readonly foreground: string; readonly busy: boolean } {
+  if (platform === 'win32') {
+    // `ptyProcess` is the terminal type here, never a process — so it is not
+    // shown either. The shell's own name is the only true thing available.
+    return { foreground: shellName, busy: false }
+  }
+  /*
+   * A dead shell has no foreground process, so it describes as the shell it was
+   * rather than as an empty string. `running: false` is what carries the truth;
+   * this field only ever gets read to name a process in the kill confirmation,
+   * which a dead terminal never reaches.
+   */
+  const foreground = ptyProcess || shellName
+  return { foreground, busy: foreground !== shellName }
 }
 
 export type TerminalPush =
@@ -347,17 +402,11 @@ export class TerminalService {
   describe(ref: TerminalRef): TerminalDescription | null {
     const session = this.find(ref)
     if (session === null) return null
-    /*
-     * A dead shell has no foreground process, so it describes as the shell it
-     * was rather than as an empty string. `running: false` is what carries the
-     * truth; this field only ever gets read to name a process in the kill
-     * confirmation, which a dead terminal never reaches.
-     */
-    const foreground = session.pty.process || session.shellName
+    const { foreground, busy } = describeForeground(session.pty.process, session.shellName)
     return {
       running: !session.exited,
       foreground,
-      busy: !session.exited && foreground !== session.shellName,
+      busy: !session.exited && busy,
       exitCode: session.exitCode,
     }
   }

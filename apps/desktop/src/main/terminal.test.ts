@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   TerminalService,
+  describeForeground,
   type Frame,
   type Pty,
   type PtyOptions,
@@ -758,5 +759,38 @@ describe('clearing', () => {
     service.clear(GLOBAL, stale.epoch)
     await settled()
     expect((await service.attach(GLOBAL)).snapshot).toContain('still wanted')
+  })
+})
+
+describe('describeForeground', () => {
+  it('reports a foreground process as busy on unix', () => {
+    expect(describeForeground('ssh', 'zsh', 'darwin')).toEqual({ foreground: 'ssh', busy: true })
+  })
+
+  it('reports the shell itself as idle on unix', () => {
+    expect(describeForeground('zsh', 'zsh', 'darwin')).toEqual({ foreground: 'zsh', busy: false })
+  })
+
+  it('names a dead shell rather than showing an empty string', () => {
+    expect(describeForeground('', 'zsh', 'darwin')).toEqual({ foreground: 'zsh', busy: false })
+  })
+
+  /*
+   * The bug this phase found. node-pty's WindowsTerminal returns the *terminal
+   * type* from `.process` — assigned once at construction and never updated —
+   * so the old comparison made every Windows terminal permanently busy and put
+   * `xterm-256color` in the kill dialog as the name of the running process.
+   */
+  it('never reports busy on windows, where node-pty cannot answer the question', () => {
+    expect(describeForeground('xterm-256color', 'cmd.exe', 'win32')).toEqual({
+      foreground: 'cmd.exe',
+      busy: false,
+    })
+  })
+
+  it('does not leak the terminfo name into the kill dialog on windows', () => {
+    expect(describeForeground('xterm-256color', 'powershell.exe', 'win32').foreground).toBe(
+      'powershell.exe'
+    )
   })
 })

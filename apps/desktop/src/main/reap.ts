@@ -32,9 +32,39 @@ const AGENT_PATTERNS = ['codex app-server', 'claude --'] as const
 export interface ReapResult {
   readonly killed: number
   readonly inspected: number
+  /**
+   * True when the backstop did not run at all, rather than ran and found
+   * nothing. Those are different facts and the log should not conflate them.
+   */
+  readonly skipped: boolean
 }
 
-export async function reapOrphanedAgents(): Promise<ReapResult> {
+/**
+ * Off on Windows, deliberately and visibly.
+ *
+ * It was already off there in effect: `pgrep` does not exist, `execFile` fails
+ * with ENOENT, the catch treats that as "nothing matched", and the function
+ * returned a confident `killed: 0`. That is the worst arrangement available —
+ * indistinguishable in the log from a clean machine.
+ *
+ * The plan's instruction here was to measure before porting, and that
+ * measurement needs a Windows machine nobody has run this on yet. Every piece
+ * of the Unix strategy is a guess off Windows: PPID 1 is the Unix
+ * reparenting convention and Windows has no equivalent — an orphan is simply a
+ * process whose parent handle closed, with no marker on it; `SIGKILL` is not a
+ * Windows signal; and `pgrep -f` matching on a command line would, ported
+ * naively, match the user's own `codex` running in their own terminal, which is
+ * the one thing the Unix version's PPID check exists to prevent.
+ *
+ * So it reports `skipped` and does nothing, which is at least true. What would
+ * replace it is a job object or a pid whose ownership is proven, and that is
+ * Phase 2 work with a Windows machine attached to it.
+ */
+export async function reapOrphanedAgents(
+  platform: NodeJS.Platform = process.platform
+): Promise<ReapResult> {
+  if (platform === 'win32') return { killed: 0, inspected: 0, skipped: true }
+
   let killed = 0
   let inspected = 0
 
@@ -52,7 +82,7 @@ export async function reapOrphanedAgents(): Promise<ReapResult> {
     }
   }
 
-  return { killed, inspected }
+  return { killed, inspected, skipped: false }
 }
 
 async function findPids(pattern: string): Promise<number[]> {
