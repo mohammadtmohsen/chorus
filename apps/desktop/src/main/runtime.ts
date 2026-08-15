@@ -6,6 +6,7 @@ import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
   AccountSummary,
   AgentAdapter,
+  AgentSession,
   ApprovalDecision,
   McpServerHealth,
   ModelChoice,
@@ -401,6 +402,258 @@ function trimBothEnds(text: string, limit: number): string {
 }
 
 /**
+ * What the log says was actually done, for a recap to write `Done` and `Open`
+ * from.
+ *
+ * **Not `summariseSession`**, and the reuse was weighed rather than skipped.
+ * That function answers "what happened in this session, counted" for a panel —
+ * turns, spend, per-agent totals, handoffs — and a board needs almost none of
+ * it. Reusing it would mean moving it and `Spend` out of the renderer, typing
+ * its `payload` as `Record<string, unknown>` where main has the real
+ * discriminated union, and then discarding four fifths of the result. This is
+ * smaller, better typed, and answers the question actually being asked.
+ *
+ * The three things a board can say and the log can prove: what changed, what
+ * failed, what broke. Everything else on a board — whether it worked, what is
+ * still missing, what comes next — is judgement, and the agent supplies that.
+ * Denied approvals are deliberately absent: they need a join to
+ * `approval.requested` for their description, and "the user refused something"
+ * reads as blocked far more often than it is.
+ */
+export interface RecapLedger {
+  /** Distinct paths actually written, most recent last. */
+  readonly files: readonly string[]
+  /** Commands that exited non-zero, as `command → exit N`. */
+  readonly failed: readonly string[]
+  /** Errors the log recorded, newest last. */
+  readonly errors: readonly string[]
+}
+
+/** Bounds, because a board has four `Done` lines and this feeds them. */
+const LEDGER_FILES = 12
+const LEDGER_FAILURES = 5
+const LEDGER_ERRORS = 3
+
+/**
+ * Tools that write files, so their `tool.started` names one.
+ *
+ * **Read out of a real log, not out of the schema**, and the difference was the
+ * whole feature. `file.change.completed` is the event that looks like it records
+ * a write, and this store — 183MB, 454 conversations — contains **zero** of
+ * them. Files are written through the provider's own tools, whose
+ * `tool.started.detail` is the absolute path. A ledger built on the obvious
+ * event would have reported "no files changed" for every conversation that has
+ * ever existed, which is worse than reporting nothing: it reads as a fact.
+ */
+const WRITING_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
+
+/**
+ * Commands where a non-zero exit is an answer rather than a fault.
+ *
+ * Also measured: of 38 "failed" commands in the busiest real conversation, most
+ * were greps that matched nothing. A board that lists those as failures buries
+ * the one that is real, and `grep` exiting 1 is the single most common event in
+ * an agent's day.
+ *
+ * By name rather than by exit code, because 1 is also what a genuine build
+ * failure returns — `pnpm check` and `grep` are indistinguishable by number.
+ */
+const SEARCH_TOOLS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'find', 'diff', 'cmp', 'test'])
+
+/**
+ * Whether a command's exit code says anything about the command.
+ *
+ * **Measured, and it is the rule that made this list usable at all.** Over four
+ * real conversations, every single non-zero exit belonged to a compound line —
+ * `cd … && python3 - <<'PY' … | grep -E "×|Tests" | head`. The status of such a
+ * line is the status of whatever ran *last*, which is almost always a `grep`
+ * that matched nothing, and the line itself is far too long to read on a board.
+ * Twenty of twenty sampled were noise.
+ *
+ * A simple line is different: `pnpm check → exit 1` is exactly the fact a board
+ * wants. So the rule is not "guess harder about compound lines" — it is to
+ * report only the ones whose exit code has a single unambiguous author.
+ *
+ * The cost is silence about a build that failed inside a `&&` chain. That is the
+ * right way round: a board that says nothing is read as saying nothing, while a
+ * board listing five greps is read as five failures.
+ */
+function simpleCommand(line: string): boolean {
+  return !/[|&;\n]|<<|\$\(|`/.test(line)
+}
+
+/**
+ * Strips the login shell both providers wrap a command in.
+ *
+ * Every command in a real log arrives as `/bin/zsh -lc '…'`. Left on, a board's
+ * failure lines all begin with fourteen identical characters and the useful part
+ * is what falls off the end of the trim.
+ */
+function unwrapShell(line: string): string {
+  const wrapped = /^\S*\/?(?:ba|z|)sh\s+-[a-z]*c\s+(['"])([\s\S]*)\1$/.exec(line.trim())
+  return wrapped?.[2] ?? line
+}
+
+/**
+ * Noise the supervisor makes, which is not news about the work.
+ *
+ * `agent claude exited unexpectedly; restarting` was the most common
+ * `error.raised` in every real conversation sampled — three of three in one.
+ * It is true, it is worth logging, and it tells a reader nothing about where the
+ * task stands.
+ */
+const SUPERVISOR_NOISE = /exited unexpectedly|restarting|No completion record was found/i
+
+/**
+ * Pure, and exported for its own tests.
+ *
+ * `file.change.completed` rather than `.proposed`: a proposal is not a change,
+ * which is the same distinction `catchup.ts` draws when it skips proposals
+ * entirely. A `Done` line built from proposals would claim work that a denied
+ * approval stopped.
+ *
+ * A command's line arrives on `command.started` and its exit code on
+ * `command.completed`, so they are joined by `itemRef` — the same join
+ * `summariseSession` makes, and for the same reason: without it the failures
+ * cannot be named, only counted.
+ */
+export function recapLedger(events: readonly StoredEvent[], cwd = ''): RecapLedger {
+  const files: string[] = []
+  const failed: string[] = []
+  const errors: string[] = []
+  const commandLine = new Map<string, string>()
+
+  /*
+   * Inside the project only, and project-relative.
+   *
+   * Both halves were measured. Absolute paths make a board a column of identical
+   * prefixes; and the busiest real conversation had half its "files changed"
+   * list taken by `/tmp/promote.mjs`, `/tmp/deadline2.mjs` and other throwaway
+   * probes, which crowded the actual source files out of a bounded list. A
+   * scratch file outside the project is not what the task is about.
+   */
+  const touch = (path: string): void => {
+    /*
+     * With no project to measure against, everything is kept as written.
+     * Filtering on an unknown `cwd` would silently drop every file, and a board
+     * that says "no files changed" because it did not know where it was is the
+     * failure mode this whole ledger exists to avoid.
+     */
+    if (cwd !== '' && !path.startsWith(`${cwd}/`)) return
+    const relative = cwd === '' ? path : path.slice(cwd.length + 1)
+    const already = files.indexOf(relative)
+    if (already !== -1) files.splice(already, 1)
+    files.push(relative)
+  }
+
+  for (const event of events) {
+    const payload = event.payload
+    switch (payload.type) {
+      case 'command.started':
+        commandLine.set(payload.itemRef, payload.command.join(' '))
+        break
+
+      case 'command.completed': {
+        if (payload.exitCode === null || payload.exitCode === 0) break
+        // Unwrapped before the simplicity test, or every command looks compound
+        // — the shell wrapper's own quotes are what `simpleCommand` would trip on.
+        const line = unwrapShell(commandLine.get(payload.itemRef) ?? '').trim()
+        if (line === '' || !simpleCommand(line)) break
+        const tool = /([a-z0-9_-]+)/i.exec(line)?.[1] ?? ''
+        if (payload.exitCode === 1 && SEARCH_TOOLS.has(tool)) break
+        failed.push(`${trimBothEnds(line, 120)} → exit ${String(payload.exitCode)}`)
+        break
+      }
+
+      case 'tool.started':
+        // Where a written file actually shows up. See `WRITING_TOOLS`.
+        if (WRITING_TOOLS.has(payload.name) && payload.detail !== null && payload.detail !== '') {
+          touch(payload.detail)
+        }
+        break
+
+      case 'tool.completed':
+        if (payload.status === 'error' && !SUPERVISOR_NOISE.test(payload.summary ?? '')) {
+          errors.push(trimBothEnds(payload.summary ?? 'a tool failed', 200))
+        }
+        break
+
+      case 'file.change.completed':
+        /*
+         * Kept, though no log has ever contained one — see `WRITING_TOOLS`. If a
+         * provider does start writing these, a board that ignored them would be
+         * wrong in the direction that is hardest to notice.
+         *
+         * `applied`, not merely `completed`: the event is written for `failed`
+         * and `declined` too, and a write the user refused is still a completed
+         * *attempt*. Counting those puts a file on `Done` that was never changed,
+         * which is the one line a reader acts on without re-checking.
+         */
+        if (payload.outcome !== 'applied') break
+        for (const file of payload.files) touch(file.path)
+        break
+
+      case 'error.raised':
+        if (!SUPERVISOR_NOISE.test(payload.message)) {
+          errors.push(trimBothEnds(payload.message, 200))
+        }
+        break
+
+      /*
+       * Listed rather than defaulted, the way `projections.ts` and `catchup.ts`
+       * list theirs, so a new event type has to be considered here instead of
+       * silently failing to count.
+       *
+       * The reason they are no-ops is one reason, not twenty-seven: a ledger
+       * carries **what the log can prove was done**, and none of these is
+       * evidence of work. Speech is the conversation, not its outcome — and it
+       * is deliberately absent, because a board built from what an agent *said*
+       * it did is the drifted account this feature exists to replace. Proposals
+       * and requests are intentions. Turn, session, usage and policy events are
+       * bookkeeping about the room rather than about the work.
+       *
+       * The one worth revisiting is `approval.decided`: a denied approval is
+       * genuinely "Open", and it is left out only because naming it needs a join
+       * to `approval.requested` and "the user refused something" reads as blocked
+       * far more often than it is. See the plan's open questions.
+       */
+      case 'conversation.created':
+      case 'session.started':
+      case 'session.ended':
+      case 'user.message':
+      case 'turn.started':
+      case 'turn.completed':
+      case 'agent.message.delta':
+      case 'agent.message.completed':
+      case 'agent.reasoning.delta':
+      case 'command.output':
+      case 'file.change.proposed':
+      case 'diff.updated':
+      case 'approval.requested':
+      case 'approval.decided':
+      case 'userinput.requested':
+      case 'userinput.answered':
+      case 'handoff.created':
+      case 'context.compacted':
+      case 'usage.updated':
+      case 'conversation.renamed':
+      case 'aside.promoted':
+      case 'project.changed':
+      case 'policy.changed':
+      case 'tool.progress':
+      case 'notice.raised':
+        break
+    }
+  }
+
+  return {
+    files: files.slice(-LEDGER_FILES),
+    failed: failed.slice(-LEDGER_FAILURES),
+    errors: errors.slice(-LEDGER_ERRORS),
+  }
+}
+
+/**
  * What a fork is asked when someone has lost the thread.
  *
  * **Not `explainPrompt` for a whole conversation.** Explain answers _what does
@@ -409,12 +662,29 @@ function trimBothEnds(text: string, limit: number): string {
  * passage that triggered it is the one input the prompt must not lean on.
  * Nothing is quoted from the reply here, and that absence is the feature.
  *
- * **The anchor is the user's own messages, read out of the log by the caller.**
- * The fork inherits the agent's session as persisted, which means it inherits
- * whatever compaction has already discarded — and asking a drifted context to
- * describe the task it drifted from is asking the symptom to diagnose itself.
- * The log has not drifted. Claude Code's own compaction prompt keeps an "All user
- * messages" section for the same reason.
+ * **Everything it knows comes from the log, and it is told so.** This began as a
+ * fork of the agent that spoke, on the theory that its memory was the cheapest
+ * source of `Done`. Two things killed that. The memory is the thing that
+ * *drifted* — asking a drifted context to describe the drift is asking the
+ * symptom to diagnose itself — and, measured in the running app, a fork is
+ * simply unavailable at the moment a recap is most wanted: Claude's session ref
+ * only exists once it has spoken in this process, so right after reopening the
+ * app there is nothing to fork and the whole feature was dead.
+ *
+ * So the reader is a **fresh** agent with no history, and the prompt carries
+ * everything: the user's own messages as the task, and `recapLedger`'s counted
+ * facts as the evidence. That is the project's own first rule applied properly —
+ * the event log is the source of truth — and it is why the prompt has to say
+ * "you were not part of this". A model handed a transcript it is told is its own
+ * writes `I did X`; handed one it is told it is reading, it writes what the log
+ * shows. Claude Code's own compaction prompt keeps an "All user messages"
+ * section for the same reason the anchor exists.
+ *
+ * **The ledger is fenced off from the judgement.** Facts go in under a heading
+ * that says they are Chorus's, not the model's recollection, the same way
+ * `catchup.ts` marks its block `[Chorus]` rather than splicing another agent's
+ * words in silently. Without the label the two blur and the board starts
+ * asserting things the log never said.
  *
  * **Two numbers, not an adjective.** `explainPrompt` records that "short" drifted
  * twice before a number fixed it. A cap on lines alone produces four very long
@@ -426,31 +696,38 @@ function trimBothEnds(text: string, limit: number): string {
  * and quarantined at once.
  *
  * The do-not-work clause is the same one `asideQuestion`, `explainPrompt` and
- * `translatePrompt` carry, for the same measured reason: without it a fork treats
- * the request as the next turn of the work and starts doing things, which no
- * permission rule catches because reading files is allowed. A request for a
- * status board looks more like a task than any of the other three.
+ * `translatePrompt` carry, for the same measured reason: without it a session
+ * treats the request as the next turn of the work and starts doing things, which
+ * no permission rule catches because reading files is allowed. A request for a
+ * status board looks more like a task than any of the other three, and a reader
+ * with no history has nothing else to be doing.
  */
-export function recapPrompt(asked: readonly string[]): string {
+export function recapPrompt(asked: readonly string[], ledger: RecapLedger): string {
   const { kept, omitted } = taskAnchor(asked)
+  const quote = (text: string): string =>
+    text
+      .split('\n')
+      .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+      .join('\n')
 
   return [
-    'Someone has lost the thread of this conversation and needs to see where it',
-    'stands.',
+    'Someone has lost the thread of a conversation and needs to see where it',
+    'stands. You were not part of it — everything you know about it is below.',
     '',
     // Lead position, because the first clause is the one the model commits to —
     // the same lesson `explainPrompt` records at its "Begin with what it *is*".
     'Your reply is a status board, not a message. Four headings, in this order —',
     'Task, Done, Open, Next. Nothing before them and nothing after them.',
     '',
-    'Task — one line. What is being worked on, taken from what the user asked for',
-    'in their own words below. Not what you happened to be talking about last.',
+    'Task — one line. What is being worked on, taken from the user’s own words',
+    'below. Where they asked for several things, the most recent one wins.',
     '',
-    'Done — up to four lines. Only what is actually finished, each naming the file,',
-    'command or decision it refers to. If something has not been run or checked',
-    'since it changed, end that line with "unverified".',
+    'Done — up to four lines. Only what the log below shows was actually done,',
+    'each naming the file or command it refers to. The log records that a file',
+    'changed, never that the change was correct — so no line here may claim',
+    'something works. End any line whose result was not checked with "unverified".',
     '',
-    'Open — up to three lines. What is unfinished, blocked, or waiting on the user.',
+    'Open — up to three lines. What is unfinished, failing, or waiting on the user.',
     'Say what each one is waiting on.',
     '',
     'Next — exactly one line, beginning with a verb. The single action that comes',
@@ -468,18 +745,20 @@ export function recapPrompt(asked: readonly string[]): string {
     // rather than from a real answer. Each line added later should say which
     // answer caused it, the way `explainPrompt`'s list does.
     'Leave out:',
-    '- anything from your last reply that is not one of the five things above;',
+    '- anything below that is not one of the five things above;',
     '- how something works, or why a decision was right;',
-    '- suggestions, options or offers you were not asked for;',
-    '- praise, apology, or remarks about this conversation;',
+    '- suggestions, options or offers nobody asked for;',
+    '- praise, apology, or remarks about the conversation itself;',
     "- restating the user's request beyond the one Task line.",
     '',
-    'If something is not in the conversation, leave the line out rather than',
-    'inferring it. A short board is correct. A padded one is not.',
+    'Work only from what is below. If something is not there, leave the line out',
+    'rather than inferring it — you have no other source and a guess is',
+    'indistinguishable from a fact on a board. A short board is correct. A padded',
+    'one is not.',
     '',
     'Do not continue the work or change anything. Write the board and stop.',
     '',
-    "These are the user's own messages, from Chorus's log. They define the task:",
+    '--- what the user asked for, in their own words. This is the task. ---',
     '',
     // Disclosed rather than silent, as `catchup.ts:87` does it. A truncated
     // anchor that does not say so reads as a complete one.
@@ -488,13 +767,37 @@ export function recapPrompt(asked: readonly string[]): string {
     // Consecutive `>` lines are one blockquote to every markdown reader and to
     // both CLIs, so without the separator four requests arrive as one paragraph
     // and the narrowing they describe is lost.
-    ...kept.flatMap((text, index) => [
-      ...(index === 0 ? [] : ['']),
-      text
-        .split('\n')
-        .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
-        .join('\n'),
-    ]),
+    ...kept.flatMap((text, index) => [...(index === 0 ? [] : ['']), quote(text)]),
+    ...(kept.length === 0 ? ['(nothing has been asked in this conversation yet)'] : []),
+    '',
+    /*
+     * Fenced and attributed, for the reason the doc comment gives: a reader told
+     * these are its own recollections writes "I did X". Told they are Chorus's
+     * record, it writes what the record shows.
+     *
+     * Each section says what its absence means, because an empty list is
+     * ambiguous in exactly the direction that produces a wrong board — "no failed
+     * commands" and "no commands were run" are different states, and a model
+     * given a blank will pick the flattering one.
+     */
+    "--- what Chorus's log records. These are facts, not your recollection. ---",
+    '',
+    ledger.files.length === 0
+      ? 'Files changed: none recorded.'
+      : `Files changed, oldest first: ${ledger.files.join(', ')}`,
+    '',
+    ledger.failed.length === 0
+      ? 'Failed commands: none recorded. This does not mean the tests passed — it'
+      : 'Failed commands:',
+    ...(ledger.failed.length === 0
+      ? ['means nothing in this conversation exited non-zero.']
+      : ledger.failed.map((line) => `- ${line}`)),
+    '',
+    ...(ledger.errors.length === 0
+      ? ['Errors: none recorded.']
+      : ['Errors:', ...ledger.errors.map((line) => `- ${line}`)]),
+    '',
+    '--- end of what you know ---',
   ].join('\n')
 }
 
@@ -999,10 +1302,29 @@ export class ChorusRuntime {
     if (participant === undefined) throw new Error(`${agentId} is no longer in this conversation`)
 
     const adapter = this.adapters.get(agentId)
-    if (adapter?.fork === undefined) throw new Error(`${agentId} cannot be forked`)
-    if (participant.session.sessionRef === '') {
-      throw new Error(`${agentId} has not started a session yet`)
+    /*
+     * A recap does not fork, so none of the three checks below apply to it.
+     *
+     * They all guard the same thing: that the branch being taken genuinely holds
+     * the passage. A recap reads nothing from the agent's memory — its whole
+     * input is the log — so there is no branch to get wrong.
+     *
+     * This is not tidiness. `sessionRef` is *live* state: Claude's real id only
+     * arrives with its first message of the process, so an agent that has been
+     * reopened and not yet spoken has none. `finalKey` comes from the log, which
+     * survives a restart, so the button was offered on every replayed transcript
+     * and then refused — dead at the one moment a recap is most wanted, which is
+     * when you reopen the app and ask where you were. Found by driving it, not by
+     * reading it.
+     */
+    const recapping = (request.purpose ?? 'question') === 'recap'
+    if (!recapping) {
+      if (adapter?.fork === undefined) throw new Error(`${agentId} cannot be forked`)
+      if (participant.session.sessionRef === '') {
+        throw new Error(`${agentId} has not started a session yet`)
+      }
     }
+    if (adapter === undefined) throw new Error(`${agentId} is not available`)
 
     /*
      * The passage must belong to the session about to be forked.
@@ -1036,15 +1358,17 @@ export class ChorusRuntime {
      * wrongly takes the feature away, while allowing wrongly is the behaviour
      * that existed before this guard did.
      */
-    const freshStartAfter = this.store
-      .read(request.conversationId)
-      .find(
-        (e) =>
-          e.seq > source.seq &&
-          e.payload.type === 'session.started' &&
-          e.payload.agentId === agentId &&
-          e.payload.resumed === false
-      )
+    const freshStartAfter = recapping
+      ? undefined
+      : this.store
+          .read(request.conversationId)
+          .find(
+            (e) =>
+              e.seq > source.seq &&
+              e.payload.type === 'session.started' &&
+              e.payload.agentId === agentId &&
+              e.payload.resumed === false
+          )
     if (freshStartAfter !== undefined) {
       throw new Error(`${agentId} has started a new session since it said that`)
     }
@@ -1078,13 +1402,12 @@ export class ChorusRuntime {
     }
 
     /*
-     * A recap's anchor: what the user actually asked for, from the log.
+     * Everything a recap will know, read here, before anything is spawned.
      *
-     * Read here, before anything is spawned, for the same reason the language is
-     * — and read from the **store** rather than from the fork, which is the whole
-     * design. A fork inherits the session as persisted, compaction included, so
-     * asking it to name the task is asking a drifted context to describe the
-     * drift. The log has not drifted.
+     * One read of the log for both halves: the user's own messages, which are the
+     * task, and `recapLedger`'s counted facts, which are the evidence. Read from
+     * the **store** rather than from an agent's memory, which is the whole design
+     * — the memory is what drifted, and after a reopen there may not be one.
      *
      * `parseMentions` is used for its `text`, documented as "the message with its
      * leading mentions removed, as the agent should see it". `send` logs the raw
@@ -1093,28 +1416,49 @@ export class ChorusRuntime {
      * live participants: the job here is stripping scaffolding, not routing, and
      * a mention of an agent since removed from the room is scaffolding too.
      */
-    const asked =
-      purpose !== 'recap'
-        ? []
-        : this.store
-            .read(request.conversationId)
-            .filter((e) => e.payload.type === 'user.message')
-            .map((e) =>
-              e.payload.type === 'user.message'
-                ? parseMentions(e.payload.text, { participants: ['codex', 'claude'] }).text
-                : ''
-            )
+    const history = recapping ? this.store.read(request.conversationId) : []
+    const asked = history
+      .filter((e) => e.payload.type === 'user.message')
+      .map((e) =>
+        e.payload.type === 'user.message'
+          ? parseMentions(e.payload.text, { participants: ['codex', 'claude'] }).text
+          : ''
+      )
+    const ledger = recapLedger(history, parent.cwd)
 
     const opts: SessionOpts = {
       cwd: parent.cwd,
       sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
     }
-    const forked = await adapter.fork(participant.session.sessionRef, {
-      ...opts,
-      // Decided with the user: the aside inherits the user's configuration, so
-      // hooks, skills and CLAUDE.md load exactly as they do in the room.
-      inherits: 'config',
-    })
+    /*
+     * A recap starts a session; every other purpose branches one.
+     *
+     * `start` rather than `fork` because a recap must read the log and nothing
+     * else — a reader carrying the conversation in its context would answer from
+     * the memory this feature exists to stop trusting, and would be unavailable
+     * whenever that memory is (see the guards above). It also costs no more: a
+     * fork was already a cold CLI start, measured at about 2.6 seconds.
+     *
+     * `inherits: 'config'` has no counterpart on `start`, and needs none —
+     * `settingSources` is deliberately omitted in the adapters, so a fresh
+     * session loads the user's hooks, skills and CLAUDE.md anyway.
+     */
+    let forked: AgentSession
+    if (recapping) {
+      forked = await adapter.start(opts)
+    } else if (adapter.fork !== undefined) {
+      forked = await adapter.fork(participant.session.sessionRef, {
+        ...opts,
+        // Decided with the user: the aside inherits the user's configuration,
+        // so hooks, skills and CLAUDE.md load exactly as they do in the room.
+        inherits: 'config',
+      })
+    } else {
+      // Unreachable — the guard above refuses this before anything is read. Kept
+      // as a throw rather than an assertion so the narrowing is the compiler's
+      // rather than a claim this file makes about a check fifty lines away.
+      throw new Error(`${agentId} cannot be forked`)
+    }
 
     const asideId = newConversationId()
 
@@ -1208,7 +1552,7 @@ export class ChorusRuntime {
           // purpose quotes the passage into its prompt; a recap whose prompt
           // carried the reply would summarise the reply, which is the failure
           // this exists to fix rather than a smaller version of it.
-          await service.sendUserMessage('Where are we?', recapPrompt(asked))
+          await service.sendUserMessage('Where are we?', recapPrompt(asked, ledger))
         } else if (request.question !== undefined && request.question !== '') {
           await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
         }

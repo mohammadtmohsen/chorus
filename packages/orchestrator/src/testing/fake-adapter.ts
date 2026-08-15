@@ -35,6 +35,21 @@ export interface FakeAdapterOptions {
    * which is how a `failed` state shipped that no production adapter reached.
    */
   readonly models?: readonly ModelChoice[] | Error
+  /**
+   * Starts a session whose `sessionRef` is empty, the way Claude really does.
+   *
+   * Not a hypothetical. `claude-adapter.ts` only learns its session id from the
+   * first message the SDK streams back, so an agent that has been started — or
+   * reopened, and whose resume fell back to a fresh session — has **no ref at
+   * all** until it speaks. This fake handed out `fake-session-N` immediately,
+   * which is more generous than either provider, and that gap is precisely why
+   * a feature that required a ref could pass every test here and be dead in the
+   * app the moment it was reopened.
+   *
+   * Opt-in, because most tests are not about that window and would only be made
+   * noisier by it.
+   */
+  readonly startsWithoutRef?: boolean
 }
 
 /**
@@ -174,6 +189,7 @@ export class FakeAdapter implements AgentAdapter {
   readonly sessions: FakeAgentSession[] = []
   private readonly version: string
   private readonly models: readonly ModelChoice[] | Error | undefined
+  private readonly startsWithoutRef: boolean
   private counter = 0
 
   constructor(options: FakeAdapterOptions = {}) {
@@ -181,6 +197,7 @@ export class FakeAdapter implements AgentAdapter {
     this.capabilities = { ...DEFAULT_CAPABILITIES, ...options.capabilities }
     this.version = options.version ?? '0.0.0-fake'
     this.models = options.models
+    this.startsWithoutRef = options.startsWithoutRef ?? false
   }
 
   /**
@@ -195,7 +212,7 @@ export class FakeAdapter implements AgentAdapter {
   start(opts: SessionOpts): Promise<AgentSession> {
     this.startedOpts.push(opts)
     const session = new FakeAgentSession(
-      `fake-session-${String(++this.counter)}`,
+      this.startsWithoutRef ? '' : `fake-session-${String(++this.counter)}`,
       this.id,
       this.models
     )

@@ -61,6 +61,72 @@ agent should see it". Both agent ids are named rather than the live participants
 the job is stripping scaffolding, not routing, and a mention of an agent since
 removed from the room is scaffolding too.
 
+## Phase 5, and it rewrote the feature
+
+Driving it did what the plan said it would, and more than expected: **the fork
+was wrong, and the ledger I would have shipped was mostly noise.** Both were
+found by running against the real store, neither by reading the code.
+
+### The fork could not work when it was most wanted
+
+Second real click: `claude has not started a session yet`. `finalKey` comes from
+the log, which survives a restart; forking needs `participant.session.sessionRef`,
+which is _live_ — Claude's id only arrives with its first message of the process
+(`claude-adapter.ts:561`), and a resume that falls back to a fresh session has
+none. So the button was offered on every replayed transcript and refused. Dead at
+exactly the moment a recap is wanted: reopen the app, ask where you were.
+
+**The reader is now a fresh session, and the prompt carries everything.** Not a
+workaround — the better design, and the one the plan's own open question was
+circling. A fork's memory is the thing that drifted; the log has not. The prompt
+now says "you were not part of it", fences the facts off under a heading that
+attributes them to Chorus, and works whether or not any agent is live.
+
+`FakeAdapter` gained `startsWithoutRef`, because it handed out an id immediately
+— more generous than either real provider. That gap is why a feature requiring a
+ref passed every test here and died in the app. Two tests now cover the window:
+a recap succeeds in it, an explanation still correctly refuses.
+
+### The ledger, measured against 183MB of real log
+
+Four findings, each of which would have shipped as a confident lie:
+
+- **`file.change.completed` has never been written. Not once**, in 454
+  conversations. Files are written through `Edit`/`Write` tool calls whose
+  `tool.started.detail` is the absolute path. A ledger built on the obvious event
+  would have reported "no files changed" for every conversation that has ever
+  existed — and "none recorded" reads as a fact, not as a gap.
+- **Every non-zero command exit belonged to a compound line.** Twenty of twenty
+  sampled were `cd … && python3 - <<'PY' … | grep -E "×" | head` — whose status
+  is the trailing grep's. Only simple lines are reported now, which keeps
+  `pnpm check → exit 1` and drops the noise. The cost is silence about a build
+  that failed inside a `&&` chain; that is the right way round, because a board
+  listing five greps is read as five failures.
+- **`/tmp` probe scripts crowded out real source files.** Half the busiest
+  conversation's file list. Files outside the project cwd are dropped.
+- **`agent claude exited unexpectedly; restarting` was the most common
+  `error.raised`** in every conversation sampled — three of three in one. True,
+  and not news about the work. Filtered.
+
+Also: `/bin/zsh -lc '…'` wraps every real command, so unstripped, every failure
+line began with the same fourteen characters and the useful part fell off the
+trim.
+
+`file.change.completed` is still handled, though nothing writes it. If a provider
+starts, a board that ignored it would be wrong in the hardest direction to notice.
+
+### What is still not verified
+
+**No agent has answered this prompt yet.** The inputs are now real and checked;
+the output is not. The "Leave out" list is still seeded from the original request
+rather than from an answer that padded. The card has still not been seen, and
+560px is still arithmetic.
+
+**The ledger is blind to edits made through the shell.** One sampled conversation
+— 10,039 events, 124 asks — reported zero files, because its edits went through
+`python3 - <<'PY'` heredocs rather than the Edit tool. Real, and not fixable by
+reading `tool.started`.
+
 ## First real click: a stale main process, not a bug
 
 The first attempt to use the button failed with

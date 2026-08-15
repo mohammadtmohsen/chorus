@@ -183,9 +183,24 @@ export function QuickQuestion(props: {
         props.onClose()
       }
     )
-    void props.language.then((it) => {
-      if (adopted) setLanguage(it)
-    })
+    props.language.then(
+      (it) => {
+        if (adopted) setLanguage(it)
+      },
+      /*
+       * A rejection handler that does nothing, which is the point.
+       *
+       * `language` is derived from the same promise as `opening`, so when an
+       * open fails they both reject — and this one had only a fulfil handler,
+       * so every failed aside threw an unhandled rejection into the console.
+       * Two, in fact: the effect re-runs under StrictMode and attaching to an
+       * already-rejected promise raises it again.
+       *
+       * Silent rather than reported, because `opening` above already reports it
+       * and closes the card. Two dialogs for one failure is worse than none.
+       */
+      () => undefined
+    )
     return () => {
       adopted = false
     }

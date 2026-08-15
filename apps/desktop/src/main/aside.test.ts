@@ -1,5 +1,6 @@
 import { FakeAdapter } from '@chorus/orchestrator'
 import type { AgentAdapter } from '@chorus/agent-protocol'
+import type { StoredEvent } from '@chorus/event-store'
 import { Logger, newApprovalId, type AgentId } from '@chorus/shared'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -8,9 +9,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ChorusRuntime,
   explainPrompt,
+  recapLedger,
   recapPrompt,
   taskAnchor,
   translatePrompt,
+  type RecapLedger,
 } from './runtime.js'
 import { DEFAULT_SETTINGS, writeSettings } from './settings.js'
 
@@ -198,7 +201,12 @@ describe('opening a recap', () => {
       payload: { type: 'user.message', text },
     })
   }
-  const sentToFork = (): string => adapter.forked[0]?.session.sent.at(0)?.text ?? ''
+  /*
+   * `sessions`, not `forked`. A recap starts a session rather than branching one,
+   * so nothing lands in `forked` at all — and asserting on `forked` here is what
+   * would silently stop testing anything if the spawn ever went back to a fork.
+   */
+  const sentToReader = (): string => adapter.sessions.at(-1)?.sent.at(0)?.text ?? ''
 
   it('anchors on the user, and does not quote the reply back', async () => {
     asked('@claude make the phone field match the API contract')
@@ -211,7 +219,7 @@ describe('opening a recap', () => {
       purpose: 'recap',
     })
 
-    const prompt = sentToFork()
+    const prompt = sentToReader()
     expect(prompt).toContain('> make the phone field match the API contract')
     // The whole design. A prompt carrying the reply would summarise the reply,
     // which is the failure this exists to fix rather than a smaller version.
@@ -227,7 +235,7 @@ describe('opening a recap', () => {
       excerpt: 'Something.',
       purpose: 'recap',
     })
-    expect(sentToFork()).not.toContain('@claude make')
+    expect(sentToReader()).not.toContain('@claude make')
   })
 
   it('logs a short line and delivers the prompt, so the transcript reads back right', async () => {
@@ -286,7 +294,343 @@ describe('opening a recap', () => {
       excerpt: 'Something.',
       purpose: 'recap',
     })
-    expect(sentToFork()).toContain('status board')
+    expect(sentToReader()).toContain('status board')
+  })
+
+  it('starts a session rather than forking one', async () => {
+    asked('fix the parser')
+    const sourceEventId = reply('Something.')
+    await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'Something.',
+      purpose: 'recap',
+    })
+    // The reader must carry no history: a fork would answer from the memory this
+    // feature exists to stop trusting.
+    expect(adapter.forked).toHaveLength(0)
+  })
+
+  /**
+   * The regression that made this whole shape necessary, in its own room because
+   * it needs an adapter built differently.
+   *
+   * Found by driving the app, not by reading it. Claude's session ref only
+   * arrives with the first message the SDK streams back, so an agent that has
+   * been reopened and not yet spoken has none — while `finalKey` comes from the
+   * log, which survives the restart. So the button was offered on every replayed
+   * transcript and refused with "claude has not started a session yet": dead at
+   * the one moment a recap is most wanted, which is when you reopen the app and
+   * ask where you were.
+   *
+   * `startsWithoutRef` had to be added to `FakeAdapter` before this could be
+   * written at all. The fake handed out an id immediately, which is more generous
+   * than either real provider — and that gap is the reason a feature requiring a
+   * ref passed every test here and died in the app.
+   */
+  describe('when the agent has no live session ref', () => {
+    beforeEach(async () => {
+      await runtime.close()
+      adapter = new FakeAdapter({ id: 'claude', startsWithoutRef: true })
+      runtime = ChorusRuntime.open(
+        dataPath,
+        silent,
+        new Map<AgentId, AgentAdapter>([['claude', adapter]])
+      )
+      const started = await runtime.startConversation({ agents: ['claude'], cwd: process.cwd() })
+      conversationId = started.conversationId
+    })
+
+    it('still recaps, because it needs no session to fork', async () => {
+      runtime.store.append({
+        conversationId,
+        actor: 'user',
+        payload: { type: 'user.message', text: 'fix the parser' },
+      })
+      const stored = runtime.store.append({
+        conversationId,
+        actor: 'claude',
+        payload: { type: 'agent.message.completed', itemRef: 'm1', text: 'Something.' },
+      })
+      await expect(
+        runtime.openAside({
+          conversationId,
+          sourceEventId: stored?.id ?? '',
+          excerpt: 'Something.',
+          purpose: 'recap',
+        })
+      ).resolves.toMatchObject({ language: '' })
+    })
+
+    it('still refuses to explain, which is the guard doing its job', async () => {
+      // The check was never wrong — an explanation genuinely needs the agent's
+      // memory, so it genuinely needs a session. Only a recap does not.
+      const stored = runtime.store.append({
+        conversationId,
+        actor: 'claude',
+        payload: { type: 'agent.message.completed', itemRef: 'm1', text: 'Something.' },
+      })
+      await expect(
+        runtime.openAside({
+          conversationId,
+          sourceEventId: stored?.id ?? '',
+          excerpt: 'Something.',
+          question: 'why?',
+        })
+      ).rejects.toThrow(/has not started a session yet/)
+    })
+  })
+
+  it('carries the log’s counted facts, not just the user’s words', async () => {
+    asked('fix the parser')
+    // An absolute path under the conversation's cwd, which is what a provider
+    // really reports — and what makes the ledger render it project-relative.
+    runtime.store.append({
+      conversationId,
+      actor: 'claude',
+      payload: {
+        type: 'tool.started',
+        itemRef: 't1',
+        name: 'Edit',
+        parentRef: null,
+        detail: join(process.cwd(), 'src/parse.ts'),
+      },
+    })
+    runtime.store.append({
+      conversationId,
+      actor: 'claude',
+      payload: { type: 'command.started', itemRef: 'c1', command: ['pnpm check'], cwd: '.' },
+    })
+    runtime.store.append({
+      conversationId,
+      actor: 'claude',
+      payload: { type: 'command.completed', itemRef: 'c1', exitCode: 1 },
+    })
+
+    const sourceEventId = reply('Something.')
+    await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'Something.',
+      purpose: 'recap',
+    })
+
+    const prompt = sentToReader()
+    expect(prompt).toContain('src/parse.ts')
+    expect(prompt).toContain('pnpm check → exit 1')
+  })
+})
+
+/**
+ * What the log can prove, as opposed to what an agent remembers.
+ *
+ * Pure, so it is tested here rather than through a fork. The judgement in it is
+ * which events count as evidence — a proposal is not a change, and a command's
+ * name and its exit code arrive on different events.
+ */
+describe('recapLedger', () => {
+  let seq = 0
+  const event = (actor: 'claude' | 'user', payload: unknown): StoredEvent =>
+    ({
+      seq: (seq += 1),
+      id: `e${String(seq)}`,
+      conversationId: 'c',
+      actor,
+      type: (payload as { type: string }).type,
+      payload,
+      createdAt: seq,
+      schemaVersion: 1,
+    }) as StoredEvent
+
+  it('counts a completed change and ignores a mere proposal', () => {
+    // A proposal that a denied approval stopped is not work done, and a `Done`
+    // line built from one claims something that never happened.
+    const ledger = recapLedger([
+      event('claude', {
+        type: 'file.change.proposed',
+        itemRef: 'p1',
+        files: [{ path: 'never.ts', patch: '' }],
+      }),
+      event('claude', {
+        type: 'file.change.completed',
+        itemRef: 'f1',
+        outcome: 'applied',
+        files: [{ path: 'real.ts', change: 'modified', added: 1, removed: 0 }],
+      }),
+    ])
+    expect(ledger.files).toEqual(['real.ts'])
+  })
+
+  it('ignores a write that failed or the user declined', () => {
+    /*
+     * `file.change.completed` is written for `failed` and `declined` too — a
+     * refused write is still a completed *attempt*. Counting those puts a file
+     * on `Done` that was never changed, which is the worst line for a board to
+     * get wrong: it is the one a reader acts on without re-checking.
+     *
+     * Missed on the first pass and caught by the schema rejecting a fixture that
+     * omitted `outcome`, not by reading the code.
+     */
+    const attempt = (path: string, outcome: string): StoredEvent =>
+      event('claude', {
+        type: 'file.change.completed',
+        itemRef: path,
+        outcome,
+        files: [{ path, change: 'modified', added: 1, removed: 0 }],
+      })
+    const ledger = recapLedger([
+      attempt('applied.ts', 'applied'),
+      attempt('failed.ts', 'failed'),
+      attempt('declined.ts', 'declined'),
+    ])
+    expect(ledger.files).toEqual(['applied.ts'])
+  })
+
+  it('moves a file touched twice to the end rather than listing it twice', () => {
+    // A reader looks at the end of the list for current work.
+    const touch = (path: string, ref: string): StoredEvent =>
+      event('claude', {
+        type: 'file.change.completed',
+        itemRef: ref,
+        outcome: 'applied',
+        files: [{ path, change: 'modified', added: 1, removed: 0 }],
+      })
+    expect(recapLedger([touch('a.ts', '1'), touch('b.ts', '2'), touch('a.ts', '3')]).files).toEqual(
+      ['b.ts', 'a.ts']
+    )
+  })
+
+  /*
+   * Everything in this block was written after driving the ledger over the real
+   * store — 183MB, 454 conversations — rather than after reading the schema.
+   * Each case is a shape that actually dominated the output.
+   */
+  it('reads a written file off the tool that wrote it, not off file.change.completed', () => {
+    // The finding that reshaped this function: `file.change.completed` has never
+    // been written once in the whole store. Files arrive as Edit/Write tool
+    // calls whose `detail` is the absolute path.
+    const ledger = recapLedger(
+      [
+        event('claude', {
+          type: 'tool.started',
+          itemRef: 't1',
+          name: 'Edit',
+          parentRef: null,
+          detail: '/work/src/parse.ts',
+        }),
+        event('claude', {
+          type: 'tool.started',
+          itemRef: 't2',
+          name: 'Read',
+          parentRef: null,
+          detail: '/work/src/other.ts',
+        }),
+      ],
+      '/work'
+    )
+    // Read is not a change. Only the writing tools count.
+    expect(ledger.files).toEqual(['src/parse.ts'])
+  })
+
+  it('ignores a file written outside the project', () => {
+    // Half the busiest conversation's file list was `/tmp/promote.mjs` and other
+    // throwaway probes, crowding the real source files out of a bounded list.
+    const ledger = recapLedger(
+      [
+        event('claude', {
+          type: 'tool.started',
+          itemRef: 't1',
+          name: 'Write',
+          parentRef: null,
+          detail: '/tmp/probe.mjs',
+        }),
+      ],
+      '/work'
+    )
+    expect(ledger.files).toEqual([])
+  })
+
+  it('reports a simple failure and drops a compound one', () => {
+    /*
+     * The rule that made this list usable. Every non-zero exit in four real
+     * conversations belonged to a line like
+     * `cd … && python3 - <<'PY' … | grep -E "×" | head` — whose status is the
+     * status of the trailing grep. Twenty of twenty sampled were noise.
+     */
+    const ran = (ref: string, line: string, exitCode: number): StoredEvent[] => [
+      event('claude', { type: 'command.started', itemRef: ref, command: [line], cwd: '.' }),
+      event('claude', { type: 'command.completed', itemRef: ref, exitCode }),
+    ]
+    const ledger = recapLedger([
+      ...ran('a', "/bin/zsh -lc 'pnpm check'", 1),
+      ...ran('b', "cd /x && python3 - <<'PY' | grep -E 'x' | head", 1),
+    ])
+    // The shell wrapper is stripped too: left on, every line begins with the
+    // same fourteen characters and the useful part falls off the trim.
+    expect(ledger.failed).toEqual(['pnpm check → exit 1'])
+  })
+
+  it('drops the supervisor’s own noise from the errors', () => {
+    // `agent claude exited unexpectedly; restarting` was the most common
+    // `error.raised` in every conversation sampled. True, and not news about
+    // where the task stands.
+    const ledger = recapLedger([
+      event('claude', {
+        type: 'error.raised',
+        message: 'agent claude exited unexpectedly; restarting',
+        recoverable: true,
+      }),
+      event('claude', {
+        type: 'error.raised',
+        message: 'the parser rejected the shape',
+        recoverable: false,
+      }),
+    ])
+    expect(ledger.errors).toEqual(['the parser rejected the shape'])
+  })
+
+  it('names a failed command, which needs both of its events', () => {
+    // The command line is only on `started` and the exit code only on
+    // `completed`, so without the join the failure can be counted and not named.
+    const ledger = recapLedger([
+      event('claude', {
+        type: 'command.started',
+        itemRef: 'c1',
+        command: ['pnpm', 'check'],
+        cwd: '.',
+      }),
+      event('claude', { type: 'command.completed', itemRef: 'c1', exitCode: 2 }),
+    ])
+    expect(ledger.failed).toEqual(['pnpm check → exit 2'])
+  })
+
+  it('ignores a command that succeeded, and one still running', () => {
+    const ledger = recapLedger([
+      event('claude', { type: 'command.started', itemRef: 'ok', command: ['ls'], cwd: '.' }),
+      event('claude', { type: 'command.completed', itemRef: 'ok', exitCode: 0 }),
+      event('claude', { type: 'command.started', itemRef: 'run', command: ['sleep'], cwd: '.' }),
+      event('claude', { type: 'command.completed', itemRef: 'nul', exitCode: null }),
+    ])
+    expect(ledger.failed).toEqual([])
+  })
+
+  it('keeps the newest facts when there are more than a board can hold', () => {
+    const many = Array.from({ length: 30 }, (_, i) =>
+      event('claude', {
+        type: 'file.change.completed',
+        itemRef: `f${String(i)}`,
+        outcome: 'applied',
+        files: [{ path: `f${String(i)}.ts`, change: 'modified', added: 1, removed: 0 }],
+      })
+    )
+    const ledger = recapLedger(many)
+    expect(ledger.files).toHaveLength(12)
+    expect(ledger.files.at(-1)).toBe('f29.ts')
+  })
+
+  it('is empty for a conversation that only talked', () => {
+    const ledger = recapLedger([event('user', { type: 'user.message', text: 'hello' })])
+    expect(ledger).toEqual({ files: [], failed: [], errors: [] })
   })
 })
 
@@ -1140,13 +1484,57 @@ describe('taskAnchor', () => {
  * board a board.
  */
 describe('recapPrompt', () => {
-  const prompt = recapPrompt(['Make the phone field match the API contract.'])
+  const NOTHING: RecapLedger = { files: [], failed: [], errors: [] }
+  const prompt = recapPrompt(['Make the phone field match the API contract.'], NOTHING)
 
   it('quotes the user, and only the user', () => {
     // The whole mechanism against drift. The reply that triggered the recap is
     // deliberately absent: summarising it is the failure this feature exists for.
     expect(prompt).toContain('> Make the phone field match the API contract.')
-    expect(prompt).toContain("These are the user's own messages, from Chorus's log")
+    expect(prompt).toContain('what the user asked for, in their own words')
+  })
+
+  it('tells the reader it was not there, so it does not write "I did X"', () => {
+    // The reader is a fresh session with no history. A model told a transcript
+    // is its own claims the work; told it is reading one, it reports.
+    expect(prompt).toContain('You were not part of it')
+    expect(prompt).toContain('everything you know about it is below')
+  })
+
+  it('fences the log off from the judgement, and attributes it', () => {
+    expect(prompt).toContain("what Chorus's log records. These are facts, not your recollection")
+    expect(prompt).toContain('--- end of what you know ---')
+  })
+
+  it('refuses to let a changed file become a working one', () => {
+    // The sharpest thing the log cannot say. `file.change.completed` proves a
+    // file was written and nothing about whether the change was right.
+    expect(prompt).toContain('never that the change was correct')
+    expect(prompt).toContain('no line here may claim')
+  })
+
+  it('says what an empty ledger section means, rather than leaving a blank', () => {
+    // "No failed commands" and "no commands were run" are different states, and
+    // a model handed a blank picks the flattering one.
+    expect(prompt).toContain('Files changed: none recorded.')
+    expect(prompt).toContain('This does not mean the tests passed')
+  })
+
+  it('carries the ledger when there is one', () => {
+    const withFacts = recapPrompt(['fix the parser'], {
+      files: ['src/parse.ts', 'src/parse.test.ts'],
+      failed: ['pnpm check → exit 1'],
+      errors: ['the provider closed the stream'],
+    })
+    expect(withFacts).toContain('src/parse.ts, src/parse.test.ts')
+    expect(withFacts).toContain('- pnpm check → exit 1')
+    expect(withFacts).toContain('- the provider closed the stream')
+  })
+
+  it('says so when nothing has been asked yet', () => {
+    // Otherwise the task section is a heading with nothing under it, which reads
+    // as truncation rather than as an empty conversation.
+    expect(recapPrompt([], NOTHING)).toContain('nothing has been asked in this conversation yet')
   })
 
   it('commits to a board in its opening clause', () => {
@@ -1172,8 +1560,8 @@ describe('recapPrompt', () => {
   })
 
   it('takes the task from the user rather than from the last reply', () => {
-    expect(prompt).toContain('in their own words below')
-    expect(prompt).toContain('Not what you happened to be talking about last')
+    expect(prompt).toContain('taken from the user’s own words')
+    expect(prompt).toContain('the most recent one wins')
   })
 
   it('gives the off-task material somewhere bounded to go', () => {
@@ -1187,14 +1575,14 @@ describe('recapPrompt', () => {
   it('asks for "unverified" rather than trusting a Done line', () => {
     // "Done" and "done and checked" are exactly what a recap is read to tell
     // apart, and the difference is invisible unless it is asked for.
-    expect(prompt).toContain('end that line with "unverified"')
+    expect(prompt).toContain('not checked with "unverified"')
   })
 
   it('names the padding rather than asking for brevity', () => {
     for (const banned of [
       'not one of the five things above',
       'why a decision was right',
-      'offers you were not asked for',
+      'offers nobody asked for',
       'praise, apology',
       "restating the user's request",
     ]) {
@@ -1204,7 +1592,7 @@ describe('recapPrompt', () => {
 
   it('forbids padding a section that has nothing true in it', () => {
     expect(prompt).toContain('never pad a section to fill it')
-    expect(prompt).toContain('leave the line out rather than')
+    expect(prompt).toContain('leave the line out')
   })
 
   it('carries the do-not-work clause every aside prompt carries', () => {
@@ -1215,7 +1603,7 @@ describe('recapPrompt', () => {
 
   it('discloses a truncated anchor instead of reading as a complete one', () => {
     const long = Array.from({ length: 40 }, (_, i) => `request ${String(i)} ${'.'.repeat(300)}`)
-    expect(recapPrompt(long)).toContain('earlier messages omitted)')
+    expect(recapPrompt(long, NOTHING)).toContain('earlier messages omitted)')
   })
 
   it('says nothing about omissions when there were none', () => {
@@ -1225,6 +1613,8 @@ describe('recapPrompt', () => {
   it('separates quoted messages, so a narrowing does not arrive as one paragraph', () => {
     // Consecutive `>` lines are a single blockquote to every markdown reader and
     // to both CLIs.
-    expect(recapPrompt(['first ask', 'then narrower'])).toContain('> first ask\n\n> then narrower')
+    expect(recapPrompt(['first ask', 'then narrower'], NOTHING)).toContain(
+      '> first ask\n\n> then narrower'
+    )
   })
 })
