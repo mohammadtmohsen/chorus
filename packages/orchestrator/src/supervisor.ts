@@ -35,6 +35,20 @@ export interface SupervisorPolicy {
   readonly windowMs: number
   readonly baseBackoffMs: number
   readonly maxBackoffMs: number
+  /**
+   * How long a resume waits to hear that it failed.
+   *
+   * A provider thread that is gone says so promptly and unprompted — Claude
+   * answers `No conversation found with session ID …` within a moment of being
+   * asked to rejoin. A thread that is *fine* says nothing at all until someone
+   * prompts it. So there is no event that means "resumed successfully", and this
+   * window cannot be a wait for one; it is a wait for the failure, after which
+   * silence is taken as success.
+   *
+   * 2s is generous against a local process answering in tens of milliseconds,
+   * and it is only ever spent on startup for conversations being rejoined.
+   */
+  readonly resumeVerdictMs: number
 }
 
 export const DEFAULT_SUPERVISOR_POLICY: SupervisorPolicy = {
@@ -42,6 +56,7 @@ export const DEFAULT_SUPERVISOR_POLICY: SupervisorPolicy = {
   windowMs: 60_000,
   baseBackoffMs: 500,
   maxBackoffMs: 15_000,
+  resumeVerdictMs: 2_000,
 }
 
 export interface SupervisedSessionDeps {
@@ -114,7 +129,28 @@ export class SupervisedSession implements AgentSession {
     deps: SupervisedSessionDeps = {}
   ): Promise<SupervisedSession> {
     const first = await adapter.resume(sessionRef, opts)
-    return new SupervisedSession(adapter, opts, first, policy, deps)
+    /*
+     * Rejecting here is what makes a dead thread recoverable.
+     *
+     * `adapter.resume` returns as soon as the process is spawned; whether the
+     * provider actually *found* the thread arrives later, on the event stream.
+     * So this resolved happily for a session whose transcript had been deleted,
+     * the caller recorded a successful resume, and the failure turned up
+     * afterwards as an error in the transcript. `runtime.ts` has always carried
+     * a `catch` around this call that falls back to a fresh session — it simply
+     * never ran, because nothing ever threw.
+     *
+     * `verdictOf` gives the failure a bounded moment to arrive and turns it into
+     * a rejection, which is the shape that `catch` was written for.
+     */
+    const verdict = await verdictOf(first, policy.resumeVerdictMs, deps)
+    if (verdict.failed !== null) {
+      /* Close what was spawned before rejecting. The caller is about to start a
+         fresh session, and a refused resume still left a live process behind. */
+      await first.close()
+      throw new Error(verdict.failed)
+    }
+    return new SupervisedSession(adapter, opts, verdict.session, policy, deps)
   }
 
   /**
@@ -333,4 +369,89 @@ export class SupervisedSession implements AgentSession {
       recoverable,
     })
   }
+}
+
+/**
+ * Waits briefly for a resumed session to say it failed.
+ *
+ * Peeking at an `AsyncIterable` consumes from it, so anything read here would be
+ * lost to the consumer that follows — the events the provider sent while we were
+ * deciding. The session handed back therefore replays whatever was buffered
+ * before delegating to the original iterator, and the caller cannot tell the
+ * difference.
+ *
+ * Only a non-recoverable error counts. That is the same test the supervisor's
+ * own loop applies, and `mapping.ts` marks everything except `error_max_turns`
+ * as non-recoverable — so a missing thread qualifies and a turn that merely ran
+ * out of turns does not.
+ */
+async function verdictOf(
+  session: AgentSession,
+  windowMs: number,
+  deps: SupervisedSessionDeps
+): Promise<{ failed: string | null; session: AgentSession }> {
+  const scheduler = deps.scheduler ?? realScheduler
+  const iterator = session.events[Symbol.asyncIterator]()
+  const buffered: AgentEvent[] = []
+
+  let timer: unknown
+  const expired = new Promise<'expired'>((resolve) => {
+    timer = scheduler.setTimeout(() => {
+      resolve('expired')
+    }, windowMs)
+  })
+
+  let failed: string | null = null
+  try {
+    for (;;) {
+      const next = await Promise.race([iterator.next(), expired])
+      if (next === 'expired') break
+      if (next.done === true) break
+      buffered.push(next.value)
+      if (next.value.type === 'error' && !next.value.recoverable) {
+        failed = next.value.message
+        break
+      }
+    }
+  } finally {
+    scheduler.clearTimeout(timer)
+  }
+
+  return { failed, session: replaying(session, buffered, iterator) }
+}
+
+/**
+ * The same session, with the peeked events put back at the front.
+ *
+ * A proxy rather than `{ ...session, events }`. Every adapter's session is a
+ * class instance, and a spread copies only *own* properties — so the object that
+ * produced would carry the fields and none of the methods, and the first
+ * `send()` after a resume would fail on a session that looked fine. Written as a
+ * spread first; the runtime's own fallback test is what caught it.
+ *
+ * Methods are bound to the original so `this` still refers to the real session
+ * rather than to the proxy.
+ */
+function replaying(
+  session: AgentSession,
+  buffered: readonly AgentEvent[],
+  iterator: AsyncIterator<AgentEvent>
+): AgentSession {
+  const events: AsyncIterable<AgentEvent> = {
+    async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {
+      yield* buffered
+      for (;;) {
+        const next = await iterator.next()
+        if (next.done === true) return
+        yield next.value
+      }
+    },
+  }
+  return new Proxy(session, {
+    get(target, property, receiver) {
+      if (property === 'events') return events
+      const value = Reflect.get(target, property, receiver) as unknown
+      return typeof value === 'function' ? (value as () => unknown).bind(target) : value
+    },
+  })
 }

@@ -222,6 +222,82 @@ describe('reopening the app', () => {
     expect(startedWith(claude)).toEqual(['sonnet'])
   })
 
+  /*
+   * The failure as it actually arrives, not as it was easiest to fake.
+   *
+   * `failResume` makes `resume()` reject, and no provider does that — spawning
+   * succeeds and the refusal comes back on the event stream a moment later. The
+   * fallback in `runtime.ts` was written for the rejecting shape and was
+   * therefore unreachable in production: a session whose transcript had been
+   * deleted resolved as a successful resume, and the error turned up afterwards
+   * in the transcript with nothing left to catch it.
+   *
+   * `SupervisedSession.resume` now waits briefly for that verdict and turns it
+   * into a rejection, which is the shape the `catch` was always expecting.
+   */
+  it('falls back to a fresh session when the thread is refused on the stream', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    claude.refuseResumeOnStream = true
+    writeOpenSessions(dataPath, { sessions: [saved()], workspace: null })
+
+    await runtime.restoreOpenConversations()
+
+    /*
+     * Two entries, not one, and the difference from the rejecting case is the
+     * point: `failResume` refuses before recording an attempt, so that test sees
+     * only the fallback. Here the resume genuinely happens — a process spawns
+     * with resume options, which deliberately omit the configured model — and is
+     * refused afterwards. What matters is that a second, *fresh* start follows
+     * it and carries what the settings sheet says new sessions carry.
+     */
+    expect(startedWith(claude)).toEqual([undefined, 'sonnet'])
+  })
+
+  /*
+   * Two concurrent restores are one restore.
+   *
+   * `restoreOpenConversations` already refused to reopen a conversation that is
+   * in `this.active` — but that check only helps once the first reopen has
+   * finished registering it. Two calls that overlap both find `active` empty and
+   * both start a full set of agents: measured in the field as paired
+   * `sessions reopened` log lines milliseconds apart, and two starts for one
+   * conversation five sequence numbers apart.
+   *
+   * React's Strict Mode is what produced two callers in development, but the
+   * guard is main's: "one set of agents per conversation" is its invariant, and
+   * a reload or a second window would break it the same way.
+   *
+   * Awaiting both together rather than in sequence is the whole test — `await`
+   * one and then the other and the old code passes.
+   */
+  it('starts one set of agents when two restores overlap', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    writeOpenSessions(dataPath, { sessions: [saved()], workspace: null })
+
+    const [first, second] = await Promise.all([
+      runtime.restoreOpenConversations(),
+      runtime.restoreOpenConversations(),
+    ])
+
+    expect(startedWith(claude)).toHaveLength(1)
+    // Both callers get the same answer, not one real result and one empty.
+    expect(first.sessions).toHaveLength(1)
+    expect(second.sessions).toHaveLength(1)
+  })
+
+  /* The guard is per-call, not permanent: a later restore is a real request. */
+  it('lets a restore that comes afterwards run for real', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
+    writeOpenSessions(dataPath, { sessions: [saved()], workspace: null })
+
+    await runtime.restoreOpenConversations()
+    const again = await runtime.restoreOpenConversations()
+
+    // Still one set of agents — that is `active` doing its job the second time.
+    expect(startedWith(claude)).toHaveLength(1)
+    expect(again.sessions).toHaveLength(1)
+  })
+
   it('still keeps the two agents apart', async () => {
     writeSettings(dataPath, { ...DEFAULT_SETTINGS, model: 'sonnet' })
     writeOpenSessions(dataPath, {

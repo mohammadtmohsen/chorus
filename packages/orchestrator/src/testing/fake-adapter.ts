@@ -213,11 +213,33 @@ export class FakeAdapter implements AgentAdapter {
    */
   failResume = false
 
+  /**
+   * Makes `resume` succeed and *then* refuse, which is what really happens.
+   *
+   * `failResume` above models a rejection, and no provider does that: spawning
+   * works, and the news that the thread is gone arrives on the event stream
+   * afterwards. That difference is exactly why the fallback in `runtime.ts` sat
+   * unreachable — every test of it used the rejecting shape.
+   *
+   * The message is the one Claude actually sends, so a reader of a failing test
+   * can search for it.
+   */
+  refuseResumeOnStream = false
+
   resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession> {
     if (this.failResume) return Promise.reject(new Error('no such thread'))
     this.startedOpts.push(opts)
     const session = new FakeAgentSession(sessionRef, this.id, this.models)
     this.sessions.push(session)
+    if (this.refuseResumeOnStream) {
+      queueMicrotask(() => {
+        session.emit({
+          type: 'error',
+          message: `No conversation found with session ID: ${sessionRef}`,
+          recoverable: false,
+        })
+      })
+    }
     return Promise.resolve(session)
   }
 

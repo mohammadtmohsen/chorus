@@ -14,6 +14,9 @@ const POLICY: SupervisorPolicy = {
   windowMs: 60_000,
   baseBackoffMs: 10,
   maxBackoffMs: 100,
+  /* Short, because these tests drive fakes that answer instantly — a real
+     window would spend two seconds per resume waiting for silence. */
+  resumeVerdictMs: 20,
 }
 
 /** Runs timers immediately so backoff does not make the suite slow. */
@@ -38,6 +41,76 @@ async function collect(session: SupervisedSession, until: number): Promise<Agent
   }
   return seen
 }
+
+describe('SupervisedSession.resume, when the thread is gone', () => {
+  /*
+   * The failure that used to arrive too late to act on.
+   *
+   * `adapter.resume` returns as soon as a process exists; whether the provider
+   * found the thread comes back on the event stream afterwards. So a resume of a
+   * deleted session resolved happily, the caller recorded success, and the
+   * refusal turned up later as an error in the transcript — past the `catch` in
+   * `runtime.ts` that exists to fall back to a fresh session.
+   */
+  it('rejects when the provider says the thread is gone', async () => {
+    const adapter = new FakeAdapter({ id: 'claude' })
+    /* Real timers here, unlike the restart tests: these are *about* the verdict
+       window, and a scheduler that fires it immediately closes it before the
+       fake can answer. `POLICY.resumeVerdictMs` is 20ms so this stays quick. */
+    const resuming = SupervisedSession.resume(adapter, 'thread-1', OPTS, POLICY)
+    await tick()
+    adapter.sessions[0]?.emit({
+      type: 'error',
+      message: 'No conversation found with session ID: c39bee04',
+      recoverable: false,
+    })
+    await expect(resuming).rejects.toThrow(/No conversation found/)
+  })
+
+  /* A turn that ran out of turns is recoverable and says nothing about whether
+     the thread exists — resuming must not treat it as a dead session. */
+  it('does not reject on a recoverable error', async () => {
+    const adapter = new FakeAdapter({ id: 'claude' })
+    /* Real timers here, unlike the restart tests: these are *about* the verdict
+       window, and a scheduler that fires it immediately closes it before the
+       fake can answer. `POLICY.resumeVerdictMs` is 20ms so this stays quick. */
+    const resuming = SupervisedSession.resume(adapter, 'thread-1', OPTS, POLICY)
+    await tick()
+    adapter.sessions[0]?.emit({ type: 'error', message: 'max turns', recoverable: true })
+    await expect(resuming).resolves.toBeDefined()
+  })
+
+  /*
+   * Silence is success, and it has to be: a thread that is fine emits nothing
+   * until someone prompts it, so there is no positive signal to wait for.
+   */
+  it('resolves when the provider says nothing at all', async () => {
+    const adapter = new FakeAdapter({ id: 'claude' })
+    const sup = await SupervisedSession.resume(adapter, 'thread-1', OPTS, POLICY)
+    expect(sup.sessionRef).toBe('thread-1')
+  })
+
+  /*
+   * Peeking consumes, so the peeked events have to be put back.
+   *
+   * Without the replay the events a provider sent while the verdict was being
+   * decided would be read by the check and never reach the transcript — silent
+   * loss, and worst exactly when a provider is chatty on reconnect.
+   */
+  it('loses nothing it read while deciding', async () => {
+    const adapter = new FakeAdapter({ id: 'claude' })
+    /* Real timers here, unlike the restart tests: these are *about* the verdict
+       window, and a scheduler that fires it immediately closes it before the
+       fake can answer. `POLICY.resumeVerdictMs` is 20ms so this stays quick. */
+    const resuming = SupervisedSession.resume(adapter, 'thread-1', OPTS, POLICY)
+    await tick()
+    adapter.sessions[0]?.emit({ type: 'message.delta', itemRef: 'm1', text: 'still here' })
+    const sup = await resuming
+
+    const events = await collect(sup, 1)
+    expect(events[0]).toMatchObject({ type: 'message.delta', text: 'still here' })
+  })
+})
 
 describe('SupervisedSession', () => {
   it('passes events through when nothing goes wrong', async () => {
