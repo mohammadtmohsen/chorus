@@ -825,6 +825,21 @@ body {
 }
 
 /*
+ * A recap is a board, not a paragraph, and a board wraps badly.
+ *
+ * An explanation is a hundred words of prose: 420px reads fine, because prose
+ * only cares how many lines it takes. A recap is five headings and short lines
+ * capped at fifteen words, and at 420px most of those lines wrap onto a second —
+ * which turns a ten-line board into eighteen and undoes the whole point of
+ * bounding it. The height cap is untouched: it has more room to fill because it
+ * shows no excerpt, and a board that still scrolls a little is the failure that
+ * cap exists for working correctly.
+ */
+.quick-question--recap {
+  width: min(560px, calc(100% - 24px));
+}
+
+/*
  * Everything except the answer keeps its natural size. Only one region scrolls,
  * because two scrollbars in a card this size is a worse answer than a clipped
  * excerpt.

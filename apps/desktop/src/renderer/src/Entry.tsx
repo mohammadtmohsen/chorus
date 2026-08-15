@@ -391,6 +391,7 @@ export const Entry = memo(function Entry({
   message,
   cwd = '',
   onHandOff,
+  onRecap,
   answersThinking = false,
   final = false,
   grouped = false,
@@ -400,6 +401,15 @@ export const Entry = memo(function Entry({
   cwd?: string
   /** Absent when there is nobody to hand to — a one-agent conversation. */
   onHandOff?: ((message: TranscriptMessage) => void) | undefined
+  /**
+   * Opens a recap card on this reply. Absent when the pane cannot host one.
+   *
+   * The rect is the button's own, because a recap has no selection to anchor to
+   * and `fitCard` still needs somewhere to sit. Read at the click rather than
+   * measured later: by the time a promise resolves the transcript may have
+   * scrolled.
+   */
+  onRecap?: ((message: TranscriptMessage, from: DOMRect) => void) | undefined
   /** This reply follows the agent's own thinking, so it is worth marking as the answer. */
   answersThinking?: boolean
   /** The answer the finished turn arrived at, as opposed to the work it did. */
@@ -704,19 +714,52 @@ export const Entry = memo(function Entry({
         yourself — and those two choices now sit together rather than at opposite
         ends of the row.
       */}
-      {onHandOff !== undefined && message.kind === 'message' && message.status === 'complete' && (
-        <div className="entry-actions">
-          <button
-            type="button"
-            className="handoff-action"
-            onClick={() => {
-              onHandOff(message)
-            }}
-          >
-            {t('handoff.action')}
-          </button>
-        </div>
-      )}
+      {/*
+        Each button carries its own condition, and the row carries the union of
+        them. It used to be `onHandOff !== undefined` for the whole row, which
+        was right while handing off was the only tenant and would have hidden
+        Recap in every one-agent conversation — which is most of them.
+
+        The union rather than just "a finished message": the row has a
+        `margin-top`, so an empty one is a few pixels under every user message
+        for no reason anybody could see.
+      */}
+      {message.kind === 'message' &&
+        message.status === 'complete' &&
+        (onHandOff !== undefined || (final && onRecap !== undefined)) && (
+          <div className="entry-actions">
+            {onHandOff !== undefined && (
+              <button
+                type="button"
+                className="handoff-action"
+                onClick={() => {
+                  onHandOff(message)
+                }}
+              >
+                {t('handoff.action')}
+              </button>
+            )}
+            {/*
+              Only on the last reply, and `final` is already false mid-turn
+              (`Session.tsx`'s `finalKey` is null while the view is busy). That
+              is load-bearing rather than tidy: `openAside` refuses to fork on a
+              reply still arriving, because a fork inherits the session as
+              persisted and would answer that no such reply exists. Without this
+              the button's most obvious click would be an error.
+            */}
+            {final && onRecap !== undefined && (
+              <button
+                type="button"
+                className="handoff-action"
+                onClick={(e) => {
+                  onRecap(message, e.currentTarget.getBoundingClientRect())
+                }}
+              >
+                {t('aside.recap')}
+              </button>
+            )}
+          </div>
+        )}
     </article>
   )
 })

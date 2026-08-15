@@ -149,8 +149,45 @@ export function promotion(agent: string, excerpt: string, answer: string): strin
   ].join('\n')
 }
 
+/**
+ * What "take this and continue" puts in the composer, for a recap.
+ *
+ * Separate from `promotion` rather than `promotion` with an empty excerpt, and
+ * the difference is not the missing quote. `promotion` says _you explained this
+ * in an aside_ — it is handing back an answer about a passage. A recap is handing
+ * back **the task**, and the sentence that matters is the instruction after it:
+ * the whole point of promoting one is that the next turn starts from the board
+ * instead of from the tangent the board was written to escape.
+ *
+ * The mention is load-bearing for the same reason it is in `promotion`:
+ * `runtime.send` only guarantees reaching a named agent, and `lastAddressed` is
+ * not necessarily whoever spoke last.
+ *
+ * And the aside is labelled as somewhere else, not spliced in silently — the
+ * agent does not remember writing this, and one acting confidently on a
+ * conclusion it cannot place is worse than one that asks. Same reason
+ * `catchup.ts` marks its block `[Chorus]`.
+ */
+export function recapPromotion(agent: string, recap: string): string {
+  const quoted = recap
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+    .join('\n')
+
+  return [
+    `@${agent} `,
+    '',
+    quoted,
+    '',
+    'This is a recap you wrote in an aside, which is not in this conversation.',
+    'Work from it. Stay on the task it names.',
+    '',
+  ].join('\n')
+}
+
 /** Why an aside was opened. Widened here, and exhaustively switched on below. */
-export type AsidePurpose = 'question' | 'explanation' | 'translation'
+export type AsidePurpose = 'question' | 'explanation' | 'translation' | 'recap'
 
 /**
  * What the card calls itself, as a key the renderer can translate.
@@ -188,6 +225,11 @@ export function asideHeading(
       return language === ''
         ? { key: 'aside.translatingPending', vars: {} }
         : { key: 'aside.translating', vars: { language } }
+    // No language and no passage, so nothing has to resolve before the heading
+    // can be written — the only purpose of the four with a heading that is the
+    // same on the first frame as on the last.
+    case 'recap':
+      return { key: 'aside.recapping', vars: { agent } }
   }
 }
 
@@ -196,10 +238,14 @@ export function asideHeading(
  *
  * The distinction the UI actually turns on, and the one the old checks kept
  * spelling as `=== 'explanation'`: a question waits for you to type, while an
- * explanation and a translation are already running by the time the card
- * appears. So the answer region shows from the first frame, focus goes to the
- * card rather than the input, and the follow-up box stays hidden until there is
- * something to follow up on.
+ * explanation, a translation and a recap are all already running by the time the
+ * card appears. So the answer region shows from the first frame, focus goes to
+ * the card rather than the input, and the follow-up box stays hidden until there
+ * is something to follow up on.
+ *
+ * Written as "not a question" rather than as a list, so a fifth purpose that
+ * carries its own first turn needs no edit here — and a fifth that does not is
+ * a deliberate change to this line rather than a forgotten one.
  */
 export function opensWithATurn(purpose: AsidePurpose): boolean {
   return purpose !== 'question'

@@ -612,6 +612,75 @@ export function Session(props: {
   )
 
   /**
+   * Opens a recap card on a finished reply. `openCard`'s sibling, not a fourth
+   * branch of it.
+   *
+   * `openCard` starts from `selected`, and a recap has no selection: it is asked
+   * from a button under the last reply, about the conversation rather than about
+   * a passage. Everything after the anchor is the same, which is why the two sit
+   * next to each other rather than one calling the other — the shared part is
+   * four lines and the different part is the first four.
+   *
+   * **The excerpt is the whole reply, and it never reaches the prompt.** Main
+   * still checks it (`containsPassage`), because that guard authenticates which
+   * agent said this and in which session — a recap needs both, since the fork it
+   * takes is of that agent's session. What a recap has no use for is the
+   * quoting, and `recapPrompt` does not do any.
+   *
+   * The anchor comes from the button's own rect, converted from viewport space
+   * to pane space the way `inPane` converts content space — by subtracting the
+   * pane's origin. `fitCard` prefers above and drops below, so a button near the
+   * foot of a long transcript gets its card over the transcript rather than over
+   * the composer.
+   */
+  const openRecap = useCallback(
+    (message: TranscriptMessage, from: DOMRect) => {
+      if (message.actor !== 'codex' && message.actor !== 'claude') return
+      if (message.eventId === '' || message.text === '') return
+
+      const paneEl = pane.current
+      if (paneEl === null) return
+      const paneRect = paneEl.getBoundingClientRect()
+
+      const opened = window.chorus.openAside({
+        conversationId,
+        sourceEventId: message.eventId,
+        excerpt: message.text,
+        purpose: 'recap',
+      })
+
+      setAskingAbout({
+        text: message.text,
+        anchor: {
+          space: 'pane',
+          centreX: from.left + from.width / 2 - paneRect.left,
+          top: from.top - paneRect.top,
+          height: from.height,
+        },
+        source: {
+          eventId: message.eventId,
+          actor: message.actor,
+          kind: message.kind,
+          status: message.status,
+        },
+        purpose: 'recap',
+        opening: opened.then((result) => result.asideId),
+        // Nothing to resolve — a recap names no language. Kept a promise because
+        // the card's prop is one, and a second shape for one purpose would be a
+        // branch in every consumer to save an await that never blocks.
+        language: opened.then(() => ''),
+      })
+
+      // The card replaces the quote offer, as `openCard` does. Clicking the
+      // button clears the DOM selection but not this, and the offer would
+      // otherwise float over the card it was replaced by.
+      setSelected(null)
+      window.getSelection()?.removeAllRanges()
+    },
+    [conversationId]
+  )
+
+  /**
    * Closes the aside a card was showing. The other half of `openCard`.
    *
    * Here rather than in the card's own cleanup, because React runs an effect
@@ -858,6 +927,12 @@ export function Session(props: {
             }
           : undefined
       }
+      /*
+       * `Entry` gates this on `final`, which is already null mid-turn. Passed
+       * unconditionally for every agent message rather than filtered here, so
+       * the one rule about which reply may be recapped lives in one place.
+       */
+      onRecap={message.actor === 'codex' || message.actor === 'claude' ? openRecap : undefined}
     />
   )
 

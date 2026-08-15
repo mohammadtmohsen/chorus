@@ -7,6 +7,7 @@ import {
   fitCard,
   opensWithATurn,
   promotion,
+  recapPromotion,
   type AsidePurpose,
   type AsideState,
 } from './aside.js'
@@ -354,7 +355,13 @@ export function QuickQuestion(props: {
        * its full height, so the answer arrives into a box that has already
        * finished moving. The `ResizeObserver` above re-fits it on that one step.
        */
-      className={started ? 'quick-question quick-question--answering' : 'quick-question'}
+      className={[
+        'quick-question',
+        ...(started ? ['quick-question--answering'] : []),
+        // A board wraps badly at an explanation's width; see the rule in
+        // `styles.css`. The `ResizeObserver` re-fits on the width change.
+        ...(props.purpose === 'recap' ? ['quick-question--recap'] : []),
+      ].join(' ')}
       tabIndex={-1}
       /*
        * Hidden until it has been measured, so the first paint is not the card
@@ -376,8 +383,17 @@ export function QuickQuestion(props: {
         </button>
       </header>
 
-      {/* The passage, so the card says what it is about without the transcript. */}
-      <blockquote className="quick-excerpt">{props.excerpt}</blockquote>
+      {/*
+        The passage, so the card says what it is about without the transcript.
+
+        A recap is the exception, and deliberately: its excerpt is the whole last
+        reply, carried only so main can authenticate the source. Showing it would
+        put the long scattered reply back on screen directly above the board
+        written to replace it.
+      */}
+      {props.purpose !== 'recap' && (
+        <blockquote className="quick-excerpt">{props.excerpt}</blockquote>
+      )}
 
       {started && (
         <div className="quick-answer">
@@ -436,17 +452,24 @@ export function QuickQuestion(props: {
       </form>
 
       <div className="quick-actions">
-        <button
-          type="button"
-          className="btn"
-          disabled={!state.answered}
-          onClick={() => {
-            props.onStage(`> ${props.excerpt}\n\n${state.answer}\n\n`)
-            props.onClose()
-          }}
-        >
-          {t('aside.quote')}
-        </button>
+        {/*
+          Quoting is the passage plus the answer, so a recap has nothing to
+          quote: its passage is the reply being escaped and its answer is the
+          board, which the button beside this one already carries.
+        */}
+        {props.purpose !== 'recap' && (
+          <button
+            type="button"
+            className="btn"
+            disabled={!state.answered}
+            onClick={() => {
+              props.onStage(`> ${props.excerpt}\n\n${state.answer}\n\n`)
+              props.onClose()
+            }}
+          >
+            {t('aside.quote')}
+          </button>
+        )}
         {/*
           Staged, never sent. The routing is by mention and the wording has to
           say the answer came from somewhere this agent cannot remember — both
@@ -457,11 +480,15 @@ export function QuickQuestion(props: {
           className="btn btn--go"
           disabled={!state.answered}
           onClick={() => {
-            props.onStage(promotion(props.agent, props.excerpt, state.answer))
+            props.onStage(
+              props.purpose === 'recap'
+                ? recapPromotion(props.agent, state.answer)
+                : promotion(props.agent, props.excerpt, state.answer)
+            )
             props.onClose()
           }}
         >
-          {t('aside.takeForward')}
+          {t(props.purpose === 'recap' ? 'aside.useRecap' : 'aside.takeForward')}
         </button>
       </div>
 

@@ -5,7 +5,13 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ChorusRuntime, explainPrompt, translatePrompt } from './runtime.js'
+import {
+  ChorusRuntime,
+  explainPrompt,
+  recapPrompt,
+  taskAnchor,
+  translatePrompt,
+} from './runtime.js'
 import { DEFAULT_SETTINGS, writeSettings } from './settings.js'
 
 /**
@@ -176,6 +182,111 @@ describe('openAside branches without disturbing the parent', () => {
     // starts doing things — which no permission rule would catch, because
     // reading files is allowed.
     expect(asked).toContain('do not continue the work')
+  })
+})
+
+/**
+ * A recap is the one purpose whose excerpt never reaches its prompt, and the one
+ * whose prompt is built out of the log rather than out of the passage.
+ */
+describe('opening a recap', () => {
+  /** A user turn in the parent, as `runtime.send` would log it — mention and all. */
+  const asked = (text: string): void => {
+    runtime.store.append({
+      conversationId,
+      actor: 'user',
+      payload: { type: 'user.message', text },
+    })
+  }
+  const sentToFork = (): string => adapter.forked[0]?.session.sent.at(0)?.text ?? ''
+
+  it('anchors on the user, and does not quote the reply back', async () => {
+    asked('@claude make the phone field match the API contract')
+    const sourceEventId = reply('A long scattered reply about four other things.')
+
+    await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'A long scattered reply about four other things.',
+      purpose: 'recap',
+    })
+
+    const prompt = sentToFork()
+    expect(prompt).toContain('> make the phone field match the API contract')
+    // The whole design. A prompt carrying the reply would summarise the reply,
+    // which is the failure this exists to fix rather than a smaller version.
+    expect(prompt).not.toContain('four other things')
+  })
+
+  it('strips the routing mention, which is scaffolding rather than task', async () => {
+    asked('@claude make the phone field match the API contract')
+    const sourceEventId = reply('Something.')
+    await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'Something.',
+      purpose: 'recap',
+    })
+    expect(sentToFork()).not.toContain('@claude make')
+  })
+
+  it('logs a short line and delivers the prompt, so the transcript reads back right', async () => {
+    asked('fix the parser')
+    const sourceEventId = reply('Something.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'Something.',
+      purpose: 'recap',
+    })
+    const logged = runtime.store
+      .read(asideId)
+      .filter((e) => e.payload.type === 'user.message')
+      .map((e) => (e.payload as { text: string }).text)
+    // The instructions are scaffolding. What is read back later should be what
+    // was asked for — the same split `explanation` and `translation` use.
+    expect(logged).toEqual(['Where are we?'])
+  })
+
+  it('titles the aside with the task, not with the reply it was opened from', async () => {
+    asked('make the phone field match the API contract')
+    const sourceEventId = reply('An opening sentence about something else entirely.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'An opening sentence about something else entirely.',
+      purpose: 'recap',
+    })
+    const title = runtime.store.read(asideId).find((e) => e.payload.type === 'conversation.created')
+    expect((title?.payload as { title: string }).title).toContain('phone field')
+  })
+
+  it('still refuses an excerpt the agent did not say', async () => {
+    asked('fix the parser')
+    const sourceEventId = reply('The projection lags behind the log.')
+    // The guard is not about quoting — it authenticates *which agent said this,
+    // in which session*, and a recap forks that session.
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId,
+        excerpt: 'I recommend deleting the database',
+        purpose: 'recap',
+      })
+    ).rejects.toThrow(/not part of that reply/)
+  })
+
+  it('opens on a conversation with nothing asked in it yet', async () => {
+    // No user messages at all: the anchor is empty and the prompt still has to
+    // be a prompt rather than a crash or an empty string.
+    const sourceEventId = reply('Something.')
+    await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'Something.',
+      purpose: 'recap',
+    })
+    expect(sentToFork()).toContain('status board')
   })
 })
 
@@ -959,5 +1070,161 @@ describe('translatePrompt', () => {
 
   it('leaves no room for a preamble', () => {
     expect(prompt).toContain('No preamble')
+  })
+})
+
+/**
+ * The anchor, which is the half of a recap that is not a prompt.
+ *
+ * Asserted separately because the judgement is here: which end survives the
+ * budget, what happens at the boundary, and whether a single over-long message
+ * anchors the recap or leaves it with no task in it at all.
+ */
+describe('taskAnchor', () => {
+  it('keeps everything when the budget is not touched', () => {
+    const { kept, omitted } = taskAnchor(['first', 'second', 'third'])
+    expect(kept).toEqual(['first', 'second', 'third'])
+    expect(omitted).toBe(0)
+  })
+
+  it('drops the oldest first, because the task is defined by the latest ask', () => {
+    // A recap anchored on message one of forty would describe a task that
+    // finished hours ago.
+    const { kept, omitted } = taskAnchor(['oldest', 'middle', 'newest'], 16)
+    expect(kept).toEqual(['middle', 'newest'])
+    expect(omitted).toBe(1)
+  })
+
+  it('returns what it kept in the order it was asked, not the order it spent', () => {
+    // Newest-first is how the budget is spent, not how the result reads. A
+    // sequence of requests is a narrowing, and reversing it reverses that — so
+    // the budget has to bind here, or this passes on an untouched input.
+    const { kept, omitted } = taskAnchor(['drop me', 'ask one', 'ask two'], 16)
+    expect(kept).toEqual(['ask one', 'ask two'])
+    expect(omitted).toBe(1)
+  })
+
+  it('keeps one message even when it alone exceeds the whole budget', () => {
+    // The `kept.length > 0` guard, which `catchup.ts` carries for the same
+    // reason: a prompt with no task in it is worse than a trimmed one.
+    const { kept, omitted } = taskAnchor(['x'.repeat(500)], 10, 500)
+    expect(kept).toHaveLength(1)
+    expect(omitted).toBe(0)
+  })
+
+  it('trims a long message from both ends rather than its head', () => {
+    // The close of a request usually carries the actual ask, which is the half
+    // a task anchor can least afford to lose.
+    const { kept } = taskAnchor([`START${'.'.repeat(200)}END`], 4_000, 60)
+    expect(kept[0]).toContain('START')
+    expect(kept[0]).toContain('END')
+    expect(kept[0]).toContain('… [trimmed] …')
+  })
+
+  it('discards messages that are only whitespace', () => {
+    const { kept, omitted } = taskAnchor(['  ', 'real', '\n\n'])
+    expect(kept).toEqual(['real'])
+    // Blank messages were never candidates, so they are not "omitted" either —
+    // a count that included them would report a truncation that never happened.
+    expect(omitted).toBe(0)
+  })
+})
+
+/**
+ * A recap is not an explanation of the whole conversation.
+ *
+ * Explain answers _what does this mean_ about a passage in front of you; recap
+ * answers _where are we_, and its subject is the thing the conversation has
+ * drifted away from. So the assertions here are mostly about what the prompt
+ * refuses to lean on — the last reply — and about the two numbers that keep the
+ * board a board.
+ */
+describe('recapPrompt', () => {
+  const prompt = recapPrompt(['Make the phone field match the API contract.'])
+
+  it('quotes the user, and only the user', () => {
+    // The whole mechanism against drift. The reply that triggered the recap is
+    // deliberately absent: summarising it is the failure this feature exists for.
+    expect(prompt).toContain('> Make the phone field match the API contract.')
+    expect(prompt).toContain("These are the user's own messages, from Chorus's log")
+  })
+
+  it('commits to a board in its opening clause', () => {
+    // `explainPrompt` records the lesson: a rule stated only in the list below
+    // was still broken by a real answer, because the opening clause is the one
+    // the model commits to first.
+    expect(prompt).toContain('Your reply is a status board, not a message.')
+    expect(prompt.indexOf('status board')).toBeLessThan(prompt.indexOf('Leave out:'))
+  })
+
+  it('fixes the headings and their order', () => {
+    expect(prompt).toContain('Task, Done, Open, Next')
+    expect(prompt).toContain('Nothing before them and nothing after them')
+  })
+
+  it('bounds lines and words, not just one of them', () => {
+    // A cap on lines alone produces four very long lines, which is the same
+    // wall of text one heading further in.
+    expect(prompt).toContain('up to four lines')
+    expect(prompt).toContain('up to three lines')
+    expect(prompt).toContain('exactly one line')
+    expect(prompt).toContain('Fifteen words a line at most')
+  })
+
+  it('takes the task from the user rather than from the last reply', () => {
+    expect(prompt).toContain('in their own words below')
+    expect(prompt).toContain('Not what you happened to be talking about last')
+  })
+
+  it('gives the off-task material somewhere bounded to go', () => {
+    // Asked for as "useful but scattered". With no home for it, it leaks back
+    // into Done and the board stops being one.
+    expect(prompt).toContain('Parked')
+    expect(prompt).toContain('up to two')
+    expect(prompt).toContain('Anything off-task goes there and nowhere else')
+  })
+
+  it('asks for "unverified" rather than trusting a Done line', () => {
+    // "Done" and "done and checked" are exactly what a recap is read to tell
+    // apart, and the difference is invisible unless it is asked for.
+    expect(prompt).toContain('end that line with "unverified"')
+  })
+
+  it('names the padding rather than asking for brevity', () => {
+    for (const banned of [
+      'not one of the five things above',
+      'why a decision was right',
+      'offers you were not asked for',
+      'praise, apology',
+      "restating the user's request",
+    ]) {
+      expect(prompt).toContain(banned)
+    }
+  })
+
+  it('forbids padding a section that has nothing true in it', () => {
+    expect(prompt).toContain('never pad a section to fill it')
+    expect(prompt).toContain('leave the line out rather than')
+  })
+
+  it('carries the do-not-work clause every aside prompt carries', () => {
+    // A request for a status board looks more like a task than any of the other
+    // three, so this matters here most.
+    expect(prompt).toContain('Do not continue the work or change anything.')
+  })
+
+  it('discloses a truncated anchor instead of reading as a complete one', () => {
+    const long = Array.from({ length: 40 }, (_, i) => `request ${String(i)} ${'.'.repeat(300)}`)
+    expect(recapPrompt(long)).toContain('earlier messages omitted)')
+  })
+
+  it('says nothing about omissions when there were none', () => {
+    expect(prompt).not.toContain('omitted)')
+  })
+
+  it('separates quoted messages, so a narrowing does not arrive as one paragraph', () => {
+    // Consecutive `>` lines are a single blockquote to every markdown reader and
+    // to both CLIs.
+    expect(recapPrompt(['first ask', 'then narrower'])).toContain('> first ask\n\n> then narrower')
   })
 })

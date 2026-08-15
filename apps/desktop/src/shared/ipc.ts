@@ -755,8 +755,13 @@ export const IPC_CONTRACT = {
        * `explanation` carries its own first turn — main reads the language and
        * builds the prompt, because prompt content from the renderer is the same
        * class of problem as an unverified source event.
+       *
+       * `recap` is the one purpose whose excerpt never reaches its prompt. It is
+       * still sent and still checked: the guard authenticates *which agent said
+       * this, in which session*, which a recap needs as much as an explanation
+       * does — it is only the quoting that a recap has no use for.
        */
-      purpose: z.enum(['question', 'explanation', 'translation']).optional(),
+      purpose: z.enum(['question', 'explanation', 'translation', 'recap']).optional(),
     }),
     /**
      * The language main actually used, echoed back.

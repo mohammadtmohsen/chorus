@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { asideHeading, asideState, fitCard, opensWithATurn, promotion } from './aside.js'
+import {
+  asideHeading,
+  asideState,
+  fitCard,
+  opensWithATurn,
+  promotion,
+  recapPromotion,
+} from './aside.js'
 import { EMPTY_VIEW, type TranscriptMessage, type TranscriptView } from './transcript.js'
 
 const said = (over: Partial<TranscriptMessage>): TranscriptMessage => ({
@@ -234,9 +241,20 @@ describe('asideHeading', () => {
   })
 
   it('returns keys, never words — the reducer has no translator', () => {
-    for (const purpose of ['question', 'explanation', 'translation'] as const) {
+    for (const purpose of ['question', 'explanation', 'translation', 'recap'] as const) {
       expect(asideHeading(purpose, 'Arabic', 'claude').key).toMatch(/^aside\./)
     }
+  })
+
+  it('gives a recap the same heading on its first frame as on its last', () => {
+    // The only purpose of the four with nothing to resolve: no language, no
+    // passage. So there is no pending variant, and asserting the language is
+    // ignored is what stops one being added by copying the pair above.
+    expect(asideHeading('recap', '', 'claude')).toEqual({
+      key: 'aside.recapping',
+      vars: { agent: 'claude' },
+    })
+    expect(asideHeading('recap', 'Arabic', 'claude')).toEqual(asideHeading('recap', '', 'claude'))
   })
 })
 
@@ -245,5 +263,44 @@ describe('opensWithATurn', () => {
     expect(opensWithATurn('question')).toBe(false)
     expect(opensWithATurn('explanation')).toBe(true)
     expect(opensWithATurn('translation')).toBe(true)
+    // A recap asks itself, so the answer region shows from the first frame and
+    // the follow-up box stays hidden until there is a board to follow up on.
+    expect(opensWithATurn('recap')).toBe(true)
+  })
+})
+
+/**
+ * Promoting a recap is not promoting an answer, and the difference is the
+ * sentence after the quote rather than the missing excerpt.
+ */
+describe('recapPromotion', () => {
+  const staged = recapPromotion('claude', 'Task — ship the phone shape\nNext — delete the branch')
+
+  it('mentions the author, because routing is by mention', () => {
+    expect(staged.startsWith('@claude')).toBe(true)
+  })
+
+  it('carries the board as one quoted block', () => {
+    expect(staged).toContain('> Task — ship the phone shape\n> Next — delete the branch')
+  })
+
+  it('says the board came from somewhere the agent cannot remember', () => {
+    expect(staged).toContain('not in this conversation')
+  })
+
+  it('instructs, where promotion only informs', () => {
+    // The whole reason to promote a recap: the next turn should start from the
+    // board rather than from the tangent the board was written to escape.
+    expect(staged).toContain('Stay on the task it names')
+  })
+
+  it('carries no excerpt, because a recap has no passage', () => {
+    // The reply is the thing being escaped. Quoting it back would put it in the
+    // composer, one step from being the next turn's context again.
+    expect(staged).not.toContain('You explained this')
+  })
+
+  it('quotes a blank line inside the board rather than breaking out of it', () => {
+    expect(recapPromotion('codex', 'one\n\ntwo')).toContain('> one\n>\n> two')
   })
 })

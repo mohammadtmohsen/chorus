@@ -452,7 +452,10 @@
     "explaining": "Explaining in {{language}}",
     "explainingPending": "Explaining this",
     "translating": "Translating into {{language}}",
-    "translatingPending": "Translating this"
+    "translatingPending": "Translating this",
+    "recap": "Where are we?",
+    "recapping": "Where {{agent}} thinks we are",
+    "useRecap": "Continue from this"
   },
   "terminal": {
     "sessionTitle": "Terminal — {{project}}",

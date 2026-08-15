@@ -334,6 +334,170 @@ export function translatePrompt(excerpt: string, language: string): string {
   ].join('\n')
 }
 
+/**
+ * How much of the user's own words a recap may carry, and how much of any one.
+ *
+ * A third of `catchup.ts`'s 12,000, because this is one kind of line rather than
+ * a whole transcript, and it is paid on every recap rather than once per turn.
+ * The per-message cap is `catchup.ts`'s own `MAX_MESSAGE_CHARS`, deliberately —
+ * both are answering "how much of one user message is enough to recognise it".
+ * Guessed rather than measured; see the plan's open questions.
+ */
+const RECAP_ANCHOR_CHARS = 4_000
+const RECAP_MESSAGE_CHARS = 1_500
+
+/**
+ * The user's own messages, newest-first under a budget.
+ *
+ * Pure, and separate from the prompt, because this is the part with judgement in
+ * it — which end to keep, what happens at the boundary, and whether an
+ * over-long single message survives at all.
+ *
+ * **Newest first, oldest rendered first.** Recency wins when the budget binds:
+ * the task is defined by what was asked most recently, and a recap that anchored
+ * on message one of forty would describe a task that finished hours ago. But the
+ * kept messages are returned in their original order, because a reader and a
+ * model both take a sequence of requests as a narrowing, and reversing it
+ * reverses the narrowing.
+ *
+ * **One message always survives.** The `kept.length > 0` guard is `catchup.ts`'s
+ * (`fitToBudget`, line 360) and exists for the same reason: a single message
+ * longer than the whole budget must still anchor the recap, trimmed, rather than
+ * leaving the prompt with no task in it at all.
+ */
+export function taskAnchor(
+  asked: readonly string[],
+  budget = RECAP_ANCHOR_CHARS,
+  perMessage = RECAP_MESSAGE_CHARS
+): { kept: readonly string[]; omitted: number } {
+  const said = asked.map((text) => trimBothEnds(text, perMessage)).filter((text) => text !== '')
+
+  const kept: string[] = []
+  let used = 0
+  for (let i = said.length - 1; i >= 0; i--) {
+    const text = said[i]
+    if (text === undefined) continue
+    const cost = text.length + 1
+    if (used + cost > budget && kept.length > 0) break
+    used += cost
+    kept.unshift(text)
+  }
+
+  return { kept, omitted: said.length - kept.length }
+}
+
+/**
+ * `catchup.ts:368`'s trim, kept to the same shape.
+ *
+ * Both ends rather than a head: the opening says what the request is about and
+ * the close usually carries the actual ask, and for a task anchor the close is
+ * the half that matters most.
+ */
+function trimBothEnds(text: string, limit: number): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= limit) return trimmed
+  const half = Math.floor((limit - 20) / 2)
+  return `${trimmed.slice(0, half)}\n… [trimmed] …\n${trimmed.slice(-half)}`
+}
+
+/**
+ * What a fork is asked when someone has lost the thread.
+ *
+ * **Not `explainPrompt` for a whole conversation.** Explain answers _what does
+ * this mean_ about a passage in front of you. A recap answers _where are we_, and
+ * its subject is the thing the conversation has drifted away from — so the
+ * passage that triggered it is the one input the prompt must not lean on.
+ * Nothing is quoted from the reply here, and that absence is the feature.
+ *
+ * **The anchor is the user's own messages, read out of the log by the caller.**
+ * The fork inherits the agent's session as persisted, which means it inherits
+ * whatever compaction has already discarded — and asking a drifted context to
+ * describe the task it drifted from is asking the symptom to diagnose itself.
+ * The log has not drifted. Claude Code's own compaction prompt keeps an "All user
+ * messages" section for the same reason.
+ *
+ * **Two numbers, not an adjective.** `explainPrompt` records that "short" drifted
+ * twice before a number fixed it. A cap on lines alone produces four very long
+ * lines, so lines and words are both bounded.
+ *
+ * **`Parked` exists because the complaint was "useful but scattered".** The
+ * off-task material is worth something. Given nowhere to go it leaks back into
+ * `Done` and the board stops being a board; given a bounded home it is preserved
+ * and quarantined at once.
+ *
+ * The do-not-work clause is the same one `asideQuestion`, `explainPrompt` and
+ * `translatePrompt` carry, for the same measured reason: without it a fork treats
+ * the request as the next turn of the work and starts doing things, which no
+ * permission rule catches because reading files is allowed. A request for a
+ * status board looks more like a task than any of the other three.
+ */
+export function recapPrompt(asked: readonly string[]): string {
+  const { kept, omitted } = taskAnchor(asked)
+
+  return [
+    'Someone has lost the thread of this conversation and needs to see where it',
+    'stands.',
+    '',
+    // Lead position, because the first clause is the one the model commits to —
+    // the same lesson `explainPrompt` records at its "Begin with what it *is*".
+    'Your reply is a status board, not a message. Four headings, in this order —',
+    'Task, Done, Open, Next. Nothing before them and nothing after them.',
+    '',
+    'Task — one line. What is being worked on, taken from what the user asked for',
+    'in their own words below. Not what you happened to be talking about last.',
+    '',
+    'Done — up to four lines. Only what is actually finished, each naming the file,',
+    'command or decision it refers to. If something has not been run or checked',
+    'since it changed, end that line with "unverified".',
+    '',
+    'Open — up to three lines. What is unfinished, blocked, or waiting on the user.',
+    'Say what each one is waiting on.',
+    '',
+    'Next — exactly one line, beginning with a verb. The single action that comes',
+    "next. It must follow from the user's most recent request, not from a tangent.",
+    '',
+    'Then, only if there is something for it, a fifth heading — Parked — up to two',
+    'lines, for things raised that are worth keeping but are not part of this task.',
+    'Anything off-task goes there and nowhere else.',
+    '',
+    'Fifteen words a line at most. No sub-bullets, no prose paragraphs, no preamble,',
+    'no closing remark. Omit Done or Open entirely if there is nothing true to put',
+    'in them; never pad a section to fill it.',
+    '',
+    // Seeded from the request this was built for — "it's useful but scattered" —
+    // rather than from a real answer. Each line added later should say which
+    // answer caused it, the way `explainPrompt`'s list does.
+    'Leave out:',
+    '- anything from your last reply that is not one of the five things above;',
+    '- how something works, or why a decision was right;',
+    '- suggestions, options or offers you were not asked for;',
+    '- praise, apology, or remarks about this conversation;',
+    "- restating the user's request beyond the one Task line.",
+    '',
+    'If something is not in the conversation, leave the line out rather than',
+    'inferring it. A short board is correct. A padded one is not.',
+    '',
+    'Do not continue the work or change anything. Write the board and stop.',
+    '',
+    "These are the user's own messages, from Chorus's log. They define the task:",
+    '',
+    // Disclosed rather than silent, as `catchup.ts:87` does it. A truncated
+    // anchor that does not say so reads as a complete one.
+    ...(omitted === 0 ? [] : [`(${String(omitted)} earlier messages omitted)`]),
+    // A blank line between messages, not just between their quote blocks.
+    // Consecutive `>` lines are one blockquote to every markdown reader and to
+    // both CLIs, so without the separator four requests arrive as one paragraph
+    // and the narrowing they describe is lost.
+    ...kept.flatMap((text, index) => [
+      ...(index === 0 ? [] : ['']),
+      text
+        .split('\n')
+        .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+        .join('\n'),
+    ]),
+  ].join('\n')
+}
+
 /** Long enough for a cold provider start, short enough not to look like a hang. */
 const REOPEN_TIMEOUT_MS = 20_000
 
@@ -780,8 +944,9 @@ export class ChorusRuntime {
      *
      * `explanation` carries its own first turn: there is nothing for the user to
      * type, so opening and asking are one act. `question` opens empty and waits.
+     * `translation` and `recap` behave as `explanation` does here.
      */
-    purpose?: 'question' | 'explanation' | 'translation'
+    purpose?: 'question' | 'explanation' | 'translation' | 'recap'
     /**
      * Optional, and usually absent.
      *
@@ -912,6 +1077,34 @@ export class ChorusRuntime {
       )
     }
 
+    /*
+     * A recap's anchor: what the user actually asked for, from the log.
+     *
+     * Read here, before anything is spawned, for the same reason the language is
+     * — and read from the **store** rather than from the fork, which is the whole
+     * design. A fork inherits the session as persisted, compaction included, so
+     * asking it to name the task is asking a drifted context to describe the
+     * drift. The log has not drifted.
+     *
+     * `parseMentions` is used for its `text`, documented as "the message with its
+     * leading mentions removed, as the agent should see it". `send` logs the raw
+     * typed line (`user.message`, above), so `@claude ` is in there and is
+     * routing scaffolding, not task. Both agent ids are named rather than the
+     * live participants: the job here is stripping scaffolding, not routing, and
+     * a mention of an agent since removed from the room is scaffolding too.
+     */
+    const asked =
+      purpose !== 'recap'
+        ? []
+        : this.store
+            .read(request.conversationId)
+            .filter((e) => e.payload.type === 'user.message')
+            .map((e) =>
+              e.payload.type === 'user.message'
+                ? parseMentions(e.payload.text, { participants: ['codex', 'claude'] }).text
+                : ''
+            )
+
     const opts: SessionOpts = {
       cwd: parent.cwd,
       sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
@@ -943,7 +1136,23 @@ export class ChorusRuntime {
         payload: {
           type: 'conversation.created',
           projectId: parent.cwd,
-          title: excerpt.slice(0, 80),
+          /*
+           * A recap titles itself with the task, not with the passage.
+           *
+           * Every other purpose is *about* the excerpt, so the excerpt is the
+           * title. A recap's excerpt is the whole last reply — it is there to
+           * authenticate the source, not to be the subject — and eighty
+           * characters of it would title the row with whatever tangent the reply
+           * happened to open on, which is the thing being escaped. The latest
+           * user message is the closest the log has to "what this is about".
+           */
+          title:
+            purpose === 'recap'
+              ? (asked
+                  .filter((text) => text !== '')
+                  .at(-1)
+                  ?.slice(0, 80) ?? 'Recap')
+              : excerpt.slice(0, 80),
           aside: {
             parentId: request.conversationId,
             sourceEventId: request.sourceEventId,
@@ -994,6 +1203,12 @@ export class ChorusRuntime {
             `Translate this into ${language}.`,
             translatePrompt(excerpt, language)
           )
+        } else if (purpose === 'recap') {
+          // The excerpt is not passed, and that is the branch. Every other
+          // purpose quotes the passage into its prompt; a recap whose prompt
+          // carried the reply would summarise the reply, which is the failure
+          // this exists to fix rather than a smaller version of it.
+          await service.sendUserMessage('Where are we?', recapPrompt(asked))
         } else if (request.question !== undefined && request.question !== '') {
           await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
         }
