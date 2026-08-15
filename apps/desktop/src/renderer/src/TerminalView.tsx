@@ -3,6 +3,7 @@ import { Terminal, type ITheme } from '@xterm/xterm'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TerminalPush, TerminalRefShape } from '../../shared/ipc.js'
+import { primaryOnly } from './shortcuts.js'
 import { pendingUntilAttached, shouldApply, type Attachment } from './terminal-stream.js'
 
 /**
@@ -245,7 +246,15 @@ export function TerminalView(props: TerminalViewProps): React.JSX.Element {
         return false
       }
 
-      if (!event.metaKey || event.altKey || event.shiftKey || event.ctrlKey) return true
+      /*
+       * Only a bare primary chord continues; everything else goes to the shell.
+       *
+       * This must stay strict. On macOS `⌃K` is "kill line" and `⌃C` interrupts
+       * — a terminal that swallowed those would be broken in the way people
+       * notice first. On Windows the primary modifier *is* Ctrl, so `primaryOnly`
+       * deliberately still lets `Ctrl+C` through below by matching only on `k`.
+       */
+      if (!primaryOnly(event)) return true
       if (event.key.toLowerCase() !== 'k') return true
       term.clear()
       if (attachment !== null) {

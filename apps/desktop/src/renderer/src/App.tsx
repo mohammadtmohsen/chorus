@@ -14,6 +14,7 @@ import { Workspace } from './workspace/Workspace.js'
 import { ConfirmSessionAction } from './workspace/ConfirmSessionAction.js'
 import { sameWorkspaceSnapshot, useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
 import { reorderSessions } from './workspace/session-row.js'
+import { setRunningPlatform } from './shortcuts.js'
 
 /**
  * Raises one banner, and makes clicking it land somewhere useful.
@@ -302,9 +303,13 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     window.chorus
       .getAppInfo()
-      .then(({ appVersion: version, home: where }) => {
+      .then(({ appVersion: version, home: where, platform }) => {
         setAppVersion(version)
         setHome(where)
+        // Held at module scope in `shortcuts.ts` rather than in state: the
+        // keyboard handlers read it at event time, and Workspace's listener
+        // effect is deliberately `[]` so a prop would be captured stale.
+        setRunningPlatform(platform)
       })
       .catch(() => {
         setAppVersion(null)

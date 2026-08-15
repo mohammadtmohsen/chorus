@@ -36,7 +36,22 @@ function createWindow(): BrowserWindow {
     minWidth: 360,
     minHeight: 420,
     show: false,
-    titleBarStyle: 'hiddenInset',
+    /*
+     * macOS only, and the guard is load-bearing rather than tidy.
+     *
+     * `hiddenInset` hides the frame and draws the traffic lights over the top
+     * of the page, which is why `.masthead` is exactly 31px tall and carries
+     * 88px of left padding — that inset is the traffic lights' room, and the
+     * masthead is the window's drag region because there is no title bar to
+     * drag. On Windows Electron falls back to a standard frame, so unguarded
+     * the user got the OS title bar *plus* the 31px masthead *plus* 88px of
+     * empty space where no traffic lights are.
+     *
+     * A custom Windows frame is deliberately not hidden inside this change: it
+     * would also need accessible minimize, maximize, restore and close
+     * controls, and that is a feature rather than a platform guard.
+     */
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // Non-negotiable (plan §4.4). Relaxing any of these turns an injection in

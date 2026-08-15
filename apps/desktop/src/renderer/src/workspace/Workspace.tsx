@@ -15,6 +15,7 @@ import { countRender } from './render-count.js'
 import { monogramOf, stepSlot } from './session-row.js'
 import { useWorkspaceStore } from './store.js'
 import { useTabDrag, type ActiveTabDrag } from './useTabDrag.js'
+import { primaryAlt, primaryOnly, primaryShift, shortcutLabel } from '../shortcuts.js'
 
 /**
  * The shell: a rail of sessions on the left, panes filling the rest.
@@ -205,12 +206,12 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       const activeId = pane?.activeTabId ?? null
       const inTerminal = document.activeElement?.closest('.terminal-panel') != null
 
-      if (event.metaKey && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'j') {
+      if (primaryShift(event) && !event.altKey && event.key.toLowerCase() === 'j') {
         event.preventDefault()
         state.toggleGlobalTerminal()
         return
       }
-      if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'j') {
+      if (primaryOnly(event) && event.key.toLowerCase() === 'j') {
         event.preventDefault()
         // The global terminal answers its own ⌘J; a session's must not take it.
         if (document.activeElement?.closest('.terminal-panel--global') != null) return
@@ -232,6 +233,13 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
        * other chord here does, so no other chord needs the guard — holding this
        * one would otherwise spawn shells at the OS key-repeat rate, which is the
        * only way a person reaches forty terminals by accident.
+       */
+      /*
+       * Ctrl on *both* platforms, because it is VS Code's binding rather than a
+       * primary-modifier chord. On Windows Ctrl is also the primary modifier,
+       * so what keeps this distinct from `Ctrl+\`` is Shift plus the physical
+       * key code — not the `!metaKey` guard, which there only means "the
+       * Windows key is not held".
        */
       if (
         event.ctrlKey &&
@@ -263,13 +271,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         state.addSessionTerminal(activeId)
         return
       }
-      if (
-        event.metaKey &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === 'k' &&
-        !inTerminal
-      ) {
+      if (primaryOnly(event) && event.key.toLowerCase() === 'k' && !inTerminal) {
         event.preventDefault()
         chordUntil.current = performance.now() + 1500
         return
@@ -301,8 +303,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
        * pane-focus arm below, which would otherwise take the arrow.
        */
       if (
-        event.metaKey &&
-        event.altKey &&
+        primaryAlt(event) &&
         event.shiftKey &&
         (direction === 'up' || direction === 'down') &&
         activeId !== null
@@ -313,7 +314,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         if (slot !== null) reorderRef.current(activeId, slot)
         return
       }
-      if (event.metaKey && event.altKey && direction !== null && paneId !== null) {
+      if (primaryAlt(event) && direction !== null && paneId !== null) {
         event.preventDefault()
         if (
           event.shiftKey &&
@@ -329,19 +330,19 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         if (target !== null) state.focusPane(target)
         return
       }
-      if (event.metaKey && !event.altKey && !event.shiftKey && event.key === '\\') {
+      if (primaryOnly(event) && event.key === '\\') {
         event.preventDefault()
         if (paneId !== null && activeId !== null) state.splitTab(activeId, paneId, 'right')
         commitRef.current()
         return
       }
-      if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'w') {
+      if (primaryOnly(event) && event.key.toLowerCase() === 'w') {
         event.preventDefault()
         if (paneId !== null && activeId !== null) state.closeTab(paneId, activeId)
         commitRef.current()
         return
       }
-      if (event.metaKey && event.shiftKey && (event.key === '[' || event.key === ']')) {
+      if (primaryShift(event) && (event.key === '[' || event.key === ']')) {
         event.preventDefault()
         if (paneId === null || pane === undefined || pane.tabs.length === 0) return
         const next =
@@ -353,7 +354,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         if (id !== undefined) state.activateTab(paneId, id)
         return
       }
-      if (event.metaKey && !event.altKey && !event.shiftKey && /^[1-4]$/.test(event.key)) {
+      if (primaryOnly(event) && /^[1-4]$/.test(event.key)) {
         const target = leafPaneIds(state.layout)[Number(event.key) - 1]
         if (target !== undefined) {
           event.preventDefault()
@@ -446,7 +447,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
               onRemoveTerminal={removeGlobalTerminalTab}
               onFocusAway={() => undefined}
               variant="global"
-              shortcut={t('terminal.shortcutGlobal')}
+              shortcut={shortcutLabel({ primary: true, shift: true, key: 'j' })}
             />
           )}
         </main>
