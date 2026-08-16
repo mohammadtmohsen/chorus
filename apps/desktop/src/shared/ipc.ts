@@ -13,8 +13,28 @@ export const AgentProbeResult = z.object({
   id: z.enum(['codex', 'claude']),
   installed: z.boolean(),
   version: z.string().nullable(),
-  /** Populated when the CLI is missing or not on PATH. */
+  /**
+   * The raw error, kept for diagnostics rather than for reading.
+   *
+   * `spawn claude ENOENT` is what this holds, and it was the only thing the app
+   * knew about a failed probe — so Settings could say "not installed" and
+   * nothing else. `reason` and `foundAt` below are what a person can act on.
+   */
   problem: z.string().nullable(),
+  /**
+   * Which kind of failure, as a key rather than a sentence.
+   *
+   * The two need different advice and the code already knows which is which:
+   * `missing` is nothing at any candidate path, `failed` is something found
+   * that would not run — a shim whose interpreter is absent, a binary too old
+   * to understand `--version`. Telling a user to install what they already have
+   * is worse than saying nothing.
+   *
+   * A key, because main has no translator: the renderer turns it into words.
+   */
+  reason: z.enum(['missing', 'failed']).nullable(),
+  /** Where it was found, when it was found and still would not run. */
+  foundAt: z.string().nullable(),
 })
 export type AgentProbeResult = z.infer<typeof AgentProbeResult>
 
@@ -820,6 +840,23 @@ export const IPC_CONTRACT = {
       unread: z.number().int().min(0),
     }),
   },
+  /**
+   * Sends what you decided in an aside back to the conversation it came from.
+   *
+   * The counterpart to `aside:promote`, and the opposite direction: promotion
+   * takes the side question away into a room of its own, this returns a decision
+   * to the work. What travels is the directive you typed plus one line naming
+   * the passage it came from — never the side transcript, which would land in
+   * the parent's log as prose every other agent must then be caught up on.
+   *
+   * It answers with the routing `conversation:send` answers with, because it is
+   * that call: the renderer needs to know who picked it up, and a forward that
+   * reached nobody is a failure the composer already knows how to report.
+   */
+  'aside:forward': {
+    request: z.object({ asideId: z.string(), directive: z.string().min(1) }),
+    response: z.object({ targets: z.array(z.enum(['codex', 'claude'])) }),
+  },
   /** Ends the fork. The transcript stays in the log. */
   'aside:close': {
     request: z.object({ asideId: z.string() }),
@@ -1389,6 +1426,9 @@ export interface ChorusApi {
   readonly promoteAside: (
     request: IpcRequest<'aside:promote'>
   ) => Promise<IpcResponse<'aside:promote'>>
+  readonly forwardAside: (
+    request: IpcRequest<'aside:forward'>
+  ) => Promise<IpcResponse<'aside:forward'>>
   readonly closeAside: (request: IpcRequest<'aside:close'>) => Promise<IpcResponse<'aside:close'>>
   readonly listAsides: (request: IpcRequest<'aside:list'>) => Promise<IpcResponse<'aside:list'>>
   /** Returns an unsubscribe function. */

@@ -6,7 +6,11 @@
   "agents": {
     "probing": "checking…",
     "notFound": "not installed",
-    "unknownVersion": "installed"
+    "unknownVersion": "installed",
+    "missingHelp": "Chorus could not find it. Install it, then press Re-check:",
+    "failedHelp": "Found at {{path}}, but it would not run. It may be a broken install, or a shim whose interpreter is gone.",
+    "recheck": "Re-check",
+    "oneIsEnough": "One is enough — Chorus runs with either agent on its own."
   },
   "conversation": {
     "cast": "Agents",
@@ -445,6 +449,7 @@
     "thinking": "Thinking",
     "quote": "Quote in message",
     "takeForward": "Take this forward",
+    "sendToConversation": "Send to conversation",
     "openAsConversation": "Open as conversation",
     "profileLabel": "What this conversation may do",
     "reopened": "This aside has ended. Ask again to start a new one.",

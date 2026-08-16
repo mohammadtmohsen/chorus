@@ -535,6 +535,16 @@ function DefaultModel(): React.JSX.Element {
  * cosmetic change: a single pair spoke for two providers that share no model,
  * and sent a name from Claude's catalogue to Codex's API.
  */
+/**
+ * How each CLI is installed, copied from `docs/install-windows.md` rather than
+ * from memory — a wrong package name in an error message is worse than no
+ * message, because it is followed.
+ */
+const INSTALL: Record<'codex' | 'claude', string> = {
+  codex: 'npm install -g @openai/codex',
+  claude: 'npm install -g @anthropic-ai/claude-code',
+}
+
 export function Settings(props: {
   probes: AgentProbeResult[] | null
   onClose: () => void
@@ -635,17 +645,42 @@ export function Settings(props: {
               const probe = props.probes?.find((p) => p.id === id)
               const installed = probe?.installed ?? false
               return (
-                <p key={id} className={`cast-member voice--${id}`} data-on={installed}>
-                  <span className="voice-dot" aria-hidden="true" />
-                  <span className="cast-name">{id}</span>
-                  <span className="cast-version">
-                    {props.probes === null
-                      ? t('agents.probing')
-                      : installed
-                        ? (probe?.version ?? t('agents.unknownVersion'))
-                        : t('agents.notFound', { agent: id })}
-                  </span>
-                </p>
+                <div key={id} className="cast-entry">
+                  <p className={`cast-member voice--${id}`} data-on={installed}>
+                    <span className="voice-dot" aria-hidden="true" />
+                    <span className="cast-name">{id}</span>
+                    <span className="cast-version">
+                      {props.probes === null
+                        ? t('agents.probing')
+                        : installed
+                          ? (probe?.version ?? t('agents.unknownVersion'))
+                          : t('agents.notFound', { agent: id })}
+                    </span>
+                  </p>
+                  {/*
+                    What to do about it, where the bad news is.
+
+                    "not installed" was the whole of what this said, and it is
+                    the one place a person looks when Chorus will not start. The
+                    two failures need different advice and the probe now tells
+                    them apart: nothing found anywhere is an install, something
+                    found that will not run is not — telling someone to install
+                    what they already have sends them round a loop they have
+                    just been through.
+                  */}
+                  {props.probes !== null && !installed && (
+                    <p className="cast-help">
+                      {probe?.reason === 'failed' && probe.foundAt !== null ? (
+                        t('agents.failedHelp', { path: probe.foundAt })
+                      ) : (
+                        <>
+                          {t('agents.missingHelp')}{' '}
+                          <code className="cast-install">{INSTALL[id]}</code>
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
               )
             })}
           </fieldset>

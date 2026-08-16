@@ -531,6 +531,33 @@ body {
   padding: 0 calc(var(--step) * 1.5);
 }
 
+/*
+ * The advice under a CLI that is not there.
+ *
+ * Indented to the name above it rather than the dot, so it reads as belonging
+ * to that agent and not to the group. Only ever present when something is
+ * wrong, which is what lets it be this loud in a settings sheet.
+ */
+.cast-help {
+  margin: 2px 0 0;
+  padding-left: calc(var(--step) * 4);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.cast-install {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  /* Selectable, because the point of showing a command is copying it. */
+  user-select: text;
+}
+
 .cast-member {
   display: grid;
   grid-template-columns: auto auto 1fr auto;
@@ -1045,6 +1072,44 @@ body {
   min-height: 0;
   overflow-y: auto;
   font-size: 13px;
+}
+
+/*
+ * Two voices in a card, told apart by indent and a rule rather than by bubbles.
+ *
+ * The aside became a real exchange rather than a single answer, so the two sides
+ * have to be separable at a glance — but this app draws with lines, not
+ * elevation, and a card a few hundred pixels wide has no room for the avatars
+ * and timestamps the main transcript uses. A border on the inline-start edge
+ * costs one pixel and survives right-to-left prose, which is the case the
+ * neighbouring `unicode-bidi` rules exist for.
+ *
+ * `--voice` is set by the `voice--*` class the card already carries, so an
+ * agent's turns take the colour of the agent being asked rather than a generic
+ * accent — the same vocabulary the rail and the thinking pip use.
+ */
+.quick-turn {
+  padding-inline-start: calc(var(--step) * 2);
+  border-inline-start: 1px solid var(--line);
+}
+
+.quick-turn + .quick-turn {
+  margin-block-start: calc(var(--step) * 2);
+}
+
+.quick-turn[data-actor='agent'] {
+  border-inline-start-color: var(--voice, var(--line));
+}
+
+/*
+ * Your own words, quieter than the answer you asked for.
+ *
+ * The question is context for the reply below it — you already know what you
+ * typed. Muted rather than hidden, because a follow-up thread with no questions
+ * in it is exactly the shape this replaced.
+ */
+.quick-turn[data-actor='user'] {
+  color: var(--muted);
 }
 
 /*
