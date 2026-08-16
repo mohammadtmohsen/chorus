@@ -1,0 +1,111 @@
+name: Windows installer
+
+# The Windows half of a release, and it lives in CI because it has to.
+#
+# The DMG is built on the maintainer's Mac and uploaded by hand — that works
+# because there is a Mac. There is no Windows machine, so the only way an
+# installer exists at all is for a runner to build it. That is the whole reason
+# this file is separate from the local release sequence in CLAUDE.md rather than
+# a step inside it.
+#
+# Two triggers, for two different needs:
+#
+#   - a `v*` tag, so a release gets its installer beside the DMG;
+#   - `workflow_dispatch`, so anyone can get a build to *test* without cutting a
+#     release. That is the one being used today: nobody has run Chorus on
+#     Windows, and asking a tester to install pnpm and build from source is a
+#     tax on the person you most want to hear from.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Attach to this existing release (blank = artifact only)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build the Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      # See the note in ci.yml's `check` job for why these majors.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # No ELECTRON_SKIP_BINARY_DOWNLOAD here, unlike ci.yml: that variable is
+      # set there because typecheck and tests do not need Electron's binary.
+      # Packaging is the one job that does.
+      - run: pnpm install --frozen-lockfile
+
+      # Builds the VS Code extension, its VSIX, the app, and the NSIS installer.
+      # The VSIX is written by `zip.mjs` rather than by shelling out to `zip`,
+      # which is why this step can run here at all.
+      - name: Package
+        run: pnpm package
+
+      # Named explicitly rather than globbed. A glob that matches nothing
+      # succeeds, and an empty upload is the failure that looks like a pass.
+      - name: Find the installer
+        id: installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $exe = "apps/desktop/release/Chorus-$version-windows-x64-setup.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "no installer at $exe"
+            Get-ChildItem apps/desktop/release
+            exit 1
+          }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $exe -Leaf)" | Out-File "$exe.sha256" -Encoding ascii
+          "path=$exe" >> $env:GITHUB_OUTPUT
+          "name=$(Split-Path $exe -Leaf)" >> $env:GITHUB_OUTPUT
+          Write-Host "built $exe"
+          Write-Host "sha256 $hash"
+
+      # `verify:package` drives the built bundle rather than `out/`, which is the
+      # only thing that catches a packaging fault. This runs the Windows one
+      # against `win-unpacked` — the same tree NSIS just wrapped.
+      #
+      # `continue-on-error` because it has never run: it launches the app, opens
+      # a terminal and waits for an agent, and no agent CLI is installed on a
+      # runner. Its file-inventory checks are the useful half today and they run
+      # before anything is launched. Remove the flag once a runner has the CLIs.
+      - name: Verify the packaged bundle
+        continue-on-error: true
+        run: pnpm --filter @chorus/desktop run verify:package:windows
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.installer.outputs.name }}
+          path: |
+            ${{ steps.installer.outputs.path }}
+            ${{ steps.installer.outputs.path }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      # Only for a tag, or when a dispatch names a release. Uploading to a
+      # release that does not exist would fail the job after a ten-minute build.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          [ -z "$TAG" ] && TAG="${GITHUB_REF#refs/tags/}"
+          gh release upload "$TAG" \
+            "${{ steps.installer.outputs.path }}" \
+            "${{ steps.installer.outputs.path }}.sha256" \
+            --clobber
+          gh release view "$TAG" --json assets \
+            --jq '.assets[] | "\(.name)  \(.size) bytes"'

@@ -75,12 +75,27 @@ are macOS steps and produce a DMG. A Windows build exists in the repository —
 release note imply otherwise: a Windows section in a changelog for a release
 that shipped only a DMG is the kind of claim someone downloads on.
 
-When Windows does ship, it is a second pass of the same sequence and not a wider
-step 5. Each platform builds on its own runner, runs **its own** verifier —
-`verify:package` for the DMG, `verify:package:windows` for `win-unpacked` — and
-each gets its own asset and its own checksum on the release. Neither verifier
-knows anything about the other's bundle, deliberately; see the header of
-`e2e/packaged-windows.mjs`.
+**The Windows installer is built by CI, and that is not a preference.** The DMG
+is built on this Mac and uploaded by hand because there is a Mac. There is no
+Windows machine, so `.github/workflows/release-windows.yml` is the only thing
+that can produce an installer at all. It fires on a `v*` tag and attaches the
+`.exe` plus its `.sha256` to the release, so pushing the tag in step 8 is what
+puts the Windows asset beside the DMG — there is no manual step for it, and
+adding one would mean finding a Windows machine first.
+
+It can also be run from the Actions tab at any time, which is how a tester gets
+a build without installing pnpm and compiling from source.
+
+Each platform runs **its own** verifier — `verify:package` for the DMG,
+`verify:package:windows` for `win-unpacked`. Neither knows anything about the
+other's bundle, deliberately; see the header of `e2e/packaged-windows.mjs`.
+
+**Both artifacts are unsigned in the way their platform objects to, and the
+release notes must say so for each.** The DMG is ad-hoc signed and meets
+Gatekeeper (C-002). The `.exe` has no certificate at all and meets SmartScreen,
+which is worse in one specific way worth stating: a valid signature would not
+fix it either, because SmartScreen scores reputation rather than validity and a
+new certificate has none. `docs/install-windows.md` carries the paragraph.
 
 Two things gate a Windows release that have no macOS equivalent, and neither is
 a build step:
@@ -88,7 +103,8 @@ a build step:
 - **A code-signing certificate**, which is calendar time rather than
   engineering. OV keys must live on an HSM or token, and issuance needs
   organization validation — days to weeks. Nothing downstream can start until it
-  exists.
+  exists. Until then the installer CI produces is unsigned: fine for testing,
+  and not something to put in front of a stranger.
 - **Installer lifecycle on clean VMs**: install as a standard user, upgrade over
   a seeded previous version, prove the event log survives, uninstall, reinstall.
   `verify:package:windows` drives `win-unpacked` and proves none of this.
