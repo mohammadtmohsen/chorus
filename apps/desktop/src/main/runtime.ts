@@ -801,6 +801,49 @@ export function recapPrompt(asked: readonly string[], ledger: RecapLedger): stri
   ].join('\n')
 }
 
+/**
+ * What `Go` actually sends, in place of the word "go".
+ *
+ * Built here rather than passed in, for the reason `shared/ipc.ts` states about
+ * the aside prompts: prompt content arriving from the renderer is the same class
+ * of problem as an unverified source event. The IPC carries the *intent*; the
+ * words are the log's side of the boundary.
+ *
+ * **Short on purpose, unlike its neighbours.** `explainPrompt` and `recapPrompt`
+ * are long because they are asking for a shape the model would not otherwise
+ * produce — a hundred words of plain prose, a five-heading board. This asks for
+ * the thing the agent has *already said it would do*, so most of what could be
+ * written here would be re-specifying work that is already specified one message
+ * up. Every line below earns its place by naming a way that goes wrong.
+ *
+ * The last paragraph is the load-bearing one, and it exists because the trigger
+ * is a heuristic. `offersToAct` reads prose and will sometimes be wrong; measured
+ * over 1,276 real replies it shows on about one turn in nine and refuses far more
+ * than it accepts, but "far more" is not "always". Without that paragraph a
+ * misfire is an agent picking an option nobody chose; with it, a misfire is an
+ * agent answering the question — which is what typing nothing would have got.
+ * A heuristic that cannot be perfect is made survivable in the prompt rather
+ * than by more regex.
+ */
+export function goPrompt(): string {
+  return [
+    'Go ahead with what you just proposed.',
+    '',
+    // The failure `recapPrompt` also had to name: asked to proceed, a model
+    // frequently restates the plan first and calls that the turn.
+    'You have already described it, so do not restate it and do not re-plan it.',
+    'Start with the doing.',
+    '',
+    'Work to the end of what you proposed. Stop before the end only if a decision',
+    'is genuinely blocking — and then ask that one question and nothing else.',
+    '',
+    // The trigger is a heuristic over prose. This is what makes it survivable.
+    'If you were asking me something rather than offering to act, answer the',
+    'question instead. If you are waiting on a decision only I can make, say which',
+    'one. Do not guess at what I would have chosen.',
+  ].join('\n')
+}
+
 /** Long enough for a cold provider start, short enough not to look like a hang. */
 const REOPEN_TIMEOUT_MS = 20_000
 
@@ -1154,7 +1197,7 @@ export class ChorusRuntime {
    * Logging inside each participant would make the transcript show the user
    * repeating themselves once per agent.
    */
-  async send(conversationId: string, text: string): Promise<SendResult> {
+  async send(conversationId: string, text: string, intent?: 'go'): Promise<SendResult> {
     const conversation = this.require(conversationId)
     const participants = [...conversation.participants.keys()]
     const route = parseMentions(text, {
@@ -1199,8 +1242,22 @@ export class ChorusRuntime {
            * one delivery whether or not the turn succeeds, because a seed that
            * could arrive twice is worse than one that arrives late.
            */
-          const seeded =
-            p.seedContext === undefined ? route.text : `${p.seedContext}\n\n${route.text}`
+          /*
+           * What the agent reads, which is not always what the log kept.
+           *
+           * `route.text` is the typed message with its leading mentions removed.
+           * An intent replaces it: the transcript keeps `@claude Go ahead.` — a
+           * line the user would recognise as their own — and the agent receives
+           * `goPrompt()`. The same split `sendUserMessage(text, delivered)` makes
+           * for asides, for the reason stated there: logging the wrapper puts
+           * words in the user's mouth in their own transcript.
+           *
+           * Routing is unaffected. It was decided from the *logged* text above,
+           * so the mention still picks the agent whose reply the button sat
+           * under — and `lastAddressed` is not a reliable stand-in for that.
+           */
+          const body = intent === 'go' ? goPrompt() : route.text
+          const seeded = p.seedContext === undefined ? body : `${p.seedContext}\n\n${body}`
           delete p.seedContext
 
           await p.service.deliver(

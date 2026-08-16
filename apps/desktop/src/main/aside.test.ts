@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ChorusRuntime,
   explainPrompt,
+  goPrompt,
   recapLedger,
   recapPrompt,
   taskAnchor,
@@ -1616,5 +1617,75 @@ describe('recapPrompt', () => {
     expect(recapPrompt(['first ask', 'then narrower'], NOTHING)).toContain(
       '> first ask\n\n> then narrower'
     )
+  })
+})
+
+/**
+ * The `Go` intent, which is the one place `send` delivers something other than
+ * what it logged.
+ *
+ * Driving the app proves the chip appears and that `@claude Go ahead.` is what
+ * the transcript keeps. It cannot see the other half — what actually reached the
+ * agent — and that half is the whole point of the intent.
+ */
+describe('sending with the go intent', () => {
+  const sentToAgent = (): string => adapter.sessions.at(-1)?.sent.at(-1)?.text ?? ''
+  const logged = (): string[] =>
+    runtime.store
+      .read(conversationId)
+      .filter((e) => e.payload.type === 'user.message')
+      .map((e) => (e.payload as { text: string }).text)
+
+  it('logs the short line and delivers the instruction', async () => {
+    await runtime.send(conversationId, '@claude Go ahead.', 'go')
+
+    // What a reader sees later is a line they would recognise as their own.
+    expect(logged()).toEqual(['@claude Go ahead.'])
+    // What the agent reads is the actual instruction.
+    expect(sentToAgent()).toContain('Go ahead with what you just proposed')
+    expect(sentToAgent()).toContain('do not restate it and do not re-plan it')
+  })
+
+  it('carries the clause that survives a wrong guess', async () => {
+    // The trigger is a heuristic over prose. Without this the worst misfire is
+    // an agent choosing an option nobody picked.
+    await runtime.send(conversationId, '@claude Go ahead.', 'go')
+    expect(sentToAgent()).toContain('If you were asking me something rather than offering to act')
+    expect(sentToAgent()).toContain('Do not guess at what I would have chosen')
+  })
+
+  it('leaves an ordinary message exactly as it was', async () => {
+    await runtime.send(conversationId, '@claude have a look at the parser')
+    expect(sentToAgent()).toContain('have a look at the parser')
+    expect(sentToAgent()).not.toContain('Go ahead with what you just proposed')
+  })
+
+  it('still routes from the logged text, so the mention picks the agent', async () => {
+    // The mention is why the button reaches the reply's author rather than
+    // whoever happens to be `lastAddressed`.
+    const { targets } = await runtime.send(conversationId, '@claude Go ahead.', 'go')
+    expect(targets).toEqual(['claude'])
+  })
+})
+
+describe('goPrompt', () => {
+  const prompt = goPrompt()
+
+  it('asks for the doing, not for the plan again', () => {
+    expect(prompt.startsWith('Go ahead with what you just proposed.')).toBe(true)
+    expect(prompt).toContain('Start with the doing')
+  })
+
+  it('bounds where it may stop', () => {
+    expect(prompt).toContain('Stop before the end only if a decision')
+    expect(prompt).toContain('ask that one question and nothing else')
+  })
+
+  it('is short, unlike its neighbours', () => {
+    // `explainPrompt` and `recapPrompt` are long because they ask for a shape a
+    // model would not otherwise produce. This asks for what the agent already
+    // said it would do, so most of what could be added would re-specify work
+    // that is specified one message up.
+    expect(prompt.length).toBeLessThan(explainPrompt('x', 'Arabic').length / 2)
   })
 })

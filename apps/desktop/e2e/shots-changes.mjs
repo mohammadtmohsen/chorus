@@ -185,16 +185,16 @@ try {
     timeRights: [...document.querySelectorAll('.entry-time')].map((t) =>
       Math.round(t.getBoundingClientRect().right)
     ),
-    handoffRows: [...document.querySelectorAll('.entry:has(.handoff-action)')].map((e) => {
+    handoffRows: [...document.querySelectorAll('.entry:has([data-entry-action='handoff'])')].map((e) => {
       const dot = e.querySelector('.tick')?.getBoundingClientRect()
       const body = e.querySelector('.said, .notice-line, .command-fold')?.getBoundingClientRect()
-      const action = e.querySelector('.handoff-action').getBoundingClientRect()
+      const action = e.querySelector('[data-entry-action="handoff"]').getBoundingClientRect()
       return {
         kind: e.dataset.kind,
         grouped: e.dataset.grouped ?? 'no',
         dotToBody: dot && body ? Math.round(dot.top - body.top) : null,
         actionToBody: body ? Math.round(action.top - body.top) : null,
-        colour: getComputedStyle(e.querySelector('.handoff-action')).color,
+        colour: getComputedStyle(e.querySelector('[data-entry-action="handoff"]')).color,
       }
     }),
     markProbe: (() => {

@@ -201,8 +201,12 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         ...(request.profileId === undefined ? {} : { profileId: request.profileId }),
       }),
 
-    'conversation:send': async (request: { conversationId: string; text: string }) => {
-      const { targets } = await runtime.send(request.conversationId, request.text)
+    'conversation:send': async (request: {
+      conversationId: string
+      text: string
+      intent?: 'go'
+    }) => {
+      const { targets } = await runtime.send(request.conversationId, request.text, request.intent)
       // Copied out of the readonly domain type; the IPC boundary is plain JSON.
       return { targets: [...targets] }
     },

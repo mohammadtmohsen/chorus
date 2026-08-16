@@ -290,106 +290,6 @@
 }
 
 /*
- * Every select in the app, in one place.
- *
- * It was in three — `.sheet select`, `.settings-models select` and
- * `.quick-promote select` — and the third carries a comment saying so, added
- * when a card rendered "a native light control in a dark card". That is the
- * failure a scoped rule guarantees eventually: the next select someone adds is
- * native until a fourth copy is written for it. The look belongs to the element.
- *
- * **`appearance: none` is the substance of this.** Without it the control is the
- * platform's: Chromium draws its own chevron in its own colour, sizes the box
- * from the OS metrics rather than from `--radius` and the padding here, and
- * ignores the border on some platforms entirely. Everything below is only
- * reachable once the native paint is off.
- *
- * The chevron is a background image rather than a pseudo-element, because a
- * `select` has no reliable `::after` — it is a replaced element and Chromium
- * does not render one. That costs the theme: a data URI cannot read a custom
- * property, so the mark is a literal hex and the light scheme overrides it a few
- * rules down. Two rules, stated, rather than a wrapper `<div>` at four call
- * sites and in every future one.
- *
- * Stroked at 1.8 with round caps to match `.composer-trigger svg`, which is the
- * app's icon voice.
- */
-select {
-  appearance: none;
-  /* Right padding is the chevron's lane, so a long option cannot run under it. */
-  padding: 7px 30px 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background-color: var(--sunken);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239d9d9d' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 9px center;
-  background-size: 13px;
-  color: var(--bone);
-  font: inherit;
-  cursor: pointer;
-}
-
-/*
- * The border answers the pointer; the ring is reserved for focus.
- *
- * A hover that changed the background would make the control look pressed, and
- * a select is not a button — the only thing hovering it promises is that it will
- * open.
- */
-select:hover:not(:disabled) {
-  border-color: var(--border-strong);
-}
-
-/*
- * Its own focus rule, so the ring follows the control's corners.
- *
- * The global `:focus-visible` sets `border-radius: 3px` on the outline, which is
- * right for the square things it was written for and leaves a nearly-square ring
- * standing off a `--radius` box. Same colour, same width, same offset — only the
- * radius is restated.
- */
-select:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  border-radius: var(--radius);
-}
-
-select:disabled {
-  color: var(--text-disabled);
-  cursor: not-allowed;
-}
-
-/*
- * The options are a native popup and the OS paints it, so this is the one part
- * of the control that cannot be styled to match. Naming the colours at least
- * stops a dark app opening a white list on Linux, where Chromium honours them.
- */
-select option {
-  background: var(--bg-surface);
-  color: var(--text-primary);
-}
-
-/*
- * The chevron again, in the light scheme's muted ink.
- *
- * **After the base rule, not up with the tokens**, and that placement is the
- * whole of it. A data URI cannot read a custom property, so this is a second
- * rule of equal specificity rather than a derived value — and written beside
- * `:root`'s light overrides, where it began, it lost to the dark rule below it
- * on source order alone. Measured, not reasoned: `--text-muted` resolved to
- * `#59636e` while the rendered mark was still `#9d9d9d`. Asserting the token
- * would have passed.
- *
- * `#59636e` is `--text-muted` in this scheme. The two change together.
- */
-@media (prefers-color-scheme: light) {
-  select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2359636e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
-  }
-}
-
-/*
  * The system UI face is the default; monospace is asked for.
  *
  * That is the inversion. Every rule that means "this is machine output" already
@@ -1656,7 +1556,7 @@ body {
  */
 .tick,
 .speaker,
-.handoff-action,
+.entry-action,
 .md-lang {
   user-select: none;
 }
@@ -2197,11 +2097,13 @@ body {
   justify-content: space-between;
 }
 
-/* Only what a settings row needs on top of the shared control: a width that
-   stops two adjacent selects disagreeing, and the mono face this table reads in. */
 .settings-models select {
   min-width: 22ch;
-  padding: 4px 28px 4px 8px;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--bone);
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -3793,19 +3695,49 @@ input::placeholder {
  * The row under a reply that holds what you can do with it.
  *
  * `margin-top` is small on purpose: this is attached to the message above, not a
- * band between two turns. `justify-content: flex-start` puts it under the first
- * word rather than out at the right margin — it is read as part of the reply's
- * left-aligned column, and a control alone on the right edge reads as chrome.
+ * band between two turns.
+ *
+ * **`space-between`, and the rule it replaced is worth keeping in view.** This
+ * said `flex-start`, because "a control alone on the right edge reads as
+ * chrome" — written when handing off was the only tenant, and correct then.
+ * With two it is the wrong shape: two controls packed at the left read as one
+ * pair of related things, and they are not. Handing the reply to the other
+ * agent and asking where the task stands are opposite moves.
+ *
+ * The old reason survives the change rather than being overruled by it, which
+ * is what makes `space-between` safe here: with a single child it resolves to
+ * `flex-start` anyway. A one-agent conversation has no hand-off, a
+ * non-final reply has no recap, and in both cases the surviving control stays
+ * under the first word exactly as before. Nothing lands alone on the right.
+ *
+ * `gap` stays as a minimum for the case where the row is full — it only binds
+ * on a narrow pane, where `space-between` has no space to give.
  */
 .entry-actions {
   display: flex;
   grid-area: actions;
   align-items: center;
+  justify-content: space-between;
   gap: calc(var(--step) * 2);
   margin-top: var(--step);
 }
 
-.handoff-action {
+/*
+ * The two things you can *do* with a reply, kept together.
+ *
+ * `space-between` on the row was chosen when there were two tenants and it put
+ * one at each end. With three, the middle one floats. Grouping by kind keeps the
+ * rule and fixes the shape: handing off and going ahead act on the reply, a
+ * recap only reads it, so the acts share the left edge and the reading keeps the
+ * right.
+ */
+.entry-actions-do {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+}
+
+.entry-action {
   /*
    * Was `margin-left: auto` when this lived in the head, pinning it to the far
    * edge just inside the time. In its own row there is nothing to push against
@@ -3827,7 +3759,7 @@ input::placeholder {
 }
 
 /*
- * The `:has(.handoff-action)` nudge on `.entry-time` is gone with the move.
+ * The `:has(.entry-action)` nudge on `.entry-time` is gone with the move.
  *
  * It existed to stop the time and the handoff both claiming the far edge of the
  * head. Nothing shares that edge now, so the time is pinned by its own
@@ -3836,7 +3768,11 @@ input::placeholder {
  * in the first place.
  */
 
-.handoff-action:hover {
+.entry-action--go {
+  color: var(--voice);
+}
+
+.entry-action:hover {
   color: var(--voice);
 }
 
@@ -3932,6 +3868,15 @@ input::placeholder {
   font-size: 12.5px;
   line-height: 1.6;
   min-height: 260px;
+}
+
+.sheet select {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+  color: var(--bone);
+  font: inherit;
 }
 
 .sheet-actions {
@@ -4770,14 +4715,18 @@ input::placeholder {
 }
 
 /*
- * Only the fit. The look is the shared `select` rule now — this used to restate
- * all of it, with a comment explaining that select styling was scoped rather
- * than global, which is the thing that has been fixed.
+ * Styled here because select styling is scoped, not global — `.sheet select`
+ * and `.settings-models select` each carry their own, and the card is neither.
+ * Without this it rendered as a native light control in a dark card.
  */
 .quick-promote select {
   flex: 1;
   min-width: 0;
-  padding: 4px 28px 4px 8px;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--sunken);
+  color: var(--bone);
   font-family: var(--mono);
   font-size: 12px;
 }

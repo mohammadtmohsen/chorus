@@ -5,6 +5,7 @@ import { CodeRun } from './CodeRun.js'
 import { useTranslation } from 'react-i18next'
 import { FileDiff } from './FileDiff.js'
 import { MarkdownView } from './MarkdownView.js'
+import { offersToAct } from './offer.js'
 import type { TranscriptMessage } from './transcript.js'
 import { useTypewriter } from './useTypewriter.js'
 
@@ -392,6 +393,7 @@ export const Entry = memo(function Entry({
   cwd = '',
   onHandOff,
   onRecap,
+  onGo,
   answersThinking = false,
   final = false,
   grouped = false,
@@ -410,6 +412,14 @@ export const Entry = memo(function Entry({
    * scrolled.
    */
   onRecap?: ((message: TranscriptMessage, from: DOMRect) => void) | undefined
+  /**
+   * Accepts the offer this reply ended on. Absent when the pane cannot send.
+   *
+   * Whether the reply *made* an offer is decided here rather than by the caller,
+   * because it is a reading of what is on screen — the same shape of decision
+   * `askableSource` makes about a selection.
+   */
+  onGo?: ((message: TranscriptMessage) => void) | undefined
   /** This reply follows the agent's own thinking, so it is worth marking as the answer. */
   answersThinking?: boolean
   /** The answer the finished turn arrived at, as opposed to the work it did. */
@@ -726,19 +736,53 @@ export const Entry = memo(function Entry({
       */}
       {message.kind === 'message' &&
         message.status === 'complete' &&
-        (onHandOff !== undefined || (final && onRecap !== undefined)) && (
+        (onHandOff !== undefined ||
+          (final && onRecap !== undefined) ||
+          (final && onGo !== undefined && offersToAct(message.text))) && (
           <div className="entry-actions">
-            {onHandOff !== undefined && (
-              <button
-                type="button"
-                className="handoff-action"
-                onClick={() => {
-                  onHandOff(message)
-                }}
-              >
-                {t('handoff.action')}
-              </button>
-            )}
+            {/*
+              Grouped by what they are, not by what fits.
+
+              Handing off and going ahead are both *doing* something with the
+              reply; a recap is a way of looking at where the work stands. With
+              `space-between` on the row that split puts the two acts together at
+              the left and leaves the right edge to the one that only reads.
+            */}
+            <span className="entry-actions-do">
+              {onHandOff !== undefined && (
+                <button
+                  type="button"
+                  className="entry-action"
+                  data-entry-action="handoff"
+                  onClick={() => {
+                    onHandOff(message)
+                  }}
+                >
+                  {t('handoff.action')}
+                </button>
+              )}
+              {/*
+                Only where the reply offered exactly one thing to say yes to.
+
+                `offersToAct` is a heuristic over prose and it refuses far more
+                than it accepts — measured, it shows on about one turn in nine.
+                The asymmetry is deliberate: a missing chip costs a line of
+                typing, and a wrong one sends "go ahead" at a question nobody
+                answered.
+              */}
+              {final && onGo !== undefined && offersToAct(message.text) && (
+                <button
+                  type="button"
+                  className="entry-action entry-action--go"
+                  data-entry-action="go"
+                  onClick={() => {
+                    onGo(message)
+                  }}
+                >
+                  {t('conversation.go')}
+                </button>
+              )}
+            </span>
             {/*
               Only on the last reply, and `final` is already false mid-turn
               (`Session.tsx`'s `finalKey` is null while the view is busy). That
@@ -750,7 +794,8 @@ export const Entry = memo(function Entry({
             {final && onRecap !== undefined && (
               <button
                 type="button"
-                className="handoff-action"
+                className="entry-action"
+                data-entry-action="recap"
                 onClick={(e) => {
                   onRecap(message, e.currentTarget.getBoundingClientRect())
                 }}

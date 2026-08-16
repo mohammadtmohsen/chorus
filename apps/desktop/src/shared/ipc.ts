@@ -279,7 +279,25 @@ export const IPC_CONTRACT = {
     }),
   },
   'conversation:send': {
-    request: z.object({ conversationId: z.string(), text: z.string().min(1) }),
+    request: z.object({
+      conversationId: z.string(),
+      text: z.string().min(1),
+      /**
+       * An instruction to expand in main, rather than the instruction itself.
+       *
+       * `go` is the quick action under a reply that offered to do one thing. It
+       * delivers `goPrompt()` while `text` — `@claude Go ahead.` — is what the
+       * transcript keeps, the same split `sendUserMessage(text, delivered)` makes
+       * for asides and for the same reason: logging the wrapper puts words in the
+       * user's mouth in their own transcript.
+       *
+       * **A name, not a string.** The prompt is built in main because prompt
+       * content from the renderer is the same class of problem as an unverified
+       * source event — see `aside:open`'s note on exactly this. A renderer that
+       * could name any intent can only choose between the ones main knows.
+       */
+      intent: z.enum(['go']).optional(),
+    }),
     /** Which agents the mention router picked, so the UI can show it. */
     response: z.object({ targets: z.array(z.enum(['codex', 'claude'])) }),
   },
