@@ -34,99 +34,71 @@ it.
 whole sequence without asking which parts — the only thing worth confirming is
 the version number when the bump is not obvious.
 
+**Everything after the tag is `.github/workflows/release.yml`.** It gates,
+builds the DMG and the `.exe` in parallel, verifies each against its own
+packaged bundle, and publishes the release with both assets, both checksums and
+notes assembled from the CHANGELOG. There is no manual packaging step and no
+manual upload; adding one back would mean building an artifact from whatever
+happens to be in a working tree, which is the bug described in step 4.
+
 1. **Merge** whatever is outstanding into `main`, and check there is genuinely
    nothing left: `git cherry main <branch>` marks a commit `-` when an
    equivalent patch is already in `main`. `git branch --no-merged` compares
    _ancestry_, so a rebased or squashed branch shows as outstanding forever and
    merging it replays months-old files over current ones.
 2. **Bump the version in both places** — `package.json` and
-   `apps/desktop/package.json`. They are separate and drift silently.
+   `apps/desktop/package.json`. They are separate and drift silently, which is
+   why the pipeline's first job refuses to build when they or the tag disagree.
 3. **Write the CHANGELOG entry**, in its own voice: "what changed, for someone
    deciding whether to update". Say what was broken from the user's side, not
    which function was edited. If a previous release recorded a known gap that
-   this one closes, say so — that is the line people are waiting for.
-4. **`pnpm check`** — the gate. Never package around a red gate.
-5. **`pnpm package`** — builds the VS Code extension, the app, and the DMG into
-   `apps/desktop/release/Chorus-<version>-arm64.dmg`.
-6. **`pnpm --filter @chorus/desktop run verify:package`**, and this one is not
-   optional. It drives the _built bundle_ rather than `out/`, which is the only
-   thing that catches a packaging fault — `node-pty` ships `spawn-helper`
-   without its executable bit, so a build can pass every unit test, launch fine,
-   and be unable to open a shell.
-7. **Commit** as `chore(release): X.Y.Z`, touching only the changelog and the two
-   `package.json` files.
-8. **Tag and push**: `git tag -a vX.Y.Z -m "Chorus X.Y.Z"`, then push `main` and
-   the tag separately.
-9. **Publish**: `gh release create vX.Y.Z <dmg> --title "Chorus X.Y.Z"
---notes-file <notes>`. The notes are the changelog section for that version
-   plus the ad-hoc-signing paragraph — every release repeats it, because every
-   downloader meets Gatekeeper (C-002).
-10. **Verify against the API, not the exit code.** `gh release view` for the
-    asset and its size; `git ls-remote --tags` for the tag. A `git push
---delete` of several refs aborts entirely if one does not exist, and prints
-    nothing useful about what did not happen.
+   this one closes, say so — that is the line people are waiting for. The
+   pipeline lifts this section verbatim into the release notes, so it is the
+   thing people read, not a record.
+4. **`pnpm check`** locally before tagging. The pipeline runs it too, and the
+   point of running it here is to fail in seconds rather than after a
+   ten-minute build. Never tag around a red gate.
+5. **Commit** as `chore(release): X.Y.Z`, touching only the changelog and the
+   two `package.json` files.
+6. **Tag and push**: `git tag -a vX.Y.Z -m "Chorus X.Y.Z"`, then push `main` and
+   the tag separately. **This is the release.** Everything above was
+   preparation.
+7. **Watch the run, and verify against the API rather than the exit code.**
+   `gh run watch`, then `gh release view vX.Y.Z --json assets` for both files
+   and their sizes, and `git ls-remote --tags` for the tag. The pipeline's own
+   last step counts the `.dmg` and the `.exe` and fails if it does not find
+   both — but a workflow that never started is also a workflow that never
+   failed, so look.
 
-### Platforms are released separately, and a release names which one
+**To rehearse it**, run **Release** from the Actions tab with no input: it
+builds both installers and uploads them as workflow artifacts without
+publishing. That is also how a tester gets a build without a release being cut.
 
-**macOS ARM64 is the only platform that ships today.** Steps 5, 6 and 9 above
-are macOS steps and produce a DMG. A Windows build exists in the repository —
-`win` and `nsis` in `electron-builder.yml`, `verify:package:windows`,
-`docs/install-windows.md` — and has **never been produced or run**. Do not let a
-release note imply otherwise: a Windows section in a changelog for a release
-that shipped only a DMG is the kind of claim someone downloads on.
+### What a release does not prove, and must not be reported as proving
 
-**Both installers are built by CI, and steps 4–9 above are now one tag push.**
-`.github/workflows/release.yml` fires on `v*` and does the whole thing: refuses
-to start unless the tag and both `package.json` versions agree, runs the gate,
-builds the DMG and the `.exe` in parallel, verifies each against its own
-packaged bundle, and publishes the release with both assets, both checksums,
-and the notes assembled from the CHANGELOG section for that version.
+**Neither installer is signed in the way its platform wants.** The DMG is
+ad-hoc signed and not notarized, so every downloader meets Gatekeeper (C-002).
+The `.exe` has no certificate at all and meets SmartScreen — and a signature
+alone would not fix that either, because SmartScreen scores reputation rather
+than validity and a new certificate has none. Both paragraphs are in the notes
+the pipeline writes, because every release has to repeat them.
 
-That is not tidiness. A hand-built artifact is built from whatever is in that
-working tree, and `pnpm package` reaching for a `dist/` some earlier build left
-behind is the bug the first Windows CI run found — latent for as long as
-releases had been cut from a machine that never starts clean. The version check
-is the same kind of thing: this file has said for months that the two
-`package.json` files "drift silently", and a tag that disagrees with them
-produces an installer whose filename lies about its contents.
+**CI verifies at `bundle` scope only.** That is the native-file inventory, that
+the app launches, and that the renderer is served. The full scope — the event
+store opening, a terminal, an agent joining — needs an installed and
+authenticated CLI that no runner has, so it still has to be run on a real
+machine: `pnpm --filter @chorus/desktop run verify:package`. A release that
+skipped that has not checked the thing `verify:package` was written for.
 
-Run it from the Actions tab with no input to build both installers **without**
-publishing — which is how you find out the pipeline works without cutting a
-release to do it, and how a tester gets a build.
+**The Windows installer itself is unproven.** The pipeline verifies the bundle
+NSIS wrapped, not what the installer does to a machine. Install, upgrade,
+uninstall and whether the event log survives a version change have never been
+tested; they need clean VMs. `docs/windows-test-brief.md` is the brief for that.
 
-Each platform runs **its own** verifier — `verify:package` for the DMG,
-`verify:package:windows` for `win-unpacked`. Neither knows anything about the
-other's bundle, deliberately; see the header of `e2e/packaged-windows.mjs`.
-
-**Both artifacts are unsigned in the way their platform objects to, and the
-release notes must say so for each.** The DMG is ad-hoc signed and meets
-Gatekeeper (C-002). The `.exe` has no certificate at all and meets SmartScreen,
-which is worse in one specific way worth stating: a valid signature would not
-fix it either, because SmartScreen scores reputation rather than validity and a
-new certificate has none. `docs/install-windows.md` carries the paragraph.
-
-Two things gate a Windows release that have no macOS equivalent, and neither is
-a build step:
-
-- **A code-signing certificate**, which is calendar time rather than
-  engineering. OV keys must live on an HSM or token, and issuance needs
-  organization validation — days to weeks. Nothing downstream can start until it
-  exists. Until then the installer CI produces is unsigned: fine for testing,
-  and not something to put in front of a stranger.
-- **Installer lifecycle on clean VMs**: install as a standard user, upgrade over
-  a seeded previous version, prove the event log survives, uninstall, reinstall.
-  `verify:package:windows` drives `win-unpacked` and proves none of this.
-
-**What a release does not prove, and must not be reported as proving.** The e2e
-suite is not part of this sequence — it takes ~5 minutes, passes about 6 runs in
-10 (C-029), and has to be run deliberately. (Its size is whatever `specs.mjs`
-holds; this used to say "28-spec" and was wrong by four within the week.) `verify:package`
-covers launch, the native module, the composer and an agent joining. Anything
+**The e2e suite is not part of any of this.** It takes ~5 minutes, passes about
+6 runs in 10 (C-029), is macOS-only, and has to be run deliberately. Anything
 about the transcript, tabs, or a menu under load is unverified unless someone
 ran the suite or drove the app. Say which of those happened.
-
-The e2e suite is macOS-only and has not been looked at for Windows. Neither
-platform may claim UI coverage that was not run on it.
 
 ## The one rule everything else follows from
 

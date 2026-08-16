@@ -1,13 +1,18 @@
 # Testing Chorus on Windows — the first time anyone has
 
-Nobody has run this application on Windows. The test suite passes there, which
-says the code is portable, not that the app works. You are the first person to
-find out.
+Nobody has run this application on Windows. The test suite passes there and CI
+builds an installer that launches far enough to serve its renderer — which says
+the code is portable and the packaging is sound, not that the app works. You are
+the first person to find out.
+
+Nothing below has been tested by installing: not the install itself, not an
+agent starting, not a terminal. That is the whole point of asking you.
 
 This is a brief for that, not an install guide — `docs/install-windows.md` is
-the install guide, and it describes an installer that does not exist yet.
+the install guide, and it covers the dialogs, the file locations and the
+troubleshooting in more detail than you probably need on a first run.
 
-**Branch:** `feat/windows-installer` · **Machine:** Windows 10 or 11, x64
+**Machine:** Windows 10 or 11, x64. Everything here is on `main`.
 
 ---
 
@@ -35,7 +40,7 @@ seconds of your time answers it whether or not the rest of the test goes well.
 ## Setup
 
 ```powershell
-# Prerequisites
+# Chorus drives these; it does not bundle them
 npm install -g @openai/codex @anthropic-ai/claude-code
 # Git for Windows — Claude Code shells out to POSIX tools and fails without it
 winget install Git.Git
@@ -43,33 +48,31 @@ winget install Git.Git
 # Authenticate both once, in a terminal, before Chorus sees them
 codex
 claude
+```
 
-# Then
+## Get Chorus
+
+**Download the installer** from the
+[releases page](https://github.com/mohammadtmohsen/chorus/releases) —
+`Chorus-<version>-windows-x64-setup.exe`, with a `.sha256` beside it. CI builds
+it on `windows-latest` and a verifier confirms the app launches from that exact
+bundle, so it is a real artifact rather than a hopeful one.
+
+**SmartScreen will block it.** Choose **More info → Run anyway**. The installer
+is unsigned; that is expected and is not a finding.
+
+Building from source works too, if you would rather:
+
+```powershell
 git clone https://github.com/mohammadtmohsen/chorus.git
 cd chorus
-git checkout feat/windows-installer
-pnpm install
+pnpm install     # proven on Windows — CI does exactly this
+pnpm dev         # fastest path to a window, and skips the installer entirely
 ```
 
-`pnpm install` is the one step already proven on Windows — CI does exactly this.
-If it fails, that is a genuine surprise and worth reporting on its own.
-
-## Run it
-
-```powershell
-pnpm dev
-```
-
-Fastest path to a window. If you want the installer instead:
-
-```powershell
-pnpm package
-# → apps/desktop/release/Chorus-<version>-windows-x64-setup.exe
-pnpm --filter @chorus/desktop run verify:package:windows
-```
-
-`pnpm package` has never been run on Windows either. It is unsigned, so
-SmartScreen will block it — that is expected and not a finding.
+`pnpm dev` is worth knowing about for a second reason: if the _installed_ app
+misbehaves, running from source separates "the installer did something wrong"
+from "the app does something wrong", and those need different fixes.
 
 ## What to test, hardest question first
 
@@ -104,6 +107,10 @@ name the file. This is a named pipe that has never been dialled.
 **6. Does your data survive?** Have a conversation, quit, reopen. The transcript
 lives in `%APPDATA%\Chorus\chorus.db` and is the source of truth — if it does not
 come back, stop and say so.
+
+**7. Does an upgrade keep it?** Only if a second version is available: install
+over the top and check the same conversation is still there. Uninstall
+deliberately leaves `%APPDATA%\Chorus` alone, so a wipe would be a real bug.
 
 ## Known-degraded, so please do not report these
 
