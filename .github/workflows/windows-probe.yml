@@ -73,8 +73,18 @@ jobs:
           CHORUS_RESOLVE_PROBE: '1'
         run: pnpm --filter @chorus/desktop exec vitest run src/main/resolve-probe.test.ts --reporter verbose
 
+      # `bundle` scope, and the scope is the point.
+      #
+      # The verifier's full pass waits for a `.pane`, which only exists once a
+      # conversation has started — and a conversation needs an *authenticated*
+      # agent. No runner has one. Run without this, it waits two minutes and
+      # reports a packaging fault that is not there; the file says so in a
+      # comment, and the first Windows CI run made the same misreading. This one
+      # did too, which is why the variable is now set rather than assumed.
       - name: Package, and drive the packaged app
         shell: pwsh
+        env:
+          CHORUS_VERIFY_SCOPE: bundle
         run: |
           pnpm package
           pnpm --filter @chorus/desktop run verify:package:windows
