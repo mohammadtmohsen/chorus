@@ -183,6 +183,13 @@ export interface TerminalServiceOptions {
   readonly env?: NodeJS.ProcessEnv
   readonly scrollback?: number
   readonly frame?: Frame
+  /**
+   * Injected, because the service reads the platform in two places and both
+   * decide user-visible behaviour: which shell opens, and whether a terminal
+   * reports busy. Left implicit, the tests asserted whichever host they ran on
+   * — which is how the Windows CI run found them.
+   */
+  readonly platform?: NodeJS.Platform
 }
 
 /** Lines of history the headless mirror keeps. The bound on memory per shell. */
@@ -270,9 +277,11 @@ export class TerminalService {
   private readonly env: NodeJS.ProcessEnv
   private readonly scrollback: number
   private readonly frame: Frame
+  private readonly platform: NodeJS.Platform
 
   constructor(options: TerminalServiceOptions) {
     this.cwdFor = options.cwdFor
+    this.platform = options.platform ?? process.platform
     this.spawner = options.spawn ?? nodePty
     this.env = options.env ?? process.env
     this.scrollback = options.scrollback ?? SCROLLBACK
@@ -402,7 +411,11 @@ export class TerminalService {
   describe(ref: TerminalRef): TerminalDescription | null {
     const session = this.find(ref)
     if (session === null) return null
-    const { foreground, busy } = describeForeground(session.pty.process, session.shellName)
+    const { foreground, busy } = describeForeground(
+      session.pty.process,
+      session.shellName,
+      this.platform
+    )
     return {
       running: !session.exited,
       foreground,
@@ -511,7 +524,7 @@ export class TerminalService {
   }
 
   private open(ref: TerminalRef, size?: { cols: number; rows: number }): Session {
-    const shell = resolveShell(this.env)
+    const shell = resolveShell(this.env, this.platform)
     const cols = size?.cols ?? DEFAULT_COLS
     const rows = size?.rows ?? DEFAULT_ROWS
 

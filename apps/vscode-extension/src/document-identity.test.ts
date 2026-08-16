@@ -8,6 +8,15 @@ import { joinInside, resolveDocument, type DocumentUri } from './document-identi
  * failure this whole module exists to avoid.
  */
 
+/*
+ * Every call below names `'darwin'`.
+ *
+ * The fixtures are POSIX — `/Users/me/repo`, `/src/app.ts` — and what counts as
+ * an absolute path is a platform question, so without naming one these asserted
+ * whichever host they ran on. On the Windows runner `hasRoot('/Users/me/repo')`
+ * is false, because a rooted path with no drive letter cannot be located, and
+ * seven tests went red for a reason that had nothing to do with what they test.
+ */
 const REPO = '/Users/me/repo'
 
 const uri = (over: Partial<DocumentUri>): DocumentUri => ({
@@ -49,20 +58,20 @@ const git = (ref: string, path = `${REPO}/src/app.ts`): DocumentUri =>
 
 describe('joinInside', () => {
   it('joins a repo-relative path onto its root', () => {
-    expect(joinInside(REPO, '/src/app.ts')).toBe(`${REPO}/src/app.ts`)
-    expect(joinInside(`${REPO}/`, 'src/app.ts')).toBe(`${REPO}/src/app.ts`)
+    expect(joinInside(REPO, '/src/app.ts', 'darwin')).toBe(`${REPO}/src/app.ts`)
+    expect(joinInside(`${REPO}/`, 'src/app.ts', 'darwin')).toBe(`${REPO}/src/app.ts`)
   })
 
   /* A path from a merge request never legitimately climbs out of the repo, so
      this refuses rather than normalising and being wrong quietly. */
   it('refuses to climb out of the root', () => {
-    expect(joinInside(REPO, '/../../etc/passwd')).toBeNull()
-    expect(joinInside(REPO, '/src/../../x')).toBeNull()
+    expect(joinInside(REPO, '/../../etc/passwd', 'darwin')).toBeNull()
+    expect(joinInside(REPO, '/src/../../x', 'darwin')).toBeNull()
   })
 
   it('refuses a root that is not absolute, and an empty path', () => {
-    expect(joinInside('repo', '/src/a.ts')).toBeNull()
-    expect(joinInside(REPO, '/')).toBeNull()
+    expect(joinInside('repo', '/src/a.ts', 'darwin')).toBeNull()
+    expect(joinInside(REPO, '/', 'darwin')).toBeNull()
   })
 })
 

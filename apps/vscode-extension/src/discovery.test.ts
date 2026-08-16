@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { pidIsAlive, readDescriptors } from './discovery.js'
 
 let dir: string
-const alive = { isAlive: () => true }
-const dead = { isAlive: () => false }
+const alive = { platform: 'darwin' as const, isAlive: () => true }
+const dead = { platform: 'darwin' as const, isAlive: () => false }
 
 function write(name: string, value: unknown, mode = 0o600): void {
   const path = join(dir, name)

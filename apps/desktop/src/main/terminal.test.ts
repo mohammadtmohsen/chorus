@@ -74,6 +74,13 @@ function build(): Harness {
     }
   }
   const service = new TerminalService({
+    /*
+     * Named, not inherited. These tests assert unix shell selection and unix
+     * busy/idle — `zsh` in the foreground, `ssh` on top of it — and without this
+     * they asserted whichever host they happened to run on, which on the Windows
+     * runner meant `cmd.exe` and a terminal that is never busy.
+     */
+    platform: 'darwin',
     cwdFor: (ref) => (ref.scope === 'global' ? '/home/me' : `/work/${ref.conversationId}`),
     env: { SHELL: '/bin/zsh' },
     frame,

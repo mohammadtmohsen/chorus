@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 /**
  * Where the bridge listens, and where the extension looks — decided once.
@@ -10,9 +10,25 @@ import { join } from 'node:path'
  * rule moved here before the platform did.
  */
 
+/**
+ * `path` for the platform being reasoned about, which in tests is not this one.
+ *
+ * These three take a platform and then joined with `node:path`'s bare `join`,
+ * which is bound to the *running* one. Harmless in production, where the two are
+ * the same machine — and exactly the inconsistency `paths.ts` two files over
+ * exists to avoid, which is how the Windows CI run found it: `endpointFor(...,
+ * 'darwin')` on a Windows host returned `\tmp\chorus-ide\4242.sock`.
+ */
+function ops(platform: NodeJS.Platform): typeof win32 {
+  return platform === 'win32' ? win32 : posix
+}
+
 /** The directory holding one `<pid>.json` descriptor per running Chorus. */
-export function runtimeDirectory(tmp: string): string {
-  return join(tmp, 'chorus-ide')
+export function runtimeDirectory(
+  tmp: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  return ops(platform).join(tmp, 'chorus-ide')
 }
 
 /**
@@ -37,12 +53,16 @@ export function runtimeDirectory(tmp: string): string {
  */
 export function endpointFor(directory: string, pid: number, platform: NodeJS.Platform): string {
   if (platform === 'win32') return `\\\\.\\pipe\\chorus-ide-${String(pid)}`
-  return join(directory, `${String(pid)}.sock`)
+  return ops(platform).join(directory, `${String(pid)}.sock`)
 }
 
 /** The descriptor is a real file on both platforms; only its contents differ. */
-export function descriptorFor(directory: string, pid: number): string {
-  return join(directory, `${String(pid)}.json`)
+export function descriptorFor(
+  directory: string,
+  pid: number,
+  platform: NodeJS.Platform = process.platform
+): string {
+  return ops(platform).join(directory, `${String(pid)}.json`)
 }
 
 /**

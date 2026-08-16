@@ -34,7 +34,8 @@ describe('endpointFor', () => {
 
 describe('descriptorFor', () => {
   it('stays a real file on both platforms — it is what carries the token', () => {
-    expect(descriptorFor('/tmp/chorus-ide', 7)).toBe('/tmp/chorus-ide/7.json')
+    expect(descriptorFor('/tmp/chorus-ide', 7, MAC)).toBe('/tmp/chorus-ide/7.json')
+    expect(descriptorFor('C:\\Temp\\chorus-ide', 7, WIN)).toBe('C:\\Temp\\chorus-ide\\7.json')
   })
 })
 
@@ -42,7 +43,21 @@ describe('runtimeDirectory', () => {
   it('is the one definition both ends now share', () => {
     // Previously two bare join(tmpdir(), 'chorus-ide') expressions that agreed
     // only by luck.
-    expect(runtimeDirectory('/tmp')).toBe('/tmp/chorus-ide')
+    expect(runtimeDirectory('/tmp', MAC)).toBe('/tmp/chorus-ide')
+    expect(runtimeDirectory('C:\\Temp', WIN)).toBe('C:\\Temp\\chorus-ide')
+  })
+
+  /*
+   * The bug the first Windows CI run found. All three of these take a platform
+   * and then joined with the *running* one, so a darwin-targeted call on a
+   * Windows host produced `\tmp\chorus-ide`. Harmless in production, where the
+   * two always agree — and precisely the inconsistency that makes a test suite
+   * assert its own host rather than its argument.
+   */
+  it('honours the platform argument rather than the host it runs on', () => {
+    expect(runtimeDirectory('/tmp', MAC)).not.toContain('\\')
+    expect(descriptorFor('/tmp/chorus-ide', 1, MAC)).not.toContain('\\')
+    expect(endpointFor('/tmp/chorus-ide', 1, MAC)).not.toContain('\\')
   })
 })
 

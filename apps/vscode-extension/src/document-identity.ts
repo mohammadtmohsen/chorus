@@ -65,14 +65,18 @@ function stringField(source: Record<string, unknown>, key: string): string | nul
  * result regardless — this is disclosure minimisation, not the security
  * boundary.
  */
-export function joinInside(root: string, relative: string): string | null {
+export function joinInside(
+  root: string,
+  relative: string,
+  platform: NodeJS.Platform = process.platform
+): string | null {
   /*
    * `hasRoot`, not `startsWith('/')`. The old check rejected every Windows root
    * outright — `c:\repo` does not start with `/`, and neither does
    * `\\server\share\repo` — so this returned null for every GitLab review
    * pane on Windows.
    */
-  if (root === '' || !hasRoot(root)) return null
+  if (root === '' || !hasRoot(root, platform)) return null
 
   /*
    * Split on **both** separators. Splitting on `/` alone left a backslash-
@@ -86,7 +90,7 @@ export function joinInside(root: string, relative: string): string | null {
   if (segments.includes('..')) return null
   // A drive-relative or rooted segment would escape too: `C:x`, or a leading
   // separator that survived the filter as an absolute-looking first element.
-  if (segments.some((s) => hasRoot(s) || /^[a-zA-Z]:/.test(s))) return null
+  if (segments.some((s) => hasRoot(s, platform) || /^[a-zA-Z]:/.test(s))) return null
 
   const sep = separatorOf(root)
   const base = root.endsWith(sep) ? root.slice(0, -1) : root
@@ -113,14 +117,14 @@ function isChangeType(value: unknown): value is ChangeType {
  * reports `worktree` rather than inventing a version that would need
  * qualifying.
  */
-function resolveGit(uri: DocumentUri): ResolvedDocument | null {
+function resolveGit(uri: DocumentUri, platform: NodeJS.Platform): ResolvedDocument | null {
   const query = parseQuery(uri.query)
   if (query === null) return null
   const filePath = stringField(query, 'path')
   // `hasRoot` rather than a leading `/`: on Windows the built-in Git extension
   // puts `c:\...` here, so the old check made every `git:` diff pane resolve to
   // null — the exact regression protocol 2 existed to fix, one platform over.
-  if (typeof filePath !== 'string' || !hasRoot(filePath)) return null
+  if (typeof filePath !== 'string' || !hasRoot(filePath, platform)) return null
 
   const ref = query['ref']
   if (typeof ref !== 'string') return null
@@ -148,7 +152,7 @@ function resolveGit(uri: DocumentUri): ResolvedDocument | null {
  * file — GitLab's own `isEmptyFileUri` — and there is nothing there to
  * reference.
  */
-function resolveReview(uri: DocumentUri): ResolvedDocument | null {
+function resolveReview(uri: DocumentUri, platform: NodeJS.Platform): ResolvedDocument | null {
   const query = parseQuery(uri.query)
   if (query === null) return null
 
@@ -158,7 +162,7 @@ function resolveReview(uri: DocumentUri): ResolvedDocument | null {
 
   const root = stringField(query, 'repositoryRoot')
   if (root === null) return null
-  const filePath = joinInside(root, uri.path)
+  const filePath = joinInside(root, uri.path, platform)
   if (filePath === null) return null
 
   /*
@@ -181,14 +185,24 @@ function resolveReview(uri: DocumentUri): ResolvedDocument | null {
  * Notebook cells are absent because a cell needs an index carried through the
  * reference to mean anything, which is its own decision.
  */
-export function resolveDocument(uri: DocumentUri): ResolvedDocument | null {
+export function resolveDocument(
+  uri: DocumentUri,
+  /*
+   * Named by the caller in tests, inherited in production.
+   *
+   * Everything below decides what counts as an absolute path, and that answer
+   * differs by platform — so a suite using POSIX fixtures asserted its own host
+   * rather than its argument, and went red the first time it ran on Windows.
+   */
+  platform: NodeJS.Platform = process.platform
+): ResolvedDocument | null {
   switch (uri.scheme) {
     case 'file':
       return uri.fsPath === '' ? null : { filePath: uri.fsPath, provenance: { kind: 'worktree' } }
     case 'git':
-      return resolveGit(uri)
+      return resolveGit(uri, platform)
     case 'gl-review':
-      return resolveReview(uri)
+      return resolveReview(uri, platform)
     default:
       return null
   }
