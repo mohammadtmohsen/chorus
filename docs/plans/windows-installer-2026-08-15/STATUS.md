@@ -249,3 +249,48 @@ assessed.
 What a green suite on `windows-latest` does **not** cover, and what the brief
 therefore asks for: agent startup, ConPTY, the named-pipe bridge, the window
 frame, and whether the event store survives a restart. None of it has been run.
+
+## An installer exists, 2026-08-16
+
+`.github/workflows/release.yml` builds both platforms from one tag and publishes
+them together. `Chorus-0.14.1-windows-x64-setup.exe` — 111 MB — is attached to
+the 0.14.1 release with its checksum, beside the DMG.
+
+Three things stood between the first dispatch and a green pipeline, and only one
+of them was about Windows.
+
+**`pnpm package` had always been broken on a clean checkout.** It ran the
+extension's esbuild without building `@chorus/ide-protocol` first, so it only
+worked where an earlier build had left a `dist/` behind — every machine it had
+ever run on, until a runner did a fresh clone. Reproduced on macOS in one
+command before the platform was blamed. A release cut from a fresh clone would
+have hit it at any point in the past.
+
+**`new URL('..', import.meta.url).pathname` keeps its leading slash**, so on
+Windows it is `/D:/a/...` and joins into `\D:\a\...` — a slash before the drive
+letter, which nothing can open. That one was Windows, and it was in the verifier
+written for Windows.
+
+**The pane check needed an agent, not a fix.** The build launched Chorus and
+served the renderer, then failed waiting for a pane — which needs a
+conversation, which needs an installed and authenticated CLI no runner has.
+Confirmed by hiding `codex` and `claude` from PATH and watching the _macOS_
+verifier fail identically against a bundle known to be good. Both verifiers now
+take a scope; CI runs `bundle` and gates on it.
+
+### What Windows has actually demonstrated
+
+All six native binaries load from outside the asar, including the
+`conpty_console_list` binding review caught missing; the `.pdb` and
+vendored-source exclusions hold; the VSIX ships with its version file; and the
+app **starts and serves its renderer**.
+
+### What it still has not
+
+The event store opening, a terminal, an agent joining — all need credentials a
+runner does not have. And the installer itself is unproven: the verifier checks
+the bundle NSIS wrapped, not what installing does to a machine. Install,
+upgrade, uninstall and data survival across a version change are Phase 6 and
+need clean VMs.
+
+The certificate remains unstarted and remains the long pole.

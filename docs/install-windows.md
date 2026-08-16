@@ -5,11 +5,13 @@ them, and it will not install them for you — so most of what follows is about
 getting those two working first, because a Chorus that cannot find them looks
 broken in a way that has nothing to do with Chorus.
 
-> **Status: not yet released.** The Windows build exists in the repository and
-> has not been produced, signed, or run on a Windows machine. Everything below
-> describes the intended install; the sections marked **unverified** have never
-> been executed by anyone. See `docs/plans/windows-installer-2026-08-15/STATUS.md`
-> for what is actually done.
+> **Status: the installer exists and is unsigned; nobody has completed an
+> install.** CI builds `Chorus-<version>-windows-x64-setup.exe` on every release
+> and attaches it with its checksum, and a verifier confirms the app launches
+> and serves its renderer from that bundle. What has **not** happened is anyone
+> running the installer, starting an agent, or opening a terminal on Windows.
+> The steps below are what should happen; treat the first report as the first
+> evidence. `docs/plans/windows-installer-2026-08-15/STATUS.md` has the detail.
 
 ## What is supported
 
@@ -64,7 +66,9 @@ If those print nothing, neither will Chorus.
 
 ## Installing
 
-1. Download `Chorus-<version>-windows-x64-setup.exe` from the release page.
+1. Download `Chorus-<version>-windows-x64-setup.exe` from the
+   [releases page](https://github.com/mohammadtmohsen/chorus/releases). The
+   `.sha256` beside it is the checksum for that exact file.
 2. **Expect a SmartScreen warning.** Choose "More info" then "Run anyway". This
    is not a sign that anything is wrong — see below.
 3. Choose per-user (default) or per-machine. Per-machine needs an administrator.
@@ -75,10 +79,14 @@ everything under your own profile.
 
 ### About the SmartScreen warning
 
+**This installer is not signed at all**, so the warning is expected rather than
+surprising. It is worth understanding what a signature would and would not buy.
+
 A valid signature and a good reputation are different things. SmartScreen scores
-by how many people have downloaded a given signed binary, so a newly issued
-certificate has no reputation and every download is warned about — for weeks,
-sometimes months, regardless of the signature being correct.
+by how many people have downloaded a given signed binary, so even a correctly
+signed build from a newly issued certificate is warned about — for weeks,
+sometimes months. Signing is on the roadmap; it will make the warning
+_eventually_ go away, not immediately.
 
 To check the signature yourself rather than trusting the dialog:
 
