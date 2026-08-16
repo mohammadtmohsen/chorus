@@ -25,58 +25,75 @@ the buffer is unsaved. Source code crosses once, when you press Send, and only f
 selection named in the composer. Nothing is reported for a folder Chorus does not have
 open, so a file from another project never leaves the editor — not even as a path.
 
-## Vision
+## Why
 
-Coding agents are most useful when they can specialize, exchange findings, and remain under clear human control. Chorus provides one place to ask an agent for analysis, hand the result to another agent for implementation, and send the finished work back for review.
+Coding agents are most useful when they can specialize, exchange findings, and
+stay under clear human control. Today that means several terminals, copying an
+answer out of one and pasting it into another, and losing the thread of who said
+what. Chorus is one place to ask an agent for analysis, hand the result to
+another agent to implement, and send the finished work back for review — with
+the whole exchange in a single transcript you can read afterwards.
 
-## Core workflow
+It **drives** the `claude` and `codex` CLIs you already have installed and signed
+in. It does not reimplement them and it does not proxy your account through
+anyone's server.
 
-1. Ask Codex to inspect a project and recommend an approach without editing files.
-2. Review and discuss the recommendation in the shared conversation.
-3. Hand the approved recommendation to Claude for implementation.
-4. Approve commands and file changes through structured confirmation cards.
-5. Ask Codex to review Claude's changes and report actionable findings.
+## A typical session
 
-## Product principles
+1. Ask Codex to inspect the project and recommend an approach, changing nothing.
+2. Read the recommendation and argue with it, in the shared conversation.
+3. Hand it to Claude to implement.
+4. Approve each command and file change on a card that shows what will happen.
+5. Ask Codex to review what Claude did and report what it finds.
 
-- **Human controlled:** consequential commands and edits require visible approval.
-- **Local first:** projects, transcripts, and agent processes stay on the developer's Mac by default.
-- **Explicit context sharing:** agents keep separate contexts, while Chorus forwards selected messages and handoffs.
-- **Reliable integrations:** use supported programmatic interfaces instead of parsing terminal graphics.
-- **Agent independent:** adapters keep the shared conversation separate from any single model provider.
+Both agents see the same conversation. Neither sees the other's context window.
 
-## Proposed architecture
+## What it does
 
-- **Desktop client:** Electron, React, and TypeScript.
-- **Local orchestrator:** routes messages, approvals, tasks, and agent events.
-- **Codex adapter:** communicates with `codex app-server` over standard input/output.
-- **Claude adapter:** uses Claude's streaming CLI for the private local version, with the Agent SDK available for distributed products.
-- **Event store:** SQLite stores conversations, handoffs, approvals, and project metadata.
-- **Workspace service:** manages project directories, Git status, diffs, and optional worktree isolation.
-
-## MVP
-
-- Shared conversation for the developer, Claude, and Codex.
-- `@claude` and `@codex` mentions.
-- Direct handoff buttons between agents.
-- Streaming responses and agent status indicators.
-- Approval cards for commands and file changes.
-- Per-project working directories and permission profiles.
-- Git diff and review view.
-- A slash menu, `@` mentions for agents and files, and drafts that survive a quit.
-- Plan mode: read and reason, change nothing until the plan is approved.
-- What the agents are doing — hooks, tool calls, subagents, background tasks,
-  and how full each context window is.
-- What this machine gives them — MCP server health, plugins, and which account
+- **One conversation, several agents.** `@claude` and `@codex` to address
+  someone; handoff buttons to move a reply from one to the other.
+- **Approval cards** for commands and edits, with per-project permission
+  profiles and a deny list that nothing can override.
+- **Plan mode** — read and reason, change nothing, until the plan is approved.
+- **A real diff view.** Every edit an agent makes, per turn and per agent, plus
+  the cumulative working-tree diff.
+- **Several conversations at once**, in a splittable pane layout, with agents
+  still running in the ones you are not looking at.
+- **A real shell** — `⌘J` per session, or a global one. Chorus retires the
+  terminal as an _agent interface_, not as a tool.
+- **What the agents are doing** — hooks, tool calls, subagents, background tasks,
+  how full each context window is, MCP server health, plugins, and which account
   each agent is signed in as.
+- **VS Code selection**, so a question can carry an exact reference instead of a
+  description.
+
+Everything an agent streams is written to an append-only SQLite log as it
+arrives, because Codex discards partial output when a turn is interrupted — a
+transcript cannot be rebuilt from the providers, so it is made durable here.
+
+## How it is put together
+
+- **Desktop client** — Electron, React, TypeScript, hand-written CSS.
+- **Orchestrator** — routes messages, approvals and agent events; owns the
+  permission engine and catch-up.
+- **Two adapters** — `codex app-server` over JSON-RPC on stdio, and the Claude
+  Agent SDK. Both project onto one normalized `AgentEvent` union, and nothing
+  provider-specific leaks past an adapter.
+- **Event store** — SQLite. An append and every projection it updates land in
+  one transaction, so a projection can never be ahead of the log.
 
 ## Status
 
-Working software, used daily on real projects. `0.15.0` runs both CLIs headless,
-holds several conversations at once, and keeps an append-only log that a
-transcript is rebuilt from. See the [changelog](CHANGELOG.md) for what each
-version added, and [the board](BOARD.md) for what is open, what is parked, and
-what needs a person.
+Working software, used daily on real projects — `0.15.0` is the current release.
+See the [changelog](CHANGELOG.md) for what each version added, and
+[the board](BOARD.md) for what is open, what is parked, and what needs a person
+rather than a commit.
+
+Two honest caveats. **macOS is the tested platform** — Apple Silicon, macOS 12 or
+later. A Windows installer exists and the test suite passes on Windows in CI, but
+installing, upgrading and uninstalling on a real Windows machine has not been
+verified. **Neither installer is signed the way its platform wants**, so a
+download meets Gatekeeper or SmartScreen; building from source avoids both.
 
 Not a Claude Code replacement in full, and deliberately so: most of that tool's
 commands exist only inside its terminal UI and have no API. What is reachable
