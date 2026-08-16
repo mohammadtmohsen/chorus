@@ -10,7 +10,15 @@ import { createPreviewController, SessionPreviewHost } from './SessionPreview.js
 import { TerminalPanel } from '../TerminalPanel.js'
 import type { TerminalRefShape } from '../../../shared/ipc.js'
 import { leafPaneIds, type SplitDirection } from './layout.js'
-import { usePane, useGlobalTerminal, useWorkspaceActions, useWorkspaceLayout } from './hooks.js'
+import {
+  usePane,
+  useGlobalTerminal,
+  useSessionRowState,
+  useWorkspaceActions,
+  useWorkspaceLayout,
+} from './hooks.js'
+import { stateOf } from './session-row.js'
+import { StateMark } from './SessionRow.js'
 import { countRender } from './render-count.js'
 import { monogramOf, stepSlot } from './session-row.js'
 import { useWorkspaceStore } from './store.js'
@@ -68,6 +76,24 @@ interface WorkspaceProps {
     focused: boolean,
     paneId: string
   ) => React.ReactNode
+}
+
+/**
+ * A tab's own state mark, in its own component because of the hook.
+ *
+ * `useSessionRowState` subscribes to one conversation's slice of the pulse, and
+ * the tabs are produced by a `map` — so this cannot be inlined without calling a
+ * hook in a loop. Splitting it also means a session going busy re-renders one
+ * tab rather than the whole strip.
+ */
+function TabState({ conversationId }: { conversationId: string }): React.JSX.Element {
+  const row = useSessionRowState(conversationId)
+  const state = stateOf(row)
+  return (
+    <span className="workspace-tab-state" data-state={state}>
+      <StateMark state={state} voice={row.working.length === 1 ? (row.working[0] ?? null) : null} />
+    </span>
+  )
 }
 
 function directionFromKey(key: string): SplitDirection | null {
@@ -784,11 +810,21 @@ function PaneTabStrip(
                   <path d="M20 12a8 8 0 0 1-8 8H5l-1.5 2v-4.5A8 8 0 1 1 20 12Z" />
                 </svg>
                 <span className="workspace-tab-title">{session.title}</span>
-                <span className="workspace-tab-voices" aria-hidden="true">
-                  {session.participants.map((agent) => (
-                    <span className={`voice-dot voice--${agent}`} key={agent} />
-                  ))}
-                </span>
+                {/*
+                  What the session is *doing*, where its cast used to be.
+
+                  The dots said which agents were in the room, which does not
+                  change and so is never news. What a tab has to say is the thing
+                  that changed while you were looking at another one: an approval
+                  holding a tool, a question waiting, an agent working, an agent
+                  that stopped.
+
+                  The same `StateMark` the sidebar card draws, from the same
+                  `useSessionRowState`. Deliberately not a second derivation:
+                  a tab and its card disagreeing about whether a session is
+                  blocked is worse than either being wrong alone.
+                */}
+                <TabState conversationId={conversationId} />
               </button>
               <button
                 type="button"

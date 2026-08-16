@@ -4967,15 +4967,51 @@ input::placeholder {
   white-space: nowrap;
 }
 
-.workspace-tab-voices {
+/*
+ * What the session is doing, in the tab.
+ *
+ * Replaces the cast dots that used to sit here. Those said *which agents are in
+ * this room* — a fact that does not change, and so is never the reason to look
+ * at a tab. This says the thing that did change while you were reading another
+ * one.
+ *
+ * The mark itself is `.state-mark`, exactly as the sidebar card draws it, so a
+ * tab and its card cannot disagree about whether a session is blocked.
+ */
+.workspace-tab-state {
   display: flex;
-  gap: 3px;
+  align-items: center;
   flex: none;
 }
 
-.workspace-tab-voices .voice-dot {
-  width: 5px;
-  height: 5px;
+/*
+ * Full strength even on an inactive tab, and that is the whole point.
+ *
+ * `.workspace-tab-main` dims its contents when the tab is not the active one,
+ * which is right for a title and wrong for this: the tab you are *not* looking
+ * at is exactly the one whose approval you need to notice. Idle is left to dim
+ * with everything else, because "nothing is happening" is not news.
+ */
+.workspace-tab-main .workspace-tab-state:not([data-state='idle']) {
+  opacity: 1;
+}
+
+/*
+ * A waiting tab says so in colour as well as in shape.
+ *
+ * The mark is 7px. On a strip of six tabs that is a small thing to catch out of
+ * the corner of an eye, and an approval is the one state where being missed has
+ * a cost — an agent is stopped mid-turn holding a tool it cannot run. So the
+ * tab itself carries a hint of the state's own colour rather than leaving the
+ * whole signal to the dot.
+ */
+.workspace-tab:has(.workspace-tab-state[data-state='approval']) .workspace-tab-main,
+.workspace-tab:has(.workspace-tab-state[data-state='question']) .workspace-tab-main {
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+
+.workspace-tab:has(.workspace-tab-state[data-state='question']) .workspace-tab-main {
+  background: color-mix(in srgb, var(--focus-ring) 10%, transparent);
 }
 
 /*
