@@ -625,6 +625,12 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
     'aside:promote': (request: { asideId: string; profileId: string }) =>
       runtime.promoteAside(request.asideId, request.profileId),
 
+    'aside:forward': async (request: { asideId: string; directive: string }) => {
+      const { targets } = await runtime.forwardAside(request.asideId, request.directive)
+      // Copied out of the readonly domain type; the IPC boundary is plain JSON.
+      return { targets: [...targets] }
+    },
+
     'aside:close': async (request: { asideId: string }) => {
       await runtime.closeAside(request.asideId)
       return { ok: true as const }

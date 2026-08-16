@@ -33,6 +33,82 @@ describe('asideState', () => {
     expect(state.answered).toBe(true)
   })
 
+  /*
+   * The card is a two-way exchange, and these are the properties that make it
+   * one. Before this the reducer kept only the agent's half, joined end to end —
+   * so a second question had nowhere to appear and its answer ran on from the
+   * first, which read as the follow-up having overwritten what it followed.
+   */
+  it('keeps both sides, in the order they were said', () => {
+    const state = asideState(
+      view({
+        messages: [
+          said({ key: 'a', actor: 'user', text: 'where are we?' }),
+          said({ key: 'b', text: 'The projection lags.' }),
+          said({ key: 'c', actor: 'user', text: 'run the tests' }),
+          said({ key: 'd', text: 'All green.' }),
+        ],
+      })
+    )
+    expect(state.turns.map((t) => `${t.actor}:${t.text}`)).toEqual([
+      'user:where are we?',
+      'agent:The projection lags.',
+      'user:run the tests',
+      'agent:All green.',
+    ])
+  })
+
+  it('leaves the system half of the log out of the exchange', () => {
+    // `joined` and the like are real messages in an aside's log, and neither of
+    // the two people in the card said them.
+    const state = asideState(
+      view({
+        messages: [
+          said({ key: 'a', actor: 'system', text: 'claude joined' }),
+          said({ key: 'b', text: 'It lags.' }),
+        ],
+      })
+    )
+    expect(state.turns).toHaveLength(1)
+    expect(state.turns[0]?.actor).toBe('agent')
+  })
+
+  it('marks a turn that is still arriving, so the card can show a caret', () => {
+    const state = asideState(view({ busy: true, messages: [said({ status: 'streaming' })] }))
+    expect(state.turns[0]?.streaming).toBe(true)
+  })
+
+  /*
+   * `answer` is what `promotion` seeds a real conversation with, so it stays the
+   * agent's words alone. A seed containing the user's own questions back would
+   * open the promoted room by telling the agent what it had just been asked.
+   */
+  it('keeps `answer` to the agent half, even though `turns` has both', () => {
+    const state = asideState(
+      view({
+        messages: [
+          said({ key: 'a', actor: 'user', text: 'where are we?' }),
+          said({ key: 'b', text: 'It lags.' }),
+        ],
+      })
+    )
+    expect(state.answer).toBe('It lags.')
+    expect(state.turns).toHaveLength(2)
+  })
+
+  it('drops reasoning and tool rows, which two-way did not change', () => {
+    const state = asideState(
+      view({
+        messages: [
+          said({ key: 'a', kind: 'reasoning', text: 'thinking' }),
+          said({ key: 'b', kind: 'command', text: 'ls' }),
+          said({ key: 'c', text: 'It lags.' }),
+        ],
+      })
+    )
+    expect(state.turns.map((t) => t.text)).toEqual(['It lags.'])
+  })
+
   it('is working, not answered, while the turn is open', () => {
     const state = asideState(view({ busy: true, messages: [said({ text: 'It lags' })] }))
     expect(state.working).toBe(true)

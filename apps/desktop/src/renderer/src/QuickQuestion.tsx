@@ -105,6 +105,7 @@ export function QuickQuestion(props: {
   const [language, setLanguage] = useState('')
   const [state, setState] = useState<AsideState>(EMPTY_ASIDE)
   const [asking, setAsking] = useState(false)
+  const [forwarding, setForwarding] = useState(false)
   /** What the promoted room would be allowed to do. Shown, and changeable. */
   const [profileId, setProfileId] = useState(props.profileId)
   const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([])
@@ -338,6 +339,45 @@ export function QuickQuestion(props: {
       })
   }
 
+  /**
+   * The same box, sent the other way: to the conversation instead of the fork.
+   *
+   * The reason the aside exists is to work out *whether* to go on — you ask where
+   * things stand, read the answer, and conclude "run the tests" or "hold on".
+   * Until now that conclusion had nowhere to go but a retype.
+   *
+   * **Sent rather than staged, which is the opposite of the button below it**,
+   * and the difference is what is travelling. `takeForward` stages the *agent's*
+   * answer, because its wording has to admit it came from somewhere the receiving
+   * agent cannot remember, and nobody should discover that after it went. This
+   * sends words you typed a second ago into a box you are looking at. Staging
+   * them would ask you to approve your own sentence.
+   *
+   * The card closes and the fork does not. Having decided, what you want next is
+   * the conversation you decided about — but the aside stays alive behind it, so
+   * the obvious follow-up ("did that work?") is still one click away rather than
+   * a new fork with none of the context.
+   */
+  const forward = (): void => {
+    const text = question.trim()
+    if (text === '' || forwarding) return
+    setForwarding(true)
+    setQuestion('')
+
+    // Waits on the same boot `ask` does: the id may not exist yet.
+    props.opening
+      .then((id) => window.chorus.forwardAside({ asideId: id, directive: text }))
+      .then(() => {
+        props.onClose()
+      })
+      .catch((e: unknown) => {
+        props.onError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        setForwarding(false)
+      })
+  }
+
   /*
    * The language belongs here rather than on the button. A constant label keeps
    * the offer a constant width — the pill already overflowed a narrow pane once
@@ -410,21 +450,37 @@ export function QuickQuestion(props: {
         <blockquote className="quick-excerpt">{props.excerpt}</blockquote>
       )}
 
+      {/*
+        The exchange, both sides, oldest first.
+
+        It used to be one `MarkdownView` over every agent reply joined together,
+        which is why a second question read as though it had overwritten the
+        first answer: there was nowhere for the question to go and no boundary
+        between the replies. Rows keyed by the message's own key, so a streaming
+        reply updates in place rather than being remounted under a new index —
+        the same reason the main transcript keys on `key` and not on position.
+
+        Still not the main transcript, and the difference is deliberate: no
+        avatars, no timestamps, no tool rows. A card anchored to a passage shows
+        who spoke and what they said, and nothing that would turn a footnote into
+        a second conversation competing with the one behind it.
+      */}
       {started && (
         <div className="quick-answer">
-          {state.failed !== null ? (
-            <p className="notice notice--bad">{state.failed}</p>
-          ) : state.answer !== '' ? (
-            <MarkdownView source={state.answer} />
-          ) : (
+          {state.turns.map((turn) => (
+            <div key={turn.key} className="quick-turn" data-actor={turn.actor}>
+              <MarkdownView source={turn.text} />
+            </div>
+          ))}
+          {state.failed !== null && <p className="notice notice--bad">{state.failed}</p>}
+          {/*
+            The dots stand in for a reply that has not started, and continue
+            under one that has — that line is for the wait before anything
+            appears, and repeating the expectation after it would be noise.
+          */}
+          {(state.turns.length === 0 || state.working) && state.failed === null && (
             <Thinking agent={props.agent} />
           )}
-          {/*
-            While text is already arriving, the dots continue without repeating
-            the expectation — that line is for the wait before anything appears,
-            and after it has appeared it would only be noise.
-          */}
-          {state.working && state.answer !== '' && <Thinking agent={props.agent} />}
         </div>
       )}
 
@@ -467,6 +523,23 @@ export function QuickQuestion(props: {
       </form>
 
       <div className="quick-actions">
+        {/*
+          Enabled by what is in the box, not by whether the answer arrived.
+
+          Every other control here waits on `answered`, because every other one
+          carries the agent's words. This carries yours — and "hold on" is a
+          decision you are entitled to reach halfway through a reply you have
+          already seen enough of. Gating it on the turn finishing would make the
+          one instruction that means *stop* the one you have to wait for.
+        */}
+        <button
+          type="button"
+          className="btn"
+          disabled={question.trim() === '' || forwarding}
+          onClick={forward}
+        >
+          {t('aside.sendToConversation')}
+        </button>
         {/*
           Quoting is the passage plus the answer, so a recap has nothing to
           quote: its passage is the reply being escaped and its answer is the

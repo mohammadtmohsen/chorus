@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   ChorusRuntime,
   explainPrompt,
+  forwardedFromAside,
   goPrompt,
   recapLedger,
   recapPrompt,
@@ -1689,5 +1690,45 @@ describe('goPrompt', () => {
     // said it would do, so most of what could be added would re-specify work
     // that is specified one message up.
     expect(prompt.length).toBeLessThan(explainPrompt('x', 'Arabic').length / 2)
+  })
+})
+
+describe('forwardedFromAside', () => {
+  /*
+   * The one that is a bug rather than a preference.
+   *
+   * `parseMentions` only reads mentions at the start of the text, so anything
+   * placed above the directive silently costs the message its routing: it stops
+   * addressing the agent the user named and falls back to `lastAddressed`. That
+   * is a wrong *recipient*, not a wrong-looking message, and nothing downstream
+   * would report it — the send succeeds and the wrong agent answers.
+   */
+  it('keeps the directive first, so a leading mention still routes', () => {
+    const out = forwardedFromAside('@codex run the tests', 'the projection lags behind the log')
+    expect(out.startsWith('@codex run the tests')).toBe(true)
+  })
+
+  it('names the passage it came from, without carrying the side transcript', () => {
+    const out = forwardedFromAside('continue', 'the projection lags behind the log')
+    expect(out).toContain('from a side question about')
+    expect(out).toContain('the projection lags behind the log')
+  })
+
+  it('flattens the excerpt, because provenance is one line', () => {
+    // A selected passage arrives with whatever newlines it had on screen. Left
+    // alone they turn a one-line annotation into a quoted block that buries the
+    // instruction it is annotating.
+    expect(forwardedFromAside('go on', 'one\n\n  two   three')).toContain('“one two three”')
+  })
+
+  it('clips a long excerpt rather than pasting it', () => {
+    const long = 'x'.repeat(400)
+    const out = forwardedFromAside('go on', long)
+    expect(out).toContain('…')
+    expect(out.length).toBeLessThan(200)
+  })
+
+  it('is just the directive when there is nothing to cite', () => {
+    expect(forwardedFromAside('  hold on  ', '   ')).toBe('hold on')
   })
 })

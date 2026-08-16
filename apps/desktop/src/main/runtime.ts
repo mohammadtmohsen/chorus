@@ -862,6 +862,41 @@ export function goPrompt(): string {
   ].join('\n')
 }
 
+/**
+ * A decision reached in an aside, carried back into the conversation it came from.
+ *
+ * An aside is where you work out *whether* to go on — you ask "where are we",
+ * read the answer, and conclude "run the tests" or "hold on". Until now that
+ * conclusion had nowhere to go: `aside:promote` turns the side question into a
+ * third conversation, which takes the thread further away from the work rather
+ * than returning to it. This is the return.
+ *
+ * **The directive leads, and that is a routing constraint rather than a style
+ * choice.** `parseMentions` reads mentions only at the *start* of the text, so a
+ * provenance line above `@claude run the tests` would leave the mention
+ * unparsed and the message routed by `lastAddressed` — to whichever agent
+ * happened to speak last, which is exactly the wrong one often enough to matter.
+ * Anything added therefore goes underneath.
+ *
+ * **A reference, not a transcript.** Forwarding the whole side exchange would
+ * put its prose in the parent's log, where `catchup.ts` makes every other agent
+ * read and summarise it — the cost C-004 exists to measure, paid on every side
+ * question anyone ever asks. One line naming what the aside was about is enough
+ * for the reply to make sense to a reader a week later, which is the bar the log
+ * is held to.
+ *
+ * The excerpt is flattened and clipped because it is provenance, not content: it
+ * says *which* passage this came from, and a paragraph of it in the composer's
+ * own transcript would bury the instruction it is annotating.
+ */
+export function forwardedFromAside(directive: string, excerpt: string): string {
+  const trimmed = directive.trim()
+  const flat = excerpt.replace(/\s+/g, ' ').trim()
+  if (flat === '') return trimmed
+  const clipped = flat.length > 120 ? `${flat.slice(0, 119).trimEnd()}…` : flat
+  return `${trimmed}\n\n_(from a side question about “${clipped}”)_`
+}
+
 /** Long enough for a cold provider start, short enough not to look like a hang. */
 const REOPEN_TIMEOUT_MS = 20_000
 
@@ -1654,6 +1689,38 @@ export class ChorusRuntime {
       throw new Error('That aside has ended — ask again to start a new one')
     }
     await aside.service.sendUserMessage(question, asideQuestion(aside.excerpt, question))
+  }
+
+  /**
+   * Sends a decision from an aside into the conversation the aside came from.
+   *
+   * Deliberately `this.send` rather than a path of its own, and that is the
+   * whole design: the routing, the log entry, the catch-up watermark and the
+   * mention handling are the ones a typed message already gets, so a forwarded
+   * directive cannot drift from a typed one. It is not a new kind of event
+   * either — the user really did author these words, so `user.message` is what
+   * it is, and the provenance line in the text is what says where they were
+   * written rather than a new payload type three switches would have to learn.
+   *
+   * **The parent is revalidated, not trusted from when the aside opened.** It
+   * may have been closed, or had its last agent removed, in the minutes someone
+   * spent reading the side answer — `promoteAside` revalidates for the same
+   * reason and `send` would otherwise throw something about a missing
+   * conversation, which is true and useless.
+   *
+   * The aside is left open. Forwarding is not promoting and not closing: having
+   * decided to run the tests, the next thing you want is usually to ask the same
+   * fork what it thought about the result.
+   */
+  async forwardAside(asideId: string, directive: string): Promise<SendResult> {
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) {
+      throw new Error('That aside has ended — ask again to start a new one')
+    }
+    if (this.active.get(aside.parentId) === undefined) {
+      throw new Error('The conversation this came from is no longer open')
+    }
+    return this.send(aside.parentId, forwardedFromAside(directive, aside.excerpt))
   }
 
   /**

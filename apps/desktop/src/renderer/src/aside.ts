@@ -16,8 +16,41 @@ import type { TranscriptView } from './transcript.js'
  * unfolded into a task list would be the derailment the feature exists to avoid.
  * What is kept is what was asked, what came back, and whether it went wrong.
  */
+/**
+ * One thing said in an aside, by one of the two people in it.
+ *
+ * The card used to keep only what the agent said, joined end to end, and the
+ * shape is what limited it to one exchange: a merged string cannot show a second
+ * question, so a follow-up appeared to overwrite the answer it followed. Asked
+ * for as _"make the aside always two way chat"_ — the reply is not a footnote
+ * once you have answered it twice.
+ */
+export interface AsideTurn {
+  readonly key: string
+  /** `agent` rather than the agent's name: a card has one, and it is in the header. */
+  readonly actor: 'user' | 'agent'
+  readonly text: string
+  /** Mid-stream, so the card can show the caret where the main transcript does. */
+  readonly streaming: boolean
+}
+
 export interface AsideState {
-  /** Everything the agent has said so far, streaming or complete. */
+  /**
+   * The exchange, oldest first — both sides, in the order they were said.
+   *
+   * What is dropped is unchanged and still deliberate: reasoning, tool calls and
+   * commands never reach here, because a card anchored to a passage has no room
+   * to narrate an agent's working. Two-way is about *who* is shown, not about
+   * lifting the limit on what.
+   */
+  readonly turns: readonly AsideTurn[]
+  /**
+   * Everything the agent has said so far, streaming or complete.
+   *
+   * Kept alongside `turns` rather than derived at each call site because
+   * `promotion` seeds a real conversation from it, and that seed should be the
+   * answer rather than a transcript of how it was reached.
+   */
   readonly answer: string
   /** Mid-turn: the card shows a pending state rather than an empty one. */
   readonly working: boolean
@@ -34,16 +67,34 @@ export interface AsideState {
 }
 
 export const EMPTY_ASIDE: AsideState = {
+  turns: [],
   answer: '',
   working: false,
   failed: null,
   answered: false,
 }
 
-/** The four things the card needs, out of the whole view. */
+/** What the card needs, out of the whole view. */
 export function asideState(view: TranscriptView): AsideState {
-  const spoken = view.messages
-    .filter((m) => m.kind === 'message' && m.actor !== 'user' && m.actor !== 'system')
+  const said = view.messages.filter((m) => m.kind === 'message' && m.actor !== 'system')
+
+  /*
+   * `system` is dropped and `user` is not, which is the whole change.
+   *
+   * An aside's log carries a `joined` line and, for an explanation, a first
+   * question main composed rather than the user — both are already excluded by
+   * kind or actor. What is left is the two of you, and showing only one half was
+   * what made a follow-up look like it had replaced the previous answer.
+   */
+  const turns: AsideTurn[] = said.map((m) => ({
+    key: m.key,
+    actor: m.actor === 'user' ? 'user' : 'agent',
+    text: m.text,
+    streaming: m.status === 'streaming',
+  }))
+
+  const spoken = said
+    .filter((m) => m.actor !== 'user')
     .map((m) => m.text)
     .join('\n\n')
     .trim()
@@ -57,6 +108,7 @@ export function asideState(view: TranscriptView): AsideState {
   const failure = view.messages.filter((m) => m.kind === 'notice' && m.level === 'error').at(-1)
 
   return {
+    turns,
     answer: spoken,
     working: view.busy,
     failed: failure?.text ?? null,

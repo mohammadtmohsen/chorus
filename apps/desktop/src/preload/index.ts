@@ -100,6 +100,7 @@ const api: ChorusApi = {
   openAside: invoke('aside:open'),
   askAside: invoke('aside:ask'),
   promoteAside: invoke('aside:promote'),
+  forwardAside: invoke('aside:forward'),
   closeAside: invoke('aside:close'),
   listAsides: invoke('aside:list'),
 
