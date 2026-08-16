@@ -40,7 +40,12 @@ import {
   type PermissionProfile,
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
-import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
+import {
+  readWorkspace,
+  relativeWithin,
+  type DiffFile,
+  type WorkspaceStatus,
+} from '@chorus/workspace'
 import type { ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
@@ -540,8 +545,20 @@ export function recapLedger(events: readonly StoredEvent[], cwd = ''): RecapLedg
      * that says "no files changed" because it did not know where it was is the
      * failure mode this whole ledger exists to avoid.
      */
-    if (cwd !== '' && !path.startsWith(`${cwd}/`)) return
-    const relative = cwd === '' ? path : path.slice(cwd.length + 1)
+    /*
+     * Through the shared containment rule, not a hand-rolled prefix test.
+     *
+     * This was `path.startsWith(`${cwd}/`)` and `path.slice(cwd.length + 1)` —
+     * the third copy of the arithmetic already fixed in `path-safety.ts` and
+     * `project-match.ts`, and the one that had no test until the Windows CI run
+     * found it. A `/` that never appears in a Windows path meant the guard
+     * dropped **every** file, so a recap reported "no files changed" for every
+     * conversation — the exact failure mode the comment above says this ledger
+     * exists to avoid.
+     */
+    const within = cwd === '' ? path : relativeWithin(cwd, path)
+    if (within === null || within === '') return
+    const relative = within
     const already = files.indexOf(relative)
     if (already !== -1) files.splice(already, 1)
     files.push(relative)

@@ -4,9 +4,20 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { pidIsAlive, readDescriptors } from './discovery.js'
 
+/**
+ * The refusal test needs a unix filesystem, not a unix argument.
+ *
+ * `write()` below asks for mode 0o600, and on Windows that is a no-op — every
+ * descriptor reads 0o666. Naming `'darwin'` in the shared deps therefore made
+ * *all* of them look world-readable and `readDescriptors` returned nothing, which
+ * turned one Windows failure into four. The platform is inherited instead, and
+ * the one test that genuinely asserts the unix mode check is skipped there.
+ */
+const onUnixFs = it.skipIf(process.platform === 'win32')
+
 let dir: string
-const alive = { platform: 'darwin' as const, isAlive: () => true }
-const dead = { platform: 'darwin' as const, isAlive: () => false }
+const alive = { isAlive: () => true }
+const dead = { isAlive: () => false }
 
 function write(name: string, value: unknown, mode = 0o600): void {
   const path = join(dir, name)
@@ -58,7 +69,7 @@ describe('readDescriptors', () => {
   })
 
   /* A descriptor anyone else can read has already leaked its token. */
-  it('refuses a world-readable descriptor', () => {
+  onUnixFs('refuses a world-readable descriptor', () => {
     write('4242.json', valid, 0o644)
     expect(readDescriptors(dir, alive)).toEqual([])
   })

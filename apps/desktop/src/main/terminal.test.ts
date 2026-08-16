@@ -81,6 +81,10 @@ function build(): Harness {
      * runner meant `cmd.exe` and a terminal that is never busy.
      */
     platform: 'darwin',
+    // Named too, because resolveShell checks the disk and `/bin/zsh` is not on
+    // a Windows runner — these tests assert a shell called `zsh`, not whichever
+    // fallback the host happens to have.
+    shell: { file: '/bin/zsh', args: ['-l'] },
     cwdFor: (ref) => (ref.scope === 'global' ? '/home/me' : `/work/${ref.conversationId}`),
     env: { SHELL: '/bin/zsh' },
     frame,

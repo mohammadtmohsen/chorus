@@ -2,7 +2,7 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 import { basename } from 'node:path'
 import type * as NodePty from 'node-pty'
-import { resolveShell } from './shell.js'
+import { resolveShell, type ShellChoice } from './shell.js'
 
 /**
  * The shells behind the terminal panels. One per conversation, plus one global.
@@ -190,6 +190,17 @@ export interface TerminalServiceOptions {
    * — which is how the Windows CI run found them.
    */
   readonly platform?: NodeJS.Platform
+  /**
+   * The shell to open, when the caller already knows.
+   *
+   * Naming a platform is not enough for a test: `resolveShell` validates its
+   * candidates against the real filesystem, so asking for darwin on a Windows
+   * runner walks `/bin/zsh`, `/bin/bash`, `/bin/sh` — none of which exist —
+   * and lands on the last fallback. The suite then asserted a shell named `sh`
+   * where it meant `zsh`. Injecting the choice is the same move `spawn` already
+   * gets, one layer up.
+   */
+  readonly shell?: ShellChoice
 }
 
 /** Lines of history the headless mirror keeps. The bound on memory per shell. */
@@ -278,10 +289,12 @@ export class TerminalService {
   private readonly scrollback: number
   private readonly frame: Frame
   private readonly platform: NodeJS.Platform
+  private readonly shell: ShellChoice | undefined
 
   constructor(options: TerminalServiceOptions) {
     this.cwdFor = options.cwdFor
     this.platform = options.platform ?? process.platform
+    this.shell = options.shell
     this.spawner = options.spawn ?? nodePty
     this.env = options.env ?? process.env
     this.scrollback = options.scrollback ?? SCROLLBACK
@@ -524,7 +537,7 @@ export class TerminalService {
   }
 
   private open(ref: TerminalRef, size?: { cols: number; rows: number }): Session {
-    const shell = resolveShell(this.env, this.platform)
+    const shell = this.shell ?? resolveShell(this.env, this.platform)
     const cols = size?.cols ?? DEFAULT_COLS
     const rows = size?.rows ?? DEFAULT_ROWS
 
