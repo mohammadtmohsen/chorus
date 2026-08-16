@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
 import { fitCard, type AsidePurpose } from './aside.js'
-import { deadlineState, formatCountdown, type DeadlineState } from './deadline.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
 import { focusedNow, mayTakeCaret } from './focus.js'
@@ -1453,7 +1452,6 @@ export function Session(props: {
           <ApprovalCard
             key={current.approvalId}
             approval={current}
-            deadline={current.expiresAt}
             waiting={view.approvals.length - 1}
             active={props.active}
             onAllow={() => {
@@ -1487,9 +1485,7 @@ export function Session(props: {
         {asking !== undefined && (
           <QuestionCard
             key={asking.userInputId}
-            conversationId={conversationId}
             request={asking}
-            deadline={asking.expiresAt}
             waiting={view.questions.length - 1}
             active={props.active}
             onAnswer={(answers) => {
@@ -1559,70 +1555,6 @@ export function Session(props: {
 const OTHER = '\u0000other'
 
 /**
- * How long this card has left, re-rendering only when that changes.
- *
- * The judgement is in `deadline.ts`; this is the plumbing that keeps it live.
- * It schedules a single wake-up rather than running an interval: a 1Hz timer
- * for the four minutes before anything is worth saying is a re-render per
- * second of a card with no news.
- */
-function useDeadline(deadline: number): DeadlineState {
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    setNow(Date.now())
-  }, [deadline])
-
-  const state = deadlineState(deadline, now)
-  const wake = state.nextChangeInMs
-
-  useEffect(() => {
-    if (wake === null) return undefined
-    /*
-     * `max(wake, 0)` because a tab that was backgrounded can come back with the
-     * moment already past; a negative delay would fire immediately and spin.
-     */
-    const timer = setTimeout(
-      () => {
-        setNow(Date.now())
-      },
-      Math.max(wake, 0)
-    )
-    return () => {
-      clearTimeout(timer)
-    }
-  }, [wake, deadline])
-
-  return state
-}
-
-/**
- * The last-minute warning, shared by both blocking cards.
- *
- * Silent until it matters — see `WARN_WITHIN_MS` for why the threshold is a
- * minute and not the whole window.
- *
- * The ticking digits are `aria-hidden`. Both cards are `aria-live="assertive"`,
- * so a number changing every second inside one would be read out every second,
- * which is not urgency but noise. The sentence beside them says the same thing
- * once and does not change, so it announces once.
- */
-function DeadlineNote({ deadline }: { deadline: number }): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const state = useDeadline(deadline)
-  if (!state.warn) return null
-
-  return (
-    <span className="card-deadline">
-      <span className="sr-only">{t('deadline.warning')}</span>
-      <span className="card-deadline-clock" aria-hidden="true">
-        {formatCountdown(state.secondsLeft)}
-      </span>
-    </span>
-  )
-}
-
-/**
  * A question set, answered inline.
  *
  * The other half of the blocking pair. An approval asks whether an action may
@@ -1635,27 +1567,13 @@ function DeadlineNote({ deadline }: { deadline: number }): React.JSX.Element | n
  * it a multiple choice would produce an answer it cannot take back.
  */
 function QuestionCard({
-  conversationId,
   request,
-  deadline,
   waiting,
   active,
   onAnswer,
   onDismiss,
 }: {
-  /** Which conversation this question belongs to, for the deadline call. */
-  conversationId: string
   request: PendingQuestion
-  /*
-   * Where the deadline **starts**, not where it stays.
-   *
-   * A seam, and Phase 2 is what it was for: the card now holds the deadline in
-   * force itself and moves it as someone works, seeding from this. The renderer
-   * only ever replays the *original* `expiresAt`, so a card that read
-   * `request.expiresAt` directly would show a stale deadline the moment anything
-   * extended it — which is why this was a prop before it needed to be.
-   */
-  deadline: number
   /** How many more sets are queued behind this one. */
   waiting: number
   /** Whether this pane owns the caret; a background card must not take it. */
@@ -1675,48 +1593,6 @@ function QuestionCard({
   const takeFocus = (el: HTMLElement | null): void => {
     first.current = el
   }
-  /*
-   * The deadline in force, which is not the one the log replays after an
-   * extension. Seeded from the prop — the Phase 1 seam — and moved by the
-   * answers below.
-   */
-  const [effective, setEffective] = useState(deadline)
-  const lastTold = useRef(0)
-
-  /**
-   * Tells main someone is working on this, and takes the deadline back.
-   *
-   * `engaged` must be a gesture the app cannot manufacture. Focus is not one:
-   * this card focuses its own first control on mount, so trusting focus would
-   * extend the deadline the instant it appeared with nobody involved.
-   *
-   * Throttled, because a gesture buys two minutes and typing would otherwise
-   * send one of these per keystroke.
-   */
-  const held = useCallback(
-    (engaged: boolean) => {
-      const now = Date.now()
-      if (engaged && now - lastTold.current < 20_000) return
-      if (engaged) lastTold.current = now
-      void window.chorus
-        .extendQuestion({ conversationId, userInputId: request.userInputId, engaged })
-        .then(({ expiresAt }) => {
-          if (expiresAt !== null) setEffective(expiresAt)
-        })
-        .catch(() => undefined)
-    },
-    [conversationId, request.userInputId]
-  )
-
-  /*
-   * Read once on arrival, and read rather than claimed: a card that has just
-   * remounted needs the deadline in force, and mounting is not evidence that
-   * anyone is there.
-   */
-  useEffect(() => {
-    held(false)
-  }, [held])
-
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [typed, setTyped] = useState<Record<string, string>>({})
   /** Which question of the set is on screen; a set of one never shows it. */
@@ -1753,8 +1629,6 @@ function QuestionCard({
   const asked = request.questions[step]
 
   const toggle = (q: QuestionField, value: string): void => {
-    // Choosing an option is the clearest evidence there is that someone is here.
-    held(true)
     setPicked((current) => {
       const chosen = current[q.id] ?? []
       /*
@@ -1807,7 +1681,6 @@ function QuestionCard({
         {waiting > 0 && (
           <span className="question-queue">{t('question.waiting', { count: waiting })}</span>
         )}
-        <DeadlineNote deadline={effective} />
       </header>
 
       <div className="question-item">
@@ -1888,7 +1761,6 @@ function QuestionCard({
             onChange={(e) => {
               const { value } = e.target
               setTyped((current) => ({ ...current, [asked.id]: value }))
-              held(true)
             }}
           />
         )}
@@ -1903,7 +1775,6 @@ function QuestionCard({
             className="btn"
             onClick={() => {
               setStep((current) => current - 1)
-              held(true)
             }}
           >
             {t('question.back')}
@@ -1929,7 +1800,6 @@ function QuestionCard({
             disabled={!done(asked)}
             onClick={() => {
               setStep((current) => current + 1)
-              held(true)
             }}
           >
             {t('question.next')}
@@ -1945,7 +1815,6 @@ function QuestionCard({
 
 function ApprovalCard({
   approval,
-  deadline,
   waiting,
   active,
   onAllow,
@@ -1953,8 +1822,6 @@ function ApprovalCard({
   onDeny,
 }: {
   approval: PendingApproval
-  /** The effective deadline. Passed in for the same reason as `QuestionCard`'s. */
-  deadline: number
   /** How many more are queued behind this one. Counted so the card can say so. */
   waiting: number
   /** Whether this pane owns the caret; a background card must not take it. */
@@ -2003,7 +1870,6 @@ function ApprovalCard({
         {waiting > 0 && (
           <span className="approval-queue">{t('approval.waiting', { count: waiting })}</span>
         )}
-        <DeadlineNote deadline={deadline} />
       </header>
       <pre className="approval-summary">{approval.summary}</pre>
       {approval.detail !== null && <pre className="approval-detail">{approval.detail}</pre>}

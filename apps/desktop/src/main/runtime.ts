@@ -1864,15 +1864,6 @@ export class ChorusRuntime {
    * that recognises it answers; the rest return null, which is what "not mine"
    * means here.
    */
-  extendUserInput(conversationId: string, userInputId: string, engaged: boolean): number | null {
-    const conversation = this.active.get(conversationId)
-    if (conversation === undefined) return null
-    for (const participant of conversation.participants.values()) {
-      const at = participant.service.extendUserInput(userInputId, engaged)
-      if (at !== null) return at
-    }
-    return null
-  }
 
   /** Ends an aside's fork. Its transcript stays in the log. */
   async closeAside(asideId: string): Promise<void> {

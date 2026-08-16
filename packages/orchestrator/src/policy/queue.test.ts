@@ -77,44 +77,45 @@ describe('ApprovalQueue', () => {
     expect(await queue.resolve('a', { outcome: 'deny', message: 'no' })).toBe(false)
   })
 
-  it('denies on expiry — never allows', async () => {
-    // Auto-allowing something nobody looked at would turn a screensaver into a
-    // permission grant.
+  it('never expires, however long it waits', async () => {
+    /*
+     * The behaviour this queue used to have, inverted deliberately. The window
+     * was Chorus's own invention — neither provider imposes one — and an expiry
+     * always *denied*, so walking away silently answered no and the turn carried
+     * on as though that had been meant.
+     */
     const scheduler = clock()
     const { queue, resolved } = make(scheduler)
     queue.add('c1', request('a', 5_000))
 
-    scheduler.advance(4_000)
-    await queue.sweep()
-    expect(resolved).toHaveLength(0)
-
-    scheduler.advance(2_000)
-    await queue.sweep()
-    expect(resolved[0]).toMatchObject({ decision: { outcome: 'timeout' }, by: 'system' })
-    expect(queue.size).toBe(0)
-  })
-
-  it('sweeps automatically without anyone calling it', async () => {
-    const scheduler = clock()
-    const { queue, resolved } = make(scheduler)
-    queue.add('c1', request('a', 500))
-
-    scheduler.advance(1_000)
+    scheduler.advance(60 * 60_000)
     await Promise.resolve()
-    expect(resolved).toHaveLength(1)
-    expect(resolved[0]?.decision.outcome).toBe('timeout')
+    expect(resolved).toHaveLength(0)
+    expect(queue.size).toBe(1)
   })
 
-  it('expires only what is past its deadline', async () => {
+  it('is still answerable long after its nominal deadline', async () => {
+    // The point of waiting: an answer given late is the answer that counts.
     const scheduler = clock()
     const { queue, resolved } = make(scheduler)
-    queue.add('c1', request('soon', 1_000))
-    queue.add('c1', request('later', 60_000))
+    queue.add('c1', request('a', 1_000))
 
-    scheduler.advance(2_000)
-    await queue.sweep()
-    expect(resolved.map((r) => r.entry.request.id)).toEqual(['soon'])
-    expect(queue.size).toBe(1)
+    scheduler.advance(24 * 60 * 60_000)
+    expect(await queue.resolve('a', { outcome: 'allow', scope: 'once' })).toBe(true)
+    expect(resolved[0]).toMatchObject({ decision: { outcome: 'allow' }, by: 'user' })
+  })
+
+  it('arms no timer, so nothing can fire while it waits', async () => {
+    // A guard with teeth: the old shape armed a repeating one-second sweep for
+    // as long as anything was pending, and that is what has to stay gone.
+    const scheduler = clock()
+    const { queue, resolved } = make(scheduler)
+    queue.add('c1', request('a', 1_000))
+    for (let i = 0; i < 100; i++) {
+      scheduler.advance(1_000)
+      await Promise.resolve()
+    }
+    expect(resolved).toHaveLength(0)
   })
 
   it('denies everything outstanding when drained', async () => {

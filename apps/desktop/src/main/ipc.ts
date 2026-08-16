@@ -402,19 +402,6 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       return OK
     },
 
-    'userinput:extend': (request: {
-      conversationId: string
-      userInputId: string
-      engaged: boolean
-    }) =>
-      Promise.resolve({
-        expiresAt: runtime.extendUserInput(
-          request.conversationId,
-          request.userInputId,
-          request.engaged
-        ),
-      }),
-
     'userinput:answer': async (request: {
       conversationId: string
       agentId: 'codex' | 'claude'

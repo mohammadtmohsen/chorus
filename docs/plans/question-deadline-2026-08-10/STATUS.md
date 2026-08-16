@@ -235,3 +235,45 @@ of question sets.
 
 Phase 3: a half-filled answer still dies when you switch panes, with no timeout
 involved.
+
+## Reversed, 2026-08-16 — there is no deadline any more
+
+Everything below this line describes a mechanism that no longer exists. It is
+kept because the reasoning is still worth reading and because the reversal is
+the more interesting record.
+
+Asked for directly: _"for any ask or permission request make no expiry time at
+all, never count the time and ignore it — if no response just wait until the
+user responds no matter how long this takes."_
+
+**The plan's premise was sound and its conclusion was not.** Neither provider
+imposes a deadline — the Claude SDK's permission prompt blocks by design, and an
+unanswered Codex `requestApproval` hangs the turn — so Chorus owned the timeout
+and this plan made it responsive rather than fixed: a gesture bought two
+minutes, up to a half-hour ceiling.
+
+What none of that changed is what expiry _did_. It **answered**. `outcome:
+'timeout'` told the provider nothing was chosen and the turn carried on, so
+walking away for six minutes was a decision the person never made — and the
+extension work made that decision harder to predict rather than removing it.
+
+The timer's real job was never the clock. It was "never leave a session with no
+way out", and that was already covered twice over: `drain` resolves everything
+outstanding when a session ends or the app closes, and a turn you no longer want
+is stopped by the interrupt control — a person deciding, rather than a clock
+deciding for them.
+
+**Removed:** the queue's expiry sweep and its one-second timer;
+`armUserInputTimer`; `extendUserInput` and the `userinput:extend` channel with
+its preload, handler and runtime half; `ENGAGED_GRACE_MS`, `MAX_EXTENSION_MS`
+and the per-question `ceiling`; `deadline.ts`, its tests, the `DeadlineNote`
+countdown, its i18n block and its CSS.
+
+**Kept:** `expiresAt` on the request and in the log — it records what the
+adapter proposed and nothing reads it back; and `neverAsks`, which still
+resolves an aside's question at once, because a fork nobody is watching is the
+one case waiting really would wedge.
+
+**Driven:** a real approval left unanswered for 6.5 minutes — past the window
+that used to deny it — stayed on screen with its three buttons and no countdown,
+and the answer given at 6.5 minutes was accepted normally.

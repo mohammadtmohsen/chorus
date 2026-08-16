@@ -85,7 +85,6 @@ const api: ChorusApi = {
   writeSettings: invoke('settings:write'),
   history: invoke('conversation:history'),
   decideApproval: invoke('approval:decide'),
-  extendQuestion: invoke('userinput:extend'),
   answerQuestion: invoke('userinput:answer'),
   profiles: invoke('policy:profiles'),
   setProfile: invoke('policy:set'),

@@ -4,16 +4,30 @@ import type { Scheduler } from '../delta-buffer.js'
 import { realScheduler } from '../delta-buffer.js'
 
 /**
- * Holds approvals that are waiting on a person, and makes sure none waits
- * forever.
+ * Holds approvals that are waiting on a person, for as long as that takes.
+ *
+ * **Nothing expires here, and that is a decision rather than an omission.**
  *
  * Neither provider imposes a deadline — the Claude SDK's permission prompt
  * blocks indefinitely by design, and an unanswered Codex `requestApproval`
- * hangs the turn (plan §2.2). Chorus owning the timeout is the only thing
- * standing between a closed laptop and a wedged session.
+ * hangs the turn (plan §2.2). The five-minute window this used to enforce was
+ * therefore Chorus's own invention, and it existed to stop a closed laptop
+ * wedging a session.
  *
- * An expiry always **denies**. Auto-allowing something nobody looked at would
- * turn a screensaver into a permission grant.
+ * It bought that at a price nobody chose. An expiry always **denied**, and a
+ * denial is a real answer: walking away for six minutes silently told the agent
+ * no, and the turn carried on as though you had meant it. Asked for directly —
+ * "no expiry at all, never count the time, wait until the user answers no
+ * matter how long it takes."
+ *
+ * What replaces it is not nothing. `drain` still resolves everything
+ * outstanding when a session ends or the app closes, so quitting stays clean;
+ * and a turn you no longer want is ended by the interrupt control, which is a
+ * person deciding rather than a clock deciding for them. The timer's real job —
+ * never leave a session with no way out — was already done by a button.
+ *
+ * `expiresAt` is still carried on the request and still written to the log. It
+ * records what the adapter proposed. Nothing reads it back.
  */
 
 export interface PendingEntry {
@@ -36,7 +50,6 @@ export class ApprovalQueue {
   private readonly pending = new Map<string, PendingEntry>()
   private readonly scheduler: Scheduler
   private readonly onResolved: ApprovalQueueOptions['onResolved']
-  private timer: unknown = null
 
   constructor(options: ApprovalQueueOptions) {
     this.scheduler = options.scheduler ?? realScheduler
@@ -50,7 +63,6 @@ export class ApprovalQueue {
       conversationId,
       requestedAt: this.scheduler.now(),
     })
-    this.arm()
   }
 
   get size(): number {
@@ -74,27 +86,14 @@ export class ApprovalQueue {
     const entry = this.pending.get(id)
     if (entry === undefined) return false
     this.pending.delete(id)
-    if (this.pending.size === 0) this.disarm()
     await this.onResolved(entry, decision, decidedBy)
     return true
-  }
-
-  /** Denies everything past its deadline. Safe to call at any time. */
-  async sweep(now = this.scheduler.now()): Promise<number> {
-    const expired = [...this.pending.values()].filter((e) => e.request.expiresAt <= now)
-    for (const entry of expired) {
-      this.pending.delete(entry.request.id)
-      await this.onResolved(entry, { outcome: 'timeout' }, 'system')
-    }
-    if (this.pending.size === 0) this.disarm()
-    return expired.length
   }
 
   /** Denies everything outstanding — used when a session or the app is closing. */
   async drain(reason: string): Promise<void> {
     const entries = [...this.pending.values()]
     this.pending.clear()
-    this.disarm()
     for (const entry of entries) {
       await this.onResolved(entry, { outcome: 'deny', message: reason }, 'system')
     }
@@ -102,22 +101,5 @@ export class ApprovalQueue {
 
   dispose(): void {
     this.pending.clear()
-    this.disarm()
-  }
-
-  private arm(): void {
-    if (this.timer !== null) return
-    this.timer = this.scheduler.setTimeout(() => {
-      this.timer = null
-      void this.sweep().then(() => {
-        if (this.pending.size > 0) this.arm()
-      })
-    }, 1_000)
-  }
-
-  private disarm(): void {
-    if (this.timer === null) return
-    this.scheduler.clearTimeout(this.timer)
-    this.timer = null
   }
 }

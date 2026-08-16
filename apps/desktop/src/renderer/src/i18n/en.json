@@ -147,9 +147,6 @@
       "none": "It offers no model choice."
     }
   },
-  "deadline": {
-    "warning": "Less than a minute left to answer."
-  },
   "activity": {
     "label": "Agents and settings",
     "show": "Show sessions",

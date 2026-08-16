@@ -648,24 +648,23 @@ describe('agent question deadlines', () => {
     ],
   }
 
-  it('times out rather than holding the turn open forever', async () => {
-    // Neither provider imposes a deadline, so an unanswered question would
-    // block the agent indefinitely with nothing left to answer it.
+  it('holds the turn open rather than timing out', async () => {
+    /*
+     * The inverse of what this asserted, and deliberately. Neither provider
+     * imposes a deadline, so the one that fired here was Chorus's own — and it
+     * *answered* `timeout`, which is a decision. A question now waits.
+     */
     session().emit({ type: 'userinput.requested', request: ASK_TTL })
     await tick()
     expect(service.pendingQuestions()).toHaveLength(1)
 
+    expect(scheduler.peek()).toBe(null)
     scheduler.fire()
     await tick()
 
-    expect(service.pendingQuestions()).toHaveLength(0)
-    expect(session().userInputResponses[0]?.response).toMatchObject({ outcome: 'timeout' })
-    expect(store.read(CONV, { types: ['userinput.answered'] })[0]?.payload).toMatchObject({
-      outcome: 'timeout',
-      // A timeout never invents an answer.
-      answers: null,
-      answeredBy: 'system',
-    })
+    expect(service.pendingQuestions()).toHaveLength(1)
+    expect(session().userInputResponses).toHaveLength(0)
+    expect(store.read(CONV, { types: ['userinput.answered'] })).toHaveLength(0)
   })
 
   it('cancels an unanswered question when the session closes', async () => {
@@ -707,93 +706,38 @@ describe('a deadline that responds to the person', () => {
     await tick()
   }
 
-  it('pushes the deadline out when the person does something', async () => {
-    await ask()
-    const before = service.pendingQuestions()[0]?.expiresAt ?? 0
-    const after = service.extendUserInput('q-ttl', true)
-    expect(after).not.toBeNull()
-    expect(after ?? 0).toBeGreaterThan(before)
-  })
-
-  it('reads without changing anything when nothing was done', async () => {
-    // A remounting card asks this way. Mounting is not evidence of a person —
-    // the card focuses itself — so it must be able to say "I am back, what is
-    // the deadline" without claiming attention it cannot prove.
-    await ask()
-    const first = service.extendUserInput('q-ttl', false)
-    const second = service.extendUserInput('q-ttl', false)
-    expect(first).toBe(second)
-    expect(first).toBe(service.pendingQuestions()[0]?.expiresAt)
-  })
-
-  it('buys nothing while there is already more time than a gesture is worth', async () => {
+  it('arms no timer at all, so nothing can time it out', async () => {
     /*
-     * A gesture buys `now + 2 minutes`, so early in a five-minute question it is
-     * a no-op — correct, and surprising enough that a live run reading "moved by
-     * 0s" looked like a bug. `ASKED` expires at 60s against a clock at 0, so the
-     * far-future case needs its own request.
-     */
-    session().emit({
-      type: 'userinput.requested',
-      request: { ...ASKED, id: 'q-far' as UserInputId, expiresAt: 300_000 },
-    })
-    await tick()
-    expect(service.extendUserInput('q-far', true)).toBe(300_000)
-  })
-
-  it('never pulls a deadline back towards now', async () => {
-    // A gesture late in a long grace period must not shorten what it already
-    // bought.
-    await ask()
-    const long = service.extendUserInput('q-ttl', true) ?? 0
-    const again = service.extendUserInput('q-ttl', true) ?? 0
-    expect(again).toBeGreaterThanOrEqual(long)
-  })
-
-  it('stops extending at a ceiling, so a stuck renderer cannot wedge a turn', async () => {
-    await ask()
-    let last = 0
-    for (let i = 0; i < 200; i++) last = service.extendUserInput('q-ttl', true) ?? 0
-    expect(last).toBeLessThanOrEqual(ASKED.expiresAt + 30 * 60_000)
-  })
-
-  it('does not extend a question that is already gone', async () => {
-    await ask()
-    await service.answerUserInput('q-ttl', { outcome: 'timeout' }, 'system')
-    expect(service.extendUserInput('q-ttl', true)).toBeNull()
-  })
-
-  it('survives an expiry that fires after an extension was granted', async () => {
-    /*
-     * The race the re-arm exists for: a queued `setTimeout` cannot be
-     * un-queued, so an extension arriving in the same tick as the expiry would
-     * otherwise resolve against a deadline that has already moved — which is
-     * this bug again with extra steps.
+     * This block used to hold eight tests about extending a deadline. There is
+     * no deadline now: neither provider imposes one, so the window was Chorus's
+     * own — and its expiry *answered*, which turned walking away into a decision
+     * the person never made.
+     *
+     * Asserting on the scheduler rather than on elapsed time, because "nothing
+     * was ever scheduled" is the property, and it cannot pass by accident.
      */
     await ask()
-    // Held before the extension, exactly as the runtime would already have it
-    // queued. `clearTimeout` cannot call this back.
-    const alreadyQueued = scheduler.peek()
-    service.extendUserInput('q-ttl', true)
-    alreadyQueued?.()
-    await tick()
+    expect(scheduler.peek()).toBe(null)
 
+    scheduler.fire()
+    await tick()
     expect(service.pendingQuestions()).toHaveLength(1)
     expect(store.read(CONV, { types: ['userinput.answered'] })).toHaveLength(0)
   })
 
-  it('still times out once the extended deadline is reached', async () => {
-    // The TTL is not the bug and must survive the fix.
+  it('takes the answer whenever it comes, and that answer counts', async () => {
     await ask()
-    service.extendUserInput('q-ttl', true)
-    scheduler.fire()
-    await tick()
     scheduler.fire()
     await tick()
 
-    expect(service.pendingQuestions()).toHaveLength(0)
+    await service.answerUserInput(
+      ASKED.id,
+      { outcome: 'answered', answers: [{ questionId: 'a', values: ['yes'] }] },
+      'user'
+    )
+
     expect(store.read(CONV, { types: ['userinput.answered'] })[0]?.payload).toMatchObject({
-      outcome: 'timeout',
+      outcome: 'answered',
     })
   })
 })
