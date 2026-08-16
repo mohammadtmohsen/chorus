@@ -319,6 +319,28 @@ enforces this (`UNIVERSAL_DENIES` may not carry a `pathPattern`).
   Measure `defaultPrevented` on the key instead, and carry a control proving the
   mechanism fires when it should. This is C-027 from the inside.
 
+- **`git diff main...HEAD -- <file>` does not answer "does this match main".**
+  Three dots compares against the **merge base**, so an empty result means _the
+  branch_ has not touched the file — which is exactly the set of files `main`
+  has changed and you are about to overwrite. Used to decide which files were
+  safe to copy from a branch working tree into a `main` worktree, it named every
+  dangerous file as safe: two commits silently reverted a rail's i18n key and
+  CSS, an entire select restyling, and a measured `ResizeObserver` fix. It also
+  cascades, because the second commit re-reverted what the first had. Use two
+  dots, or `git cherry-pick`, and **never copy whole files between worktrees** —
+  re-apply the change instead. Verify by asserting the features are present, not
+  by reading the diff: the diff is what was misread in the first place.
+
+- **The e2e harness used to attach to whatever owned port 9800.** It counted up
+  from a fixed base per node process, so a stray Electron left by an earlier run
+  answered first and every assertion then described a real DOM belonging to a
+  different build in a different checkout. A button provably in the source and
+  provably in the bundle "did not exist", and the only tell was a CSS class
+  renamed hours earlier, which could not have come from the code under test.
+  `launch` now passes `--remote-debugging-port=0` and reads the port back out of
+  the child's own stderr, so attaching to someone else's app is impossible rather
+  than unlikely. If you add another way to drive the app, do the same.
+
 ## Plans
 
 Work of any size goes through a plan first.

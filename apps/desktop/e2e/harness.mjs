@@ -21,8 +21,13 @@ import { join } from 'node:path'
 
 const APP = new URL('..', import.meta.url).pathname
 
-/** Chosen per spec so specs can run without fighting over a port. */
-let nextPort = 9800
+/**
+ * How long to wait for the child to announce its debugger.
+ *
+ * Generous, because this is a cold Electron start on a machine that may already
+ * be running several.
+ */
+const DEBUGGER_TIMEOUT_MS = 30_000
 
 /**
  * @param options.executable A built `.app` binary to drive instead of `out/`.
@@ -30,16 +35,32 @@ let nextPort = 9800
  *   code came from `electron-vite` or from the bundle a user actually installs.
  */
 export async function launch({ userData, keepData = false, executable } = {}) {
-  const port = nextPort++
   const dataPath = userData ?? mkdtemp()
   const env = { ...process.env, CHORUS_USER_DATA: dataPath }
   // The VS Code extension host sets this, and it makes Electron boot as Node.
   delete env.ELECTRON_RUN_AS_NODE
 
+  /*
+   * Port zero, and the child tells us which one it got.
+   *
+   * This used to count up from a fixed 9800 per node process, so every run began
+   * at the same number — and a *stray* Electron from an earlier run that had not
+   * been killed still owned it. `connect` then attached to that one and reported
+   * a perfectly real DOM belonging to a different build, in a different checkout.
+   *
+   * It cost an hour: a button that was provably in the source and provably in
+   * the bundle "did not exist" in the app, and the only tell was a CSS class
+   * that had been renamed hours earlier and so could not have come from the code
+   * under test.
+   *
+   * Asking the OS for a free port and reading the answer out of the child's own
+   * stderr makes attaching to someone else's app impossible rather than
+   * unlikely.
+   */
   const [command, args] =
     executable === undefined
-      ? ['npx', ['electron', '.', `--remote-debugging-port=${String(port)}`]]
-      : [executable, [`--remote-debugging-port=${String(port)}`]]
+      ? ['npx', ['electron', '.', '--remote-debugging-port=0']]
+      : [executable, ['--remote-debugging-port=0']]
 
   const child = spawn(command, args, {
     cwd: APP,
@@ -49,6 +70,18 @@ export async function launch({ userData, keepData = false, executable } = {}) {
   let output = ''
   child.stdout.on('data', (d) => (output += d.toString()))
   child.stderr.on('data', (d) => (output += d.toString()))
+
+  /** Waits for the child to say which port it bound, rather than assuming one. */
+  const announcedPort = async () => {
+    const until = Date.now() + DEBUGGER_TIMEOUT_MS
+    while (Date.now() < until) {
+      const found = readPort(output)
+      if (found !== null) return found
+      if (child.exitCode !== null) break
+      await wait(100)
+    }
+    throw new Error('the app never announced a debugging port')
+  }
 
   /*
    * A launch failure has to carry what the app said about it.
@@ -60,7 +93,7 @@ export async function launch({ userData, keepData = false, executable } = {}) {
    */
   let socket
   try {
-    socket = await connect(port)
+    socket = await connect(await announcedPort())
   } catch (error) {
     child.kill('SIGKILL')
     /*
@@ -111,6 +144,17 @@ function mkdtemp() {
   )
   mkdirSync(path, { recursive: true })
   return path
+}
+
+/**
+ * The port the child actually bound, out of the line Chromium prints for it.
+ *
+ * `DevTools listening on ws://127.0.0.1:51423/devtools/browser/…` — the only
+ * statement of the truth that exists, since with `--remote-debugging-port=0` the
+ * number is the OS's choice and nobody else knows it.
+ */
+function readPort(text) {
+  return /ws:\/\/127\.0\.0\.1:(\d+)\//.exec(text)?.[1] ?? null
 }
 
 async function connect(port) {
