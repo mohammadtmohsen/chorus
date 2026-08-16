@@ -7,6 +7,89 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.15.0
+
+### There is a Windows installer, and nobody has installed it yet
+
+`Chorus-0.15.0-windows-x64-setup.exe` is attached to this release beside the
+DMG, with a checksum. CI builds it, and a verifier confirms the app launches and
+draws its interface out of that exact bundle.
+
+That is the honest extent of it. **Nothing has run past the first window.** No
+agent has started on Windows, no terminal has opened, and no one has completed
+an install, an upgrade or an uninstall. The installer is also unsigned, so
+SmartScreen will block it — choose "More info" then "Run anyway".
+
+If you are on Windows, treat this as something to try and report back on rather
+than something to depend on. [Installing Chorus on
+Windows](docs/install-windows.md) lists what is already known to be degraded
+there, so you can tell a known gap from a new one.
+
+Everything below is macOS as much as Windows.
+
+### An approval waits for you, however long that takes
+
+A permission request used to expire. After five minutes — later, a responsive
+window that a gesture could extend — Chorus answered on your behalf with
+"timed out", the provider was told nothing had been chosen, and the turn carried
+on. Walking away from your desk was a decision nobody made.
+
+Neither provider ever asked for that window; it was Chorus's own. Requests now
+stay open until you answer them. The two things the timer was really there for
+are unchanged: ending a session or closing the app resolves everything
+outstanding, and a turn you no longer want is ended by interrupting it.
+
+### Three ways a file path could come back wrong
+
+The same off-by-one lived in three places: a path was cut one character short
+whenever the project sat at a filesystem root. A file mentioned to an agent
+could arrive as `ile.ts` instead of `file.ts`, and a recap could silently list
+nothing at all under "files changed" — which reads as a fact rather than as a
+failure, and is why it went unnoticed.
+
+Rare on macOS, where few people keep a project at `/`. Found by making the code
+run somewhere that has more roots than one.
+
+### Trusted mode recognises more of what it should refuse
+
+The universal denials — recursive delete, force push, history rewrite — matched
+only the exact lowercase spelling of a Unix command. `RM -RF` walked past them,
+and so did `git.exe push --force`, because a four-character suffix was enough to
+miss the pattern. Denials are now matched case-insensitively and cover the cmd
+and PowerShell forms of the same irreversible actions.
+
+Nothing that was allowed before is denied now except those. Allowances are
+deliberately still matched exactly, because widening one has the opposite risk.
+
+### Keyboard shortcuts are described by what they do
+
+Every shortcut is now defined in one place rather than spelled out at each
+handler, and the label you see is generated from it. On macOS the visible change
+is small: `⇧⌘J` where it used to read `⌘⇧J`, which is the order macOS itself
+uses.
+
+### Smaller corrections
+
+- The VS Code extension could refuse a `git:` or merge-request pane depending on
+  how the path was written, and the check that was supposed to stop a path
+  climbing out of the repository could be bypassed by writing it differently.
+- A terminal whose `$SHELL` pointed at something uninstalled fell back to the
+  shell least likely to exist rather than the one guaranteed to.
+- Releases are built by CI now, from a clean checkout, for both platforms at
+  once. The packaging step had a long-standing dependence on files left behind
+  by a previous build — invisible on a machine that had built before, and fatal
+  on one that had not.
+
+### Known gaps in this release
+
+- **Windows is unproven past first launch**, as above.
+- Neither installer is signed the way its platform wants. The DMG is ad-hoc
+  signed and meets Gatekeeper; the Windows installer has no certificate and
+  meets SmartScreen.
+- On Windows a terminal never reports itself as busy, so the confirmation before
+  closing one cannot warn that a build is running; and an agent left behind by a
+  crash is not cleaned up.
+
 ## 0.14.1
 
 ### The answer at the end of a turn now stands out from the working
