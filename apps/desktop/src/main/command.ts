@@ -221,8 +221,53 @@ export function classify(
  * not — the resolver does the read, this records the answer, and a shim that
  * could not be parsed simply never comes through here.
  */
-export function withScriptPath(resolved: ResolvedCommand, scriptPath: string): ResolvedCommand {
-  return { ...resolved, scriptPath }
+export function withScriptPath(
+  resolved: ResolvedCommand,
+  scriptPath: string,
+  nodeExecutable?: string
+): ResolvedCommand {
+  /*
+   * A readable shim stops being a shim.
+   *
+   * This used to keep `kind: 'cmd-shim'` and merely record the script, so every
+   * launch still went `cmd.exe /d /s /c claude.cmd <args>` — and that is a
+   * command-injection surface, not just an inelegance. Node quotes an argument
+   * only when it contains a space or a quote, so `a&calc` is passed to cmd
+   * bare, cmd reads the `&` as a separator, and `calc` runs. Agent-supplied
+   * text reaches these arguments.
+   *
+   * Running the script under `node` removes cmd from the path entirely: argv
+   * goes to CreateProcess under the C runtime's rules, which have no
+   * metacharacters. It is the same answer the SDK needs, so both consumers now
+   * agree rather than one of them being a special case.
+   *
+   * What is given up is the shim's own preference for a `node.exe` sitting
+   * beside it, which portable Node installs rely on; this takes `node` from
+   * PATH, as the shim's own fallback branch does.
+   */
+  const node = nodeExecutable !== undefined && nodeExecutable !== '' ? nodeExecutable : 'node'
+  // Spread rather than build fresh: every field here is replaced today, but a
+  // future one added by `classify` should survive being upgraded.
+  return { ...resolved, file: node, argsPrefix: [scriptPath], kind: 'node-script', scriptPath }
+}
+
+/**
+ * Characters `cmd.exe` reads as syntax rather than as text.
+ *
+ * `%` and `!` are expansion, the rest are separators, redirection, grouping and
+ * escape. All of them are legal in a Windows path, which is exactly the problem:
+ * `C:\R&D\project` is a directory somebody has.
+ */
+const CMD_METACHARACTERS = /[&|<>^"%!()]/
+
+export class UnsafeCommandArgument extends Error {
+  constructor(readonly argument: string) {
+    super(
+      `Refusing to pass ${JSON.stringify(argument)} through cmd.exe: it contains a character ` +
+        'cmd would read as syntax.'
+    )
+    this.name = 'UnsafeCommandArgument'
+  }
 }
 
 /**
@@ -270,6 +315,28 @@ export function spawnSpec(
   resolved: ResolvedCommand,
   args: readonly string[] = []
 ): { readonly file: string; readonly args: string[] } {
+  /*
+   * The only path where an argument is parsed by something other than the C
+   * runtime, and therefore the only one that can be injected into.
+   *
+   * `cmd-shim` is now reached only when the shim could **not** be read — a
+   * hand-written batch file such as VS Code's `code.cmd` rather than an npm
+   * shim, which `withScriptPath` promotes past cmd entirely. That leaves a
+   * narrow case with no safe general escaping available: Node quotes an
+   * argument only when it contains a space or a quote, so `^`-escaping breaks
+   * for quoted arguments and does not apply to unquoted ones consistently.
+   *
+   * So this refuses rather than guesses. A correct fix is a hand-built verbatim
+   * command line with `windowsVerbatimArguments`, and writing one from the
+   * documentation without a Windows machine to check it against is precisely
+   * the "guessed shape" this codebase has been bitten by before. Refusing costs
+   * a legitimate `C:\R&D\project`; guessing costs arbitrary execution.
+   */
+  if (resolved.kind === 'cmd-shim') {
+    for (const argument of args) {
+      if (CMD_METACHARACTERS.test(argument)) throw new UnsafeCommandArgument(argument)
+    }
+  }
   return { file: resolved.file, args: [...resolved.argsPrefix, ...args] }
 }
 

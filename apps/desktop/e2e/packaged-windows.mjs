@@ -9,7 +9,7 @@ import { launch } from './harness.mjs'
  * is the worse one: the two bundles differ in almost every particular the
  * verifier exists to check — `Chorus.app/Contents/Resources/app.asar.unpacked`
  * against `win-unpacked/resources/app.asar.unpacked`, a `spawn-helper` that only
- * exists on Unix against four PE files that only exist on Windows — so a shared
+ * exists on Unix against five PE files that only exist on Windows — so a shared
  * script would be two scripts wearing one name, with every check wrapped in a
  * platform branch. The first time one of those branches was wrong, it would
  * report a pass for a bundle it had not looked at.
@@ -36,10 +36,12 @@ const UNPACKED = join(UNPACKED_ROOT, 'resources/app.asar.unpacked')
  * The binaries that must be outside the asar, named individually.
  *
  * A `.node` cannot be `dlopen`'d from inside an archive, and node-pty's Windows
- * prebuild is not one file but four: `pty.node` and `conpty.node` are the
- * bindings, `winpty.dll` is the library `pty.node` links against, and
- * `winpty-agent.exe` is a separate process it spawns. Miss any one and the
- * failure arrives at the first `⌘J`, as a terminal that never opens.
+ * prebuild is not one file but five: `pty.node` and `conpty.node` are the
+ * bindings, `conpty_console_list.node` is loaded by a forked child during
+ * cleanup, `winpty.dll` is the library `pty.node` links against, and
+ * `winpty-agent.exe` is a separate process it spawns. Miss one of the first two
+ * and the failure arrives at the first `Ctrl+J`, as a terminal that never
+ * opens; miss the console-list one and it arrives when a terminal is closed.
  *
  * Listed rather than globbed, because a glob that matches nothing passes.
  */
@@ -47,6 +49,18 @@ const REQUIRED = [
   ['node_modules/better-sqlite3/prebuilds/win32-x64.node', 'the SQLite binding'],
   ['node_modules/node-pty/prebuilds/win32-x64/pty.node', "node-pty's binding"],
   ['node_modules/node-pty/prebuilds/win32-x64/conpty.node', 'the ConPTY binding'],
+  /*
+   * Forked as a separate process, not required from the main one.
+   * `windowsPtyAgent.js` runs `conpty_console_list_agent.js` to enumerate the
+   * console's process list during ConPTY cleanup, and that child `require`s
+   * this binding. Missing it does not fail at startup — it fails when a
+   * terminal is closed, which is the least likely moment for anyone to connect
+   * the two.
+   */
+  [
+    'node_modules/node-pty/prebuilds/win32-x64/conpty_console_list.node',
+    'the ConPTY console-list binding, which cleanup forks a child to use',
+  ],
   ['node_modules/node-pty/prebuilds/win32-x64/winpty.dll', 'the winpty library'],
   ['node_modules/node-pty/prebuilds/win32-x64/winpty-agent.exe', "winpty's agent process"],
 ]
@@ -60,7 +74,11 @@ const REQUIRED = [
  * an installer's size.
  */
 const FORBIDDEN = [
-  ['node_modules/node-pty/prebuilds/win32-x64/pty.pdb', 'debug symbols'],
+  ['node_modules/node-pty/prebuilds/win32-x64/pty.pdb', 'pty debug symbols'],
+  [
+    'node_modules/node-pty/prebuilds/win32-x64/conpty_console_list.pdb',
+    'console-list debug symbols',
+  ],
   ['node_modules/node-pty/deps', 'the vendored winpty source'],
 ]
 

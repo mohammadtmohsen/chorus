@@ -1,7 +1,7 @@
 import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
-import { ClaudeAdapter } from '@chorus/adapter-claude'
+import { ClaudeAdapter, type ResolvedExecutable } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
   AccountSummary,
@@ -3304,18 +3304,20 @@ function defaultAdapters(): Map<AgentId, AgentAdapter> {
  * reason `claude` cannot end up in the same state. Falls back to the SDK's own
  * lookup when nothing is found.
  *
- * `sdkExecutablePath` rather than the resolved file, because this is the one
- * consumer that cannot take an argument prefix: `pathToClaudeCodeExecutable` is
- * a plain string and `executableArgs` is flags for the JS runtime, not a
- * command prefix. On Windows that means the script behind the `.cmd` shim, and
- * null when the shim could not be read — which surfaces as the adapter's own
- * "could not find the claude CLI" rather than an EINVAL from inside the SDK.
+ * **Two answers, because there are two consumers.** The SDK takes
+ * `pathToClaudeCodeExecutable`, a plain string with no slot for an argument
+ * prefix — `executableArgs` is flags for the JS runtime, not a command prefix —
+ * so on Windows it gets the script behind the `.cmd` shim, and null when the
+ * shim could not be read. The adapter's own version probe gets the spawnable
+ * pair instead, because `execFile` cannot run a `.js` on Windows and handing it
+ * the SDK's answer reported every npm install as unavailable.
  */
-function claudeOptions(): { resolveExecutablePath: () => Promise<string | null> } {
+function claudeOptions(): { resolveExecutable: () => Promise<ResolvedExecutable | null> } {
   return {
-    resolveExecutablePath: async () => {
+    resolveExecutable: async () => {
       const resolved = await resolveCommand('claude')
-      return resolved === null ? null : sdkExecutablePath(resolved)
+      if (resolved === null) return null
+      return { sdkPath: sdkExecutablePath(resolved), launch: spawnSpec(resolved) }
     },
   }
 }

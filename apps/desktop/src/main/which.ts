@@ -210,8 +210,14 @@ async function resolveUncached(name: string, deps: ResolveDeps): Promise<Resolve
  *
  * The read only happens for a `cmd-shim`, and only its failure is silent — a
  * shim whose format we do not recognise keeps the `cmd-shim` kind, which every
- * consumer but the Claude SDK can still launch. That degrade is the whole
- * reason `parseShimTarget` returns null instead of throwing.
+ * consumer but the Claude SDK can still launch, and which `spawnSpec` then
+ * refuses to hand cmd-unsafe arguments. That degrade is the whole reason
+ * `parseShimTarget` returns null instead of throwing.
+ *
+ * When the read *succeeds*, the command stops going through `cmd.exe` at all —
+ * see `withScriptPath`. That is the difference between a shim we understand and
+ * one we do not, and it is worth more than the SDK path it was originally added
+ * for: it takes an injection surface out of every launch rather than one.
  */
 function upgrade(path: string, deps: ResolveDeps): ResolvedCommand {
   const base = classify(path, { platform: deps.platform, comspec: deps.env['COMSPEC'] })

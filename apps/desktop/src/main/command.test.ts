@@ -6,6 +6,7 @@ import {
   pathExtensions,
   sdkExecutablePath,
   spawnSpec,
+  UnsafeCommandArgument,
   withScriptPath,
 } from './command.js'
 
@@ -296,8 +297,15 @@ describe('sdkExecutablePath', () => {
     const shim = classify('C:\\npm\\claude.cmd', { platform: WINDOWS })
     const withScript = withScriptPath(shim, 'C:\\npm\\node_modules\\claude-code\\cli.js')
     expect(sdkExecutablePath(withScript)).toBe('C:\\npm\\node_modules\\claude-code\\cli.js')
-    // ...while the spawnable form is still cmd.exe, not the script.
-    expect(spawnSpec(withScript, ['--version']).file).toBe('cmd.exe')
+    /*
+     * ...and the spawnable form is `node`, not cmd.exe.
+     *
+     * This asserted `cmd.exe` until review found that routing every launch
+     * through cmd is a command-injection surface. Reading the shim tells us the
+     * interpreter and the script, which is strictly more information than the
+     * shim itself — so there is no reason left to go through cmd at all.
+     */
+    expect(spawnSpec(withScript, ['--version']).file).toBe('node')
   })
 
   it('gives the script rather than the interpreter for a node-script', () => {
@@ -311,5 +319,73 @@ describe('sdkExecutablePath', () => {
     expect(sdkExecutablePath(classify('/usr/local/bin/claude', { platform: MAC }))).toBe(
       '/usr/local/bin/claude'
     )
+  })
+})
+
+/**
+ * The injection this phase closed, found in review before it shipped.
+ *
+ * Node quotes an argument only when it contains a space or a quote. `a&calc`
+ * has neither, so it reached `cmd.exe` bare, cmd read the `&` as a separator,
+ * and `calc` ran. Agent output reaches these arguments — a file path, a plugin
+ * name, a project directory — so this was arbitrary execution on Windows.
+ */
+describe('cmd.exe is not on the path for a shim we can read', () => {
+  const shim = classify('C:\\npm\\claude.cmd', { platform: WINDOWS, comspec: 'cmd.exe' })
+
+  it('promotes a readable shim to node, removing cmd from the launch entirely', () => {
+    const promoted = withScriptPath(shim, 'C:\\npm\\node_modules\\claude\\cli.js')
+    expect(promoted.kind).toBe('node-script')
+    expect(promoted.file).toBe('node')
+    expect(spawnSpec(promoted, ['--version'])).toEqual({
+      file: 'node',
+      args: ['C:\\npm\\node_modules\\claude\\cli.js', '--version'],
+    })
+  })
+
+  it('lets metacharacters through harmlessly once cmd is gone', () => {
+    // The C runtime has no metacharacters, so this is just an argument.
+    const promoted = withScriptPath(shim, 'C:\\npm\\cli.js')
+    expect(spawnSpec(promoted, ['C:\\R&D\\project']).args).toContain('C:\\R&D\\project')
+  })
+
+  it('still hands the SDK the script rather than the interpreter', () => {
+    const promoted = withScriptPath(shim, 'C:\\npm\\cli.js')
+    expect(sdkExecutablePath(promoted)).toBe('C:\\npm\\cli.js')
+  })
+})
+
+describe('an unreadable shim refuses rather than guessing', () => {
+  /*
+   * VS Code's `code.cmd` is hand-written rather than an npm shim, so
+   * `parseShimTarget` cannot reduce it and cmd.exe stays in the path. There is
+   * no safe general escaping available there — Node's conditional quoting
+   * breaks `^`-escaping for exactly the arguments that need it — so this fails
+   * closed. A verbatim command line is the real fix and needs a Windows machine
+   * to verify against.
+   */
+  const shim = classify('C:\\VS Code\\bin\\code.cmd', { platform: WINDOWS, comspec: 'cmd.exe' })
+
+  it.each(['C:\\R&D\\proj', 'a|b', 'a>b', 'a%USERNAME%b', 'a^b', 'a(b)', 'a!b', 'a"b'])(
+    'refuses %s',
+    (argument) => {
+      expect(() => spawnSpec(shim, [argument])).toThrow(UnsafeCommandArgument)
+    }
+  )
+
+  it('allows an ordinary path, including one with spaces', () => {
+    expect(() => spawnSpec(shim, ['C:\\Users\\me\\my project'])).not.toThrow()
+    expect(spawnSpec(shim, ['C:\\Users\\me\\my project']).args).toEqual([
+      '/d',
+      '/s',
+      '/c',
+      'C:\\VS Code\\bin\\code.cmd',
+      'C:\\Users\\me\\my project',
+    ])
+  })
+
+  it('never refuses on macOS, where cmd.exe does not exist', () => {
+    const native = classify('/usr/local/bin/code', { platform: MAC })
+    expect(() => spawnSpec(native, ['/p/R&D/proj', 'a|b'])).not.toThrow()
   })
 })

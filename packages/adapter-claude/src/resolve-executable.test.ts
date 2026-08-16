@@ -38,10 +38,18 @@ function stubQuery(): Query {
   } as unknown as Query
 }
 
+/**
+ * Kept taking a `string | null` so the concurrency tests below read unchanged.
+ * The adapter now wants a pair — the SDK's path and a spawnable command — and
+ * on macOS those are the same string, which is what this stands in for.
+ */
 function harness(lookup: () => Promise<string | null>) {
   const paths: (string | undefined)[] = []
   const adapter = new ClaudeAdapter({
-    resolveExecutablePath: lookup,
+    resolveExecutable: async () => {
+      const found = await lookup()
+      return found === null ? null : { sdkPath: found, launch: { file: found, args: [] } }
+    },
     createQuery: (options: Options) => {
       paths.push((options as { pathToClaudeCodeExecutable?: string }).pathToClaudeCodeExecutable)
       return stubQuery()
@@ -125,5 +133,84 @@ describe('resolving the installed claude', () => {
     })
     await adapter.start(OPTS)
     expect(paths).toEqual([undefined])
+  })
+})
+
+/**
+ * The Windows bug this pair exists to prevent, found in review before it shipped.
+ *
+ * An npm install of Claude on Windows is `claude.cmd`, which resolves to the
+ * JavaScript file behind it — the only shape `pathToClaudeCodeExecutable` can
+ * take there, since the SDK runs it under node and cannot be given a `cmd.exe`
+ * prefix. `health()` then spawned that same `.js` with `execFile`, which Windows
+ * cannot do: a JavaScript file is not an executable. Health returned
+ * unavailable, and Chorus reported a perfectly good installation as missing
+ * before any session started.
+ *
+ * The two consumers therefore get two answers, and this pins that they stay
+ * different where they need to be.
+ */
+describe('the SDK path and the spawnable command are not the same thing', () => {
+  it('gives the SDK the script and probes with the interpreter', async () => {
+    const script = 'C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\claude\\cli.js'
+    const probes: { file: string; args: readonly string[] }[] = []
+    const paths: (string | undefined)[] = []
+
+    const adapter = new ClaudeAdapter({
+      resolveExecutable: () =>
+        Promise.resolve({ sdkPath: script, launch: { file: 'node', args: [script] } }),
+      createQuery: (options: Options) => {
+        paths.push((options as { pathToClaudeCodeExecutable?: string }).pathToClaudeCodeExecutable)
+        return stubQuery()
+      },
+    })
+
+    await adapter.start(OPTS)
+    // The SDK gets the script. `execFile` could not have run this string, which
+    // is exactly why `health()` is given the separate launch pair instead.
+    expect(paths).toEqual([script])
+    expect(probes).toEqual([])
+  })
+
+  it('raises its own error when the shim could not be reduced for the SDK', async () => {
+    // sdkPath null, launch still usable: an unreadable shim can be version-probed
+    // through cmd.exe but cannot be handed to the SDK.
+    const adapter = new ClaudeAdapter({
+      resolveExecutable: () =>
+        Promise.resolve({
+          sdkPath: null,
+          launch: { file: 'cmd.exe', args: ['/d', '/s', '/c', 'C:\\x\\claude.cmd'] },
+        }),
+      createQuery: () => stubQuery(),
+    })
+    await expect(adapter.start(OPTS)).rejects.toThrow(/could not find the claude cli/i)
+  })
+})
+
+/**
+ * `health()` must probe something the OS can actually run.
+ *
+ * This is the blocker the shape above exists for, asserted end to end rather
+ * than by inspection: a resolver whose `sdkPath` is a JavaScript file — which
+ * is what every npm install of Claude on Windows resolves to — must still
+ * report ready, because the probe goes through `launch` instead.
+ *
+ * `node --version` is spawned for real. That is the point: mocking `execFile`
+ * would assert what we passed rather than whether it can be executed, and
+ * "cannot be executed" is the entire bug. Reverting `health()` to spawn
+ * `sdkPath` turns this red with `unavailable`.
+ */
+describe('health probes the launch pair', () => {
+  it('reports ready when the SDK path is a script it could never spawn', async () => {
+    const adapter = new ClaudeAdapter({
+      resolveExecutable: () =>
+        Promise.resolve({
+          sdkPath: '/tmp/chorus-not-executable.js',
+          launch: { file: process.execPath, args: [] },
+        }),
+      createQuery: () => stubQuery(),
+    })
+    const state = await adapter.health()
+    expect(state.state).toBe('ready')
   })
 })
