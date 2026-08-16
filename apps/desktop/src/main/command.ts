@@ -135,6 +135,25 @@ export function executableCandidates(
     const localAppData = env['LOCALAPPDATA']
     if (localAppData !== undefined && localAppData !== '') {
       directories.push(p.join(localAppData, 'Programs', 'Microsoft VS Code', 'bin'))
+      /*
+       * Where winget links what it installs. Not on PATH on a machine whose
+       * PATH predates winget, which is the same shape of failure as the npm
+       * entry above.
+       */
+      directories.push(p.join(localAppData, 'Microsoft', 'WinGet', 'Links'))
+    }
+
+    /*
+     * The two package managers that put shims somewhere PATH may not name.
+     *
+     * Scoop installs per user and Chocolatey machine-wide, and both are how a
+     * developer on Windows usually gets a CLI. Listing them costs two
+     * `existsSync` calls against directories that are absent on most machines.
+     */
+    directories.push(p.join(home, 'scoop', 'shims'))
+    const programData = env['ProgramData']
+    if (programData !== undefined && programData !== '') {
+      directories.push(p.join(programData, 'chocolatey', 'bin'))
     }
   } else {
     directories.push(p.join(home, '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin')

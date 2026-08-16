@@ -107,7 +107,15 @@ export interface ResolveDeps {
   /** Null rather than throwing: an unreadable shim is a shim we do not upgrade. */
   readonly readFile: (path: string) => string | null
   readonly realpath: (path: string) => string
-  /** The user's login shell, asked directly. Unix only; empty on Windows. */
+  /**
+   * Places only the machine can name, asked at resolve time.
+   *
+   * Unix: the user's login shell, whose PATH is richer than a Finder-launched
+   * app's. Windows: npm's own global prefix, which is `%APPDATA%\npm` by
+   * default and anywhere at all after `npm config set prefix` — the GitHub
+   * Windows runner reports `C:\npm\prefix`, and a developer who moved it off a
+   * roaming profile has done the same thing.
+   */
   readonly shellCandidates: (name: string) => Promise<string[]>
   /** Null when it will not run or will not say — either way, not a candidate. */
   readonly versionOf: (spec: { file: string; args: string[] }) => Promise<number[] | null>
@@ -252,8 +260,56 @@ function identityOf(command: ResolvedCommand): string {
  * process launch and no candidates — and the interactive-shell trick this exists
  * for has no Windows equivalent to translate.
  */
+/**
+ * Directories only the machine can name.
+ *
+ * **Not `where.exe` on Windows, and that is worth stating** — the first attempt
+ * at this was exactly that, and it would have added nothing.
+ * `executableCandidates` already pushes every `PATH` entry, so asking `where`
+ * only re-derives a list we hold. It earns its place on Unix because a *login*
+ * shell has a PATH that a Finder-launched app does not; Windows has no such
+ * split, since a process started from Explorer already carries the user's
+ * environment.
+ *
+ * What Windows cannot be told by inspection is where npm keeps its global
+ * shims once someone has moved it. `%APPDATA%\npm` is only the default.
+ */
+/**
+ * npm's global prefix, asked of npm.
+ *
+ * One spawn, once per name per run — `resolveCommand` caches. `npm` is a `.cmd`
+ * on Windows and `spawn` will not run one without a shell, so this goes through
+ * `cmd.exe /c` for the same reason `command.ts` does.
+ *
+ * Bare name and every `PATHEXT` variant, because the prefix directory holds
+ * `claude` and `claude.cmd` side by side and the caller does not know which.
+ */
+async function npmPrefixCandidates(name: string): Promise<string[]> {
+  try {
+    const { stdout } = await run(
+      process.env['COMSPEC'] ?? 'cmd.exe',
+      ['/c', 'npm', 'config', 'get', 'prefix'],
+      {
+        timeout: 10_000,
+      }
+    )
+    const prefix = stdout.trim()
+    // `npm config get` prints `undefined` rather than failing when unset.
+    if (prefix === '' || prefix === 'undefined') return []
+    const extensions = (process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+      .split(';')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '')
+    const base = `${prefix}\\${name}`
+    return [base, ...extensions.map((extension) => base + extension.toLowerCase())]
+  } catch {
+    // No npm, or it would not answer. The static list still covers the defaults.
+    return []
+  }
+}
+
 async function askShell(name: string): Promise<string[]> {
-  if (process.platform === 'win32') return []
+  if (process.platform === 'win32') return npmPrefixCandidates(name)
 
   const shell = process.env['SHELL'] ?? '/bin/zsh'
   const found = new Set<string>()

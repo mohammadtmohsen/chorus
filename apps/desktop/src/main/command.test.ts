@@ -81,6 +81,26 @@ describe('executableCandidates on Windows', () => {
     )
   })
 
+  it('looks in the package-manager shim directories PATH may not name', () => {
+    /*
+     * Scoop, Chocolatey and winget are how a developer on Windows usually gets a
+     * CLI, and none of them is guaranteed to be on PATH — the same failure the
+     * npm entry above guards against, three more times.
+     */
+    const found = executableCandidates('claude', {
+      platform: WINDOWS,
+      env: {
+        ...env,
+        LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
+        ProgramData: 'C:\\ProgramData',
+      },
+      home: 'C:\\Users\\me',
+    })
+    expect(found).toContain('C:\\Users\\me\\scoop\\shims\\claude.cmd')
+    expect(found).toContain('C:\\ProgramData\\chocolatey\\bin\\claude.exe')
+    expect(found).toContain('C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe')
+  })
+
   it('splits PATH on ; — the one character that makes the old code wrong here', () => {
     const found = executableCandidates('codex', {
       platform: WINDOWS,
