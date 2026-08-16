@@ -117,6 +117,19 @@ export function executableCandidates(
      * not list it. Same failure this file's Unix half already guards against
      * with `~/.local/bin`.
      */
+    /*
+     * Where the native installer puts them, and the omission that made this
+     * whole comment necessary.
+     *
+     * Claude Code's own installer writes `%USERPROFILE%\.local\bin\claude.exe`
+     * — the same `~/.local/bin` the Unix branch below has always listed, spelled
+     * for Windows. It was missing here while the comment beneath cited it, so a
+     * machine with the native install and a PATH that did not list it reported
+     * the CLI as not installed. Reported from a real Windows box; on this
+     * developer's Mac the very same install resolves to `~/.local/bin/claude`.
+     */
+    directories.push(p.join(home, '.local', 'bin'))
+
     const appData = env['APPDATA']
     if (appData !== undefined && appData !== '') directories.push(p.join(appData, 'npm'))
     const localAppData = env['LOCALAPPDATA']

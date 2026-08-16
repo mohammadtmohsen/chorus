@@ -65,6 +65,22 @@ describe('executableCandidates on Windows', () => {
     expect(found).toContain('C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd')
   })
 
+  it('looks in %USERPROFILE%\\.local\\bin, where the native installer writes', () => {
+    // The reported failure: Chorus on Windows could not find a claude that was
+    // installed and working. `~/.local/bin` was in the Unix branch and named in
+    // the comment beside this one, and absent here.
+    const found = executableCandidates('claude', { platform: WINDOWS, env, home: 'C:\\Users\\me' })
+    expect(found).toContain('C:\\Users\\me\\.local\\bin\\claude.exe')
+    expect(found).toContain('C:\\Users\\me\\.local\\bin\\claude.cmd')
+  })
+
+  it('prefers the native install over a PATH entry, as the Unix branch does', () => {
+    const found = executableCandidates('claude', { platform: WINDOWS, env, home: 'C:\\Users\\me' })
+    expect(found.indexOf('C:\\Users\\me\\.local\\bin\\claude.exe')).toBeLessThan(
+      found.indexOf('C:\\tools\\claude.exe')
+    )
+  })
+
   it('splits PATH on ; — the one character that makes the old code wrong here', () => {
     const found = executableCandidates('codex', {
       platform: WINDOWS,
