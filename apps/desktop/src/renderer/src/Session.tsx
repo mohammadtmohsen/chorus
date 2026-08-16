@@ -871,11 +871,76 @@ export function Session(props: {
     [conversationId, props.onCarry]
   )
 
+  /**
+   * Putting the view back where it was, after a drag or a split remounted us.
+   *
+   * Dragging a tab to another pane, splitting, and reordering all move this
+   * component in the tree, and only the moved pane remounts — which is why the
+   * one you dragged was the one that jumped to the top while its neighbours sat
+   * still. Both halves of the old restore were wrong.
+   *
+   * **A pinned transcript is re-pinned, not restored.** `following` is carried
+   * (line 308 reads it back) and was then ignored here, so a conversation that
+   * was sitting at the bottom came back to whatever number `scrollTop` last
+   * happened to be. The bottom is a *position* that survives the content being
+   * measured again; a number is not. `makeRoom` first, because the spare room
+   * decides where the bottom is — the same order `settle` uses.
+   *
+   * **And one assignment cannot land before the content has a height.** In a
+   * layout effect the transcript has not measured: markdown, diff cards and
+   * terminals all expand after mount. Assigning 4800 to a scroller whose
+   * `scrollHeight` is still 600 silently clamps to ~0 — no error, no warning,
+   * and nothing afterwards puts it right, because the ResizeObserver's
+   * correction is guarded on `following` and this branch is the one that is not
+   * following. That is the whole bug for a reader who had scrolled up.
+   *
+   * So the position is re-applied only while the scroller is still too short to
+   * hold it, and the loop ends the moment it *can* — which is also what keeps it
+   * from fighting the reader. Until the content is tall enough there is no
+   * deliberate place to scroll to, so writing during that window overrides
+   * nobody; once it is, this sets the position once and stops. Bounded by wall
+   * clock as well, so a conversation that never grows that tall gives up instead
+   * of spinning for the life of the pane.
+   */
   useLayoutEffect(() => {
-    const scrollTop = props.carry?.scrollTop
-    if (scrollTop === undefined || score.current === null) return
-    score.current.scrollTop = scrollTop
-  }, [])
+    const el = score.current
+    if (el === null) return undefined
+
+    if (following.current) {
+      makeRoom()
+      el.scrollTop = el.scrollHeight
+      return undefined
+    }
+
+    const wanted = props.carry?.scrollTop
+    if (wanted === undefined || wanted === 0) return undefined
+
+    /*
+     * `makeRoom` once, then two numbers a frame — the same bargain the watch
+     * above strikes, and for the same reason: it forces a layout, so calling it
+     * on every pass would cost more than the position it is chasing.
+     */
+    makeRoom()
+
+    let frame = 0
+    const until = Date.now() + 2_000
+    const restore = (): void => {
+      const furthest = el.scrollHeight - el.clientHeight
+      if (furthest >= wanted) {
+        el.scrollTop = wanted
+        return
+      }
+      // As close as the content currently allows, so a short transcript still
+      // lands at its own end rather than at the top.
+      el.scrollTop = furthest
+      if (Date.now() < until) frame = requestAnimationFrame(restore)
+    }
+    restore()
+
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [makeRoom])
 
   useEffect(() => {
     return window.chorus.onIdeContext((payload) => {
