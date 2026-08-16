@@ -41,6 +41,10 @@ jobs:
           $env:USERPROFILE
           Write-Host "--- APPDATA ---"
           $env:APPDATA
+          # `where.exe` exits 1 when it finds nothing, and the runner's pwsh
+          # wrapper fails a step on any non-zero exit. Here "not found" is the
+          # expected answer, not a failure.
+          exit 0
 
       - name: Install the CLI the npm way
         shell: pwsh
@@ -59,6 +63,7 @@ jobs:
           if (Test-Path "$env:USERPROFILE\.local\bin") {
             Get-ChildItem "$env:USERPROFILE\.local\bin" | Select-Object Name | Out-String
           } else { Write-Host "(no such directory)" }
+          exit 0
 
       # The question `command.ts` was fixed on an inference about. This asks the
       # machine instead: given its real filesystem, does the resolver find it?
