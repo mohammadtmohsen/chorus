@@ -306,8 +306,6 @@ export function Session(props: {
    * either.
    */
   const following = useRef(props.carry?.following ?? true)
-  /** Where the last scroll left us, so the next one can be told which way it went. */
-  const wasAt = useRef(0)
 
   /**
    * Makes the current turn a view tall, however little has been said in it.
@@ -410,6 +408,48 @@ export function Session(props: {
       cancelAnimationFrame(frame)
     }
   }, [makeRoom])
+
+  /**
+   * A short watch after the reply ends, for what arrives after it.
+   *
+   * `overflow-anchor: none` on `.score` is what actually fixed this — the
+   * browser was moving `scrollTop` back to hold the view still while cards
+   * landed above the foot. With anchoring off, six tool-heavy turns settle at
+   * 0-1px instead of 163-241px.
+   *
+   * This is the remainder. A command's output, a diff, or the action row can
+   * commit a second or two after the last token, and the resize that reports it
+   * is answered correctly — but a reader looking at the bottom still wants the
+   * bottom. So the end of a turn is watched for a moment rather than trusted to
+   * one notification.
+   *
+   * Bounded by wall clock and cheap on purpose: it reads two numbers a frame and
+   * only touches layout when it actually has to correct. `makeRoom` is *not*
+   * called on every pass — it forces a layout, and 150 forced layouts to catch
+   * one late card would cost more than the card.
+   *
+   * `following` is re-read each pass rather than captured, so scrolling up to
+   * read during the watch ends it. The reader wins, as everywhere else here.
+   */
+  useEffect(() => {
+    if (view.busy) return undefined
+    const el = score.current
+    if (el === null) return undefined
+
+    let frame = 0
+    const until = Date.now() + 2_500
+    const watch = (): void => {
+      if (following.current && el.scrollHeight - el.scrollTop - el.clientHeight > 1) {
+        makeRoom()
+        el.scrollTop = el.scrollHeight
+      }
+      if (Date.now() < until) frame = requestAnimationFrame(watch)
+    }
+    frame = requestAnimationFrame(watch)
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [view.busy, makeRoom])
 
   /** Agents already writing: their words say more than a label would. */
   const streaming = new Set(
@@ -835,7 +875,6 @@ export function Session(props: {
     const scrollTop = props.carry?.scrollTop
     if (scrollTop === undefined || score.current === null) return
     score.current.scrollTop = scrollTop
-    wasAt.current = scrollTop
   }, [])
 
   useEffect(() => {
@@ -1132,48 +1171,45 @@ export function Session(props: {
         aria-label={t('conversation.transcript')}
         onMouseUp={readSelection}
         onKeyUp={readSelection}
+        /*
+         * Following stops on a *gesture*, not on a position.
+         *
+         * This used to read `scrollTop` moving backwards as "the reader scrolled
+         * up", and several things move it backwards that are not a reader:
+         * `makeRoom` shrinking the spare room clamps it, and Chromium's scroll
+         * anchoring used to drag it back to hold the view still while cards
+         * landed above the foot. Either one turned following off for good, and a
+         * transcript that stops following mid-reply never starts again on its
+         * own — which is exactly the report.
+         *
+         * A wheel, a trackpad swipe, a touch drag and the scrolling keys are the
+         * only things the app cannot manufacture, so they are the only things
+         * that count as deciding to read something else. Position is still what
+         * *resumes* following, in `onScroll` below: coming back to the bottom is
+         * unambiguous however you got there.
+         */
+        onWheel={(e) => {
+          if (e.deltaY < 0) following.current = false
+        }}
+        onTouchMove={() => {
+          const el = score.current
+          if (el === null) return
+          if (el.scrollHeight - el.scrollTop - el.clientHeight > 32) following.current = false
+        }}
+        onKeyDown={(e) => {
+          if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) following.current = false
+        }}
         onScroll={(e) => {
           const el = e.currentTarget
-          // "At the bottom" with room to spare: a couple of pixels of rounding,
-          // or a scroll that lands just short, should still count as following.
-          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 32
-          // A pixel of slack, because a scroll that lands a hair short of where
-          // it started is rounding, not a decision.
-          const wentUp = el.scrollTop < wasAt.current - 1
-          wasAt.current = el.scrollTop
-
           /*
-           * Following stops when *you* scroll up, not merely when the bottom
-           * gets further away.
+           * Only ever turns following back *on*.
            *
-           * Measuring the distance alone read a growing transcript as a reader
-           * who had wandered off: the page gains an entry between a scroll being
-           * written and its event being delivered, so the handler saw a
-           * three-line gap that nobody had opened, gave up following, and left
-           * the view one entry short of the bottom for the rest of the
-           * conversation. Since the current turn is pinned by being scrolled to,
-           * that also stranded the question halfway up the pane.
-           *
-           * Coming back to the bottom always resumes, which is what makes this
-           * safe: a shrinking transcript clamps the scroll down by itself, and
-           * that lands at the bottom rather than counting as a scroll upward.
+           * "At the bottom" with room to spare: a couple of pixels of rounding,
+           * or a scroll that lands just short, still counts as following. The
+           * `else` that used to sit here — turning it off when the bottom got
+           * further away — is what the gesture handlers above replaced.
            */
-          if (atBottom) following.current = true
-          else if (wentUp) following.current = false
-          /*
-           * The offer is not dropped here any more.
-           *
-           * It used to be, because it was positioned against the pane while the
-           * passage moved with the scroller, so any scroll left the two
-           * disagreeing. Now it is inside the scroller and moves with what it
-           * points at, and there is nothing for a scroll to correct.
-           *
-           * Dropping it was also worse than it looked. Scroll events are
-           * delivered a few milliseconds after the write that caused them, so an
-           * offer made *between* the two was destroyed by the echo of a scroll
-           * that preceded it — measured at 7152 write, 7155 offer, 7160 drop,
-           * with `scrollTop` unchanged either side (C-025).
-           */
+          if (el.scrollHeight - el.scrollTop - el.clientHeight <= 32) following.current = true
         }}
       >
         <div className="score-content" ref={transcript}>

@@ -1413,6 +1413,22 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /*
+   * Chromium's scroll anchoring, off.
+   *
+   * It exists to keep what you are reading still when something *above* it
+   * changes size, and it does that by moving `scrollTop` behind the app's back.
+   * In a transcript that is precisely wrong: the cards that arrive at the end of
+   * a turn — a command, its output, a diff — land above the foot, so the browser
+   * quietly held the view where it was and left the reply's tail below the fold.
+   *
+   * Measured rather than guessed at, and only after a wrong turn: the observer
+   * was blamed first, and an independent `ResizeObserver` installed from outside
+   * the app then reported **zero** height changes without a callback. The
+   * notifications were always arriving and the scroll was always being written;
+   * something was moving it back afterwards.
+   */
+  overflow-anchor: none;
   /* Named because the pinned turn has to cancel it exactly; see `.turn-head`. */
   --score-top: calc(var(--step) * 5);
   padding: var(--score-top) calc(var(--step) * 5) calc(var(--step) * 7);
