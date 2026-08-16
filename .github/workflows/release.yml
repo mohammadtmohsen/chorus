@@ -1,0 +1,244 @@
+name: Release
+
+# One tag, both installers, one release.
+#
+# This replaces a sequence that was half manual: the DMG was built on the
+# maintainer's Mac and uploaded by hand, and the Windows installer had its own
+# workflow. Two problems with that, and neither is tidiness.
+#
+# The first is that a hand-built artifact is built from whatever is in that
+# working tree. `pnpm package` reaching for a `dist/` a previous build left
+# behind is not a hypothetical — it is the bug the first Windows CI run found,
+# and it had been latent for as long as releases had been cut from a machine
+# that never started clean.
+#
+# The second is that "release" meant one platform, so a Windows asset was an
+# extra errand nobody would remember. Now the tag is the whole trigger.
+#
+# `workflow_dispatch` builds without publishing, which is how you find out the
+# pipeline works without cutting a release to do it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish_to:
+        description: 'Existing tag to publish to (blank = build only)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+jobs:
+  # Nothing is built until the version is coherent and the gate is green.
+  #
+  # The version check is not ceremony. CLAUDE.md has said for months that the
+  # two package.json files "are separate and drift silently", which is a defect
+  # description waiting for an enforcement, and a tag that disagrees with them
+  # produces an installer whose filename lies about what is inside it.
+  gate:
+    name: Gate
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: The tag, the root and the app must agree
+        id: version
+        shell: bash
+        run: |
+          ROOT=$(node -p "require('./package.json').version")
+          APP=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "$ROOT" != "$APP" ]; then
+            echo "::error::package.json says $ROOT, apps/desktop says $APP"
+            exit 1
+          fi
+          # Only a real tag has something to disagree with.
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -n "${{ inputs.publish_to }}" ]; then TAG="${{ inputs.publish_to }}"; fi
+          if [ "${TAG#v}" != "$TAG" ] && [ "${TAG#v}" != "$ROOT" ]; then
+            echo "::error::tag $TAG does not match version $ROOT"
+            exit 1
+          fi
+          echo "version=$ROOT" >> "$GITHUB_OUTPUT"
+          echo "building $ROOT"
+
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run format:check
+      - run: pnpm run test
+
+  build:
+    name: ${{ matrix.label }}
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing must not cancel the other. Knowing that Windows
+      # built and macOS did not is worth more than one cancelled job.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS installer
+            artifact: Chorus-${{ needs.gate.outputs.version }}-arm64.dmg
+            verify: verify:package
+          - os: windows-latest
+            label: Windows installer
+            artifact: Chorus-${{ needs.gate.outputs.version }}-windows-x64-setup.exe
+            verify: verify:package:windows
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Electron's own binary is skipped for the gate and needed here.
+      - run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 0
+
+      - name: Package
+        run: pnpm package
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 0
+
+      # `bundle` scope: the native inventory, the launch, the renderer. The full
+      # scope waits for a conversation, which needs an installed and
+      # authenticated agent no runner has — confirmed by running the macOS
+      # verifier with the CLIs hidden and watching it fail identically on a
+      # bundle known to be good. This gates; a red here is real.
+      - name: Verify the packaged bundle
+        run: pnpm --filter @chorus/desktop run ${{ matrix.verify }}
+        env:
+          CHORUS_VERIFY_SCOPE: bundle
+
+      # Named, never globbed. A glob that matches nothing succeeds, and an empty
+      # upload is the failure that looks like a pass.
+      - name: Checksum
+        shell: bash
+        run: |
+          cd apps/desktop/release
+          if [ ! -f "${{ matrix.artifact }}" ]; then
+            echo "::error::no artifact named ${{ matrix.artifact }}"
+            ls -la
+            exit 1
+          fi
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+          fi
+          cat "${{ matrix.artifact }}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            apps/desktop/release/${{ matrix.artifact }}
+            apps/desktop/release/${{ matrix.artifact }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish the release
+    # Only for a real tag, or a dispatch that named one. A dispatch with neither
+    # has built both installers and uploaded them as artifacts, which is the
+    # point of being able to run this without cutting a release.
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_to != ''
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      # The notes are the CHANGELOG section for this version, plus the two
+      # paragraphs every release has to repeat because every downloader meets
+      # one of them: Gatekeeper on macOS (C-002) and SmartScreen on Windows.
+      - name: Assemble the notes
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${{ needs.gate.outputs.version }}"
+          {
+            awk -v v="## $VERSION" '
+              $0 == v { on = 1; next }
+              on && /^## / { exit }
+              on { print }
+            ' CHANGELOG.md
+            cat <<'FOOTER'
+
+          ---
+
+          ### Installing
+
+          **macOS** — the build is ad-hoc signed but not notarized, so Gatekeeper
+          objects on first launch. Open it once with **right-click → Open**, or:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/Chorus.app
+          ```
+
+          [Installing Chorus on macOS](docs/install-macos.md) walks through every
+          dialog, including the one that means something is actually wrong.
+
+          **Windows** — the installer is not signed at all, so SmartScreen blocks
+          it: choose **More info → Run anyway**. A signature alone would not fix
+          that either, because SmartScreen scores reputation rather than validity
+          and a new certificate has none.
+          [Installing Chorus on Windows](docs/install-windows.md) has the rest,
+          including how to verify the checksum published beside the installer.
+
+          Requires the `claude` and `codex` CLIs already installed and logged in.
+          Windows additionally needs Git for Windows.
+          FOOTER
+          } > notes.md
+          echo "wrote $(wc -l < notes.md) lines of notes"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ inputs.publish_to }}"
+          [ -z "$TAG" ] && TAG="${GITHUB_REF#refs/tags/}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "Chorus ${{ needs.gate.outputs.version }}" \
+              --notes-file notes.md
+          fi
+          gh release upload "$TAG" assets/* --clobber
+
+      # Verify against the API rather than the exit code: a `gh release upload`
+      # that half-worked still exits zero, and the asset list is the only thing
+      # that says what a person will actually be offered.
+      - name: Verify the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ inputs.publish_to }}"
+          [ -z "$TAG" ] && TAG="${GITHUB_REF#refs/tags/}"
+          gh release view "$TAG" --json assets \
+            --jq '.assets[] | "\(.name)  \(.size) bytes"'
+          COUNT=$(gh release view "$TAG" --json assets --jq '[.assets[] | select(.name|test("dmg$|exe$"))] | length')
+          if [ "$COUNT" -ne 2 ]; then
+            echo "::error::expected a .dmg and an .exe, found $COUNT"
+            exit 1
+          fi
