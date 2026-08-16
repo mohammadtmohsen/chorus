@@ -27,17 +27,22 @@ export interface Tracker {
 }
 
 /**
- * The tracker this workspace's agents talk about.
+ * The tracker this workspace's agents talk about. Empty, so nothing linkifies.
  *
- * A constant rather than a setting, for now: one workspace, one tracker, and a
- * settings field plus the UI to edit it is more surface than the fact deserves
- * until there is a second. `linkifyIssues` takes the tracker as an argument, so
- * moving it into `SettingsShape` later changes this file's callers and nothing
- * about its logic.
+ * **Off by default on purpose.** A tracker is one workspace's private fact — its
+ * host names the company and its keys name the projects — so there is no honest
+ * default to ship. An empty key list is the one setting that is correct for
+ * everybody: `keyPattern` returns `null` for it and `linkifyIssues` hands the
+ * nodes straight back, so the feature costs nothing until someone fills it in.
+ *
+ * A constant rather than a settings field, still, because the UI to edit it is
+ * more surface than the fact deserves. `linkifyIssues` and `issueHref` both take
+ * the tracker as an argument, so moving it into `SettingsShape` changes this
+ * file's callers and nothing about its logic.
  */
 export const TRACKER: Tracker = {
-  baseUrl: 'https://acme.example',
-  keys: ['ACME'],
+  baseUrl: '',
+  keys: [],
 }
 
 export function issueHref(key: string, tracker: Tracker = TRACKER): string {
@@ -54,7 +59,7 @@ function keyPattern(tracker: Tracker): RegExp | null {
    * Case-sensitive, and bounded at both ends.
    *
    * Upper case because that is what a key is; lower case would match ordinary
-   * words. The leading boundary stops `XTPA-1` matching, and the trailing one
+   * words. The leading boundary stops `XACME-1` matching, and the trailing one
    * keeps the full number rather than a prefix of it — while still letting the
    * sentence's own full stop fall outside the link.
    */

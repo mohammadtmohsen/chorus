@@ -30,7 +30,7 @@ waiting on you. Click a chip to bring it back on stage.
 │  Chorus                    [New] [⚙] │
 ├───────────────────┬──────────────────┤
 │                   │                  │
-│   chorus (claude) │  example-app (codex) │
+│   chorus (claude) │  web-app (codex) │
 │                   │                  │
 │   ● on stage      │  ● on stage      │
 │                   │                  │

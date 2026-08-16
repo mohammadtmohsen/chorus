@@ -900,12 +900,12 @@ function DragFeedback({ drag }: { drag: ActiveTabDrag | null }): React.JSX.Eleme
 /**
  * The curve that joins the active tab to the pane below it.
  *
- * Ported from `example-app`'s `TabStrip`, which solves this the way browsers do:
- * the tab and the panel are one surface, and where the tab's rounded top meets
- * the panel's flat edge there is a *concave* quarter-round turning outward on
- * each side. Without it a tab is a rounded rectangle sitting on a line — which
- * is what Chorus drew, and why the join read as two shapes touching rather than
- * one shape with a tab on it.
+ * Browsers and editors all solve this the same way, and it is worth naming: the
+ * tab and the panel are one surface, and where the tab's rounded top meets the
+ * panel's flat edge there is a *concave* quarter-round turning outward on each
+ * side. Without it a tab is a rounded rectangle sitting on a line — which is
+ * what Chorus drew, and why the join read as two shapes touching rather than one
+ * shape with a tab on it.
  *
  * Three layers, and each is load-bearing:
  *
@@ -917,14 +917,14 @@ function DragFeedback({ drag }: { drag: ActiveTabDrag | null }): React.JSX.Eleme
  *  - **two curves**, each an SVG rather than a CSS pseudo-element, because the
  *    corner needs a *fill* — the pane's surface, flooding into the notch — and a
  *    *stroke* on the same arc, in the tab's border colour. A `border-radius`
- *    trick gives one or the other, not both, which is why the original reached
- *    for SVG too.
+ *    trick gives one or the other, not both, which is why every implementation
+ *    of this reaches for SVG.
  *
- * Authored at 11px with a radius of 8 rather than scaling their 14px artwork:
- * their tab is `rounded-t-xl` with a 2px border and Chorus's is 9px with a 1px
- * one, so a scaled copy would have arrived with a 1.4px stroke that renders
- * soft. The control points are the usual quarter-arc constant — 8 × 0.5523 — so
- * the arc meets both straight edges tangentially.
+ * Authored at 11px with a radius of 8, rather than scaling artwork drawn for a
+ * chunkier tab: Chorus's corner is 9px with a 1px border, so a copy scaled down
+ * from a 14px corner with a 2px border would have arrived carrying a 1.4px
+ * stroke that renders soft. The control points are the usual quarter-arc
+ * constant — 8 × 0.5523 — so the arc meets both straight edges tangentially.
  *
  * **11px and half-pixel coordinates, because 10px left visible breaks.** A 1px
  * stroke is centred on its path, so a path along the box's own edge renders half
