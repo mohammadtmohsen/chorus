@@ -490,6 +490,76 @@ describe('recapLedger', () => {
     expect(ledger.files).toEqual(['applied.ts'])
   })
 
+  it('drops a file that was written and then removed', () => {
+    /*
+     * Reported from a real board: three of its four `Done` lines named throwaway
+     * probes created and deleted in the same session. The ledger read the writes
+     * and never noticed the `rm`, so it claimed as delivered several files that
+     * do not exist.
+     */
+    const wrote = (path: string, ref: string): StoredEvent =>
+      event('claude', { type: 'tool.started', itemRef: ref, name: 'Write', detail: path })
+    const ran = (line: string, ref: string): StoredEvent =>
+      event('claude', { type: 'command.started', itemRef: ref, command: [line], cwd: '.' })
+
+    const ledger = recapLedger(
+      [wrote('/p/keep.ts', 'a'), wrote('/p/probe.mjs', 'b'), ran('rm /p/probe.mjs', 'c')],
+      '/p'
+    )
+    expect(ledger.files).toEqual(['keep.ts'])
+  })
+
+  it('keeps a file whose name merely appears in an unrelated command', () => {
+    // The removal has to be a removal. `cat keep.ts` names the file and does
+    // nothing to it.
+    const ledger = recapLedger(
+      [
+        event('claude', {
+          type: 'tool.started',
+          itemRef: 'a',
+          name: 'Write',
+          detail: '/p/keep.ts',
+        }),
+        event('claude', {
+          type: 'command.started',
+          itemRef: 'b',
+          command: ['cat keep.ts'],
+          cwd: '.',
+        }),
+      ],
+      '/p'
+    )
+    expect(ledger.files).toEqual(['keep.ts'])
+  })
+
+  it('drops a file removed by a compound line', () => {
+    // `rm -f a b` and `cd x && rm y` are both ordinary in a real log.
+    const ledger = recapLedger(
+      [
+        event('claude', {
+          type: 'tool.started',
+          itemRef: 'a',
+          name: 'Write',
+          detail: '/p/one.mjs',
+        }),
+        event('claude', {
+          type: 'tool.started',
+          itemRef: 'b',
+          name: 'Write',
+          detail: '/p/two.mjs',
+        }),
+        event('claude', {
+          type: 'command.started',
+          itemRef: 'c',
+          command: ['cd /p && rm -f one.mjs two.mjs'],
+          cwd: '.',
+        }),
+      ],
+      '/p'
+    )
+    expect(ledger.files).toEqual([])
+  })
+
   it('moves a file touched twice to the end rather than listing it twice', () => {
     // A reader looks at the end of the list for current work.
     const touch = (path: string, ref: string): StoredEvent =>
@@ -1576,10 +1646,17 @@ describe('recapPrompt', () => {
     expect(prompt).toContain('Anything off-task goes there and nowhere else')
   })
 
-  it('asks for "unverified" rather than trusting a Done line', () => {
-    // "Done" and "done and checked" are exactly what a recap is read to tell
-    // apart, and the difference is invisible unless it is asked for.
-    expect(prompt).toContain('not checked with "unverified"')
+  it('spends the word "unverified" only where the log can support it', () => {
+    /*
+     * Measured from a real board, which marked *everything* unverified —
+     * including two things a Windows machine had confirmed that morning. Told to
+     * flag unchecked work and handed a ledger that records no checking, an agent
+     * flags all of it, and a board that says "unverified" on every line says as
+     * little as one that never says it.
+     */
+    expect(prompt).toContain('shows the work and')
+    expect(prompt).toContain('no command that would have checked it')
+    expect(prompt).toContain('say nothing about verification')
   })
 
   it('names the padding rather than asking for brevity', () => {

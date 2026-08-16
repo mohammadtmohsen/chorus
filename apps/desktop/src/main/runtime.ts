@@ -564,12 +564,45 @@ export function recapLedger(events: readonly StoredEvent[], cwd = ''): RecapLedg
     files.push(relative)
   }
 
+  /**
+   * A file that was written and later deleted was not work done.
+   *
+   * Reported from a real recap: three of its four `Done` lines named throwaway
+   * probe scripts that had been created and removed in the same session. The
+   * ledger read `Edit` and `Write` and never noticed the `rm` that followed, so
+   * a board claimed as delivered several files that do not exist — which is the
+   * worst line for a board to get wrong, because it is the one a reader acts on.
+   *
+   * Matched on the path the ledger is already holding rather than by parsing the
+   * command: a shell line can be arbitrarily compound and its argument may be
+   * quoted, globbed or built from a variable, so extracting "the file being
+   * removed" is a guess. Asking "does this removal name something I am claiming"
+   * is a question with an answer.
+   */
+  const untouchRemoved = (line: string): void => {
+    if (!/(^|[\s;&|])(rm|del|Remove-Item)\b/i.test(line)) return
+    for (let i = files.length - 1; i >= 0; i--) {
+      const candidate = files[i]
+      if (candidate !== undefined && line.includes(candidate)) files.splice(i, 1)
+    }
+  }
+
   for (const event of events) {
     const payload = event.payload
     switch (payload.type) {
-      case 'command.started':
-        commandLine.set(payload.itemRef, payload.command.join(' '))
+      case 'command.started': {
+        const line = payload.command.join(' ')
+        commandLine.set(payload.itemRef, line)
+        /*
+         * On `started`, not on `completed`. A removal that failed leaves the
+         * file, so this is the wrong event in principle — but a `command.started`
+         * with no `completed` is a command still running or one whose turn was
+         * interrupted, and dropping a claim about a file is the safe direction.
+         * Over-claiming is what this exists to stop.
+         */
+        untouchRemoved(line)
         break
+      }
 
       case 'command.completed': {
         if (payload.exitCode === null || payload.exitCode === 0) break
@@ -743,7 +776,18 @@ export function recapPrompt(asked: readonly string[], ledger: RecapLedger): stri
     'Done — up to four lines. Only what the log below shows was actually done,',
     'each naming the file or command it refers to. The log records that a file',
     'changed, never that the change was correct — so no line here may claim',
-    'something works. End any line whose result was not checked with "unverified".',
+    'something works.',
+    '',
+    // Measured from a real board: told to mark unchecked work, and given a
+    // ledger that says nothing about checking, an agent marks *everything*
+    // unverified — including two things a Windows machine had confirmed that
+    // morning. The instruction and the evidence disagreed about what the
+    // evidence could show. Say when to use the word, and when to stay silent.
+    'Write "unverified" after a line only when the log shows the work and shows',
+    'no command that would have checked it. Where the log says nothing either',
+    'way, say nothing about verification — an absent record is not evidence that',
+    'nobody checked, and a board that marks everything unverified says as little',
+    'as one that marks nothing.',
     '',
     'Open — up to three lines. What is unfinished, failing, or waiting on the user.',
     'Say what each one is waiting on.',
