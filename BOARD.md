@@ -30,6 +30,33 @@ Nothing here can be finished by me alone.
 
 ## Open
 
+### C-040 · A failing turbo task on Windows CI reports no cause
+
+`Typecheck, lint, test (Windows)` went red on the 0.16.0 merge. The whole of
+what the log said was:
+
+```
+$ tsc -b tsconfig.build.json
+[ELIFECYCLE] Command failed with exit code 1.
+```
+
+No diagnostic, no file, no line — `@chorus/workspace:build` failed in half a
+second and turbo reported nothing about why. It took several minutes and four
+log queries to establish that there was nothing to find, and the thing that
+finally settled it was reasoning rather than evidence: the merge changed
+`CHANGELOG.md` and two version numbers, the macOS typecheck passed on identical
+code, and a re-run went green. Flaky.
+
+**The flake matters less than the silence.** A red gate that cannot say what it
+objects to is one nobody can act on, and the temptation is to re-run until it is
+green — which is how a real failure gets waved through. `pnpm check` locally
+prints the error; CI did not, because turbo buffers each task's output and the
+failing task's was lost.
+
+**Done when:** a task that fails in CI names its own cause in the log —
+`--output-logs=errors-only`, or whatever turbo now offers — verified by making a
+task fail on purpose and reading the error out of the run.
+
 ### C-004 · Measure what catch-up actually costs
 
 In a shared room each agent is fed what the other said, up to 12,000 characters a
