@@ -1,15 +1,15 @@
 # Status — Windows installer
 
-| Phase                                        | State                                     |
-| -------------------------------------------- | ----------------------------------------- |
-| 0 — Observe Windows                          | CI half shipped; VM observations not done |
-| 1 — Platform-aware command launching         | shipped, unverified on Windows            |
-| 2 — Shell, PTY, and process lifecycle        | shipped, unverified on Windows            |
-| 3 — Named-pipe IDE bridge and Windows paths  | shipped, unverified on Windows            |
-| 4 — Renderer and permission policy           | shipped, unverified on Windows            |
-| 5 — Portable build and unsigned verification | code shipped; no Windows artifact built   |
-| 6 — Signing and installer lifecycle          | **blocked** — needs a certificate and VMs |
-| 7 — Release contract and documentation       | shipped                                   |
+| Phase                                        | State                                       |
+| -------------------------------------------- | ------------------------------------------- |
+| 0 — Observe Windows                          | CI job green and blocking; VM work not done |
+| 1 — Platform-aware command launching         | shipped, unverified on Windows              |
+| 2 — Shell, PTY, and process lifecycle        | shipped, unverified on Windows              |
+| 3 — Named-pipe IDE bridge and Windows paths  | shipped, unverified on Windows              |
+| 4 — Renderer and permission policy           | shipped, unverified on Windows              |
+| 5 — Portable build and unsigned verification | code shipped; no Windows artifact built     |
+| 6 — Signing and installer lifecycle          | **blocked** — needs a certificate and VMs   |
+| 7 — Release contract and documentation       | shipped                                     |
 
 ## Current state
 
@@ -192,3 +192,43 @@ installer testing, and a Windows packaging job in CI — none of which exist. Th
 named pipe still has no ACL; Node exposes no way to set a security descriptor on
 a pipe it creates, so closing that properly means a third native dependency and
 is a decision rather than a patch.
+
+## The Windows job went green, 2026-08-16
+
+It ran for the first time on PR #67 and failed 36 tests. Every one was worth
+having, and the shape of them is the finding.
+
+**Almost all were my own tests asserting the host rather than the platform they
+named.** This branch spent seven phases making production code take an explicit
+platform, and then the suite defaulted to `process.platform` — so it described
+unix and passed only because it ran there. Three rounds to clear:
+
+1. Tests that only needed to name a platform now name it.
+2. Tests asserting a **host** path now expect the host separator rather than a
+   hardcoded `/`.
+3. Tests needing a unix **filesystem** are skipped on Windows with the reason
+   attached. `chmod` is a no-op there and libuv synthesises mode from the
+   read-only attribute, so an executable bit cannot be produced at all, and a
+   named pipe has no directory entry to `stat`. Weakening those to pass would
+   have been the suite asserting a protection that does not exist.
+
+Two mistakes of my own along the way, both from pattern-matching instead of
+reading: adding the platform argument per call site in `document-identity` and
+missing every call behind a helper, and forcing `'darwin'` into `discovery`'s
+shared deps — which made every 0o600 descriptor look world-readable on Windows
+and turned one failure into four.
+
+**One was a real bug.** The recap ledger's `touch` tested
+``path.startsWith(`${cwd}/`)`` and sliced `cwd.length + 1` — a third copy of the
+arithmetic already replaced in `path-safety.ts` and `project-match.ts`, and the
+only copy with no test. On Windows the `/` never matches, so every file was
+dropped and a recap would have reported "no files changed" for every
+conversation. That is the failure mode the function's own comment says the
+ledger exists to avoid.
+
+`continue-on-error` is removed: the condition written next to it was "remove the
+flag the first time it is seen green", and that has happened. The job blocks now.
+
+**What this still does not prove.** The suite passing on a Windows runner says
+the code is portable, not that Chorus works. Nothing has driven the app, no
+artifact has been built, and Phase 6 is untouched.

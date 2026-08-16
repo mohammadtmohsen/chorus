@@ -61,13 +61,14 @@ jobs:
   # question the plan refused to answer from memory: which of typecheck, lint,
   # format and test survive a platform nobody has run them on.
   #
-  # `continue-on-error` because this job is added to a shared workflow while
-  # another feature is in flight, and a red probe would block that PR over
-  # something unrelated to it. That is *not* the C-027 trap of a check that
-  # cannot fail: this one fails visibly and reports which step broke, it simply
-  # does not gate a release that is macOS-only anyway. **Remove the flag the
-  # first time it is seen green** — after that, red means a regression and
-  # should block.
+  # It has been green once, on 2026-08-16, so it blocks like any other job.
+  #
+  # It carried `continue-on-error` until then, on the condition written here:
+  # remove the flag the first time it passes. That first run failed 36 tests and
+  # every one was worth having — almost all of them were tests asserting the host
+  # they ran on rather than the platform they named, and one was a real bug, a
+  # third copy of the `${cwd}/` prefix arithmetic that would have made every
+  # recap on Windows report "no files changed".
   #
   # No `shell:` on the steps. Every one is a single `pnpm run` and the runner's
   # default pwsh handles those; the moment a step needs a pipeline or a `$VAR`
@@ -75,7 +76,6 @@ jobs:
   check-windows:
     name: Typecheck, lint, test (Windows)
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       # See the note in `check` above.
