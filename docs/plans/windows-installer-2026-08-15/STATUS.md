@@ -232,3 +232,20 @@ flag the first time it is seen green", and that has happened. The job blocks now
 **What this still does not prove.** The suite passing on a Windows runner says
 the code is portable, not that Chorus works. Nothing has driven the app, no
 artifact has been built, and Phase 6 is untouched.
+
+## Handed over for Windows testing, 2026-08-16
+
+`docs/windows-test-brief.md` is the brief. The branch is rebased on `main`, the
+gate is green on both platforms, and the Windows CI job blocks rather than
+merely reporting.
+
+The brief leads with one request that costs the tester ten seconds and answers
+the largest open question on the branch: the contents of the `claude.cmd` that
+`where.exe` names. `parseShimTarget` was written from cmd-shim's documented
+output rather than from a shim off a real install, and if the format does not
+match, both agents report as not installed and nothing downstream can be
+assessed.
+
+What a green suite on `windows-latest` does **not** cover, and what the brief
+therefore asks for: agent startup, ConPTY, the named-pipe bridge, the window
+frame, and whether the event store survives a restart. None of it has been run.
