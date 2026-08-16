@@ -770,18 +770,6 @@ export const Entry = memo(function Entry({
                 typing, and a wrong one sends "go ahead" at a question nobody
                 answered.
               */}
-              {final && onGo !== undefined && offersToAct(message.text) && (
-                <button
-                  type="button"
-                  className="entry-action entry-action--go"
-                  data-entry-action="go"
-                  onClick={() => {
-                    onGo(message)
-                  }}
-                >
-                  {t('conversation.go')}
-                </button>
-              )}
             </span>
             {/*
               Only on the last reply, and `final` is already false mid-turn
@@ -802,6 +790,43 @@ export const Entry = memo(function Entry({
               >
                 {t('aside.recap')}
               </button>
+            )}
+            {/*
+              Its own line, and a shape rather than a word.
+
+              Beside the others it read as part of them: "Hand off →" ends in an
+              arrow and "Go ahead" followed it in the same face, the same size
+              and nearly the same colour, so the row said "Hand off → Go ahead"
+              as one sentence. Three borderless labels in a row cannot say that
+              one of them does something the other two do not.
+
+              It is the only control here that makes an agent *work*. Handing off
+              moves a reply and a recap only reads one; this one spends tokens
+              and touches files. So it is the only one drawn as a button, and it
+              gets the line to itself.
+
+              `flex-basis: 100%` in a row that wraps, rather than a new grid
+              area — so `.entry` keeps its three-row template. The `flex-wrap` on
+              `.entry-actions` is load-bearing and was added with this: without
+              it a full-width item does not break the line, it just takes the
+              room, and the first line collapses into a column.
+            */}
+            {final && onGo !== undefined && offersToAct(message.text) && (
+              <span className="entry-actions-go">
+                <button
+                  type="button"
+                  className="entry-action entry-action--go"
+                  data-entry-action="go"
+                  onClick={() => {
+                    onGo(message)
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" />
+                  </svg>
+                  {t('conversation.go')}
+                </button>
+              </span>
             )}
           </div>
         )}

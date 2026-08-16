@@ -3837,6 +3837,10 @@ input::placeholder {
 .entry-actions {
   display: flex;
   grid-area: actions;
+  /* So a full-width item below becomes a second line rather than crushing the
+     first. Without it `flex-basis: 100%` only fights the others for room, which
+     is how `Where are we?` ended up wrapped into a two-line column. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--step) * 2);
@@ -3856,6 +3860,18 @@ input::placeholder {
   display: flex;
   align-items: center;
   gap: calc(var(--step) * 2);
+}
+
+/*
+ * The second line, which exists so `Go ahead` is not read as part of the first.
+ *
+ * `flex-basis: 100%` in a wrapping row is a line break without a new grid area,
+ * so `.entry` keeps its three-row template and this stays a change to one rule.
+ */
+.entry-actions-go {
+  flex-basis: 100%;
+  display: flex;
+  margin-top: var(--step);
 }
 
 .entry-action {
@@ -3889,8 +3905,46 @@ input::placeholder {
  * in the first place.
  */
 
+/*
+ * The one control here that makes an agent *work*, drawn as such.
+ *
+ * Handing off moves a reply; a recap only reads one. This spends tokens and
+ * touches files, and three borderless labels in a row cannot say that. Worse,
+ * they actively lied: "Hand off →" ends in an arrow and "Go ahead" followed it
+ * in the same face and nearly the same colour, so the row read as one sentence —
+ * "Hand off → Go ahead".
+ *
+ * So it is the only one with an edge, a ground and a glyph. Tinted rather than
+ * filled: it is an affirmative action, not a destructive one, and a solid button
+ * under every offered reply would shout down the reply itself.
+ */
 .entry-action--go {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--voice) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--voice) 9%, transparent);
   color: var(--voice);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+/* Filled on the glyph only — a spark, at the weight the app's other icons use. */
+.entry-action--go svg {
+  width: 11px;
+  height: 11px;
+  fill: currentcolor;
+  stroke: none;
+  /* The bolt's mass sits high; a hair of nudge puts it on the text's centre. */
+  margin-top: -1px;
+}
+
+.entry-action--go:hover {
+  border-color: color-mix(in srgb, var(--voice) 60%, transparent);
+  background: color-mix(in srgb, var(--voice) 16%, transparent);
 }
 
 .entry-action:hover {
