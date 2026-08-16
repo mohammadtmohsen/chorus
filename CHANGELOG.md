@@ -7,6 +7,72 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.16.0
+
+### The transcript follows the reply again, all the way down
+
+A reply that ended in commands, output or a diff could stop halfway and stay
+there. It looked random because it was: two separate things had to line up.
+
+The browser was moving the view back. Chromium keeps what you are reading still
+when something _above_ it changes size, and the cards at the end of a turn land
+above the foot — so it quietly held your place and left the tail below the fold.
+Worse, Chorus read that same movement as _you_ scrolling up and stopped
+following for good, which is why it never recovered on its own. Shrinking the
+spare room under a short turn did it too.
+
+Following now stops when you actually scroll — a wheel, a trackpad swipe, a
+touch drag, Page Up — and nothing else. Coming back to the bottom resumes it.
+Measured on the replies that used to fail: six of six now settle at the bottom
+instead of one in six, and a reader who scrolls up mid-reply is left there.
+
+Dragging a pane into a split, or reordering tabs, used to jump the moved pane to
+the top. Only that pane remounts, which is why it was the only one that moved.
+It comes back where you left it, and at the bottom if that is where it was.
+
+### A tab says what its session is doing
+
+Tabs carried two coloured dots naming which agents were in the room. That never
+changes, so it was never the reason to look at a tab. They now show the state
+the sidebar card already shows: working, waiting on an approval, waiting on a
+question, stopped. A tab needing an approval tints, and its mark stays at full
+strength even when the tab is not the one you are looking at — which is exactly
+when you need to notice it.
+
+### Chorus says what to install when it cannot find a CLI
+
+Starting with no `codex` and no `claude` gave you a wordmark and `spawn claude
+ENOENT`. The first screen now names both CLIs, gives the command to install
+either, and says that one is enough — Chorus runs with a single agent. If a CLI
+was found but would not run, it says where it found it instead, because being
+told to install something you already have is its own dead end.
+
+### Windows can find a CLI that is not where the defaults say
+
+Chorus reported `claude` as missing on machines where it ran fine from a
+terminal. It only knew two places to look. It now also looks where the native
+installer writes, where scoop, Chocolatey and winget put their shims, and — by
+asking npm rather than guessing — wherever npm's global prefix has been moved
+to.
+
+Confirmed on a real Windows machine for the first time, along with the rest of
+the packaged bundle. Everything the 0.15.0 notes said about Windows still
+stands: nobody has completed an install, no agent has started there, and no
+terminal has opened. The installer is still unsigned.
+
+### An aside is a two-way conversation, and its answer can come back
+
+The card kept only half of it. Follow-up questions had nowhere to appear and
+their answers ran on from the first, which read as the second question having
+overwritten the first. Both sides are shown now, in order. And a decision you
+reach in an aside can be sent back into the main conversation instead of being
+retyped.
+
+### Groundwork for opening the source
+
+A licence, a security policy, and a README that describes what Chorus does
+rather than what it was going to do.
+
 ## 0.15.0
 
 ### There is a Windows installer, and nobody has installed it yet
