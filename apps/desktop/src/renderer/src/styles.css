@@ -538,6 +538,52 @@ body {
  * to that agent and not to the group. Only ever present when something is
  * wrong, which is what lets it be this loud in a settings sheet.
  */
+/*
+ * The advice on the first screen a machine with no CLI reaches.
+ *
+ * Above the raw error rather than below it: `spawn claude ENOENT` is the truth
+ * and worth keeping, but it is not the first thing to read when the answer is
+ * "install one of these".
+ */
+.empty-help {
+  width: 100%;
+  margin: 0 0 calc(var(--step) * 3);
+  padding: calc(var(--step) * 3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  text-align: left;
+}
+
+.empty-help-lead {
+  margin: 0 0 calc(var(--step) * 2);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.empty-help-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  margin: 0 0 var(--step);
+}
+
+.empty-help-name {
+  min-width: 6ch;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.empty-help-foot {
+  margin: calc(var(--step) * 2) 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .cast-help {
   margin: 2px 0 0;
   padding-left: calc(var(--step) * 4);

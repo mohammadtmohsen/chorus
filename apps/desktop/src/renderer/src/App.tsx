@@ -9,7 +9,7 @@ import { trimCarry } from './carry.js'
 import { EMPTY_VIEW } from './transcript.js'
 import { noticesFrom, roomsWaiting, shouldRaise, trackPending, type Notice } from './notify.js'
 import { HistoryPanel } from './HistoryPanel.js'
-import { Settings, type Defaults } from './Settings.js'
+import { INSTALL, Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { ConfirmSessionAction } from './workspace/ConfirmSessionAction.js'
 import { sameWorkspaceSnapshot, useWorkspaceStore, workspaceSnapshot } from './workspace/store.js'
@@ -809,6 +809,7 @@ export function App(): React.JSX.Element {
         <Stuck
           error={error}
           starting={starting}
+          probes={probes}
           onRetry={() => {
             setError(null)
           }}
@@ -926,19 +927,51 @@ export function App(): React.JSX.Element {
   )
 }
 
+/**
+ * The screen a machine with no CLI actually reaches.
+ *
+ * Worth stating, because it was not obvious and the first attempt at improving
+ * this put the advice somewhere else. With no agent, `startConversation` throws,
+ * `sessions` stays empty and the workspace — with its rail, and the Settings
+ * sheet the advice was written into — never mounts at all. This is the whole of
+ * what a new user sees.
+ *
+ * So the same guidance is here, and it comes first. `props.error` still follows
+ * it, because `spawn claude ENOENT` is the truth and someone will paste it into
+ * a search box; it is simply not the first thing to read.
+ *
+ * Only when the probe says nothing is installed. Any other startup failure — a
+ * missing directory, a corrupt store — is unrelated, and offering "install the
+ * CLI" for it would be worse than the raw message.
+ */
 function Stuck(props: {
   error: string | null
   starting: boolean
+  probes: AgentProbeResult[] | null
   onRetry: () => void
   onSettings: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const nothingInstalled =
+    props.probes !== null && props.probes.length > 0 && props.probes.every((p) => !p.installed)
   return (
     <div className="empty">
       <div className="empty-inner">
         <h1 className="wordmark wordmark--large">
           <ChorusLogo className="wordmark-logo" label={t('app.name')} />
         </h1>
+        {nothingInstalled && (
+          <div className="empty-help">
+            <p className="empty-help-lead">{t('agents.noneAtAll')}</p>
+            {props.probes?.map((probe) => (
+              <p key={probe.id} className="empty-help-row">
+                <span className="empty-help-name">{probe.id}</span>
+                <code className="cast-install">{INSTALL[probe.id]}</code>
+              </p>
+            ))}
+            <p className="empty-help-foot">{t('agents.oneIsEnough')}</p>
+          </div>
+        )}
         <p className="notice notice--bad" role="alert">
           {props.error}
         </p>

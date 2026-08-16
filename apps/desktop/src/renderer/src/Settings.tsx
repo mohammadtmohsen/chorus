@@ -540,7 +540,7 @@ function DefaultModel(): React.JSX.Element {
  * from memory — a wrong package name in an error message is worse than no
  * message, because it is followed.
  */
-const INSTALL: Record<'codex' | 'claude', string> = {
+export const INSTALL: Record<'codex' | 'claude', string> = {
   codex: 'npm install -g @openai/codex',
   claude: 'npm install -g @anthropic-ai/claude-code',
 }

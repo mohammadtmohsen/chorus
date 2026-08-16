@@ -23,26 +23,28 @@ const app = await launch({ executable: BUNDLE })
 try {
   await app.until(`document.querySelector('#root') !== null`, { timeout: 120_000 })
 
-  // Settings is reachable from the rail whether or not a session ever opened,
-  // which matters here: with no CLI there is no session.
-  await app.until(`document.querySelector('[data-rail-settings]') !== null`, {
-    timeout: 60_000,
-    label: 'the rail rendered',
+  /*
+   * The first screen, not Settings.
+   *
+   * With no agent, `startConversation` throws, `sessions` stays empty and the
+   * workspace never mounts — so there is no rail and no Settings sheet to open.
+   * An earlier version of this waited a minute for `[data-rail-settings]` and
+   * failed, which is how that was discovered.
+   */
+  await app.until(`document.querySelector('.empty-inner') !== null`, {
+    timeout: 90_000,
+    label: 'the first screen rendered',
   })
-  await app.evaluate(`(document.querySelector('[data-rail-settings]').click(), true)`)
-  await app.until(`document.querySelectorAll('.cast-member').length > 0`, {
-    timeout: 60_000,
-    label: 'the agents block rendered',
-  })
-  // The probe spawns two CLIs and waits on each; give it room to fail properly.
+  // Two CLIs are probed and each has to fail; give it room.
   await wait(15_000)
 
-  const said =
-    await app.evaluate(`(() => Array.from(document.querySelectorAll('.cast-entry')).map(e => ({
-    name: e.querySelector('.cast-name')?.textContent ?? '',
-    state: e.querySelector('.cast-version')?.textContent ?? '',
-    help: e.querySelector('.cast-help')?.innerText ?? null,
-  })))()`)
+  const said = await app.evaluate(`(() => {
+    const help = document.querySelector('.empty-help')
+    return {
+      guidance: help === null ? null : help.innerText,
+      rawError: document.querySelector('.notice--bad')?.innerText ?? null,
+    }
+  })()`)
   console.log(JSON.stringify(said, null, 1))
 
   mkdirSync(OUT, { recursive: true })
@@ -55,12 +57,11 @@ try {
 
   // The whole point of running this here: guidance a person can act on, on a
   // machine that genuinely has nothing installed.
-  const helpful = said.every((row) => (row.help ?? '').length > 0)
-  if (!helpful) {
-    console.error('FAILED: an agent reported as absent with no advice beside it')
+  if (said.guidance === null || !said.guidance.includes('npm install -g')) {
+    console.error('FAILED: no CLI found, and nothing on screen says what to install')
     process.exit(1)
   }
-  console.log('every absent agent carried advice')
+  console.log('the first screen says what to install')
 } finally {
   await app.quit()
 }

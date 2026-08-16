@@ -10,7 +10,8 @@
     "missingHelp": "Chorus could not find it. Install it, then press Re-check:",
     "failedHelp": "Found at {{path}}, but it would not run. It may be a broken install, or a shim whose interpreter is gone.",
     "recheck": "Re-check",
-    "oneIsEnough": "One is enough — Chorus runs with either agent on its own."
+    "oneIsEnough": "One is enough — Chorus runs with either agent on its own.",
+    "noneAtAll": "Chorus drives the coding CLI you already have, and could not find one. Install either of these and press Try again:"
   },
   "conversation": {
     "cast": "Agents",
