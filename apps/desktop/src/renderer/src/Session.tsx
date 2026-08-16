@@ -906,33 +906,49 @@ export function Session(props: {
     const el = score.current
     if (el === null) return undefined
 
-    if (following.current) {
-      makeRoom()
-      el.scrollTop = el.scrollHeight
-      return undefined
-    }
+    /*
+     * A following pane is left alone, and writing to it was the bug.
+     *
+     * The ResizeObserver already pins a following transcript on every resize,
+     * so there is nothing here to add — and the write raced it. It landed while
+     * the content was still short, then `onScroll` measured the gap the growth
+     * opened, read it as the reader having scrolled up, and turned following
+     * *off*. Driven: a pane pinned to the bottom came back 128px short of it,
+     * and stayed there because the thing that would have corrected it had just
+     * been switched off by the correction.
+     */
+    if (following.current) return undefined
 
     const wanted = props.carry?.scrollTop
     if (wanted === undefined || wanted === 0) return undefined
 
     /*
-     * `makeRoom` once, then two numbers a frame — the same bargain the watch
-     * above strikes, and for the same reason: it forces a layout, so calling it
-     * on every pass would cost more than the position it is chasing.
+     * Waits for the range, and writes exactly once.
+     *
+     * The previous version parked at `scrollHeight - clientHeight` each frame
+     * while the content was too short — "as close as we can get for now" — which
+     * put the view at the *transient* bottom. `onScroll` resumes following
+     * within 32px of the end, so every one of those writes said "the reader is
+     * at the bottom" and the next resize duly dragged them there. Driven: parked
+     * at 40 of 209, came back at 141 of 141.
+     *
+     * So: read two numbers a frame, write nothing until the position is
+     * reachable, then set it and stop.
      */
-    makeRoom()
-
     let frame = 0
     const until = Date.now() + 2_000
     const restore = (): void => {
-      const furthest = el.scrollHeight - el.clientHeight
-      if (furthest >= wanted) {
+      if (el.scrollHeight - el.clientHeight >= wanted) {
         el.scrollTop = wanted
+        /*
+         * Stated rather than inferred. `onScroll` decides following from where
+         * the view ends up, and this write is a restoration rather than the
+         * reader arriving anywhere — if `wanted` happens to sit within 32px of
+         * the end, inference would resume following for someone who never asked.
+         */
+        following.current = false
         return
       }
-      // As close as the content currently allows, so a short transcript still
-      // lands at its own end rather than at the top.
-      el.scrollTop = furthest
       if (Date.now() < until) frame = requestAnimationFrame(restore)
     }
     restore()
@@ -940,7 +956,7 @@ export function Session(props: {
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [makeRoom])
+  }, [])
 
   useEffect(() => {
     return window.chorus.onIdeContext((payload) => {

@@ -715,6 +715,46 @@ it already carries the flag — or `hydrate` merges rather than replaces the fie
 a user can have touched. A test that toggles before hydration and asserts the
 state survives is what would hold it.
 
+### C-039 · A reader who scrolled up is re-followed by a layout they did not cause
+
+Reported as _"when i drag and split workspace or reorder the tabs it scroll to top
+for the moved workspace"_. Half of that was a real restore bug and is fixed
+(`c160be7`, corrected after). This is the half that is not, and it is a design
+question rather than an oversight.
+
+**Following stops on a gesture and resumes on position** — `9393281` made that
+split deliberately, because inferring "the reader scrolled up" from `scrollTop`
+moving backwards was wrong: anchoring and `makeRoom` both move it backwards, and
+either one ended following permanently. Position was kept as the resume signal
+on the grounds that _"arriving at the bottom is unambiguous however you got
+there."_
+
+**It is not unambiguous, because the bottom moves.** `makeRoom` sizes the spare
+room against the view, so the scroll range changes without the reader touching
+anything — measured here 209 → 141 across one remount, and `9393281` itself
+records the spare room oscillating 686→663→686 during a turn. A reader parked
+100px up is 100px up until the range shrinks under them; then they are inside the
+32px resume band, and the next resize takes them to the bottom.
+
+**Measured** (`e2e/split-scroll.mjs`, viewport 1000×360): wheel up, park at
+`40 of 209`, switch tabs and back. The trace reads `141/141` from the _first_
+frame — so the pane is re-following before the mount restore is even consulted,
+which is why fixing this from the restore side does not work and should not be
+attempted again.
+
+**Why it matters:** it is the original report's remaining half, and it is the
+failure mode `9393281` names as the worst one — _"a transcript that yanks you to
+the bottom while you are reading something further up is worse than one that
+never follows at all"_ — arriving by the other door.
+
+**Done when:** a reader who has gestured away stays away until they return by
+their own gesture or genuinely reach the end under their own steam — with the
+range changing under them counting as neither. The obvious shape is to have the
+resume test ignore range changes the app itself caused, but that is a decision
+about which signals are trustworthy and belongs with whoever owns the follow
+logic. `e2e/split-scroll.mjs` already fails on it and is the test that would hold
+it.
+
 ## Parked, with reasons
 
 Not open questions and not oversights: judgements already made, written as tickets
