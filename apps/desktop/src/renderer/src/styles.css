@@ -3127,7 +3127,30 @@ body {
   color: var(--text-muted);
 }
 
-.approval-actions,
+/*
+ * The three ways to answer, on one line, wrapping when they will not fit.
+ *
+ * **This used to be a selector glued onto `.composer-line`'s rule**, two comment
+ * blocks above the declarations it was sharing — so the approval card silently
+ * inherited `flex-direction: column` and `align-items: stretch`, both written
+ * for the message box. The result was three full-width buttons stacked with no
+ * gap, which reads as one control with lines through it rather than as a choice
+ * between three.
+ *
+ * `wrap` rather than shrinking: the labels are the decision — "Allow for this
+ * session" is not a longer way of saying "Allow once" — so a narrow pane should
+ * cost a second row, never a truncated word.
+ *
+ * `align-items: center` so a wrapped row and a full one look the same, and the
+ * hint keeps the far end (see `.approval-hint`).
+ */
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+}
+
 /*
  * The box and its one control, on a line together.
  *
