@@ -368,17 +368,47 @@ export function Session(props: {
      * `scrollTop` rather than `scrollIntoView`: the latter walks every scrollable
      * ancestor and would drag the whole grid around when panes sit side by side.
      */
-    const follow = new ResizeObserver(() => {
-      // Before following, not after: the spare room decides where the bottom is.
-      makeRoom()
-      if (following.current) el.scrollTop = el.scrollHeight
-    })
+    /*
+     * The work happens a frame later, and that is the fix rather than a tidying.
+     *
+     * `makeRoom` writes `spacer.style.height`, and the spacer is a child of the
+     * observed element. Done inside the delivery, that is a guaranteed
+     * ResizeObserver loop: Chromium re-runs the observation, hits its depth
+     * limit, reports "loop completed with undelivered notifications" and **drops
+     * the rest**. Measured against a real streaming reply, eleven times per
+     * answer — on healthy runs too, which is why it went unnoticed.
+     *
+     * Usually the next token resizes the content again and the dropped
+     * notification is made good. When the dropped one is the *last* of a turn —
+     * the typewriter's jump to the whole text, or a diff card committing at once
+     * — nothing ever changes size again, so nothing corrects it and the
+     * transcript sits stranded below the fold until the reader scrolls. That is
+     * the "stops dead mid-reply" report. Driven: 182px left hidden, with the
+     * observer having fired 7 times against a healthy run's 25.
+     *
+     * A frame later the write is an ordinary resize rather than an undelivered
+     * one, so the loop cannot form. It also coalesces a burst of notifications
+     * into one layout, where the old shape paid for each.
+     */
+    let frame = 0
+    const settle = (): void => {
+      if (frame !== 0) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        // Before following, not after: the spare room decides where the bottom is.
+        makeRoom()
+        if (following.current) el.scrollTop = el.scrollHeight
+      })
+    }
+
+    const follow = new ResizeObserver(settle)
     follow.observe(content)
     // The pane itself, because how much room the turn is short of is measured
     // against the view — and a window resize changes that without changing a word.
     follow.observe(el)
     return () => {
       follow.disconnect()
+      cancelAnimationFrame(frame)
     }
   }, [makeRoom])
 

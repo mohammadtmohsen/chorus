@@ -290,6 +290,106 @@
 }
 
 /*
+ * Every select in the app, in one place.
+ *
+ * It was in three — `.sheet select`, `.settings-models select` and
+ * `.quick-promote select` — and the third carries a comment saying so, added
+ * when a card rendered "a native light control in a dark card". That is the
+ * failure a scoped rule guarantees eventually: the next select someone adds is
+ * native until a fourth copy is written for it. The look belongs to the element.
+ *
+ * **`appearance: none` is the substance of this.** Without it the control is the
+ * platform's: Chromium draws its own chevron in its own colour, sizes the box
+ * from the OS metrics rather than from `--radius` and the padding here, and
+ * ignores the border on some platforms entirely. Everything below is only
+ * reachable once the native paint is off.
+ *
+ * The chevron is a background image rather than a pseudo-element, because a
+ * `select` has no reliable `::after` — it is a replaced element and Chromium
+ * does not render one. That costs the theme: a data URI cannot read a custom
+ * property, so the mark is a literal hex and the light scheme overrides it a few
+ * rules down. Two rules, stated, rather than a wrapper `<div>` at four call
+ * sites and in every future one.
+ *
+ * Stroked at 1.8 with round caps to match `.composer-trigger svg`, which is the
+ * app's icon voice.
+ */
+select {
+  appearance: none;
+  /* Right padding is the chevron's lane, so a long option cannot run under it. */
+  padding: 7px 30px 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background-color: var(--sunken);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239d9d9d' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 13px;
+  color: var(--bone);
+  font: inherit;
+  cursor: pointer;
+}
+
+/*
+ * The border answers the pointer; the ring is reserved for focus.
+ *
+ * A hover that changed the background would make the control look pressed, and
+ * a select is not a button — the only thing hovering it promises is that it will
+ * open.
+ */
+select:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+/*
+ * Its own focus rule, so the ring follows the control's corners.
+ *
+ * The global `:focus-visible` sets `border-radius: 3px` on the outline, which is
+ * right for the square things it was written for and leaves a nearly-square ring
+ * standing off a `--radius` box. Same colour, same width, same offset — only the
+ * radius is restated.
+ */
+select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+select:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+/*
+ * The options are a native popup and the OS paints it, so this is the one part
+ * of the control that cannot be styled to match. Naming the colours at least
+ * stops a dark app opening a white list on Linux, where Chromium honours them.
+ */
+select option {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+/*
+ * The chevron again, in the light scheme's muted ink.
+ *
+ * **After the base rule, not up with the tokens**, and that placement is the
+ * whole of it. A data URI cannot read a custom property, so this is a second
+ * rule of equal specificity rather than a derived value — and written beside
+ * `:root`'s light overrides, where it began, it lost to the dark rule below it
+ * on source order alone. Measured, not reasoned: `--text-muted` resolved to
+ * `#59636e` while the rendered mark was still `#9d9d9d`. Asserting the token
+ * would have passed.
+ *
+ * `#59636e` is `--text-muted` in this scheme. The two change together.
+ */
+@media (prefers-color-scheme: light) {
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2359636e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
+  }
+}
+
+/*
  * The system UI face is the default; monospace is asked for.
  *
  * That is the inversion. Every rule that means "this is machine output" already
@@ -2097,13 +2197,11 @@ body {
   justify-content: space-between;
 }
 
+/* Only what a settings row needs on top of the shared control: a width that
+   stops two adjacent selects disagreeing, and the mono face this table reads in. */
 .settings-models select {
   min-width: 22ch;
-  padding: 0.2rem 0.3rem;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--bone);
+  padding: 4px 28px 4px 8px;
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -3870,15 +3968,6 @@ input::placeholder {
   min-height: 260px;
 }
 
-.sheet select {
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--sunken);
-  color: var(--bone);
-  font: inherit;
-}
-
 .sheet-actions {
   display: flex;
   align-items: center;
@@ -4715,18 +4804,14 @@ input::placeholder {
 }
 
 /*
- * Styled here because select styling is scoped, not global — `.sheet select`
- * and `.settings-models select` each carry their own, and the card is neither.
- * Without this it rendered as a native light control in a dark card.
+ * Only the fit. The look is the shared `select` rule now — this used to restate
+ * all of it, with a comment explaining that select styling was scoped rather
+ * than global, which is the thing that has been fixed.
  */
 .quick-promote select {
   flex: 1;
   min-width: 0;
-  padding: 0.25rem 0.4rem;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--sunken);
-  color: var(--bone);
+  padding: 4px 28px 4px 8px;
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -6970,6 +7055,31 @@ input::placeholder {
  */
 .rail-window[data-reported='false'] .rail-window-percent {
   color: var(--text-muted);
+}
+
+/*
+ * When this window turns over, under the figure it belongs to.
+ *
+ * Right-aligned onto the same edge as the percentage, because the two are one
+ * reading and a left-aligned second line would start under the *label* and read
+ * as belonging to it. `align-self` rather than `text-align`: the span is a flex
+ * item shrunk to its content, so aligning text inside it would move nothing.
+ *
+ * 9px and muted — the same weight as the label, deliberately. This is the
+ * secondary half of the reading and it sits between the figure and its bar; any
+ * heavier and it would break the pair those two make.
+ *
+ * Tabular figures so `in 3h 4m` and `in 3h 14m` do not shuffle the line
+ * sideways every time the minute changes. The countdown re-renders every 30
+ * seconds, so this is a thing that moves.
+ */
+.rail-window-reset {
+  align-self: flex-end;
+  color: var(--text-muted);
+  font-family: var(--ui-font);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 /*
