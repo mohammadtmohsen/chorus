@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { launch } from './harness.mjs'
@@ -27,7 +28,16 @@ import { launch } from './harness.mjs'
  * VMs, and no part of this file should be read as covering them.
  */
 
-const APP = new URL('..', import.meta.url).pathname
+/*
+ * `fileURLToPath`, not `.pathname`.
+ *
+ * A file URL's pathname keeps its leading slash, so on Windows it is
+ * `/D:/a/chorus/...` and `join()` turns that into `\D:\a\chorus\...` — a
+ * path with a slash before the drive letter, which nothing can open. The first
+ * Windows run of this verifier failed on exactly that, in the file written for
+ * Windows: `no packaged app at \D:\a\chorus\...`.
+ */
+const APP = fileURLToPath(new URL('..', import.meta.url))
 const UNPACKED_ROOT = join(APP, 'release/win-unpacked')
 const BUNDLE = join(UNPACKED_ROOT, 'Chorus.exe')
 const UNPACKED = join(UNPACKED_ROOT, 'resources/app.asar.unpacked')

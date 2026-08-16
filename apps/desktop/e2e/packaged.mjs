@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { launch } from './harness.mjs'
@@ -29,7 +30,9 @@ import { launch } from './harness.mjs'
  * belongs at a release rather than on every change.
  */
 
-const APP = new URL('..', import.meta.url).pathname
+// See the note in `packaged-windows.mjs`: `.pathname` keeps its leading
+// slash. This verifier is macOS-only, but the two should not differ here.
+const APP = fileURLToPath(new URL('..', import.meta.url))
 const BUNDLE = join(APP, 'release/mac-arm64/Chorus.app/Contents/MacOS/Chorus')
 const UNPACKED = join(APP, 'release/mac-arm64/Chorus.app/Contents/Resources/app.asar.unpacked')
 
