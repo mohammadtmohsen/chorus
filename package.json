@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "A local-first workspace for collaborating with multiple coding agents in one shared conversation.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "packageManager": "pnpm@11.20.0",
   "engines": {
     "node": ">=22.13.0"
