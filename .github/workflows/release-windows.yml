@@ -72,16 +72,19 @@ jobs:
           Write-Host "built $exe"
           Write-Host "sha256 $hash"
 
-      # `verify:package` drives the built bundle rather than `out/`, which is the
-      # only thing that catches a packaging fault. This runs the Windows one
-      # against `win-unpacked` — the same tree NSIS just wrapped.
+      # Drives the built bundle rather than `out/`, which is the only thing that
+      # catches a packaging fault — against `win-unpacked`, the tree NSIS just
+      # wrapped.
       #
-      # `continue-on-error` because it has never run: it launches the app, opens
-      # a terminal and waits for an agent, and no agent CLI is installed on a
-      # runner. Its file-inventory checks are the useful half today and they run
-      # before anything is launched. Remove the flag once a runner has the CLIs.
+      # `bundle` scope, and it gates. The full scope waits for a conversation,
+      # which needs an installed and authenticated agent that no runner has —
+      # confirmed by running the *macOS* verifier with the CLIs hidden and
+      # watching it fail at the same check on a bundle known to be good. A job
+      # that always fails teaches nothing, and one that cannot fail is worse; so
+      # this asks only what a runner can honestly answer, and a red here is real.
       - name: Verify the packaged bundle
-        continue-on-error: true
+        env:
+          CHORUS_VERIFY_SCOPE: bundle
         run: pnpm --filter @chorus/desktop run verify:package:windows
 
       - uses: actions/upload-artifact@v4

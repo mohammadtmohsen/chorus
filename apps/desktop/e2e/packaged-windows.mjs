@@ -43,6 +43,17 @@ const BUNDLE = join(UNPACKED_ROOT, 'Chorus.exe')
 const UNPACKED = join(UNPACKED_ROOT, 'resources/app.asar.unpacked')
 
 /**
+ * How much of this a machine can honestly answer.
+ *
+ * `bundle` — the native inventory, that the app launches, and that the renderer
+ * is served. Everything a runner can check without credentials.
+ *
+ * `full` (the default) — the above plus the event store, a terminal and an
+ * agent joining. Needs `codex` or `claude` installed and signed in.
+ */
+const SCOPE = process.env['CHORUS_VERIFY_SCOPE'] === 'bundle' ? 'bundle' : 'full'
+
+/**
  * The binaries that must be outside the asar, named individually.
  *
  * A `.node` cannot be `dlopen`'d from inside an archive, and node-pty's Windows
@@ -140,32 +151,28 @@ async function main() {
     await app.until(`document.querySelector('#root') !== null`, { timeout: 120_000 })
     check(true, 'the bundle starts and serves its renderer')
 
-    await app.until(`document.querySelectorAll('.pane').length > 0`, { timeout: 120_000 })
-    check(true, 'the event store opens, so better-sqlite3 loaded')
-
-    await app.settle()
-    check(
-      (await app.evaluate(`document.querySelector('.composer textarea') !== null`)) === true,
-      'the composer is there to type into'
-    )
-
     /*
-     * A terminal is the check with no macOS equivalent worth reusing. ConPTY is
-     * a different implementation from the Unix path — different binding,
-     * different agent process — and `winpty.dll` being present on disk says
-     * nothing about whether it loads. Opening one is the only thing that does.
+     * Everything past here needs an installed, authenticated agent.
+     *
+     * A pane appears when the runtime opens SQLite *and* starts a conversation,
+     * and a conversation needs an agent to hold it — so on a machine with no
+     * `codex` or `claude` this waits two minutes and fails. That is not a
+     * packaging fault, and the first Windows CI run reported it as one.
+     *
+     * Confirmed rather than assumed: running the **macOS** verifier with the
+     * CLIs hidden from PATH fails at exactly the same check, on a bundle known
+     * to be good.
+     *
+     * So CI runs `bundle` scope and gates on it, which is the half a runner can
+     * honestly answer. The rest needs credentials and belongs on a real machine
+     * before a release — which is where `verify:package` has always been run.
      */
-    await app.evaluate(
-      `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, bubbles: true }))`
-    )
-    await app.until(`document.querySelector('.xterm') !== null`, { timeout: 60_000 })
-    check(true, 'a terminal opens, so ConPTY and winpty loaded')
-
-    await app.until(
-      `Array.from(document.querySelectorAll('.entry')).some(e => /joined/i.test(e.innerText))`,
-      { timeout: 180_000 }
-    )
-    check(true, 'an agent joins, so the SDK found its own files')
+    if (SCOPE === 'bundle') {
+      console.log('\n  — scope: bundle. Skipped the store, terminal and agent')
+      console.log('    checks, which need an installed and authenticated CLI.')
+    } else {
+      await runFullChecks(app, check)
+    }
   } finally {
     await app.quit()
   }
@@ -173,6 +180,36 @@ async function main() {
   const failed = checks.filter((c) => !c.ok).length
   console.log(failed === 0 ? `\nall ${String(checks.length)} passed` : `\n${String(failed)} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/** The half that needs an installed, authenticated CLI. See `SCOPE`. */
+async function runFullChecks(app, check) {
+  await app.until(`document.querySelectorAll('.pane').length > 0`, { timeout: 120_000 })
+  check(true, 'the event store opens, so better-sqlite3 loaded')
+
+  await app.settle()
+  check(
+    (await app.evaluate(`document.querySelector('.composer textarea') !== null`)) === true,
+    'the composer is there to type into'
+  )
+
+  /*
+   * A terminal is the check with no macOS equivalent worth reusing. ConPTY is
+   * a different implementation from the Unix path — different binding,
+   * different agent process — and `winpty.dll` being present on disk says
+   * nothing about whether it loads. Opening one is the only thing that does.
+   */
+  await app.evaluate(
+    `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', ctrlKey: true, bubbles: true }))`
+  )
+  await app.until(`document.querySelector('.xterm') !== null`, { timeout: 60_000 })
+  check(true, 'a terminal opens, so ConPTY and winpty loaded')
+
+  await app.until(
+    `Array.from(document.querySelectorAll('.entry')).some(e => /joined/i.test(e.innerText))`,
+    { timeout: 180_000 }
+  )
+  check(true, 'an agent joins, so the SDK found its own files')
 }
 
 await main()
