@@ -146,3 +146,49 @@ must-not-deny cases.
 
 **Nothing here has run on Windows.** The `windows-latest` probe job has still
 never executed.
+
+## Review, 2026-08-16 — two release blockers, both mine
+
+Codex reviewed the branch as code rather than as a summary and found two defects
+that unit coverage had not. Both are fixed in `e07cc54`; both were introduced by
+the phases above, and neither would have been caught by anything short of
+reading the call path.
+
+**A command injection through `cmd.exe`.** Phase 1 routed every npm shim through
+`cmd.exe /d /s /c`, and Phase 5 shipped it. Node quotes an argument only when it
+contains a space or a quote — so `a&calc` was passed bare, `cmd` read the `&` as
+a separator, and `calc` ran. Agent output reaches those arguments as file paths,
+plugin names and project directories, so this was arbitrary execution on
+Windows. I had flagged the cmd quoting as "unverified" in Phase 1's own comments
+and then shipped four more phases on top of it, which is the wrong order.
+
+The fix removes cmd from the path rather than escaping for it: reading an npm
+shim already yields the interpreter and the script, so a readable shim now
+resolves to `node <script>`. What remains is a shim we cannot read — VS Code's
+hand-written `code.cmd` — where `spawnSpec` now **refuses** cmd-unsafe arguments.
+A verbatim command line is the correct general fix and is not something to write
+from documentation with no Windows machine to check against.
+
+**`health()` spawned the path meant for the SDK.** Phase 1 split Claude's
+resolution so the SDK got the `.js` behind the shim, and missed that the adapter
+_also_ execs that value for its own version probe. Windows cannot execute a
+`.js`, so every npm install of Claude would have reported unavailable before a
+session started. The resolver now returns both answers, because there are two
+consumers and they want different things.
+
+**Also fixed:** the Windows verifier omitted `conpty_console_list.node`, which
+`windowsPtyAgent` forks a child to load during cleanup — so it would have failed
+when a terminal was _closed_, the least likely moment to connect to a packaging
+fault.
+
+### What this says about the phases above
+
+The pattern in both blockers is the same: a value that answered two questions,
+and only one consumer considered. The unit tests passed throughout because they
+asserted the shape reaching the consumer I was thinking about.
+
+**Still open, and unchanged by this round:** the signing certificate, clean-VM
+installer testing, and a Windows packaging job in CI — none of which exist. The
+named pipe still has no ACL; Node exposes no way to set a security descriptor on
+a pipe it creates, so closing that properly means a third native dependency and
+is a decision rather than a patch.
