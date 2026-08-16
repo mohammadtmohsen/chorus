@@ -6,20 +6,23 @@ name: Windows probe
 # a Mac and unit-tested by injecting a fake platform, so the questions that
 # matter most are the ones only a real Windows filesystem can answer:
 #
-#   1. Where does the `claude` CLI actually land when it is installed?
-#   2. Does Chorus's own resolver find it there?
-#   3. Does the packaged app launch at all?
+#   1. What does a machine with **no** CLI installed actually show the user?
+#   2. Where does the CLI land once it is installed?
+#   3. Does Chorus's own resolver find it there?
+#   4. Does the packaged bundle launch?
 #
-# The first two exist because Chorus reported the CLI as missing on a real
-# machine while it ran fine from a terminal, and the candidate list was fixed
-# from an inference rather than an observation. This makes it an observation.
+# The order below is the point. A runner is the only empty machine available —
+# a developer's Mac lists `~/.local/bin`, `/opt/homebrew/bin` and
+# `/usr/local/bin` as static candidates, so a CLI installed in any of them is
+# found however `PATH` is trimmed. Everything about the empty state therefore
+# has to happen *before* the install step, and once that runs the window is gone.
 
 on:
   workflow_dispatch:
 
 jobs:
   probe:
-    name: Where the CLI lives, and whether Chorus finds it
+    name: What an empty machine shows, and where the CLI lands
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -31,20 +34,35 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Before anything is installed, so the "after" is attributable.
-      - name: What is already on PATH
+      - name: Nothing is installed yet
         shell: pwsh
         run: |
-          Write-Host "--- where.exe claude (expected: nothing yet) ---"
+          Write-Host "--- where.exe claude (expected: nothing) ---"
           where.exe claude 2>&1 | Out-String
-          Write-Host "--- USERPROFILE ---"
-          $env:USERPROFILE
-          Write-Host "--- APPDATA ---"
-          $env:APPDATA
+          Write-Host "--- where.exe codex (expected: nothing) ---"
+          where.exe codex 2>&1 | Out-String
           # `where.exe` exits 1 when it finds nothing, and the runner's pwsh
           # wrapper fails a step on any non-zero exit. Here "not found" is the
           # expected answer, not a failure.
           exit 0
+
+      - name: Package
+        shell: pwsh
+        run: pnpm package
+
+      # The one condition that cannot be staged anywhere else: a real machine,
+      # the real packaged bundle, and genuinely no CLI. Fails if an agent is
+      # reported absent with no advice beside it.
+      - name: What Settings shows with no CLI at all
+        shell: pwsh
+        run: node apps/desktop/e2e/settings-shot.mjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: settings-no-cli
+          path: apps/desktop/release/shots/*.png
+          if-no-files-found: warn
 
       - name: Install the CLI the npm way
         shell: pwsh
@@ -77,14 +95,12 @@ jobs:
       #
       # The verifier's full pass waits for a `.pane`, which only exists once a
       # conversation has started — and a conversation needs an *authenticated*
-      # agent. No runner has one. Run without this, it waits two minutes and
+      # agent. No runner has one. Run without this it waits two minutes and
       # reports a packaging fault that is not there; the file says so in a
-      # comment, and the first Windows CI run made the same misreading. This one
-      # did too, which is why the variable is now set rather than assumed.
-      - name: Package, and drive the packaged app
+      # comment, and the first Windows CI run made the same misreading. A later
+      # one did too, which is why the variable is set rather than assumed.
+      - name: Drive the packaged bundle
         shell: pwsh
         env:
           CHORUS_VERIFY_SCOPE: bundle
-        run: |
-          pnpm package
-          pnpm --filter @chorus/desktop run verify:package:windows
+        run: pnpm --filter @chorus/desktop run verify:package:windows
