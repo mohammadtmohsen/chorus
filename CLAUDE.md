@@ -75,16 +75,24 @@ are macOS steps and produce a DMG. A Windows build exists in the repository —
 release note imply otherwise: a Windows section in a changelog for a release
 that shipped only a DMG is the kind of claim someone downloads on.
 
-**The Windows installer is built by CI, and that is not a preference.** The DMG
-is built on this Mac and uploaded by hand because there is a Mac. There is no
-Windows machine, so `.github/workflows/release-windows.yml` is the only thing
-that can produce an installer at all. It fires on a `v*` tag and attaches the
-`.exe` plus its `.sha256` to the release, so pushing the tag in step 8 is what
-puts the Windows asset beside the DMG — there is no manual step for it, and
-adding one would mean finding a Windows machine first.
+**Both installers are built by CI, and steps 4–9 above are now one tag push.**
+`.github/workflows/release.yml` fires on `v*` and does the whole thing: refuses
+to start unless the tag and both `package.json` versions agree, runs the gate,
+builds the DMG and the `.exe` in parallel, verifies each against its own
+packaged bundle, and publishes the release with both assets, both checksums,
+and the notes assembled from the CHANGELOG section for that version.
 
-It can also be run from the Actions tab at any time, which is how a tester gets
-a build without installing pnpm and compiling from source.
+That is not tidiness. A hand-built artifact is built from whatever is in that
+working tree, and `pnpm package` reaching for a `dist/` some earlier build left
+behind is the bug the first Windows CI run found — latent for as long as
+releases had been cut from a machine that never starts clean. The version check
+is the same kind of thing: this file has said for months that the two
+`package.json` files "drift silently", and a tag that disagrees with them
+produces an installer whose filename lies about its contents.
+
+Run it from the Actions tab with no input to build both installers **without**
+publishing — which is how you find out the pipeline works without cutting a
+release to do it, and how a tester gets a build.
 
 Each platform runs **its own** verifier — `verify:package` for the DMG,
 `verify:package:windows` for `win-unpacked`. Neither knows anything about the

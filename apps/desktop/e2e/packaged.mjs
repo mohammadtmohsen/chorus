@@ -37,6 +37,15 @@ const BUNDLE = join(APP, 'release/mac-arm64/Chorus.app/Contents/MacOS/Chorus')
 const UNPACKED = join(APP, 'release/mac-arm64/Chorus.app/Contents/Resources/app.asar.unpacked')
 
 /**
+ * How much of this the machine can honestly answer. Mirrors the Windows
+ * verifier, for the same reason: a pane needs a conversation and a conversation
+ * needs an installed, authenticated agent, which a CI runner does not have.
+ * `bundle` stops after the launch; `full` is the default and is what a release
+ * runs on a real machine.
+ */
+const SCOPE = process.env['CHORUS_VERIFY_SCOPE'] === 'bundle' ? 'bundle' : 'full'
+
+/**
  * node-pty's `spawn-helper` ships mode 0644 and electron-builder copies the mode
  * through verbatim, so without the repair in `build/sign-adhoc.cjs` the packaged
  * terminal dies with a bare `posix_spawnp failed.` — measured on 2026-08-12, not
@@ -92,25 +101,12 @@ async function main() {
      * is the native module loading from outside the asar. It is the check most
      * likely to fail on a packaging change and the one with no other coverage.
      */
-    await app.until(`document.querySelectorAll('.pane').length > 0`, { timeout: 120_000 })
-    check(true, 'the event store opens, so the native module loaded')
-
-    await app.settle()
-    check(
-      (await app.evaluate(`document.querySelector('.composer textarea') !== null`)) === true,
-      'the composer is there to type into'
-    )
-
-    /*
-     * `session.started` is the SDK resolving its own files at runtime — the
-     * other thing kept outside the asar. An agent that cannot start leaves the
-     * card without a voice, which no amount of renderer testing would show.
-     */
-    await app.until(
-      `Array.from(document.querySelectorAll('.entry')).some(e => /joined/i.test(e.innerText))`,
-      { timeout: 180_000 }
-    )
-    check(true, 'an agent joins, so the SDK found its own files')
+    if (SCOPE === 'bundle') {
+      console.log('\n  — scope: bundle. Skipped the store, composer and agent')
+      console.log('    checks, which need an installed and authenticated CLI.')
+    } else {
+      await runFullChecks(app, check)
+    }
   } finally {
     await app.quit()
   }
@@ -118,6 +114,29 @@ async function main() {
   const failed = checks.filter((c) => !c.ok).length
   console.log(failed === 0 ? `\nall ${String(checks.length)} passed` : `\n${String(failed)} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/** The half that needs an installed, authenticated CLI. See `SCOPE`. */
+async function runFullChecks(app, check) {
+  await app.until(`document.querySelectorAll('.pane').length > 0`, { timeout: 120_000 })
+  check(true, 'the event store opens, so the native module loaded')
+
+  await app.settle()
+  check(
+    (await app.evaluate(`document.querySelector('.composer textarea') !== null`)) === true,
+    'the composer is there to type into'
+  )
+
+  /*
+   * `session.started` is the SDK resolving its own files at runtime — the other
+   * thing kept outside the asar. An agent that cannot start leaves the card
+   * without a voice, which no amount of renderer testing would show.
+   */
+  await app.until(
+    `Array.from(document.querySelectorAll('.entry')).some(e => /joined/i.test(e.innerText))`,
+    { timeout: 180_000 }
+  )
+  check(true, 'an agent joins, so the SDK found its own files')
 }
 
 await main()
