@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -19,7 +20,12 @@ import { join } from 'node:path'
  * sessions or leave anything behind in yours.
  */
 
-const APP = new URL('..', import.meta.url).pathname
+/*
+ * `fileURLToPath`, not `.pathname`: a file URL's pathname keeps its leading
+ * slash, which on Windows yields `/D:/...` and joins into an unopenable
+ * `\D:\...`. See the note in `packaged-windows.mjs`.
+ */
+const APP = fileURLToPath(new URL('..', import.meta.url))
 
 /**
  * How long to wait for the child to announce its debugger.
