@@ -1,0 +1,75 @@
+name: Windows probe
+
+# Run by hand from the Actions tab, or `gh workflow run windows-probe.yml`.
+#
+# There is no Windows machine here. Everything about that platform is written on
+# a Mac and unit-tested by injecting a fake platform, so the questions that
+# matter most are the ones only a real Windows filesystem can answer:
+#
+#   1. Where does the `claude` CLI actually land when it is installed?
+#   2. Does Chorus's own resolver find it there?
+#   3. Does the packaged app launch at all?
+#
+# The first two exist because Chorus reported the CLI as missing on a real
+# machine while it ran fine from a terminal, and the candidate list was fixed
+# from an inference rather than an observation. This makes it an observation.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Where the CLI lives, and whether Chorus finds it
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Before anything is installed, so the "after" is attributable.
+      - name: What is already on PATH
+        shell: pwsh
+        run: |
+          Write-Host "--- where.exe claude (expected: nothing yet) ---"
+          where.exe claude 2>&1 | Out-String
+          Write-Host "--- USERPROFILE ---"
+          $env:USERPROFILE
+          Write-Host "--- APPDATA ---"
+          $env:APPDATA
+
+      - name: Install the CLI the npm way
+        shell: pwsh
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Where it landed
+        shell: pwsh
+        run: |
+          Write-Host "--- where.exe claude ---"
+          where.exe claude 2>&1 | Out-String
+          Write-Host "--- %APPDATA%\npm ---"
+          if (Test-Path "$env:APPDATA\npm") {
+            Get-ChildItem "$env:APPDATA\npm" -Filter "claude*" | Select-Object Name | Out-String
+          } else { Write-Host "(no such directory)" }
+          Write-Host "--- %USERPROFILE%\.local\bin ---"
+          if (Test-Path "$env:USERPROFILE\.local\bin") {
+            Get-ChildItem "$env:USERPROFILE\.local\bin" | Select-Object Name | Out-String
+          } else { Write-Host "(no such directory)" }
+
+      # The question `command.ts` was fixed on an inference about. This asks the
+      # machine instead: given its real filesystem, does the resolver find it?
+      - name: Does Chorus's own resolver find it
+        shell: pwsh
+        env:
+          CHORUS_RESOLVE_PROBE: '1'
+        run: pnpm --filter @chorus/desktop exec vitest run src/main/resolve-probe.test.ts --reporter verbose
+
+      - name: Package, and drive the packaged app
+        shell: pwsh
+        run: |
+          pnpm package
+          pnpm --filter @chorus/desktop run verify:package:windows
