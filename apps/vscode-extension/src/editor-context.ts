@@ -1,5 +1,6 @@
 import {
   MAX_SELECTED_BYTES,
+  isInside,
   utf8ByteLength,
   type EditorMetadata,
   type IdeStatus,
@@ -74,18 +75,19 @@ export function isSupported(editor: EditorLike | null): editor is ReferenceableE
   return editor !== null && editor.provenance !== null
 }
 
-/**
- * Path containment, on segments.
+/*
+ * `isInside` used to be defined here, hardcoded to `/`, while Electron main's
+ * copy used `path.sep`. Both comments said the two had to agree; on Windows
+ * they did not, and since the extension checks first, every file in every
+ * project reported `unmatched` and main's copy was never reached. The rule now
+ * lives in `@chorus/ide-protocol` — the package both ends already import — and
+ * is re-exported here so this module's callers are unchanged.
  *
- * The extension gets the cheap version of this check and Electron main gets
- * the authoritative one. Here it exists to avoid disclosing a path at all;
- * there it exists because a client cannot be trusted. Both must agree that
- * `/a/project-old` is not inside `/a/project`.
+ * What has not changed is the *authority*: this check exists to avoid
+ * disclosing a path at all, main's exists because a client cannot be trusted.
+ * Sharing the rule does not make main trust the answer.
  */
-export function isInside(root: string, filePath: string): boolean {
-  if (filePath === root) return true
-  return filePath.startsWith(root.endsWith('/') ? root : `${root}/`)
-}
+export { isInside }
 
 export function metadataFor(
   editor: ReferenceableEditor,
@@ -126,9 +128,21 @@ export function reportFor(
 ): RootReport {
   const bare = (status: IdeStatus): RootReport => ({ root, status, editor: null })
 
-  // Equality, not containment: opening the parent of a project would silently
-  // widen the scope of everything reported from here.
-  if (!facts.workspaceFolders.includes(root)) return bare('unmatched')
+  /*
+   * Equality, not containment: opening the parent of a project would silently
+   * widen the scope of everything reported from here.
+   *
+   * Expressed as containment both ways rather than `Array.includes`, which is
+   * ordinal. The two strings being compared cross a process boundary and are
+   * canonicalized by different code — `root` by Chorus main's `canonicalRoot`,
+   * the folders by this extension's own `canonical()` with its `realpathSync`
+   * fallback — and on Windows those disagree about the drive letter's case. A
+   * path cannot be a strict subpath of itself, so mutual containment is still
+   * equality; it just knows what filesystem it is on.
+   */
+  if (!facts.workspaceFolders.some((f) => isInside(f, root) && isInside(root, f))) {
+    return bare('unmatched')
+  }
   if (!facts.isTrusted) return bare('untrusted')
   if (editor === null) return bare('unsupported')
   if (!isSupported(editor)) return bare('unsupported')

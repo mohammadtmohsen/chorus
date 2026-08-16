@@ -141,6 +141,12 @@ afterEach(async () => {
   rmSync(base, { recursive: true, force: true })
 })
 
+/**
+ * Cases that need a unix filesystem, not merely a unix argument — `chmod` is a
+ * no-op on Windows and a named pipe has no directory entry to stat.
+ */
+const onUnixFs = it.skipIf(process.platform === 'win32')
+
 describe('descriptor', () => {
   it('publishes the socket path, token, and versions', () => {
     const descriptor = JSON.parse(readFileSync(bridge.descriptorPath, 'utf8')) as Record<
@@ -157,10 +163,26 @@ describe('descriptor', () => {
   })
 
   /* A world-readable token would defeat the whole discovery scheme. */
-  it('keeps the descriptor and socket private', () => {
+  /*
+   * Unix only, and not because the check is unimportant there.
+   *
+   * On Windows `mode` is synthesised from the read-only attribute, so a private
+   * file still reports 0o666 and this can never be zero; and `socketPath` is a
+   * `\\.\pipe\` name, which `statSync` cannot stat at all. `endpoint.ts`
+   * records that the pipe has no ACL and the handshake token is the only guard —
+   * pretending otherwise here would be the test asserting a protection that does
+   * not exist.
+   */
+  onUnixFs('keeps the descriptor and socket private', () => {
     expect(statSync(bridge.descriptorPath).mode & 0o077).toBe(0)
     expect(statSync(bridge.socketPath).mode & 0o077).toBe(0)
     expect(statSync(join(base, 'chorus-ide')).mode & 0o077).toBe(0)
+  })
+
+  it('still writes a descriptor a second process can find, on either platform', () => {
+    // What survives the above on Windows: the descriptor is a real file there,
+    // and it is what carries the token.
+    expect(statSync(bridge.descriptorPath).isFile()).toBe(true)
   })
 
   /* A second Chorus must not collide with the first, and neither may delete
@@ -174,9 +196,15 @@ describe('descriptor', () => {
       token: 'other',
     })
     expect(other.socketPath).not.toBe(bridge.socketPath)
+    expect(other.descriptorPath).not.toBe(bridge.descriptorPath)
     await other.close()
-    // Closing one leaves the other listening.
-    expect(statSync(bridge.socketPath).isSocket()).toBe(true)
+    // Closing one leaves the other listening. Asserted through the filesystem on
+    // unix, where the socket is a node; a named pipe has no such entry, and its
+    // liveness is what the connection tests cover instead.
+    if (process.platform !== 'win32') {
+      expect(statSync(bridge.socketPath).isSocket()).toBe(true)
+    }
+    expect(statSync(bridge.descriptorPath).isFile()).toBe(true)
   })
 })
 

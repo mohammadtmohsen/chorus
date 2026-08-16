@@ -1,6 +1,6 @@
-import { isAbsolute, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import type { Brand } from '@chorus/shared'
-import { isWithin, safeRealpath } from './path-safety.js'
+import { hasRoot, isWithin, relativeWithin, safeRealpath } from './path-safety.js'
 
 /**
  * Deciding whether an editor belongs to a conversation's project (plan §3).
@@ -44,7 +44,16 @@ export function canonicalRoot(root: string): CanonicalRoot {
  * parent would silently widen the scope of everything the bridge reports.
  */
 export function isProjectRoot(root: CanonicalRoot, workspaceFolder: string): boolean {
-  return canonicalRoot(workspaceFolder) === root
+  /*
+   * Through `isWithin` rather than `===`, for the casing rather than the
+   * containment: on Windows the two strings are canonicalized by different code
+   * on opposite sides of the bridge and disagree about the drive letter's case.
+   * `isWithin` in both directions is equality that knows what filesystem it is
+   * on — mutual containment can only mean the same directory, since neither can
+   * be a strict subpath of the other.
+   */
+  const folder = canonicalRoot(workspaceFolder)
+  return isWithin(root, folder) && isWithin(folder, root)
 }
 
 /**
@@ -56,7 +65,10 @@ export function isProjectRoot(root: CanonicalRoot, workspaceFolder: string): boo
  * canonicalized when the conversation list last changed.
  */
 export function isFileInProject(root: CanonicalRoot, filePath: string): boolean {
-  if (filePath === '' || !isAbsolute(filePath)) return false
+  // `hasRoot`, not `isAbsolute`: on Windows the latter accepts `\\etc` (rooted
+  // but on no particular drive) and rejects `C:etc` (a drive with no root), and
+  // resolving either borrows this process's current directory.
+  if (filePath === '' || !hasRoot(filePath)) return false
   return isWithin(root, safeRealpath(resolve(filePath)))
 }
 
@@ -72,9 +84,14 @@ export function projectRelativePath(root: CanonicalRoot, filePath: string): stri
   if (!isFileInProject(root, filePath)) return null
   const real = safeRealpath(resolve(filePath))
   if (real === root) return null
-  // `isWithin` has already established the separator boundary, so this slice
-  // cannot cut a path segment in half.
-  return real.slice(root.length + 1)
+  /*
+   * Through `relativeWithin`, which owns the separator arithmetic. The slice
+   * used to live here as `real.slice(root.length + 1)` and was wrong for any
+   * root that already ends in a separator — every filesystem root does, so a
+   * project at `C:\`, `\\server\share\` or `/` lost the first character of
+   * every path it reported. That string goes straight into an agent mention.
+   */
+  return relativeWithin(root, real)
 }
 
 /**

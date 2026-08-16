@@ -24,6 +24,18 @@ files:
   - node_modules/better-sqlite3/**
   - node_modules/node-pty/**
   - node_modules/@anthropic-ai/claude-agent-sdk/**
+  # Debug symbols and the winpty source tree, neither of which ship.
+  #
+  # node-pty's win32 prebuilds carry a .pdb beside every binary — conpty,
+  # conpty_console_list, pty and winpty-agent — which is ~28 MB, several times
+  # the size of everything else in the installer. `deps/winpty/` is the
+  # vendored C++ the prebuilds were built from and is equally dead weight.
+  # Excluded here rather than in asarUnpack because they must not be collected
+  # at all, not merely left outside the asar.
+  - '!node_modules/node-pty/prebuilds/*/*.pdb'
+  - '!node_modules/node-pty/deps/**'
+  - '!node_modules/node-pty/src/**'
+  - '!node_modules/node-pty/third_party/**'
 
 # Do not let electron-builder rebuild native modules from source.
 #
@@ -58,6 +70,41 @@ asarUnpack:
   - node_modules/better-sqlite3/**
   - node_modules/node-pty/**
 
+# Windows: NSIS, x64, per-user by default.
+#
+# `asInvoker` is deliberate and is what keeps ordinary use free of a UAC prompt.
+# Nothing Chorus does needs administrator rights — it drives the user's own CLIs
+# and writes under their profile — so requesting elevation would be asking for a
+# privilege in order not to use it.
+#
+# `signExts` adds the two extensions electron-builder does not sign by default.
+# `.node` is a DLL wearing another suffix (better-sqlite3 and node-pty both ship
+# one) and `.dll` covers node-pty's winpty.dll, which arrives as a third-party
+# prebuild rather than something built here.
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  requestedExecutionLevel: asInvoker
+  signExts:
+    - .dll
+    - .node
+
+nsis:
+  # Assisted rather than one-click: a one-click installer gives the user no say
+  # in scope or location and no visible record of what it did.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  # The event log is the source of truth and it lives in userData. An uninstall
+  # that took it would destroy every transcript on the machine, which is not
+  # something an uninstaller should decide on the user's behalf.
+  deleteAppDataOnUninstall: false
+  artifactName: Chorus-${version}-windows-${arch}-setup.${ext}
+
 mac:
   category: public.app-category.developer-tools
   target:
@@ -79,6 +126,7 @@ mac:
 # untrusted — macOS calls it **damaged** and offers only "Move to Trash". No
 # right-click → Open, no way through. Ad-hoc signing does not make Gatekeeper
 # happy, but it does make the refusal an honest one the user can override.
+# Ad-hoc signing is a macOS concept; the hook returns early on other platforms.
 afterPack: build/sign-adhoc.cjs
 
 dmg:

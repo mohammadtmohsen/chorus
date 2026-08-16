@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { findExecutable } from './which.js'
+import { spawnSpec } from './command.js'
+import { resolveCommand } from './which.js'
 
 const run = promisify(execFile)
 
@@ -40,11 +41,12 @@ export interface PluginInfo {
 const TIMEOUT_MS = 10_000
 
 export async function listPlugins(): Promise<PluginInfo[]> {
-  const claude = await findExecutable('claude')
+  const claude = await resolveCommand('claude')
   if (claude === null) return []
 
   try {
-    const { stdout } = await run(claude, ['plugin', 'list', '--json'], {
+    const { file, args } = spawnSpec(claude, ['plugin', 'list', '--json'])
+    const { stdout } = await run(file, args, {
       timeout: TIMEOUT_MS,
       maxBuffer: 4 * 1024 * 1024,
     })

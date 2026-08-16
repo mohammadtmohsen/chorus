@@ -1,7 +1,7 @@
 import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
-import { ClaudeAdapter } from '@chorus/adapter-claude'
+import { ClaudeAdapter, type ResolvedExecutable } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
   AccountSummary,
@@ -40,7 +40,12 @@ import {
   type PermissionProfile,
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
-import { readWorkspace, type DiffFile, type WorkspaceStatus } from '@chorus/workspace'
+import {
+  readWorkspace,
+  relativeWithin,
+  type DiffFile,
+  type WorkspaceStatus,
+} from '@chorus/workspace'
 import type { ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
@@ -55,7 +60,8 @@ import {
   type TerminalRef,
 } from './terminal.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
-import { findExecutable } from './which.js'
+import { sdkExecutablePath, spawnSpec } from './command.js'
+import { resolveCommand } from './which.js'
 
 /**
  * Wires the domain to real agents inside the main process.
@@ -539,8 +545,20 @@ export function recapLedger(events: readonly StoredEvent[], cwd = ''): RecapLedg
      * that says "no files changed" because it did not know where it was is the
      * failure mode this whole ledger exists to avoid.
      */
-    if (cwd !== '' && !path.startsWith(`${cwd}/`)) return
-    const relative = cwd === '' ? path : path.slice(cwd.length + 1)
+    /*
+     * Through the shared containment rule, not a hand-rolled prefix test.
+     *
+     * This was `path.startsWith(`${cwd}/`)` and `path.slice(cwd.length + 1)` —
+     * the third copy of the arithmetic already fixed in `path-safety.ts` and
+     * `project-match.ts`, and the one that had no test until the Windows CI run
+     * found it. A `/` that never appears in a Windows path meant the guard
+     * dropped **every** file, so a recap reported "no files changed" for every
+     * conversation — the exact failure mode the comment above says this ledger
+     * exists to avoid.
+     */
+    const within = cwd === '' ? path : relativeWithin(cwd, path)
+    if (within === null || within === '') return
+    const relative = within
     const already = files.indexOf(relative)
     if (already !== -1) files.splice(already, 1)
     files.push(relative)
@@ -3281,7 +3299,15 @@ function defaultAdapters(): Map<AgentId, AgentAdapter> {
     // The command is resolved lazily, on first use: asking a login shell at
     // module load would delay the window for something not needed until a
     // session starts.
-    ['codex', new CodexAdapter({ resolveCommand: () => findExecutable('codex') })],
+    [
+      'codex',
+      new CodexAdapter({
+        resolveCommand: async () => {
+          const resolved = await resolveCommand('codex')
+          return resolved === null ? null : spawnSpec(resolved)
+        },
+      }),
+    ],
     ['claude', new ClaudeAdapter(claudeOptions())],
   ])
 }
@@ -3294,9 +3320,23 @@ function defaultAdapters(): Map<AgentId, AgentAdapter> {
  * happens to exist is what picked a `codex` too old to start, and there is no
  * reason `claude` cannot end up in the same state. Falls back to the SDK's own
  * lookup when nothing is found.
+ *
+ * **Two answers, because there are two consumers.** The SDK takes
+ * `pathToClaudeCodeExecutable`, a plain string with no slot for an argument
+ * prefix — `executableArgs` is flags for the JS runtime, not a command prefix —
+ * so on Windows it gets the script behind the `.cmd` shim, and null when the
+ * shim could not be read. The adapter's own version probe gets the spawnable
+ * pair instead, because `execFile` cannot run a `.js` on Windows and handing it
+ * the SDK's answer reported every npm install as unavailable.
  */
-function claudeOptions(): { resolveExecutablePath: () => Promise<string | null> } {
-  return { resolveExecutablePath: () => findExecutable('claude') }
+function claudeOptions(): { resolveExecutable: () => Promise<ResolvedExecutable | null> } {
+  return {
+    resolveExecutable: async () => {
+      const resolved = await resolveCommand('claude')
+      if (resolved === null) return null
+      return { sdkPath: sdkExecutablePath(resolved), launch: spawnSpec(resolved) }
+    },
+  }
 }
 
 export interface Diagnostics {

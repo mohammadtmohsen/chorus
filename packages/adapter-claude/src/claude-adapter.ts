@@ -94,6 +94,18 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   sandboxPolicy: 'emulated',
 }
 
+/** What a resolver hands back: the SDK's path, and a command we can spawn. */
+export interface ResolvedExecutable {
+  /**
+   * For `pathToClaudeCodeExecutable`. Null when the install could not be
+   * reduced to something the SDK can run — an unreadable Windows shim — in
+   * which case `spawn` raises rather than letting the SDK fail obscurely.
+   */
+  readonly sdkPath: string | null
+  /** For our own version probe: a file plus whatever must precede our args. */
+  readonly launch: { readonly file: string; readonly args: readonly string[] }
+}
+
 export interface ClaudeAdapterOptions {
   readonly command?: string
   readonly executablePath?: string
@@ -103,8 +115,18 @@ export interface ClaudeAdapterOptions {
    * Asked once, lazily, for the same reason Codex's is: a packaged app has no
    * terminal PATH, and the SDK's own failure for a missing binary blames the
    * architecture rather than the lookup.
+   *
+   * Returns **two** answers because there are two consumers and they want
+   * different things. The SDK takes `pathToClaudeCodeExecutable`, a plain path
+   * it runs itself; `health()` below spawns a version probe of its own. On
+   * Windows those diverge: an npm install resolves to a `.js`, which the SDK
+   * runs under node quite happily and which `execFile` cannot run at all.
+   *
+   * Answering both with one string is the bug this shape exists to prevent —
+   * `health()` was handed the `.js`, failed with a spawn error, and reported a
+   * perfectly good installation as unavailable before any session started.
    */
-  readonly resolveExecutablePath?: () => Promise<string | null>
+  readonly resolveExecutable?: () => Promise<ResolvedExecutable | null>
   readonly approvalTtlMs?: number
   readonly now?: () => number
   /** Injected in tests so no real CLI is spawned. */
@@ -791,7 +813,9 @@ export class ClaudeAdapter implements AgentAdapter {
 
   private readonly command: string
   private executablePath: string | undefined
-  private readonly resolveExecutablePath: (() => Promise<string | null>) | undefined
+  private readonly resolveExecutable: (() => Promise<ResolvedExecutable | null>) | undefined
+  /** How to spawn it ourselves, which is not always the path the SDK is given. */
+  private launch: { readonly file: string; readonly args: readonly string[] } | undefined
   private resolving: Promise<void> | null = null
   private readonly approvalTtlMs: number
   private readonly now: () => number
@@ -802,7 +826,7 @@ export class ClaudeAdapter implements AgentAdapter {
   constructor(options: ClaudeAdapterOptions = {}) {
     this.command = options.command ?? 'claude'
     this.executablePath = options.executablePath
-    this.resolveExecutablePath = options.resolveExecutablePath
+    this.resolveExecutable = options.resolveExecutable
     this.approvalTtlMs = options.approvalTtlMs ?? 5 * 60_000
     this.now = options.now ?? (() => Date.now())
     this.createQuery = options.createQuery
@@ -824,11 +848,13 @@ export class ClaudeAdapter implements AgentAdapter {
    * with restoring conversations almost exactly.
    */
   private resolveOnce(): Promise<void> {
-    const lookup = this.resolveExecutablePath
+    const lookup = this.resolveExecutable
     if (lookup === undefined) return Promise.resolve()
     this.resolving ??= lookup()
       .then((found) => {
-        if (found !== null) this.executablePath = found
+        if (found === null) return
+        this.executablePath = found.sdkPath ?? undefined
+        this.launch = found.launch
       })
       .catch(() => {
         // Let a later start try again rather than caching the failure forever.
@@ -841,7 +867,14 @@ export class ClaudeAdapter implements AgentAdapter {
     // Health runs before any session, so this is where the lookup lands.
     await this.resolveOnce()
     try {
-      const { stdout } = await run(this.executablePath ?? this.command, ['--version'], {
+      /*
+       * The launch pair, not the SDK path. On Windows those are different
+       * strings — the SDK gets a `.js` and `execFile` cannot run one — and
+       * spawning the SDK's answer here reported every npm install as
+       * unavailable.
+       */
+      const probe = this.launch ?? { file: this.executablePath ?? this.command, args: [] }
+      const { stdout } = await run(probe.file, [...probe.args, '--version'], {
         timeout: 10_000,
       })
       const version = /\d+\.\d+\.\d+[\w.-]*/.exec(stdout.trim())?.[0]
@@ -978,7 +1011,7 @@ export class ClaudeAdapter implements AgentAdapter {
      * constructed without one — every test in this package — is asking the SDK
      * to find its own way, and that is not this error.
      */
-    if (this.resolveExecutablePath !== undefined && this.executablePath === undefined) {
+    if (this.resolveExecutable !== undefined && this.executablePath === undefined) {
       throw new Error(
         'Could not find the claude CLI. Chorus runs the one you have installed rather ' +
           'than shipping its own, so `claude` needs to be on your PATH — check with ' +

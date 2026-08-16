@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { descriptorIsPrivate } from '@chorus/ide-protocol'
 
 /**
  * Finding the Chorus processes this window may talk to (plan §4).
@@ -21,6 +22,14 @@ export interface Descriptor {
 export interface DiscoveryDeps {
   /** Injected so tests do not have to create processes. */
   readonly isAlive: (pid: number) => boolean
+  /**
+   * Named by tests, inherited in production.
+   *
+   * The privacy check below is meaningless on Windows and says so by returning
+   * true, so a suite that asserts "a world-readable descriptor is refused" is
+   * asserting unix — and without naming it, asserted its own host instead.
+   */
+  readonly platform?: NodeJS.Platform
 }
 
 /** Whether a pid is still running, without signalling it. */
@@ -35,9 +44,10 @@ export function pidIsAlive(pid: number): boolean {
   }
 }
 
-function isPrivate(path: string): boolean {
+function isPrivate(path: string, platform: NodeJS.Platform = process.platform): boolean {
   try {
-    return (statSync(path).mode & 0o077) === 0
+    const stats = statSync(path)
+    return descriptorIsPrivate(stats, process.getuid?.(), platform)
   } catch {
     return false
   }
@@ -70,7 +80,7 @@ export function readDescriptors(directory: string, deps: DiscoveryDeps): Descrip
     const path = join(directory, entry)
     // A descriptor anyone else can read is one we must not trust: the token in
     // it would already be compromised.
-    if (!isPrivate(path)) continue
+    if (!isPrivate(path, deps.platform ?? process.platform)) continue
 
     let parsed: unknown
     try {

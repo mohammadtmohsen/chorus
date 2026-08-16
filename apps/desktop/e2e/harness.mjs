@@ -357,7 +357,10 @@ function newest(roots, skip = new Set()) {
       if (entry.isDirectory()) continue
       // Relative to the root, so a skip name cannot match part of the path
       // leading *to* the root — `out` is a source of truth when it is the root.
-      const inside = entry.parentPath.slice(root.length).split('/')
+      // Split on both separators: this runs on Windows too, where the skip
+      // check would otherwise never match and a stale build would be treated as
+      // fresh — the one thing this function exists to decide.
+      const inside = entry.parentPath.slice(root.length).split(/[\\/]/)
       if (inside.some((part) => skip.has(part))) continue
       const { mtimeMs } = statSync(join(entry.parentPath, entry.name))
       if (latest === undefined || mtimeMs > latest) latest = mtimeMs

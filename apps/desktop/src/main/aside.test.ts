@@ -417,7 +417,9 @@ describe('opening a recap', () => {
     })
 
     const prompt = sentToReader()
-    expect(prompt).toContain('src/parse.ts')
+    // Same reason as project-match: the path in the prompt is a host-relative one,
+    // so it carries the platform separator.
+    expect(prompt).toContain(join('src', 'parse.ts'))
     expect(prompt).toContain('pnpm check → exit 1')
   })
 })

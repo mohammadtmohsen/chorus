@@ -54,6 +54,59 @@ jobs:
       - name: Test
         run: pnpm run test
 
+  # Does the suite we already have run on Windows at all?
+  #
+  # A portability probe, not the release job — Windows support is being built in
+  # phases and this is Phase 0's only automated deliverable. It answers one
+  # question the plan refused to answer from memory: which of typecheck, lint,
+  # format and test survive a platform nobody has run them on.
+  #
+  # It has been green once, on 2026-08-16, so it blocks like any other job.
+  #
+  # It carried `continue-on-error` until then, on the condition written here:
+  # remove the flag the first time it passes. That first run failed 36 tests and
+  # every one was worth having — almost all of them were tests asserting the host
+  # they ran on rather than the platform they named, and one was a real bug, a
+  # third copy of the `${cwd}/` prefix arithmetic that would have made every
+  # recap on Windows report "no files changed".
+  #
+  # No `shell:` on the steps. Every one is a single `pnpm run` and the runner's
+  # default pwsh handles those; the moment a step needs a pipeline or a `$VAR`
+  # it needs `shell: bash` stated, because pwsh is not sh.
+  check-windows:
+    name: Typecheck, lint, test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      # See the note in `check` above.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The lockfile is generated on macOS and installed here unchanged. That is
+      # the point: both native deps ship every platform's prebuild inside the
+      # one package — node-pty carries `prebuilds/win32-x64`, better-sqlite3 a
+      # `win32-x64.node` — so there is nothing platform-resolved to drift. If
+      # this step ever fails on the lockfile, that assumption broke.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
+
+      # The step `.gitattributes` exists for. Without `eol=lf` this fails on
+      # every file in the repo, because the checkout above converted them.
+      - name: Format
+        run: pnpm run format:check
+
+      - name: Test
+        run: pnpm run test
+
   build:
     name: Build
     runs-on: macos-latest

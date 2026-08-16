@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import * as vscode from 'vscode'
 import {
   MAX_SELECTED_BYTES,
   PROTOCOL_VERSION,
+  runtimeDirectory,
   utf8ByteLength,
   type CurrentContextResult,
 } from '@chorus/ide-protocol'
@@ -166,7 +166,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const rescan = (): void => {
     if (disposed) return
-    const directory = join(tmpdir(), 'chorus-ide')
+    const directory = runtimeDirectory(tmpdir())
     const found = readDescriptors(directory, { isAlive: pidIsAlive })
     const live = new Set(found.map((d) => d.pid))
 

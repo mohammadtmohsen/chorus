@@ -53,7 +53,7 @@
     "build": "node esbuild.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --config vitest.config.mts",
-    "clean": "rm -rf dist *.tsbuildinfo",
+    "clean": "node ../../scripts/rm.mjs dist *.tsbuildinfo",
     "package": "node package.mjs"
   },
   "dependencies": {

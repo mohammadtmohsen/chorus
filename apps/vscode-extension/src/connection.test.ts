@@ -3,7 +3,12 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { encodeFrame, PROTOCOL_VERSION, type CurrentContextResult } from '@chorus/ide-protocol'
+import {
+  encodeFrame,
+  endpointFor,
+  PROTOCOL_VERSION,
+  type CurrentContextResult,
+} from '@chorus/ide-protocol'
 import { ChorusConnection } from './connection.js'
 import type { Descriptor } from './discovery.js'
 
@@ -16,6 +21,7 @@ import type { Descriptor } from './discovery.js'
 let dir: string
 let server: Server
 let socketPath: string
+let endpointSeq = 0
 let received: Record<string, unknown>[]
 let peers: Socket[]
 let connection: ChorusConnection | null
@@ -63,7 +69,21 @@ beforeEach(async () => {
   peers = []
   connection = null
   dir = mkdtempSync(join(tmpdir(), 'chorus-conn-'))
-  socketPath = join(dir, 's.sock')
+  /*
+   * The real endpoint for this platform, not a `.sock` filename.
+   *
+   * `listen()` on a filesystem path is a Unix-domain socket, which Windows does
+   * not have — so all fifteen tests in this file simply timed out there, ten
+   * seconds each. `endpointFor` is the same function production uses, so these
+   * now exercise a named pipe on Windows and a socket everywhere else, which is
+   * the arrangement they are supposed to be testing.
+   *
+   * The pid is `process.pid` plus a counter so two `beforeEach` runs cannot
+   * collide on a pipe name: unlike a socket file, a pipe is not scoped to the
+   * temp directory that was just created for it.
+   */
+  endpointSeq += 1
+  socketPath = endpointFor(dir, process.pid * 1000 + endpointSeq, process.platform)
   server = createServer((socket) => {
     peers.push(socket)
     let buffer = ''

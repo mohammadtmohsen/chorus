@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { shortcutLabel } from './shortcuts.js'
 import type { TerminalRefShape } from '../../shared/ipc.js'
 import type { TerminalPanelState } from '../../shared/workspace-layout.js'
 import { ConfirmKillTerminal } from './ConfirmKillTerminal.js'
@@ -355,7 +356,7 @@ export function TerminalPanel(props: TerminalPanelProps): React.JSX.Element {
           type="button"
           className="terminal-action"
           aria-label={t('terminal.add')}
-          title={`${t('terminal.add')} (${t('terminal.shortcutNew')})`}
+          title={`${t('terminal.add')} (${shortcutLabel({ control: true, shift: true, key: '`' })})`}
           onClick={props.onAddTerminal}
         >
           <span aria-hidden="true">+</span>

@@ -1,15 +1,19 @@
 import { randomBytes } from 'node:crypto'
 import { chmodSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
-import { join } from 'node:path'
 import type { Logger } from '@chorus/shared'
 import {
   currentContextResult,
   decodeFrame,
+  descriptorFor,
+  descriptorIsPrivate,
   encodeFrame,
+  endpointFor,
+  endpointIsFile,
   extensionMessage,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
+  runtimeDirectory,
   type CurrentContextResult,
   type EditorMetadata,
   type IdeStatus,
@@ -67,6 +71,8 @@ export interface IdeBridgeOptions {
   /** Parent of the descriptor directory. Injected so tests never touch /tmp. */
   readonly runtimeDir: string
   readonly pid: number
+  /** Injected so the Windows endpoint and privacy rules are testable from macOS. */
+  readonly platform?: NodeJS.Platform
   readonly chorusVersion: string
   readonly log: Logger
   /** Injected only by tests; production always generates a fresh one. */
@@ -118,18 +124,24 @@ export class IdeBridge {
    * can read the project too — it prevents cross-user and accidental access.
    */
   static async start(options: IdeBridgeOptions): Promise<IdeBridge> {
-    const dir = join(options.runtimeDir, 'chorus-ide')
+    const platform = options.platform ?? process.platform
+    const dir = runtimeDirectory(options.runtimeDir)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     // `mkdirSync` honours the process umask, so an existing directory or a
     // permissive umask could leave this group-readable. Set it explicitly.
-    chmodSync(dir, 0o700)
-    assertPrivateDirectory(dir)
+    // Both are no-ops on Windows; `%TEMP%` is per-user there by default.
+    if (platform !== 'win32') chmodSync(dir, 0o700)
+    assertPrivateDirectory(dir, platform)
 
-    const socketPath = join(dir, `${String(options.pid)}.sock`)
-    const descriptorPath = join(dir, `${String(options.pid)}.json`)
-    // A previous run that died without cleanup leaves the node behind, and
-    // `listen` fails on an existing path.
-    rmSync(socketPath, { force: true })
+    const socketPath = endpointFor(dir, options.pid, platform)
+    const descriptorPath = descriptorFor(dir, options.pid)
+    /*
+     * A previous run that died without cleanup leaves the node behind, and
+     * `listen` fails on an existing path. Only on unix: a named pipe is not a
+     * filesystem entry, it disappears with its last handle, and `rmSync` on the
+     * `\\.\pipe\` name would be looking in the wrong namespace entirely.
+     */
+    if (endpointIsFile(platform)) rmSync(socketPath, { force: true })
 
     const token = options.token ?? randomBytes(32).toString('hex')
     const server = createServer()
@@ -141,7 +153,13 @@ export class IdeBridge {
         resolve()
       })
     })
-    chmodSync(socketPath, 0o600)
+    /*
+     * The socket's own 0600. Skipped on Windows, where it would throw ENOENT:
+     * the pipe has no filesystem entry to chmod. Node exposes no way to set a
+     * security descriptor on a pipe it creates, so on Windows the handshake
+     * token is the only thing guarding this channel — see `descriptorIsPrivate`.
+     */
+    if (endpointIsFile(platform)) chmodSync(socketPath, 0o600)
 
     const bridge = new IdeBridge(
       server,
@@ -548,9 +566,18 @@ export class IdeBridge {
  * previous run whose umask was different, and a world-readable token is the one
  * mistake the whole discovery scheme depends on not making.
  */
-function assertPrivateDirectory(dir: string): void {
+function assertPrivateDirectory(dir: string, platform: NodeJS.Platform): void {
   const stats = statSync(dir)
   if (!stats.isDirectory()) throw new Error('ide runtime path is not a directory')
-  if ((stats.mode & 0o077) !== 0) throw new Error('ide runtime directory is not private')
-  if (stats.uid !== process.getuid?.()) throw new Error('ide runtime directory has another owner')
+  /*
+   * Both remaining checks read libuv's synthesised mode and uid, which mean
+   * nothing on Windows: a normal directory reports 0o666 there so the mask is
+   * always non-zero, and `process.getuid` is undefined so the comparison was
+   * `0 !== undefined` — always true. Between them they threw on every Windows
+   * launch, into the `try`/`catch` in index.ts that only logs, so the bridge
+   * silently never started and the pill read `unavailable` forever.
+   */
+  if (!descriptorIsPrivate(stats, process.getuid?.(), platform)) {
+    throw new Error('ide runtime directory is not private')
+  }
 }

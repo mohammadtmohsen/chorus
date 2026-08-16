@@ -22,7 +22,10 @@ interface Call {
 function deps(overrides: Partial<ExtensionDeps> & { calls?: Call[] } = {}): ExtensionDeps {
   const calls = overrides.calls ?? []
   return {
-    findCode: overrides.findCode ?? (() => Promise.resolve('/usr/local/bin/code')),
+    findCode:
+      overrides.findCode ??
+      (() =>
+        Promise.resolve({ file: '/usr/local/bin/code', argsPrefix: [], kind: 'native' as const })),
     exec:
       overrides.exec ??
       ((bin, args) => {
@@ -131,6 +134,38 @@ describe('installBundledExtension', () => {
     const result = await installBundledExtension(deps({ calls }))
     expect(result.ok).toBe(true)
     expect(calls[0]?.args).toEqual(['--install-extension', '/res/chorus-vscode.vsix', '--force'])
+  })
+
+  it('launches a Windows code.cmd through cmd.exe, not as a bare shim', async () => {
+    /*
+     * The install that would otherwise fail silently. VS Code installs `code.cmd`
+     * on Windows and `spawn` refuses a `.cmd` outright, so without the prefix
+     * this call throws EINVAL and the extension simply never appears — with no
+     * error a user would connect to the editor integration.
+     */
+    const calls: Call[] = []
+    const result = await installBundledExtension(
+      deps({
+        calls,
+        findCode: () =>
+          Promise.resolve({
+            file: 'cmd.exe',
+            argsPrefix: ['/d', '/s', '/c', 'C:\\VS Code\\bin\\code.cmd'],
+            kind: 'cmd-shim' as const,
+          }),
+      })
+    )
+    expect(result.ok).toBe(true)
+    expect(calls[0]?.bin).toBe('cmd.exe')
+    expect(calls[0]?.args).toEqual([
+      '/d',
+      '/s',
+      '/c',
+      'C:\\VS Code\\bin\\code.cmd',
+      '--install-extension',
+      '/res/chorus-vscode.vsix',
+      '--force',
+    ])
   })
 
   it('fails cleanly with no CLI', async () => {

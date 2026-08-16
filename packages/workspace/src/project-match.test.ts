@@ -101,7 +101,9 @@ describe('isFileInProject', () => {
 
 describe('projectRelativePath', () => {
   it('returns the path an agent can open', () => {
-    expect(projectRelativePath(root, join(rootPath, 'src', 'a.ts'))).toBe('src/a.ts')
+    // `join`, not a literal: this returns a **host** path, so its separator is the
+    // platform's. Hardcoding `/` asserted the machine rather than the function.
+    expect(projectRelativePath(root, join(rootPath, 'src', 'a.ts'))).toBe(join('src', 'a.ts'))
   })
 
   /* Never hand an agent a reference that points out of its own cwd. */

@@ -57,20 +57,55 @@ export interface PermissionProfile {
  * belongs in `UNIVERSAL_ASKS` below, because a wall the user cannot open is
  * only correct when no answer they could give would make the action safe.
  */
+/**
+ * `\.exe` after the verb, optionally.
+ *
+ * A Windows agent runs `git.exe push --force` as readily as `git push --force`,
+ * and `\bgit\s+push` does not match the first: `\bgit` matches, then `\s+`
+ * meets `.exe`. Every deny below carries this, because a universal deny that a
+ * four-character suffix walks through is not universal.
+ */
+const EXE = String.raw`(?:\.exe)?`
+
 export const UNIVERSAL_DENIES: readonly Rule[] = [
   {
     id: 'deny-recursive-delete',
     describe: 'Recursive delete',
     match: {
       kind: 'command',
-      commandPattern: String.raw`\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s|-[a-zA-Z]*f[a-zA-Z]*\s)`,
+      commandPattern: String.raw`\brm${EXE}\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s|-[a-zA-Z]*f[a-zA-Z]*\s)`,
+    },
+    effect: 'deny',
+  },
+  {
+    /*
+     * The same irreversible action, in the three shells Windows actually has.
+     *
+     * Separate from the `rm` rule rather than bolted onto it, because the flag
+     * grammars have nothing in common: cmd takes `/s /q` on `del` and `rd`,
+     * PowerShell takes `-Recurse -Force` on `Remove-Item` — and PowerShell
+     * accepts any unambiguous prefix of a parameter name, so `-Rec`, `-recurse`
+     * and `-r` are all the same switch. `ri`, `rm`, `rmdir`, `erase` and `del`
+     * are all aliases of Remove-Item or its cmd equivalents.
+     *
+     * This is an action, not a name: recursive deletion is irreversible on any
+     * platform, which is what qualifies it for a universal deny at all.
+     */
+    id: 'deny-recursive-delete-windows',
+    describe: 'Recursive delete',
+    match: {
+      kind: 'command',
+      commandPattern: String.raw`\b(?:(?:del|erase|rd|rmdir)${EXE}\s+(?:[^|&;\n]*\s)?/[sS]\b|(?:Remove-Item|ri)\b[^|&;\n]*\s-[rR](?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\b)`,
     },
     effect: 'deny',
   },
   {
     id: 'deny-force-push',
     describe: 'Force push',
-    match: { kind: 'command', commandPattern: String.raw`\bgit\s+push\b.*(--force|-f\b)` },
+    match: {
+      kind: 'command',
+      commandPattern: String.raw`\bgit${EXE}\s+push\b.*(--force|-f\b)`,
+    },
     effect: 'deny',
   },
   {
@@ -78,7 +113,7 @@ export const UNIVERSAL_DENIES: readonly Rule[] = [
     describe: 'History rewrite',
     match: {
       kind: 'command',
-      commandPattern: String.raw`\bgit\s+(reset\s+--hard|filter-branch|reflog\s+expire)\b`,
+      commandPattern: String.raw`\bgit${EXE}\s+(reset\s+--hard|filter-branch|reflog\s+expire)\b`,
     },
     effect: 'deny',
   },
@@ -124,7 +159,12 @@ export const UNIVERSAL_ASKS: readonly Rule[] = [
       // than denies: `\.env\b` matches `.env.e2e` as readily as `.env`, and a
       // test fixture is not a secret. Over-matching is the right failure for a
       // question and the wrong one for a wall.
-      pathPattern: String.raw`(\.env\b|\.ssh\b|\.aws\b|id_rsa|\.netrc\b|credentials\.json)`,
+      // `_netrc` is the Windows spelling of `.netrc` and was missed entirely;
+      // `.pfx`/`.pem` are where Windows keeps keys, and `cmdkey` is the
+      // Credential Manager CLI — reading it out is the same act as reading
+      // `~/.aws`. Still an ask rather than a deny: only the user can tell a
+      // secret from a fixture, which is the whole argument in the comment above.
+      pathPattern: String.raw`(\.env\b|\.ssh\b|\.aws\b|id_rsa|\.netrc\b|_netrc\b|\.pfx\b|\.pem\b|\bcmdkey\b|credentials\.json)`,
     },
     effect: 'ask',
   },
@@ -275,6 +315,7 @@ export function requestNeedsNetwork(request: ApprovalRequest): boolean {
 export function matches(rule: Rule, request: ApprovalRequest): boolean {
   const { match } = rule
   const { command, paths } = subjectOf(request)
+  const flags = flagsFor(rule.effect)
 
   if (match.kind !== undefined) {
     const kinds = Array.isArray(match.kind) ? match.kind : [match.kind]
@@ -284,10 +325,10 @@ export function matches(rule: Rule, request: ApprovalRequest): boolean {
   if (match.requiresNetwork === true && !requestNeedsNetwork(request)) return false
 
   if (match.commandPattern !== undefined) {
-    if (command === '' || !safeTest(match.commandPattern, command)) return false
+    if (command === '' || !safeTest(match.commandPattern, command, flags)) return false
     if (
       match.commandExcludePattern !== undefined &&
-      safeTest(match.commandExcludePattern, command)
+      safeTest(match.commandExcludePattern, command, flags)
     ) {
       return false
     }
@@ -306,12 +347,12 @@ export function matches(rule: Rule, request: ApprovalRequest): boolean {
      * help — and an `ask` that stops matching would silently become an allow
      * from some later rule.
      */
-    if (rule.effect === 'allow' && !everySegmentMatches(match, command)) return false
+    if (rule.effect === 'allow' && !everySegmentMatches(match, command, flags)) return false
   }
 
   if (match.pathPattern !== undefined) {
     const haystack = paths.length > 0 ? paths : [command]
-    if (!haystack.some((p) => safeTest(match.pathPattern ?? '', p))) return false
+    if (!haystack.some((p) => safeTest(match.pathPattern ?? '', p, flags))) return false
   }
 
   // A rule that matches on nothing would apply to everything, which is never
@@ -326,7 +367,7 @@ export function matches(rule: Rule, request: ApprovalRequest): boolean {
  * the log. Removing them first lets the redirect check below be absolute about
  * everything that remains.
  */
-const DISCARDS = /\d?>\s*&?\s*(\/dev\/null|\d)/g
+const DISCARDS = /\d?>\s*&?\s*(\/dev\/null|NUL\b|\$null\b|\d)/gi
 
 /**
  * Whether an `allow` rule covers every command on the line.
@@ -342,7 +383,7 @@ const DISCARDS = /\d?>\s*&?\s*(\/dev\/null|\d)/g
  * asks, and `cat "; anything"` asks for the same reason. A card nobody needed is
  * the acceptable error here; a silent allow is not.
  */
-function everySegmentMatches(match: RuleMatch, command: string): boolean {
+function everySegmentMatches(match: RuleMatch, command: string, flags = ''): boolean {
   const withoutDiscards = command.replace(DISCARDS, ' ')
   if (/[`<>]|\$\(/.test(withoutDiscards)) return false
 
@@ -354,17 +395,37 @@ function everySegmentMatches(match: RuleMatch, command: string): boolean {
 
   return segments.every(
     (segment) =>
-      safeTest(match.commandPattern ?? '', segment) &&
-      (match.commandExcludePattern === undefined || !safeTest(match.commandExcludePattern, segment))
+      safeTest(match.commandPattern ?? '', segment, flags) &&
+      (match.commandExcludePattern === undefined ||
+        !safeTest(match.commandExcludePattern, segment, flags))
   )
 }
 
-function safeTest(pattern: string, value: string): boolean {
+function safeTest(pattern: string, value: string, flags = ''): boolean {
   try {
-    return new RegExp(pattern).test(value)
+    return new RegExp(pattern, flags).test(value)
   } catch {
     // A malformed pattern must not decide anything. Failing to match means the
     // request falls through to `ask` rather than being silently allowed.
     return false
   }
+}
+
+/**
+ * Denies match case-insensitively; nothing else does.
+ *
+ * cmd and PowerShell are case-insensitive, so `DEL /S`, `Remove-item -Recurse`
+ * and `Git Push --Force` are all real invocations that the case-sensitive
+ * patterns walked straight past. Applying `i` to a deny can only ever deny
+ * more, and the cost of that on unix is denying `RM -rf` — a command that does
+ * not exist and would have failed anyway.
+ *
+ * Deliberately **not** applied to allow rules. There the same change runs the
+ * other way: `i` on `SAFE_READS` would allow `LS` and `CAT`, widening an
+ * allowlist on a platform where those are distinct from the real commands. An
+ * allow that is too narrow costs a prompt; an allow that is too wide costs the
+ * thing the allowlist exists for.
+ */
+function flagsFor(effect: RuleEffect): string {
+  return effect === 'deny' ? 'i' : ''
 }
