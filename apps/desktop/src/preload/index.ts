@@ -14,6 +14,7 @@ import {
   LIMITS_PUSH_CHANNEL,
   LimitsPush,
   SCALE_PUSH_CHANNEL,
+  SETTINGS_PUSH_CHANNEL,
   EventsPush,
   IPC_CONTRACT,
   type ChorusApi,
@@ -179,6 +180,16 @@ const api: ChorusApi = {
     ipcRenderer.on(TERMINAL_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(TERMINAL_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onSettings: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = IPC_CONTRACT['settings:read'].response.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(SETTINGS_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(SETTINGS_PUSH_CHANNEL, wrapped)
     }
   },
   onScale: (listener) => {

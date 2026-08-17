@@ -1169,6 +1169,22 @@ export const EVENTS_PUSH_CHANNEL = 'conversation:events'
 export const IDE_PUSH_CHANNEL = 'ide:context'
 
 /**
+ * Settings, pushed to every window whenever any of them writes.
+ *
+ * **A read on mount is not enough for anything a pane draws continuously.**
+ * `explainLanguage` decides whether an Explain button exists under every reply,
+ * and it was being read when the settings sheet closed — which is the only path
+ * a person takes, and not the only path there is. A second window, or anything
+ * writing through the channel directly, left every open pane holding a value
+ * that had stopped being true. The e2e suite is what found it.
+ *
+ * The whole settings object rather than the field that prompted this: the reason
+ * generalises, nothing here is secret, and a channel per preference is how you
+ * end up with five of them.
+ */
+export const SETTINGS_PUSH_CHANNEL = 'settings:changed'
+
+/**
  * The window's zoom factor, pushed whenever it changes.
  *
  * Zoom is owned by the menu, so the renderer has no other way to learn it — and
@@ -1387,6 +1403,7 @@ export interface ChorusApi {
     request: IpcRequest<'conversation:setCwd'>
   ) => Promise<IpcResponse<'conversation:setCwd'>>
   readonly onScale: (listener: (scale: number) => void) => () => void
+  readonly onSettings: (listener: (settings: IpcResponse<'settings:read'>) => void) => () => void
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly onTasks: (listener: (tasks: TasksPush) => void) => () => void

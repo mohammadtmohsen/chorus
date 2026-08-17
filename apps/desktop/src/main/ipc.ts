@@ -11,6 +11,7 @@ import {
   TASKS_PUSH_CHANNEL,
   TERMINAL_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
+  SETTINGS_PUSH_CHANNEL,
   IPC_CONTRACT,
   type IdeContextPush,
   type IpcChannel,
@@ -442,14 +443,24 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
        * map and silently drop Claude's — a caller setting one agent's model
        * clearing the other's, with nothing on screen to show it had happened.
        */
-      return Promise.resolve(
-        writeSettings(path, {
-          ...current,
-          ...request,
-          models: { ...current.models, ...request.models },
-          efforts: { ...current.efforts, ...request.efforts },
-        })
-      )
+      const written = writeSettings(path, {
+        ...current,
+        ...request,
+        models: { ...current.models, ...request.models },
+        efforts: { ...current.efforts, ...request.efforts },
+      })
+      /*
+       * Broadcast, including back to the window that asked.
+       *
+       * A window that reads its own preferences once and then draws from that
+       * copy is stale the moment anything else writes — another window, the
+       * menu, a driver. Echoing to the sender costs a render and removes the
+       * question of which writes need answering and which do not.
+       */
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(SETTINGS_PUSH_CHANNEL, written)
+      }
+      return Promise.resolve(written)
     },
 
     'diagnostics:read': () =>

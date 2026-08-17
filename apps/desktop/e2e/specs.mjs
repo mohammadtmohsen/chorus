@@ -146,6 +146,34 @@ const say = (page, text) =>
   })()`)
 
 /**
+ * The quote offer as it is actually drawn: where, how many rows, and whether
+ * each action is clickable where it appears.
+ *
+ * A helper because the width at which the bar wraps depends on how many actions
+ * it has, so the spec has to measure at more than one width rather than trusting
+ * a number written down when there were four of them.
+ */
+const measureOffer = (page) =>
+  page.evaluate(`(() => {
+    const bar = document.querySelector('.quote-offer')
+    if (bar === null) return { offer: false, rows: 0 }
+    const r = bar.getBoundingClientRect()
+    const score = document.querySelector('.score').getBoundingClientRect()
+    const btns = [...bar.querySelectorAll('.quote-offer-action')]
+    return {
+      offer: true,
+      count: btns.length,
+      rows: new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+      inside: r.top >= score.top - 1 && r.bottom <= score.bottom + 1,
+      hits: btns.every((b) => {
+        const q = b.getBoundingClientRect()
+        const el = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2)
+        return el !== null && b.contains(el)
+      }),
+    }
+  })()`)
+
+/**
  * Selects the first substantial run of text inside an entry and tells the pane.
  *
  * A real `mouseup` on `.score` rather than a call into React: the offer is
@@ -3404,14 +3432,18 @@ export const specs = [
           `window.chorus.readSettings().then((s) => window.chorus.writeSettings({ ...s, explainLanguage: 'Arabic' })).then(() => true)`
         )
         /*
-         * Reopened rather than re-selected, and that is the behaviour change.
+         * The write reaches an open pane without anything being reopened, which
+         * is the behaviour this now also guards.
          *
-         * The language used to be read once per selection, so a fresh drag was
-         * enough to see a new one. It is `App`'s now — read on mount and again
-         * when the settings sheet closes — because it decides whether Explain
-         * exists under *every* reply, which no selection can be waited on for.
-         * Nothing here opens the sheet, so this asserts the half that still
-         * belongs to the offer: Translate appears, Explain never does.
+         * The language used to be re-read on every selection, so a fresh drag
+         * picked one up. It is `App`'s now, because it decides whether an Explain
+         * button exists under *every* reply and no selection can be waited on for
+         * that — and when this spec first ran against that change it hung here,
+         * because a pane that reads its preferences once is stale the moment
+         * anything else writes. Main echoes every settings write to every window
+         * (`settings:changed`) precisely so this passes.
+         *
+         * Three, not four: Explain left the offer for a button on the reply.
          */
         await selectInside(
           app,
@@ -3445,7 +3477,7 @@ export const specs = [
             opaque: btns.every((b) => getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)'),
           }
         })()`)
-        assert(bar.rows === 1, 'four actions still fit one row on a wide pane')
+        assert(bar.rows === 1, 'every action still fits one row on a wide pane')
         assert(bar.gap === '1px' && !bar.borders, 'divided by gaps, not by borders on the buttons')
         assert(bar.opaque, 'and the buttons are opaque, or the divider colour floods them')
       } finally {
@@ -3507,34 +3539,31 @@ export const specs = [
           'scrolling no longer destroys it'
         )
 
-        // Narrow enough that the bar wraps and the follow logic churns, which is
-        // where this was not merely annoying but total.
-        await app.viewport(460, 900)
-        for (let i = 0; i < 4; i += 1) await app.settle()
-        await selectInside(
-          app,
-          '.entry[data-kind="message"][data-actor="claude"][data-status="complete"]'
-        )
-        for (let i = 0; i < 6; i += 1) await app.settle()
+        /*
+         * Narrow enough that the bar wraps and the follow logic churns, which is
+         * where this was not merely annoying but total.
+         *
+         * **Stepped rather than fixed at 460.** A single width bakes in how many
+         * actions the bar happens to have: it wrapped at 460 with four, and when
+         * Explain moved out from under the selection to a button on the reply,
+         * three fitted on one line and this failed for a reason that had nothing
+         * to do with what it guards. So it narrows until the bar genuinely wraps
+         * and asserts there — and still fails if it never does, because the
+         * wrapped case is the case.
+         */
+        let narrow = { offer: false, rows: 0 }
+        for (const width of [460, 400, 340]) {
+          await app.viewport(width, 900)
+          for (let i = 0; i < 4; i += 1) await app.settle()
+          await selectInside(
+            app,
+            '.entry[data-kind="message"][data-actor="claude"][data-status="complete"]'
+          )
+          for (let i = 0; i < 6; i += 1) await app.settle()
+          narrow = await measureOffer(app)
+          if (narrow.rows > 1) break
+        }
 
-        const narrow = await app.evaluate(`(() => {
-          const bar = document.querySelector('.quote-offer')
-          if (bar === null) return { offer: false }
-          const r = bar.getBoundingClientRect()
-          const score = document.querySelector('.score').getBoundingClientRect()
-          const btns = [...bar.querySelectorAll('.quote-offer-action')]
-          return {
-            offer: true,
-            count: btns.length,
-            rows: new Set(btns.map((b) => Math.round(b.getBoundingClientRect().top))).size,
-            inside: r.top >= score.top - 1 && r.bottom <= score.bottom + 1,
-            hits: btns.every((b) => {
-              const q = b.getBoundingClientRect()
-              const el = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2)
-              return el !== null && b.contains(el)
-            }),
-          }
-        })()`)
         assert(narrow.offer === true, 'a narrow pane still offers something at all')
         assert(narrow.inside === true, 'and keeps it inside the scrollport')
         /*

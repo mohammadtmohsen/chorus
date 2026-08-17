@@ -428,6 +428,22 @@ export function App(): React.JSX.Element {
     window.chorus.writeSettings(patch).catch(fail(setError))
   }, [])
 
+  /*
+   * The one setting a pane draws continuously, kept current from anywhere.
+   *
+   * Main echoes every write to every window, so this covers the sheet, a second
+   * window and anything writing through the channel directly. `closeSettings`
+   * below still re-reads: a push can only report a write that happened, and a
+   * sheet closed without one should still leave this holding the truth.
+   */
+  useEffect(
+    () =>
+      window.chorus.onSettings((settings) => {
+        setExplainLanguage(settings.explainLanguage)
+      }),
+    []
+  )
+
   /**
    * Closing the settings sheet, and re-reading the one setting the panes draw.
    *
