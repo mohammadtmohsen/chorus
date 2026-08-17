@@ -125,6 +125,9 @@ export function QuickQuestion(props: {
   }, [])
   const input = useRef<HTMLTextAreaElement>(null)
   const card = useRef<HTMLDivElement>(null)
+  /** The one region that scrolls, and whether it is still following its answer. */
+  const answer = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
   /** Where it ends up, once it knows how big it is. */
   const [at, setAt] = useState<{ left: number; top: number } | null>(null)
 
@@ -159,6 +162,25 @@ export function QuickQuestion(props: {
     if (opensWithATurn(props.purpose)) card.current?.focus()
     else input.current?.focus()
   }, [props.purpose, at])
+
+  /*
+   * Keeps the newest words in view while an answer arrives.
+   *
+   * The card scrolls inside itself — one region, capped — and until now it never
+   * moved, so a reply longer than the box left you reading its first paragraph
+   * while the rest arrived below the fold. That is the same failure the main
+   * transcript had, and this is the same rule: follow, unless a gesture said to
+   * read something else.
+   *
+   * `useLayoutEffect` rather than an effect, so the scroll lands in the same
+   * frame the text does and there is no visible jump. Keyed on the turns and on
+   * `working`, which together change on every delta.
+   */
+  useLayoutEffect(() => {
+    const el = answer.current
+    if (el === null || !following.current) return
+    el.scrollTop = el.scrollHeight
+  }, [state.turns, state.working])
 
   /*
    * Adopt the boot the click started. Nothing is opened or closed here.
@@ -244,12 +266,23 @@ export function QuickQuestion(props: {
   }, [props.anchor])
 
   /*
-   * Escape closes, and a click anywhere outside does too.
+   * Escape closes, and so does a click outside the card **in its own pane**.
    *
    * Capture phase for the key, so it beats anything the pane behind would do
    * with Escape. `mousedown` rather than `click` for the outside dismiss,
    * because a click that starts inside the card and ends outside it — dragging
    * to select the answer — is not an attempt to leave.
+   *
+   * **Scoped to the pane, not the document.** It used to close on any outside
+   * mousedown, which meant clicking another pane, a tab, or the sidebar threw
+   * away an answer you were part-way through reading — and the click that did it
+   * was usually "let me look at that other thing for a second". Turning away from
+   * a pane is not dismissing what is in it; clicking past the card inside the
+   * pane still is, because there the card is what you are looking at.
+   *
+   * `offsetParent` is the pane, for the reason `place` gives above: the card is
+   * absolutely positioned inside it, and asking the document for `.pane` finds
+   * the wrong one in a split.
    */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -259,7 +292,12 @@ export function QuickQuestion(props: {
       }
     }
     const onDown = (e: MouseEvent): void => {
-      if (card.current !== null && !card.current.contains(e.target as Node)) props.onClose()
+      const el = card.current
+      if (el === null) return
+      const target = e.target as Node
+      if (el.contains(target)) return
+      const pane = el.offsetParent
+      if (pane instanceof HTMLElement && pane.contains(target)) props.onClose()
     }
     document.addEventListener('keydown', onKey, true)
     document.addEventListener('mousedown', onDown)
@@ -473,9 +511,50 @@ export function QuickQuestion(props: {
         a second conversation competing with the one behind it.
       */}
       {started && (
-        <div className="quick-answer">
+        <div
+          className="quick-answer"
+          ref={answer}
+          /*
+           * The same rule the transcript follows, for the same measured reason.
+           *
+           * A card whose answer did not follow left you reading the top of a
+           * reply while the rest arrived below the fold — the failure the main
+           * transcript had and fixed. What counts as "I want to read something
+           * else" is a gesture the app cannot manufacture: a wheel, a trackpad
+           * swipe, a touch drag, a scrolling key. Position is what *resumes*
+           * following, because arriving back at the bottom is unambiguous
+           * however you got there.
+           *
+           * Reading `scroll` alone would not work here either: every streamed
+           * delta grows the region and fires one, so the card would stop
+           * following itself.
+           */
+          onWheel={(e) => {
+            if (e.deltaY < 0) following.current = false
+          }}
+          onTouchMove={() => {
+            const el = answer.current
+            if (el === null) return
+            if (el.scrollHeight - el.scrollTop - el.clientHeight > 24) following.current = false
+          }}
+          onKeyDown={(e) => {
+            if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) following.current = false
+          }}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            if (el.scrollHeight - el.scrollTop - el.clientHeight <= 24) following.current = true
+          }}
+        >
           {state.turns.map((turn) => (
-            <div key={turn.key} className="quick-turn" data-actor={turn.actor}>
+            /*
+              The wrapper takes a direction too, not only the blocks inside it.
+
+              `.quick-turn` carries the border that tells the two voices apart,
+              on its *inline-start* edge — which is only the correct side if the
+              element knows which way its own text runs. Without this an Arabic
+              turn kept its rule on the left, against the text's own margin.
+            */
+            <div key={turn.key} className="quick-turn" data-actor={turn.actor} dir="auto">
               <MarkdownView source={turn.text} />
             </div>
           ))}

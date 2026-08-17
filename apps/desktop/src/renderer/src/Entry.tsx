@@ -207,7 +207,9 @@ const SummaryCard = memo(function SummaryCard({
       <p className="summary-head">{t('summaryCard.heading')}</p>
       <ul className="summary-list">
         {items.map((item, i) => (
-          <li key={i}>{item}</li>
+          <li key={i} dir="auto">
+            {item}
+          </li>
         ))}
       </ul>
     </div>
@@ -555,7 +557,12 @@ export const Entry = memo(function Entry({
             {open ? t('conversation.hideThinking') : t('conversation.showThinking')}
           </button>
         </EntryHead>
-        {open && <div className="reasoning-body">{message.text}</div>}
+        {/* Plain text, so it needs the direction `MarkdownView` gives its blocks. */}
+        {open && (
+          <div className="reasoning-body" dir="auto">
+            {message.text}
+          </div>
+        )}
       </article>
     )
   }

@@ -56,8 +56,30 @@ const MemoBlock = memo(function MemoBlock({ source }: { source: string }): React
 function BlockView({ block }: { block: Block }): React.JSX.Element {
   switch (block.kind) {
     case 'paragraph':
+      /*
+       * `dir="auto"` on every block that holds prose, and it is the markup that
+       * has to carry it rather than the stylesheet.
+       *
+       * An agent answering in Arabic produces paragraphs whose base direction is
+       * right-to-left, and without this they were laid out left-to-right: the
+       * sentence read correctly but its full stop sat on the wrong end, a line
+       * beginning with `useMemo(` dragged the whole paragraph the wrong way, and
+       * a list's bullets stayed on the left of right-to-left items.
+       *
+       * `auto` takes the direction from the block's own first strong character,
+       * which is right for Arabic, right for English, and right for a language
+       * nobody thought of — there is no locale to consult, because the language
+       * is free text the user typed. Per block, so one English identifier at the
+       * top of an Arabic answer cannot decide the direction of everything under
+       * it.
+       *
+       * The attribute rather than `unicode-bidi: plaintext` alone: that sets the
+       * base direction for inline layout but leaves `direction` untouched, so
+       * markers, alignment and anything nested keep pointing the old way. This
+       * is the one that moves the bullet.
+       */
       return (
-        <p className="md-p">
+        <p className="md-p" dir="auto">
           <InlineRun content={block.content} />
         </p>
       )
@@ -65,7 +87,7 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
     case 'heading': {
       const Tag = (['h3', 'h4', 'h5'] as const)[block.level - 1] ?? 'h5'
       return (
-        <Tag className="md-h">
+        <Tag className="md-h" dir="auto">
           <InlineRun content={block.content} />
         </Tag>
       )
@@ -73,7 +95,15 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
 
     case 'code':
       return (
-        <pre className="md-code">
+        /*
+         * Code never flips, whatever the prose around it does.
+         *
+         * `dir="ltr"` explicitly rather than by inheritance: a fenced block
+         * inside a right-to-left answer would otherwise take that direction and
+         * move its punctuation — `);` to the left of the line, a leading `-` in
+         * a diff to the right — which is code that no longer says what it says.
+         */
+        <pre className="md-code" dir="ltr">
           {block.language !== null && <span className="md-lang">{block.language}</span>}
           <code>
             <CodeRun code={block.text} language={block.language} />
@@ -83,7 +113,7 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
 
     case 'list': {
       const items = block.items.map((item, i) => (
-        <li key={i} className={item.checked === null ? undefined : 'md-task'}>
+        <li key={i} className={item.checked === null ? undefined : 'md-task'} dir="auto">
           {item.checked !== null && (
             /*
              * Disabled rather than interactive: this is a report of what an agent
@@ -110,7 +140,7 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
 
     case 'quote':
       return (
-        <blockquote className="md-quote">
+        <blockquote className="md-quote" dir="auto">
           {block.blocks.map((child, i) => (
             <BlockView key={i} block={child} />
           ))}
@@ -130,7 +160,7 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
             <thead>
               <tr>
                 {block.head.map((cell, i) => (
-                  <th key={i} style={alignStyle(block.align[i])}>
+                  <th key={i} dir="auto" style={alignStyle(block.align[i])}>
                     <InlineRun content={cell} />
                   </th>
                 ))}
@@ -140,7 +170,7 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
               {block.rows.map((row, r) => (
                 <tr key={r}>
                   {row.map((cell, c) => (
-                    <td key={c} style={alignStyle(block.align[c])}>
+                    <td key={c} dir="auto" style={alignStyle(block.align[c])}>
                       <InlineRun content={cell} />
                     </td>
                   ))}

@@ -92,6 +92,29 @@ export interface SessionCarry {
   readonly following: boolean
   readonly scrollTop: number
   readonly ideIncluded: boolean
+  /**
+   * An aside card that was open when the pane went away.
+   *
+   * Only the active tab of each pane is mounted, so looking at another session
+   * unmounts this one — and a card that lived in local state went with it,
+   * taking an answer you were part-way through reading. The fork itself never
+   * needed to end: it lives in main, and main already closes a conversation's
+   * asides when the conversation ends.
+   *
+   * `undefined` is the ordinary case. The promises inside survive because
+   * nothing re-runs them; the card adopts what they already resolved.
+   */
+  readonly card?: OpenCard | undefined
+}
+
+/** The open aside card, as `Session` holds it and as a carry keeps it. */
+export interface OpenCard {
+  readonly text: string
+  readonly anchor: PaneAnchor
+  readonly source: SourceEntry
+  readonly purpose: AsidePurpose
+  readonly opening: Promise<string>
+  readonly language: Promise<string>
 }
 
 /**
@@ -236,17 +259,7 @@ export function Session(props: {
    * selection replaces it, and either would otherwise re-point a question that
    * has already been asked.
    */
-  const [askingAbout, setAskingAbout] = useState<{
-    text: string
-    /** Pane space: the card floats over the pane and does not scroll with it. */
-    anchor: PaneAnchor
-    source: SourceEntry
-    purpose: AsidePurpose
-    /** Started by the click, because a mount effect runs twice and can send twice. */
-    opening: Promise<string>
-    /** Whatever main decided, so the card cannot name a stale language. */
-    language: Promise<string>
-  } | null>(null)
+  const [askingAbout, setAskingAbout] = useState<OpenCard | null>(props.carry?.card ?? null)
   const explainLanguage = props.explainLanguage
   /* The cast, the folder, the profile, Restart and End all live on the
      session's card in the sidenav now, along with the state each of them needs
@@ -931,14 +944,21 @@ export function Session(props: {
    * becoming the active one. The fork outlives the component unless something
    * says otherwise.
    */
-  const openCardRef = useRef<{ opening: Promise<string> } | null>(null)
+  const openCardRef = useRef<OpenCard | null>(null)
   openCardRef.current = askingAbout
-  useEffect(
-    () => () => {
-      closeCard(openCardRef.current)
-    },
-    [closeCard]
-  )
+  /*
+   * **Unmounting no longer closes the fork**, and that is the change.
+   *
+   * It used to, on the reasoning that a pane can go away with a card open and
+   * the fork outlives the component. True, but it made the commonest reason a
+   * pane goes away — looking at another session for a moment — destroy an answer
+   * mid-read. The card rides in `SessionCarry` now and comes back with the tab.
+   *
+   * Nothing leaks. Main ends a conversation's asides when the conversation ends
+   * (`closeConversation` drops every aside whose `parentId` matches), which is
+   * the case this cleanup was standing in for, and it covers ending a session
+   * and restarting one — the two moments `App` also drops the carry.
+   */
 
   /** Puts the passage in the draft and leaves the caret under it, ready for the question. */
   const quoteSelection = useCallback(() => {
@@ -1001,7 +1021,11 @@ export function Session(props: {
 
   useEffect(
     () => () => {
-      props.onCarry(conversationId, { ...latest.current, ...box.current })
+      props.onCarry(conversationId, {
+        ...latest.current,
+        ...box.current,
+        ...(openCardRef.current === null ? {} : { card: openCardRef.current }),
+      })
     },
     [conversationId, props.onCarry]
   )

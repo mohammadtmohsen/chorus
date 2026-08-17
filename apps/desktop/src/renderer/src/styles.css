@@ -963,8 +963,13 @@ body {
    * card takes the moment an answer starts. Written twice they could drift, and
    * a card whose `height` exceeded its `max-height` would silently be the
    * smaller of the two with nothing saying which won.
+   *
+   * 560 rather than 440 since 2026-08-17. An explanation is about a hundred
+   * words and a follow-up is another, so the card was scrolling within two
+   * exchanges — and the second half of the `calc` still keeps it inside the pane
+   * on a short window, which is the case the cap exists for.
    */
-  --quick-max: min(440px, calc(100% - 16px));
+  --quick-max: min(560px, calc(100% - 16px));
   max-height: var(--quick-max);
   display: flex;
   flex-direction: column;
@@ -1089,22 +1094,59 @@ body {
  * identifier and continues in Arabic would otherwise take its direction from the
  * wrong word.
  */
-.quick-answer .md-p,
-.quick-answer .md-h,
-.quick-answer li {
-  unicode-bidi: plaintext;
+/*
+ * Scoped to the card when this was written, and that was the bug: the same
+ * answer promoted into the main transcript, or an agent simply replying in
+ * Arabic, had none of it. Direction is a property of the text, so it belongs
+ * everywhere prose is drawn.
+ *
+ * `dir="auto"` in `MarkdownView` now does the deciding — it moves the element's
+ * direction, which is what puts a bullet on the right of a right-to-left item.
+ * `text-align: start` is what makes the paragraph sit against the correct
+ * margin once it has, and it is here rather than in the markup because it is a
+ * presentation choice rather than a fact about the text.
+ */
+.md-p,
+.md-h,
+.md-list li,
+.md-quote,
+.md-table th,
+.md-table td,
+.reasoning-body,
+.summary-list li {
   text-align: start;
 }
 
 /*
- * Identifiers stay a single left-to-right run inside right-to-left prose. This
- * is the case the feature creates on purpose by keeping `DeltaBuffer` and
- * `better-sqlite3` untranslated — without isolation they are reordered around
- * the Arabic around them and read as gibberish.
+ * Identifiers stay a single left-to-right run inside right-to-left prose.
+ *
+ * This is the case the feature creates on purpose by keeping `DeltaBuffer`,
+ * `better-sqlite3` and now every technical term untranslated — without
+ * isolation they are reordered against the Arabic around them and read as
+ * gibberish. Unscoped for the same reason as the block above: a reply in the
+ * main transcript has exactly the same mixture.
+ *
+ * A link too: a URL is a left-to-right run and its slashes end up in the wrong
+ * places without this.
  */
-.quick-answer .md-inline-code,
-.quick-answer code {
+.md-inline-code,
+.md-p code,
+.md-h code,
+.md-list code,
+.md-quote code,
+.md-table code,
+.md-p a,
+.md-list a {
   unicode-bidi: isolate;
+}
+
+/*
+ * A fenced block is left-to-right whatever surrounds it. `MarkdownView` sets
+ * `dir="ltr"` on the element; this is what stops an inherited `text-align: right`
+ * from a right-to-left ancestor moving every line to the far side of the block.
+ */
+.md-code {
+  text-align: left;
 }
 
 /* The passage is the agent's original, and takes its own direction too. */
@@ -2948,9 +2990,17 @@ body {
 
 /* ------------------------------------------------------------------- dock */
 
+/*
+ * No rule above the composer.
+ *
+ * The box already separates itself: it sits on `--raised` against the
+ * transcript's own ground, and it has a border of its own. The line on top of
+ * that was a third edge in the same few pixels — measured against the
+ * composition it read as the pane being cut in half rather than as one surface
+ * ending and another beginning.
+ */
 .dock {
   padding: calc(var(--step) * 3) 9px;
-  border-top: 1px solid var(--line);
   background: var(--raised);
   display: flex;
   /*

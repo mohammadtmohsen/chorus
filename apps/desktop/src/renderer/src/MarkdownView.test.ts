@@ -20,8 +20,10 @@ describe('MarkdownView', () => {
   it('renders a pipe table as a real table', () => {
     const html = render('| Check | Before | After |\n|---|---|---|\n| /login | none | HTTP 200 |')
     expect(html).toContain('<table class="md-table">')
-    expect(html).toContain('<th><span>Check</span></th>')
-    expect(html).toContain('<td><span>HTTP 200</span></td>')
+    // `dir="auto"` on every cell: a table can hold a right-to-left phrase in one
+    // column and an English identifier in the next.
+    expect(html).toContain('<th dir="auto"><span>Check</span></th>')
+    expect(html).toContain('<td dir="auto"><span>HTTP 200</span></td>')
     // The delimiter row was the visible symptom of the old behaviour.
     expect(html).not.toContain('---')
     expect(html).not.toContain('|')
@@ -35,12 +37,36 @@ describe('MarkdownView', () => {
 
   it('renders nested and task lists', () => {
     expect(render('- outer\n  - inner')).toBe(
-      '<ul class="md-list"><li><span>outer</span>' +
-        '<ul class="md-list"><li><span>inner</span></li></ul></li></ul>'
+      '<ul class="md-list"><li dir="auto"><span>outer</span>' +
+        '<ul class="md-list"><li dir="auto"><span>inner</span></li></ul></li></ul>'
     )
     const tasks = render('- [x] done\n- [ ] todo')
     expect(tasks).toContain('checked=""')
     expect(tasks).toContain('disabled=""')
+  })
+
+  /**
+   * Direction is a property of the text, and the markup is what carries it.
+   *
+   * An agent answering in Arabic produces right-to-left paragraphs; laid out
+   * left-to-right the sentence reads but its punctuation sits on the wrong end.
+   * `auto` takes the direction from each block's own first strong character,
+   * which is the only rule that works when the language is free text somebody
+   * typed into a settings field.
+   */
+  it('lets every block of prose decide its own direction', () => {
+    expect(render('مرحبا')).toContain('<p class="md-p" dir="auto">')
+    expect(render('> quoted')).toContain('<blockquote class="md-quote" dir="auto">')
+  })
+
+  /*
+   * The exception, and it is not a preference. A fenced block that inherited a
+   * right-to-left direction moves its own punctuation — `);` to the left of the
+   * line, a diff's leading `-` to the right — which is code that no longer says
+   * what it says.
+   */
+  it('pins a fenced block left-to-right, whatever surrounds it', () => {
+    expect(render('```ts\nconst a = 1\n```')).toContain('<pre class="md-code" dir="ltr">')
   })
 
   it('keeps an ordered list on its own numbering', () => {
@@ -56,7 +82,7 @@ describe('MarkdownView', () => {
     expect(render('[see `x`](https://example.com)')).toContain(
       '<code class="md-inline-code">x</code></a>'
     )
-    expect(render('# **bold** title')).toContain('<h3 class="md-h"><strong>')
+    expect(render('# **bold** title')).toContain('<h3 class="md-h" dir="auto"><strong>')
   })
 
   it('renders an image as a link, never an img element', () => {

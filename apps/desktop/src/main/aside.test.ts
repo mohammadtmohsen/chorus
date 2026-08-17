@@ -759,6 +759,66 @@ describe('the fork boots before there is a question', () => {
     }
     expect(sent[1]?.text).toContain('and how far behind?')
   })
+
+  /**
+   * The card keeps answering in the language it was opened in.
+   *
+   * Reported from the running app: Explain answered in Arabic, and the moment a
+   * second question was typed the answer came back in English. Only the opening
+   * prompt named a language, and a model answers in the language it was asked
+   * in — so the feature worked exactly once for the person it exists for.
+   */
+  it('keeps answering an explanation in its language, however the question is typed', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: 'Arabic' })
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'explanation',
+    })
+
+    // Typed in English, which is how a developer types and says nothing about
+    // what they want to read.
+    await runtime.askAside(asideId, 'so what happens if I restart?')
+
+    const sent = adapter.forked[0]?.session.sent ?? []
+    const followUp = sent[1]?.text ?? ''
+    expect(followUp).toContain('Answer in Arabic')
+    expect(followUp).toContain('whatever language the')
+    // The identifiers stay put, as they do in the opening prompt.
+    expect(followUp).toContain('Do not translate or transliterate them')
+  })
+
+  it('carries the language of a translation card too', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: 'Arabic' })
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'translation',
+    })
+    await runtime.askAside(asideId, 'and the second sentence?')
+    expect(adapter.forked[0]?.session.sent[1]?.text).toContain('Answer in Arabic')
+  })
+
+  /*
+   * An ordinary "Ask about this" names no language, and inventing one would
+   * answer a plain question in a language nobody chose.
+   */
+  it('says nothing about language in a card that was never given one', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: 'Arabic' })
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'question',
+    })
+    await runtime.askAside(asideId, 'what does that mean?')
+    expect(adapter.forked[0]?.session.sent.at(-1)?.text).not.toContain('Answer in Arabic')
+  })
 })
 
 describe('an aside may explain, not act', () => {
@@ -886,6 +946,23 @@ describe('explainPrompt', () => {
     expect(explainPrompt('one\n\ntwo', 'Arabic')).toContain('> one\n>\n> two')
   })
 
+  /**
+   * The vocabulary stays in English, not only the names.
+   *
+   * Identifiers and paths were already protected — a translated name points at
+   * nothing. The words *around* them were not, so `event`, `status` and
+   * `variable` came back rendered into the target language, and the reader had
+   * to translate them back before they could search for them or match them
+   * against the code. Reported from the running app.
+   */
+  it('keeps the technical vocabulary in English, not just the identifiers', () => {
+    expect(prompt).toContain('Keep the technical vocabulary in English')
+    for (const term of ['event, status, variable', 'endpoint']) {
+      expect(prompt).toContain(term)
+    }
+    expect(prompt).toContain('Keep identifiers, file names and paths')
+  })
+
   it('says the subject is the whole reply, and holds the length against it', () => {
     /*
      * Explain is asked from a button under a reply now rather than from a drag,
@@ -896,6 +973,32 @@ describe('explainPrompt', () => {
     expect(prompt).toContain('your reply below')
     expect(prompt).toContain('However long the reply is')
     expect(prompt).not.toContain('the passage below')
+  })
+})
+
+/**
+ * The same rule, in the other two places prose comes back in another language.
+ * One constant feeds all three; these are what would notice if a copy appeared.
+ */
+describe('the terms rule reaches every prompt that translates', () => {
+  it('is in a translation', () => {
+    const prompt = translatePrompt('The projection lags.', 'Arabic')
+    expect(prompt).toContain('Keep the technical vocabulary in English')
+  })
+
+  it('is in a follow-up inside a card that has a language', async () => {
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: 'Arabic' })
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      purpose: 'explanation',
+    })
+    await runtime.askAside(asideId, 'and the status field?')
+    expect(adapter.forked[0]?.session.sent[1]?.text).toContain(
+      'Keep the technical vocabulary in English'
+    )
   })
 })
 

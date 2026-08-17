@@ -177,10 +177,67 @@ const JOINING_CATCHUP_CHARS = 60_000
  * aside must not have, and which no permission rule would catch because reading
  * files is allowed.
  */
-function asideQuestion(excerpt: string, question: string): string {
+/**
+ * What stays in English when the answer is in another language.
+ *
+ * **One copy, because three prompts need it** — an explanation, a translation,
+ * and every follow-up inside either card. Written out three times they drift,
+ * and the drift is invisible: two of the three keep working and the third
+ * quietly renders `commit` as a word the reader then has to translate back.
+ *
+ * Two rules, and the second is the one that was missing. Identifiers, paths and
+ * file names were already protected — they are names, and a translated name
+ * points at nothing. But the **vocabulary** was not: `event`, `status`,
+ * `variable`, `props`, `endpoint`, `migration`. A translator renders those,
+ * correctly, into ordinary words of the target language — and the result is
+ * prose a developer cannot search, cannot paste into a terminal, and cannot
+ * match against the code in front of them. Reported from the running app.
+ *
+ * The examples are deliberate rather than exhaustive: a list that tried to be
+ * complete would be wrong tomorrow, and a model given six of the right shape
+ * generalises to the seventh.
+ */
+const KEEP_IN_ENGLISH = [
+  'Keep identifiers, file names and paths exactly as written, in their own',
+  'script. Do not translate or transliterate them.',
+  '',
+  'Keep the technical vocabulary in English too, inside otherwise translated',
+  'sentences — event, status, variable, commit, branch, props, hook, endpoint,',
+  'cache, migration, and the names of tools, libraries, formats and APIs. A term',
+  'translated is one the reader has to translate back before they can search for',
+  'it, or match it against the code in front of them.',
+]
+
+function asideQuestion(excerpt: string, question: string, language = ''): string {
   return [
     'You are being asked a short side question about something you said.',
     'Answer it and nothing else: do not continue the work, do not change files.',
+    /*
+     * The language the card was opened in, repeated on every follow-up.
+     *
+     * A card opened by Explain or Translate answered in the chosen language and
+     * then switched to English the moment a second question was typed — because
+     * only the *first* prompt named a language, and a model answers in the
+     * language it was asked in. That is the reported bug, and it makes the
+     * feature useless for the person it exists for: someone who reads more
+     * comfortably in their own language does not stop after one answer.
+     *
+     * **The question's own language is deliberately not the answer's.** Typing
+     * in English is how a developer types; it says nothing about which language
+     * they want to read. The setting says that, and it is the setting that wins
+     * until the card is closed.
+     *
+     * Empty for an ordinary "Ask about this" — that card names no language, and
+     * inventing one would answer a plain question in a language nobody chose.
+     */
+    ...(language === ''
+      ? []
+      : [
+          `Answer in ${language}. Every sentence of it, whatever language the`,
+          `question is written in — a question typed in English is still to be`,
+          `answered in ${language}.`,
+          ...KEEP_IN_ENGLISH,
+        ]),
     '',
     excerpt
       .split('\n')
@@ -261,8 +318,7 @@ export function explainPrompt(excerpt: string, language: string): string {
     'They are a developer working on this project who has not met this particular',
     'thing before — not a beginner. Do not start from first principles.',
     '',
-    'Keep identifiers, file names and paths exactly as written, in their own',
-    'script. Do not translate or transliterate them.',
+    ...KEEP_IN_ENGLISH,
     '',
     `Write your explanation in ${language}. Every sentence of it — not bilingually,`,
     `and not only the first line. If you find yourself back in the reply's own`,
@@ -335,7 +391,7 @@ export function translatePrompt(excerpt: string, language: string): string {
     '- translate natural-language comments and docstrings;',
     '- change nothing else, so the code still runs.',
     '',
-    'Identifiers, file names and paths in ordinary prose keep their own script too.',
+    ...KEEP_IN_ENGLISH,
     '',
     'No preamble, no "here is the translation", no notes about the choices you',
     'made, no alternatives in brackets.',
@@ -1026,7 +1082,20 @@ export class ChorusRuntime {
    */
   private readonly asides = new Map<
     string,
-    { service: ConversationService; parentId: string; excerpt: string; agentId: AgentId }
+    {
+      service: ConversationService
+      parentId: string
+      excerpt: string
+      agentId: AgentId
+      /**
+       * The language this card answers in, or `''` when it names none.
+       *
+       * Held for the follow-ups: only the opening prompt used to name it, so a
+       * second question in the same card came back in English however the card
+       * was opened.
+       */
+      language: string
+    }
   >()
   /**
    * The terminal panels' shells.
@@ -1711,7 +1780,20 @@ export class ChorusRuntime {
       })
       await service.attach(forked, opts, await adapter.health())
 
-      this.asides.set(asideId, { service, parentId: request.conversationId, excerpt, agentId })
+      /*
+       * `language` is held for the follow-ups, not for the first turn.
+       *
+       * The opening prompt names it and then the card stays open for as long as
+       * the conversation in it lasts; without this, question two came back in
+       * English. Empty for a question or a recap, which name no language.
+       */
+      this.asides.set(asideId, {
+        service,
+        parentId: request.conversationId,
+        excerpt,
+        agentId,
+        language,
+      })
 
       try {
         if (purpose === 'explanation') {
@@ -1758,7 +1840,10 @@ export class ChorusRuntime {
       // continuing it does not, which is why a reopened aside is view-only.
       throw new Error('That aside has ended — ask again to start a new one')
     }
-    await aside.service.sendUserMessage(question, asideQuestion(aside.excerpt, question))
+    await aside.service.sendUserMessage(
+      question,
+      asideQuestion(aside.excerpt, question, aside.language)
+    )
   }
 
   /**

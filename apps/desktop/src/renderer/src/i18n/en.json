@@ -150,7 +150,7 @@
     "explainHeading": "Your language",
     "explainLanguage": "Answer in",
     "explainPlaceholder": "Arabic",
-    "explainNote": "Every finished reply gets an Explain simply button, which asks the agent to say the whole answer again plainly in this language. Select part of a reply and it can also translate that passage into it. Write the language however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. An explanation follows what you write; a translation uses the standard written form of the language. Leave it empty and neither is offered. This does not change Chorus's own language.",
+    "explainNote": "Every finished reply gets an Explain simply button, which asks the agent to say the whole answer again plainly in this language. Select part of a reply and it can also translate that passage into it. Write the language however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. An explanation follows what you write; a translation uses the standard written form of the language. Technical terms stay in English either way — event, status, props, a file name — so what you read still matches the code. Leave it empty and neither is offered. This does not change Chorus's own language.",
     "catalogue": {
       "unqueried": "Its models are read from a running session — start one to choose.",
       "loading": "Reading its models…",
