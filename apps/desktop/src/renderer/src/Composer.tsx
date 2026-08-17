@@ -1638,6 +1638,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
               <button
                 type="submit"
                 className="send"
+                /*
+                 * Marked while a turn runs, because the two states did the same
+                 * thing and looked identical.
+                 *
+                 * Sending mid-turn steers — the agent keeps working and takes
+                 * the message in — and that stays, deliberately; `specs.mjs`
+                 * pins it. What was wrong is that the button then read exactly
+                 * like the idle one, so a reply still arriving looked finished.
+                 * Reported as "the send button becomes ready while the response
+                 * is still coming", alongside a `busy` that was false for every
+                 * turn after the first and made it literally true.
+                 */
+                data-steering={props.busy ? 'true' : undefined}
                 aria-label={props.busy ? t('conversation.steer') : t('conversation.send')}
                 /* Titled in both states. It carried one only while an agent was
                    working, so the app's primary action was the one button with

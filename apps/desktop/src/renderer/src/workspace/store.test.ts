@@ -24,6 +24,7 @@ const PULSE: SessionPulse = {
   costUsd: null,
   contextByActor: {},
   tasksByActor: {},
+  activityByActor: {},
   failed: false,
 }
 

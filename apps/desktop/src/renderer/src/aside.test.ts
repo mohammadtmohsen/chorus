@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   asideHeading,
   asideState,
+  explanationPromotion,
   fitCard,
   opensWithATurn,
   promotion,
@@ -186,6 +187,33 @@ describe('promotion', () => {
   it('quotes a multi-line answer as one block', () => {
     const multi = promotion('codex', 'x', 'one\n\ntwo')
     expect(multi).toContain('> one\n>\n> two')
+  })
+})
+
+/**
+ * Explain is asked about a whole reply now, so the excerpt is the agent's own
+ * last message. `promotion` would quote it back in full — a wall of text the
+ * agent already has in context and the user has to delete.
+ */
+describe('explanationPromotion', () => {
+  const staged = explanationPromotion('claude', 'It lags by one turn, then catches up.')
+
+  it('mentions the author, because routing is by mention', () => {
+    expect(staged.startsWith('@claude')).toBe(true)
+  })
+
+  it('carries the explanation', () => {
+    expect(staged).toContain('> It lags by one turn, then catches up.')
+  })
+
+  it('quotes no passage: the reply it is about is the message above', () => {
+    const long = explanationPromotion('claude', 'short answer')
+    expect(long.match(/^> /gm)).toHaveLength(1)
+  })
+
+  it('says the agent did not write it, so it is not read as its own words', () => {
+    expect(staged).toContain('not in')
+    expect(staged).toContain('you did not write it')
   })
 })
 

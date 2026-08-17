@@ -64,6 +64,19 @@ export function App(): React.JSX.Element {
     cwd: '',
     profileId: 'read-only',
   })
+  /**
+   * The language explanations come back in, or empty when none is set.
+   *
+   * Held here rather than in each pane because it decides whether a button
+   * exists under every reply, so a pane cannot wait for a selection to learn it.
+   * Read on mount and again whenever the settings sheet closes — the sheet is
+   * the only place it can change from inside the app, and `readSettings` is a
+   * file read, so re-reading on a dialog close costs nothing worth measuring.
+   *
+   * Kept out of `defaults`, which is what a *new session* opens with. This is
+   * about every session already open.
+   */
+  const [explainLanguage, setExplainLanguage] = useState('')
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const sessionsRef = useRef<SessionInfo[]>([])
   const carries = useRef(new Map<string, SessionCarry>())
@@ -233,6 +246,19 @@ export function App(): React.JSX.Element {
     []
   )
 
+  /*
+   * What each agent says it is doing, on its own channel for the same reason
+   * again — and this one is the reason the family exists. It arrives many times
+   * a turn, which is exactly what must never be written to the log.
+   */
+  useEffect(
+    () =>
+      window.chorus.onActivity((push) => {
+        useWorkspaceStore.getState().ingestActivity(push)
+      }),
+    []
+  )
+
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
     /*
@@ -318,8 +344,9 @@ export function App(): React.JSX.Element {
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
     window.chorus
       .readSettings()
-      .then(({ agents, cwd, profileId }) => {
+      .then(({ agents, cwd, profileId, explainLanguage: language }) => {
         setDefaults({ agents, cwd, profileId })
+        setExplainLanguage(language)
       })
       .catch(fail(setError))
 
@@ -399,6 +426,26 @@ export function App(): React.JSX.Element {
   const remember = useCallback((patch: Partial<Defaults>) => {
     setDefaults((current) => ({ ...current, ...patch }))
     window.chorus.writeSettings(patch).catch(fail(setError))
+  }, [])
+
+  /**
+   * Closing the settings sheet, and re-reading the one setting the panes draw.
+   *
+   * The sheet owns the language field and persists it on every keystroke, so the
+   * file is authoritative and this component's copy is not. Re-read here rather
+   * than lifted into a prop the sheet writes back: the sheet is `Settings`'s to
+   * own, and the alternative — a push channel — is what `SCALE_PUSH_CHANNEL`
+   * exists for and is worth its five files only for something that changes
+   * behind the user's back. This does not.
+   */
+  const closeSettings = useCallback(() => {
+    setShowingSettings(false)
+    window.chorus
+      .readSettings()
+      .then(({ explainLanguage: language }) => {
+        setExplainLanguage(language)
+      })
+      .catch(() => undefined)
   }, [])
 
   useEffect(() => {
@@ -780,11 +827,9 @@ export function App(): React.JSX.Element {
       {showingSettings && (
         <Settings
           probes={probes}
-          onClose={() => {
-            setShowingSettings(false)
-          }}
+          onClose={closeSettings}
           onOpenLogs={() => {
-            setShowingSettings(false)
+            closeSettings()
             setShowingLogs(true)
           }}
         />
@@ -890,6 +935,10 @@ export function App(): React.JSX.Element {
             carry={carries.current.get(session.conversationId)}
             onCarry={keepCarry}
             onPromoteAside={promoteAside}
+            /* Read once here rather than per pane: it decides whether Explain
+               exists under every reply, and four panes asking the same question
+               of the same file is four answers that must agree. */
+            explainLanguage={explainLanguage}
             /* The same two handlers the session menu is given, so a button in
                the composer and a row in the menu do one thing, not two. */
             onRestart={() => {

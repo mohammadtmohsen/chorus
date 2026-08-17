@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
+  ACTIVITY_PUSH_CHANNEL,
+  ActivityPush,
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
   IdeContextPush,
@@ -95,6 +97,7 @@ const api: ChorusApi = {
   ideExtensionStatus: () => invoke('ide:extensionStatus')({}),
   ideInstallExtension: () => invoke('ide:installExtension')({}),
   ideOpenProject: invoke('ide:openProject'),
+  ideOpenFile: invoke('ide:openFile'),
   prepareHandoff: invoke('handoff:prepare'),
   sendHandoff: invoke('handoff:send'),
   openAside: invoke('aside:open'),
@@ -156,6 +159,16 @@ const api: ChorusApi = {
     ipcRenderer.on(TASKS_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(TASKS_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onActivity: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = ActivityPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(ACTIVITY_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(ACTIVITY_PUSH_CHANNEL, wrapped)
     }
   },
   onTerminalOutput: (listener) => {

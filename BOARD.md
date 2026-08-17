@@ -30,6 +30,32 @@ Nothing here can be finished by me alone.
 
 ## Open
 
+### C-041 · A selection is checked against a projection that cannot see the chrome
+
+`openAside` refuses an excerpt it cannot find in the reply the log holds, and it
+is right to: a caller that could name any event and any text could put words in
+an agent's mouth. But the excerpt comes from `selection.toString()`, and the DOM
+inside `.entry` contains more than what was said — a name, a time, a language
+label, the buttons, the summary card's own heading. Each one is a way for a
+genuine selection to be refused with _That passage is not part of that reply_.
+
+`styles.css` fixes these one at a time with `user-select: none`, which is now
+six selectors long: `.speaker`, `.entry-action`, `.md-lang` when this was first
+hit, and `.entry-time` and `.summary-head` added on 2026-08-17 for the same
+class of failure. **The list is the problem.** Nothing makes a seventh piece of
+chrome opt in, so the next one is found by a user, and the failure it produces
+says nothing about what went wrong.
+
+Explain no longer goes through this path at all — it asks about the whole reply
+from a button — so what is left is Translate and Ask about this, on a drag that
+crosses chrome.
+
+**Done when:** either the renderer sends what it selected in a form that cannot
+include chrome — the source offsets it knows the range covers, rather than the
+rendered text — or `.said` is the only selectable region of an entry by
+construction, with a test that fails when a new element inside `.entry` is
+selectable and not projected.
+
 ### C-040 · A failing turbo task on Windows CI reports no cause
 
 `Typecheck, lint, test (Windows)` went red on the 0.16.0 merge. The whole of

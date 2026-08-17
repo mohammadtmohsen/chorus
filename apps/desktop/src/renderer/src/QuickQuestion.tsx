@@ -4,6 +4,7 @@ import {
   asideHeading,
   asideState,
   EMPTY_ASIDE,
+  explanationPromotion,
   fitCard,
   opensWithATurn,
   promotion,
@@ -441,12 +442,18 @@ export function QuickQuestion(props: {
       {/*
         The passage, so the card says what it is about without the transcript.
 
-        A recap is the exception, and deliberately: its excerpt is the whole last
-        reply, carried only so main can authenticate the source. Showing it would
-        put the long scattered reply back on screen directly above the board
-        written to replace it.
+        Two purposes are the exception and for one reason: their excerpt is a
+        whole reply, carried so main can authenticate the source rather than to
+        be read. A recap's is the reply being escaped, and showing it would put
+        the long scattered answer back on screen directly above the board written
+        to replace it. An explanation's is the reply the card is anchored *under*
+        — the words are inches away, and repeating them would push the
+        explanation, which is the only new thing here, off the bottom.
+
+        Translation and a typed question still show it, because for those the
+        excerpt really is a passage somebody chose.
       */}
-      {props.purpose !== 'recap' && (
+      {props.purpose !== 'recap' && props.purpose !== 'explanation' && (
         <blockquote className="quick-excerpt">{props.excerpt}</blockquote>
       )}
 
@@ -541,11 +548,13 @@ export function QuickQuestion(props: {
           {t('aside.sendToConversation')}
         </button>
         {/*
-          Quoting is the passage plus the answer, so a recap has nothing to
-          quote: its passage is the reply being escaped and its answer is the
-          board, which the button beside this one already carries.
+          Quoting is the passage plus the answer, so the two purposes whose
+          passage is a whole reply have nothing to quote. A recap's is the reply
+          being escaped; an explanation's is the reply this card is anchored
+          under. In both cases the button beside this one already carries the
+          only new thing there is.
         */}
-        {props.purpose !== 'recap' && (
+        {props.purpose !== 'recap' && props.purpose !== 'explanation' && (
           <button
             type="button"
             className="btn"
@@ -568,11 +577,7 @@ export function QuickQuestion(props: {
           className="btn btn--go"
           disabled={!state.answered}
           onClick={() => {
-            props.onStage(
-              props.purpose === 'recap'
-                ? recapPromotion(props.agent, state.answer)
-                : promotion(props.agent, props.excerpt, state.answer)
-            )
+            props.onStage(staged(props.purpose, props.agent, props.excerpt, state.answer))
             props.onClose()
           }}
         >
@@ -614,4 +619,29 @@ export function QuickQuestion(props: {
       </div>
     </div>
   )
+}
+
+/**
+ * What "take this forward" writes into the composer, per purpose.
+ *
+ * Lifted out of the handler because it is now three branches rather than two,
+ * and because the rule behind them is one sentence worth stating once: **quote
+ * the excerpt only when the excerpt is a passage somebody chose.** A recap and
+ * an explanation are both about a whole reply the agent already has in its
+ * context, so quoting it back is noise the user has to delete.
+ *
+ * A switch rather than a ternary chain, for the reason `asideHeading` gives: the
+ * chain it replaced would have read "everything that is not a recap is a
+ * question", which is how a fourth purpose gets the wrong wording silently.
+ */
+function staged(purpose: AsidePurpose, agent: string, excerpt: string, answer: string): string {
+  switch (purpose) {
+    case 'recap':
+      return recapPromotion(agent, answer)
+    case 'explanation':
+      return explanationPromotion(agent, answer)
+    case 'question':
+    case 'translation':
+      return promotion(agent, excerpt, answer)
+  }
 }

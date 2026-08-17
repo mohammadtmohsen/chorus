@@ -1,5 +1,6 @@
 import {
   redactAnswers,
+  type AgentActivity,
   type AgentAdapter,
   type AgentEvent,
   type AgentSession,
@@ -54,6 +55,11 @@ export interface ConversationServiceOptions {
   readonly onContextUsage?: (usage: ContextWindow) => void
   /** Told what the agent has left running. Not persisted, for the same reason. */
   readonly onTasks?: (tasks: readonly BackgroundTask[]) => void
+  /**
+   * Told what the agent says it is doing right now. Not persisted, and of the
+   * four this is the one that would hurt most — it arrives many times a turn.
+   */
+  readonly onActivity?: (activity: AgentActivity | null) => void
   /** Told when an approved plan returned the session to ordinary permissions. */
   readonly onPlanExited?: () => void
   /**
@@ -100,6 +106,7 @@ export class ConversationService {
   private readonly onLimits: ((windows: readonly UsageWindow[]) => void) | undefined
   private readonly onContextUsage: ((usage: ContextWindow) => void) | undefined
   private readonly onTasks: ((tasks: readonly BackgroundTask[]) => void) | undefined
+  private readonly onActivity: ((activity: AgentActivity | null) => void) | undefined
   private readonly onPlanExited: (() => void) | undefined
   /**
    * Question sets waiting on the user, kept so an answer can be checked against
@@ -136,6 +143,7 @@ export class ConversationService {
     this.onLimits = options.onLimits
     this.onContextUsage = options.onContextUsage
     this.onTasks = options.onTasks
+    this.onActivity = options.onActivity
     this.onPlanExited = options.onPlanExited
     this.queue = new ApprovalQueue({
       ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
@@ -748,6 +756,16 @@ export class ConversationService {
         this.onTasks?.(event.tasks)
         return
 
+      /*
+       * The fourth of the same kind, and the loudest. `null` is passed on like
+       * an empty task list is: it is the only thing that says the agent stopped
+       * compacting, and a falsy guard here would leave the word standing for
+       * the rest of the turn.
+       */
+      case 'activity.changed':
+        this.onActivity?.(event.activity)
+        return
+
       case 'usage.updated':
         this.lifecycle({
           type: 'usage.updated',
@@ -785,6 +803,10 @@ export class ConversationService {
           name: event.name,
           parentRef: event.parentRef ?? null,
           detail: event.detail ?? null,
+          // Omitted rather than nulled when the call names no file: the schema
+          // has it optional so that logs written before it keep parsing, and a
+          // key that is sometimes absent and sometimes null is two shapes.
+          ...(event.path === undefined ? {} : { path: event.path }),
         })
         return
 

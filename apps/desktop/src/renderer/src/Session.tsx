@@ -16,9 +16,9 @@ import {
   type PaneAnchor,
   type SourceEntry,
 } from './quote.js'
-import type { IdeContextPush, TerminalRefShape } from '../../shared/ipc.js'
+import type { ActivityPush, IdeContextPush, TerminalRefShape } from '../../shared/ipc.js'
 import { TerminalPanel } from './TerminalPanel.js'
-import { useSessionTerminal, useWorkspaceActions } from './workspace/hooks.js'
+import { useSessionActivity, useSessionTerminal, useWorkspaceActions } from './workspace/hooks.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
@@ -131,6 +131,16 @@ export function Session(props: {
    */
   active: boolean
   onActivate: () => void
+  /**
+   * The language an explanation comes back in, or empty when none is set.
+   *
+   * A prop rather than a read of its own, because it now decides whether a
+   * button exists under **every** reply rather than what a selection is offered.
+   * A pane cannot wait for a drag to learn that, and `App` already owns the one
+   * moment the value can change from inside the app — the settings sheet
+   * closing.
+   */
+  explainLanguage: string
 }): React.JSX.Element {
   const { t } = useTranslation()
   const { conversationId, participants, cwd } = props.session
@@ -154,6 +164,14 @@ export function Session(props: {
    * a panel is where you left it after a relaunch.
    */
   const terminal = useSessionTerminal(conversationId)
+  /*
+   * What each agent says it is doing, as a comma-joined `agent:activity` string.
+   *
+   * A string rather than the record so a pane re-renders only when a provider
+   * actually changes its mind — a fresh object would compare unequal on every
+   * push, and this arrives several times a turn.
+   */
+  const activityByAgent = useSessionActivity(conversationId)
   const {
     toggleSessionTerminal,
     setSessionTerminalHeight,
@@ -228,16 +246,7 @@ export function Session(props: {
     /** Whatever main decided, so the card cannot name a stale language. */
     language: Promise<string>
   } | null>(null)
-  /**
-   * The language explanations come back in, or empty when there is none.
-   *
-   * Re-read on every selection rather than held from mount. `App` reads settings
-   * once and keeps only the session defaults, so nothing here would otherwise
-   * learn that the language had just been set — and the sheet where it is set is
-   * a few clicks from the passage where it is used. One IPC call per selection is
-   * cheaper than being wrong.
-   */
-  const [explainLanguage, setExplainLanguage] = useState('')
+  const explainLanguage = props.explainLanguage
   /* The cast, the folder, the profile, Restart and End all live on the
      session's card in the sidenav now, along with the state each of them needs
      while it is mid-flight. */
@@ -451,9 +460,25 @@ export function Session(props: {
     }
   }, [view.busy, makeRoom])
 
-  /** Agents already writing: their words say more than a label would. */
+  /**
+   * Agents already writing: their words say more than a label would.
+   *
+   * **`kind === 'message'` is load-bearing, and leaving it out cost the feature
+   * entirely.** Nothing ever completes a reasoning row — there is no
+   * `agent.reasoning.completed` event, and `transcript.test.ts` pins that on
+   * purpose — so a reasoning row is `streaming` for the rest of the session.
+   * Without this filter the first `Show thinking` Claude emitted put that agent
+   * in here permanently, and the working line was never drawn again however long
+   * the turn ran or whatever `busy` said. Reported as silent stretches where
+   * commands scroll past with nothing saying anyone is working.
+   *
+   * `Entry.tsx` already guards the avatar's pulse the same way and for the same
+   * reason; this is the copy that was missing.
+   */
   const streaming = new Set(
-    view.messages.filter((m) => m.status === 'streaming').map((m) => m.actor)
+    view.messages
+      .filter((m) => m.kind === 'message' && m.status === 'streaming')
+      .map((m) => m.actor)
   )
 
   /*
@@ -542,14 +567,6 @@ export function Session(props: {
       sourceEntryAt(range.endContainer),
       text
     )
-    if (source !== null) {
-      window.chorus
-        .readSettings()
-        .then((settings) => {
-          setExplainLanguage(settings.explainLanguage)
-        })
-        .catch(() => undefined)
-    }
     setSelected(anchor === null ? null : { text, source, anchor })
   }, [])
 
@@ -743,6 +760,92 @@ export function Session(props: {
       // The card replaces the quote offer, as `openCard` does. Clicking the
       // button clears the DOM selection but not this, and the offer would
       // otherwise float over the card it was replaced by.
+      setSelected(null)
+      window.getSelection()?.removeAllRanges()
+    },
+    [conversationId]
+  )
+
+  /**
+   * Opens a file a transcript row names, in VS Code, at this conversation.
+   *
+   * **The path is sent as the row holds it and resolved in main.** It comes off
+   * agent output, and the renderer is the least trustworthy thing in the process
+   * tree — so what crosses is `{conversationId, path}` and main decides, against
+   * that conversation's own directory, whether it may be opened at all. The same
+   * shape `ide:snapshot` uses, for the same reason.
+   *
+   * Failures land in the pane's error line rather than in silence: `code` not
+   * being on `PATH` is the common one, and a row that does nothing when clicked
+   * is indistinguishable from a broken feature.
+   */
+  const openFile = useCallback(
+    (path: string) => {
+      window.chorus
+        .ideOpenFile({ conversationId, path })
+        .then((result) => {
+          if (!result.ok) setError(t(`ide.openError.${result.reason ?? 'unknown'}`))
+        })
+        .catch(fail(setError))
+    },
+    [conversationId, t]
+  )
+
+  /**
+   * Explains a whole reply in the user's own language, from a button under it.
+   *
+   * `openRecap`'s twin down to the anchor, and it is worth saying why it is not
+   * `openCard('explanation')` with a different excerpt: `openCard` starts from
+   * `selected`, and the whole point of this is that there is no selection. The
+   * subject is the reply.
+   *
+   * **That is also the bug fix.** The excerpt main checks is `message.text` —
+   * the prefix of the reply as the reducer holds it — so `containsPassage` is
+   * comparing the log against itself rather than against whatever the DOM
+   * serialized. The failure people met, `That passage is not part of that
+   * reply`, is unreachable on this path however long the answer is.
+   *
+   * `message.text` and not `said`: `trailingSummary` cuts a trailing summary off
+   * into its own card, and what is left is still an exact prefix of what the
+   * agent wrote, which is all the guard asks for.
+   */
+  const openExplain = useCallback(
+    (message: TranscriptMessage, from: DOMRect) => {
+      if (message.actor !== 'codex' && message.actor !== 'claude') return
+      if (message.eventId === '' || message.text === '') return
+
+      const paneEl = pane.current
+      if (paneEl === null) return
+      const paneRect = paneEl.getBoundingClientRect()
+
+      const opened = window.chorus.openAside({
+        conversationId,
+        sourceEventId: message.eventId,
+        excerpt: message.text,
+        purpose: 'explanation',
+      })
+
+      setAskingAbout({
+        text: message.text,
+        anchor: {
+          space: 'pane',
+          centreX: from.left + from.width / 2 - paneRect.left,
+          top: from.top - paneRect.top,
+          height: from.height,
+        },
+        source: {
+          eventId: message.eventId,
+          actor: message.actor,
+          kind: message.kind,
+          status: message.status,
+        },
+        purpose: 'explanation',
+        opening: opened.then((result) => result.asideId),
+        // Main's answer, not this pane's copy of the setting: the card's heading
+        // names the language, and the log is what decides which one was used.
+        language: opened.then((result) => result.language),
+      })
+
       setSelected(null)
       window.getSelection()?.removeAllRanges()
     },
@@ -1102,6 +1205,20 @@ export function Session(props: {
           : undefined
       }
       /*
+       * Absent until a language is set, which is the gate the selection offer
+       * used and the reason is unchanged: an action that cannot say which
+       * language it would answer in is worse than an absent one. `Entry` decides
+       * nothing here — it has no way to know — so this is the whole condition.
+       */
+      onExplain={
+        explainLanguage !== '' && (message.actor === 'codex' || message.actor === 'claude')
+          ? openExplain
+          : undefined
+      }
+      /* Passed for every row: whether a row *has* a file to open is the row's
+         own business, and `Entry` is the only thing that knows. */
+      onOpenFile={openFile}
+      /*
        * `Entry` gates this on `final`, which is already null mid-turn. Passed
        * unconditionally for every agent message rather than filtered here, so
        * the one rule about which reply may be recapped lives in one place.
@@ -1160,6 +1277,15 @@ export function Session(props: {
       </article>
     ) : null
 
+  /** `claude:compacting,codex:thinking` back into something addressable. */
+  const activityOf = (agent: string): ActivityPush['activity'] => {
+    const found = activityByAgent
+      .split(',')
+      .find((entry) => entry.startsWith(`${agent}:`))
+      ?.slice(agent.length + 1)
+    return found === undefined || found === '' ? null : (found as ActivityPush['activity'])
+  }
+
   const thinking = view.working
     .filter((agent) => !streaming.has(agent))
     .map((agent) => (
@@ -1171,7 +1297,11 @@ export function Session(props: {
           <span className="speaker">{t(`actor.${agent}`)}</span>
         </div>
         <p className="said thinking" role="status">
-          <ThinkingWord kind="thinking" offset={offsetForActor(agent)} />
+          <ThinkingWord
+            kind="thinking"
+            offset={offsetForActor(agent)}
+            activity={activityOf(agent)}
+          />
           <span className="thinking-dots" aria-hidden="true">
             <i />
             <i />
@@ -1317,10 +1447,24 @@ export function Session(props: {
             <div className="turn" ref={turn}>
               <div className="turn-head" data-turn={currentTurn.key}>
                 {entry(currentTurn, turnAt)}
-                {thinking}
-                {waitingRow}
               </div>
               {view.messages.slice(turnAt + 1).map((m, i) => entry(m, turnAt + 1 + i))}
+              {/*
+                Under the newest row, not under the question.
+
+                It used to live inside `.turn-head`, which is pinned to the top
+                of the scroller — so during a long turn the one line saying an
+                agent is working sat at the top of the window while the reader
+                watched commands arrive at the bottom. Reported as silence: rows
+                appearing with nothing anywhere saying anyone was busy.
+
+                Here it travels with the output, which is the only place it can
+                be seen without scrolling back to the question. It is still
+                below the question — what `specs.mjs` asserts — and there is
+                still exactly one of it per working agent.
+              */}
+              {thinking}
+              {waitingRow}
               {/*
                 Room for the question to rise into, and for the pin to hold it
                 there. Inside the turn because a pinned header travels only
@@ -1381,31 +1525,27 @@ export function Session(props: {
                 </button>
               )}
               {/*
-                Offered only when a language has been set. There is no honest guess
-                at someone's own language, and an action that cannot say which one it
-                would answer in is worse than an absent one.
-              */}
-              {selected.source !== null && explainLanguage !== '' && (
-                <button
-                  type="button"
-                  className="quote-offer-action"
-                  onClick={() => {
-                    openCard('explanation')
-                  }}
-                >
-                  {t('conversation.explainSimply')}
-                </button>
-              )}
-              {/*
-                Gated on a language for the same reason Explain is, and on the same
-                value: an action that cannot say which language it would produce is
-                worse than an absent one.
+                Explain used to sit here, between the two, and it left because a
+                selection was the wrong input for it. Explaining an answer in your
+                own language is a question about the *reply*, not about a passage
+                — the drag was only how it got there, and it was also what made
+                the feature fail: `openAside` re-checks the text against the log,
+                and every piece of chrome inside `.entry` that the projection
+                cannot produce refused a perfectly real selection. It is a button
+                under the reply now (`Entry.tsx`, `data-entry-action="explain"`).
+
+                Translate stayed, and the difference is not arbitrary: a passage
+                genuinely is its subject. You translate a sentence, not an answer.
+
+                Gated on a language having been set. There is no honest guess at
+                someone's own language, and an action that cannot say which one it
+                would produce is worse than an absent one.
 
                 A word, not an icon, though the request said "translate icon". The
-                other three are labelled, and one icon among three labels reads as an
-                accident rather than a decision — while an unlabelled icon is the
-                least legible thing on a bar people meet rarely. Icons for all four
-                is defensible and is a different change; mixing is the only option
+                others are labelled, and one icon among labels reads as an accident
+                rather than a decision — while an unlabelled icon is the least
+                legible thing on a bar people meet rarely. Icons for all of them is
+                defensible and is a different change; mixing is the only option
                 that is not.
               */}
               {selected.source !== null && explainLanguage !== '' && (
@@ -2094,9 +2234,19 @@ export function shortenPath(path: string): string {
 function ThinkingWord({
   kind,
   offset = 0,
+  activity = null,
 }: {
   readonly kind: 'thinking' | 'waiting'
   readonly offset?: number
+  /**
+   * What the agent itself says it is doing, when it says anything.
+   *
+   * Outranks the rotating word, because one is a report and the other is a
+   * clock. It is null for most of a turn — an agent announces `requesting` and
+   * `compacting` and then works in silence — which is why the invented words
+   * stay rather than being replaced.
+   */
+  readonly activity?: ActivityPush['activity']
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [elapsed, setElapsed] = useState(0)
@@ -2120,5 +2270,17 @@ function ThinkingWord({
      to what this row said before rather than to an empty line. */
   const word = list.length > 0 ? thinkingWord(list, elapsed, offset) : t(`conversation.${kind}`)
 
-  return <span className="thinking-word">{word}</span>
+  /*
+   * The provider's own word wins whenever there is one.
+   *
+   * `compacting` is the case that makes this worth having: it is the one moment
+   * the transcript and the agent's memory of it stop agreeing, it can take a
+   * while, and until now the line said "considering" through all of it. The
+   * rotating word is what fills the long silences either side.
+   */
+  return (
+    <span className="thinking-word">
+      {activity === null ? word : t(`conversation.activity.${activity}`)}
+    </span>
+  )
 }

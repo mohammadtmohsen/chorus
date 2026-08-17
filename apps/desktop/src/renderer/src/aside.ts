@@ -182,13 +182,6 @@ export function fitCard(
  * its block `[Chorus]` instead of splicing another agent's words in silently.
  */
 export function promotion(agent: string, excerpt: string, answer: string): string {
-  const quoted = (text: string): string =>
-    text
-      .replace(/\r\n/g, '\n')
-      .split('\n')
-      .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
-      .join('\n')
-
   return [
     `@${agent} `,
     '',
@@ -199,6 +192,42 @@ export function promotion(agent: string, excerpt: string, answer: string): strin
     quoted(answer),
     '',
   ].join('\n')
+}
+
+/**
+ * The same, for an explanation of a whole reply — which quotes no passage.
+ *
+ * `promotion` opens by quoting the excerpt, and that was right while the excerpt
+ * was something you had dragged over: it says _which_ part of a long reply the
+ * answer is about. An explanation is now asked about the reply entire, so the
+ * quote would be the agent's own last message handed back to it in full — a wall
+ * of text that says nothing its context does not already hold.
+ *
+ * What survives is the part that is load-bearing. The mention, because
+ * `runtime.send` only guarantees reaching a named agent. And the sentence
+ * marking the explanation as reported rather than remembered: it came from a
+ * fork this session has no memory of, and an agent acting confidently on a
+ * conclusion it cannot place is worse than one that asks.
+ */
+export function explanationPromotion(agent: string, answer: string): string {
+  return [
+    `@${agent} `,
+    '',
+    quoted(answer),
+    '',
+    'That is how your last reply was explained to me in an aside, which is not in',
+    'this conversation — you did not write it.',
+    '',
+  ].join('\n')
+}
+
+/** One block of markdown quotation. Blank lines keep the block unbroken. */
+function quoted(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+    .join('\n')
 }
 
 /**
@@ -221,16 +250,10 @@ export function promotion(agent: string, excerpt: string, answer: string): strin
  * `catchup.ts` marks its block `[Chorus]`.
  */
 export function recapPromotion(agent: string, recap: string): string {
-  const quoted = recap
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
-    .join('\n')
-
   return [
     `@${agent} `,
     '',
-    quoted,
+    quoted(recap),
     '',
     'This is a recap you wrote in an aside, which is not in this conversation.',
     'Work from it. Stay on the task it names.',

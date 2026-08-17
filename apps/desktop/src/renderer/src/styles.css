@@ -1780,10 +1780,23 @@ body {
  *
  * `user-select: none` takes them out of the serialization entirely — which is
  * also what you want when copying a passage to paste somewhere else.
+ *
+ * **Two were missed when this was written, and both sit at an end of the drag
+ * people actually make.** `.entry-time` is the other half of the head — the same
+ * few pixels above the first line that `.speaker` was added for, so a selection
+ * that starts there still carried `14:32` and was still refused. `.summary-head`
+ * is the far end: the card's own word, drawn as `Summary` from `i18n/en.json`
+ * while `blockText` projects the heading it was cut from as `SUMMARY`, because
+ * `.md-h` uppercases and this does not. Case is significant in `containsPassage`
+ * on purpose — it distinguishes one identifier from another — so those two can
+ * never match, and any drag to the bottom of a reply that ends in a summary was
+ * refused. Selecting a whole long reply usually crosses both.
  */
 .tick,
 .speaker,
 .entry-action,
+.entry-time,
+.summary-head,
 .md-lang {
   user-select: none;
 }
@@ -2451,6 +2464,31 @@ body {
 }
 
 /*
+ * A tool row that names a file, made clickable.
+ *
+ * Underlined on hover and nowhere else: a transcript full of permanently
+ * decorated paths reads as a page of links, and most rows are not one — only the
+ * calls whose input was genuinely a path get this at all. `inherit` for
+ * everything a button would otherwise bring, because the row's typography is the
+ * row's, not the control's.
+ */
+.tool-detail--path {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.tool-detail--path:hover,
+.tool-detail--path:focus-visible {
+  color: var(--bone);
+  text-decoration: underline;
+}
+
+/*
  * The diff belongs to the row above it, so it is indented to the tool name
  * rather than to the rail, and scrolls on its own — a long line of code must not
  * widen the transcript and push every other row sideways.
@@ -2572,9 +2610,26 @@ body {
 
 .changes-path {
   overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--bone);
+  font: inherit;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Inert rather than absent when the pane cannot open one: the row still has to
+   read as the file it names. */
+.changes-path:disabled {
+  cursor: default;
+}
+
+.changes-path:not(:disabled):hover,
+.changes-path:focus-visible {
+  text-decoration: underline;
 }
 
 .changes-count {
@@ -3604,6 +3659,29 @@ body {
 
 .send:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-text) 85%, var(--bone));
+}
+
+/*
+ * Sending into a running turn, which is not the same act as sending into a
+ * finished one.
+ *
+ * It steers: the agent keeps working and takes the message in. That is
+ * deliberate and stays. But the button was drawn exactly as it is when nothing
+ * is running, so a turn still streaming looked over — reported as "the send
+ * button becomes ready while the response is still coming". Outlined rather
+ * than filled, so the filled state means *idle and ready* and nothing else, and
+ * it reads as related to Stop (which replaces it when the draft is empty)
+ * rather than as a third kind of button.
+ */
+.send[data-steering='true'] {
+  border-color: color-mix(in srgb, var(--accent-text) 55%, transparent);
+  background: color-mix(in srgb, var(--accent-text) 16%, transparent);
+  color: var(--accent-text);
+}
+
+.send[data-steering='true']:hover:not(:disabled) {
+  border-color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 .send--stop {

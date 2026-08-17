@@ -167,6 +167,39 @@ export async function openProjectInEditor(
 }
 
 /**
+ * Open one file in VS Code, at the project it belongs to.
+ *
+ * **A sibling of `openProjectInEditor`, not a flag on it.** That function is
+ * covered by a test asserting it passes exactly one argument and adds no window
+ * flags, and that assertion guards a real decision — which window a thing opens
+ * in is the user's VS Code preference. Adding `-g` there would have broken it
+ * for a reason unrelated to what it was protecting.
+ *
+ * `-g` is `--goto`, which takes `path[:line[:column]]` and is why a line can be
+ * added later without changing the shape of this. Two arguments, both from the
+ * caller, both passed as array members — `spawnSpec` is what keeps a path with a
+ * space or a semicolon from becoming shell.
+ *
+ * **The path is expected to be resolved and contained already.** This runs a
+ * process on it; deciding whether a renderer may name it is the caller's job and
+ * is done in `ipc.ts` against the conversation's own directory.
+ */
+export async function openFileInEditor(
+  path: string,
+  deps: Pick<ExtensionDeps, 'findCode' | 'exec'>
+): Promise<ActionResult> {
+  const code = await deps.findCode()
+  if (code === null) return { ok: false, reason: 'cli-missing' }
+  try {
+    const open = spawnSpec(code, ['-g', path])
+    await deps.exec(open.file, open.args)
+    return { ok: true, reason: null }
+  } catch {
+    return { ok: false, reason: 'open-failed' }
+  }
+}
+
+/**
  * Where the VSIX is, packaged and unpackaged.
  *
  * Packaged it sits in `extraResources`, outside the asar — an asar is not a

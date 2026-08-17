@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
-import type { ContextUsagePush, TasksPush, TranscriptEvent } from '../../../shared/ipc.js'
+import type {
+  ActivityPush,
+  ContextUsagePush,
+  TasksPush,
+  TranscriptEvent,
+} from '../../../shared/ipc.js'
 import { countsAsUnread } from '../../../shared/unread.js'
 import type { TerminalPanelState } from '../../../shared/workspace-layout.js'
 // `WorkspaceSnapshot` is imported as a value, not a type: `SNAPSHOT_KEYS` below
@@ -72,6 +77,19 @@ export interface SessionPulse {
    */
   readonly tasksByActor: Readonly<Record<string, readonly BackgroundTaskView[]>>
   /**
+   * What each agent says it is doing right now, as last pushed.
+   *
+   * The same category again, and the one that changes fastest — several times a
+   * turn. A key rather than a phrase: nothing in this file has a translator, and
+   * the working line is what turns it into a word.
+   *
+   * `null` is a value with meaning. It says the agent has stopped doing the
+   * thing it named and is back to working at nothing in particular, which is
+   * most of a turn; treating it as absent would leave `compacting` on screen
+   * long after the compaction finished.
+   */
+  readonly activityByActor: Readonly<Record<string, ActivityPush['activity']>>
+  /**
    * The last turn in this conversation ended badly.
    *
    * One of the four states a row draws, and the only one with no other source:
@@ -113,6 +131,7 @@ const EMPTY_PULSE: SessionPulse = {
   costUsd: null,
   contextByActor: {},
   tasksByActor: {},
+  activityByActor: {},
   failed: false,
 }
 
@@ -194,6 +213,7 @@ export interface WorkspaceActions {
   /** Pushed state, not a logged event — see the action for why it is separate. */
   ingestContextUsage: (usage: ContextUsagePush) => void
   ingestTasks: (push: TasksPush) => void
+  ingestActivity: (push: ActivityPush) => void
 }
 
 export type WorkspaceStore = WorkspaceSnapshot & WorkspaceRuntime & WorkspaceActions
@@ -384,6 +404,7 @@ export function reducePulse(
     // not be able to erase what the context channel pushed.
     contextByActor: pulse.contextByActor,
     tasksByActor: pulse.tasksByActor,
+    activityByActor: pulse.activityByActor,
     failed,
   }
 }
@@ -601,6 +622,30 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               [push.conversationId]: {
                 ...current,
                 tasksByActor: { ...current.tasksByActor, [push.agentId]: push.tasks },
+              },
+            },
+          }
+        })
+      },
+      /*
+       * Ignored when the agent is saying the same thing again, which it does
+       * often: a thinking tick can arrive several times a second, and every one
+       * of them would otherwise be a store write and a re-render of every pane.
+       */
+      ingestActivity: (push) => {
+        set((state) => {
+          const current = state.pulses[push.conversationId]
+          if (current === undefined) return state
+          if (current.activityByActor[push.agentId] === push.activity) return state
+          return {
+            pulses: {
+              ...state.pulses,
+              [push.conversationId]: {
+                ...current,
+                activityByActor: {
+                  ...current.activityByActor,
+                  [push.agentId]: push.activity,
+                },
               },
             },
           }

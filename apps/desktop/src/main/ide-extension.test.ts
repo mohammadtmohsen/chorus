@@ -7,6 +7,7 @@ import {
   extensionStatus,
   installBundledExtension,
   isOlder,
+  openFileInEditor,
   openProjectInEditor,
   parseInstalledVersion,
   readBundledVersion,
@@ -205,6 +206,33 @@ describe('openProjectInEditor', () => {
   it('fails cleanly with no CLI', async () => {
     const result = await openProjectInEditor(
       '/p/a',
+      deps({ findCode: () => Promise.resolve(null) })
+    )
+    expect(result).toEqual({ ok: false, reason: 'cli-missing' })
+  })
+})
+
+describe('openFileInEditor', () => {
+  /*
+   * Its own function rather than a flag on `openProjectInEditor`, because the
+   * test above asserts that one passes a single argument and adds no window
+   * flags — an assertion guarding a real decision, not an implementation detail.
+   */
+  it('goes to the file with -g, and passes it as one argument', async () => {
+    const calls: Call[] = []
+    await openFileInEditor("/p/my project/'; rm -rf /.ts", deps({ calls }))
+    expect(calls[0]?.args).toEqual(['-g', "/p/my project/'; rm -rf /.ts"])
+  })
+
+  it('adds no window flags either', async () => {
+    const calls: Call[] = []
+    await openFileInEditor('/p/a/src/rate.ts', deps({ calls }))
+    expect(calls[0]?.args).toHaveLength(2)
+  })
+
+  it('fails cleanly with no CLI', async () => {
+    const result = await openFileInEditor(
+      '/p/a/src/rate.ts',
       deps({ findCode: () => Promise.resolve(null) })
     )
     expect(result).toEqual({ ok: false, reason: 'cli-missing' })

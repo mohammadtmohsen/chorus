@@ -46,7 +46,7 @@ import {
   type DiffFile,
   type WorkspaceStatus,
 } from '@chorus/workspace'
-import type { ContextUsagePush, TasksPush } from '../shared/ipc.js'
+import type { ActivityPush, ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
 import { containsPassage } from '../shared/plain-text.js'
@@ -192,7 +192,14 @@ function asideQuestion(excerpt: string, question: string): string {
 }
 
 /**
- * What a fork is asked when someone did not follow a passage.
+ * What a fork is asked when someone did not follow a reply.
+ *
+ * **The subject is the whole reply now, not a selection**, and the wording moved
+ * with it. Explain was offered on a drag until the button under each reply
+ * replaced it, so every "the passage below" here would have been pointing at an
+ * entire answer while asking the model to treat it as a fragment — and the one
+ * instruction that matters most, the length, only reads as a limit if the model
+ * knows it is summarising something long.
  *
  * **Level first, language second**, and the ordering is the feature. A prompt
  * that leads with the language produces a faithful translation of something
@@ -214,7 +221,7 @@ function asideQuestion(excerpt: string, question: string): string {
  */
 export function explainPrompt(excerpt: string, language: string): string {
   return [
-    'Someone reading this conversation did not follow the passage below.',
+    'Someone reading this conversation did not follow your reply below.',
     'Say what it actually is here, what it means for the work, and — briefly — why',
     'it is that way. Nothing else.',
     '',
@@ -225,23 +232,29 @@ export function explainPrompt(excerpt: string, language: string): string {
     '',
     // Also learned from a real answer: asked about a line in a task list, it
     // explained the line's punctuation rather than the task.
-    'Explain the work the passage refers to, not how the passage is written.',
+    'Explain the work the reply refers to, not how the reply is written.',
     '',
     // Two rounds of real answers taught this list. Each line is something that
     // arrived unasked and pushed the useful part off the card.
     'Leave out:',
     '- what the words mean in general, or one by one, or where they come from;',
     '- what something is *not*, or which other meaning is not intended;',
-    '- anything the passage already says, restated;',
+    '- anything the reply already says, restated;',
     '- remarks about this conversation, about your earlier messages, or about',
     '  what you were or were not offering to do;',
-    '- background about the project or its conventions, unless the passage is',
+    '- background about the project or its conventions, unless the reply is',
     '  about them.',
     '',
     // Bounded by a number, because "short" drifted twice. Lists are allowed only
     // where the answer genuinely *is* a sequence — a real workflow, a real
     // ordering — and never as a way of getting more room.
-    'Aim for about a hundred words. Plain paragraphs, short sentences, no headings',
+    //
+    // The second sentence arrived with the whole-reply subject: a long answer
+    // invites a proportionally long explanation, which is a second long answer
+    // to read rather than a way through the first.
+    'Aim for about a hundred words. However long the reply is, the explanation is',
+    'this short — the point is a way in, not a second version of it.',
+    'Plain paragraphs, short sentences, no headings',
     'and no closing summary. Use a short numbered list only if the answer is a',
     'sequence of steps; otherwise prose.',
     '',
@@ -252,7 +265,7 @@ export function explainPrompt(excerpt: string, language: string): string {
     'script. Do not translate or transliterate them.',
     '',
     `Write your explanation in ${language}. Every sentence of it — not bilingually,`,
-    `and not only the first line. If you find yourself back in the passage's own`,
+    `and not only the first line. If you find yourself back in the reply's own`,
     `language, return to ${language}.`,
     '',
     'You have the whole conversation. Use it: say what this refers to *here*,',
@@ -260,7 +273,7 @@ export function explainPrompt(excerpt: string, language: string): string {
     '',
     // Each clause whole on its own line. A phrase split across a line break is
     // harder to read and easier to weaken by editing one half of it.
-    'Do not restate the passage. Do not widen the subject.',
+    'Do not restate the reply. Do not widen the subject.',
     'Do not continue the work or change anything. Answer this and stop.',
     '',
     excerpt
@@ -1036,6 +1049,7 @@ export class ChorusRuntime {
   private onLimits: ((push: { agentId: AgentId; windows: UsageWindow[] }) => void) | undefined
   private onContextUsage: ((push: ContextUsagePush) => void) | undefined
   private onTasks: ((push: TasksPush) => void) | undefined
+  private onActivity: ((push: ActivityPush) => void) | undefined
   /**
    * The last model list each agent reported, for the settings sheet.
    *
@@ -1134,6 +1148,18 @@ export class ChorusRuntime {
    */
   onTasksReported(listener: (push: TasksPush) => void): void {
     this.onTasks = listener
+  }
+
+  /**
+   * Told what each conversation's agents say they are doing.
+   *
+   * Nothing is remembered and nothing is seeded on reopen, for a stronger
+   * version of the reason above: this describes an agent mid-turn, and there is
+   * no turn in flight when a window opens. The next thing the provider says
+   * repopulates it; until then, saying nothing in particular is the truth.
+   */
+  onActivityReported(listener: (push: ActivityPush) => void): void {
+    this.onActivity = listener
   }
 
   /** What each provider last reported, so a new window is not born blank. */
@@ -3293,6 +3319,16 @@ export class ChorusRuntime {
        */
       onTasks: (tasks) => {
         this.onTasks?.({ conversationId, agentId, tasks: tasks.map((task) => ({ ...task })) })
+      },
+      /*
+       * What it says it is doing, pushed to the pane and never written down.
+       *
+       * `null` is forwarded like an empty task list is: it is the only thing
+       * that says a compaction finished, and swallowing it would leave the
+       * working line insisting on a word that stopped being true.
+       */
+      onActivity: (activity) => {
+        this.onActivity?.({ conversationId, agentId, activity })
       },
       // An approved plan ends the mode for the room, not just for the agent
       // whose plan it was.

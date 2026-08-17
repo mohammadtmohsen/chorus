@@ -855,7 +855,7 @@ describe('explainPrompt', () => {
     // punctuation instead of the task. An opening clause is the one a model
     // commits to first, so they moved up.
     expect(prompt).toContain('Never open by saying what it is not')
-    expect(prompt).toContain('not how the passage is written')
+    expect(prompt).toContain('not how the reply is written')
     expect(prompt.indexOf('Never open by saying')).toBeLessThan(prompt.indexOf('Leave out:'))
   })
 
@@ -884,6 +884,18 @@ describe('explainPrompt', () => {
 
   it('quotes a multi-line passage as one block', () => {
     expect(explainPrompt('one\n\ntwo', 'Arabic')).toContain('> one\n>\n> two')
+  })
+
+  it('says the subject is the whole reply, and holds the length against it', () => {
+    /*
+     * Explain is asked from a button under a reply now rather than from a drag,
+     * so what arrives here is a whole answer. A model told it has a *passage*
+     * treats a long one as a request for a long explanation — which is a second
+     * long answer to read instead of a way through the first.
+     */
+    expect(prompt).toContain('your reply below')
+    expect(prompt).toContain('However long the reply is')
+    expect(prompt).not.toContain('the passage below')
   })
 })
 
@@ -1069,7 +1081,7 @@ describe('opening a translation', () => {
     })
     const sent = adapter.forked[0]?.session.sent ?? []
     expect(sent).toHaveLength(1)
-    expect(sent[0]?.text).toContain('Do not restate the passage')
+    expect(sent[0]?.text).toContain('Do not restate the reply')
     expect(created(asideId)).toMatchObject({ purpose: 'explanation', language: 'Arabic' })
   })
 

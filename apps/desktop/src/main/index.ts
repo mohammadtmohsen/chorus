@@ -8,6 +8,7 @@ import {
   forwardIdeContextToRenderer,
   forwardContextUsageToRenderer,
   forwardTasksToRenderer,
+  forwardActivityToRenderer,
   forwardTerminalToRenderer,
   forwardLimitsToRenderer,
   registerIpcHandlers,
@@ -122,6 +123,7 @@ void app.whenReady().then(async () => {
   forwardLimitsToRenderer(runtime)
   forwardContextUsageToRenderer(runtime)
   forwardTasksToRenderer(runtime)
+  forwardActivityToRenderer(runtime)
   forwardTerminalToRenderer(runtime)
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
   installMenu()

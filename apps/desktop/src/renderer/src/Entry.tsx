@@ -244,9 +244,12 @@ function relativeTo(path: string, cwd: string): string {
 const ChangesCard = memo(function ChangesCard({
   files,
   cwd,
+  onOpenFile,
 }: {
   files: readonly NonNullable<TranscriptMessage['changes']>[number][]
   cwd: string
+  /** Absent when the pane cannot open one — the row is then inert, not missing. */
+  onOpenFile?: ((path: string) => void) | undefined
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -261,9 +264,28 @@ const ChangesCard = memo(function ChangesCard({
             >
               {t(`changes.letter.${file.change}`)}
             </span>
-            <span className="changes-path" title={file.path}>
+            {/*
+              A button, and the class is unchanged on purpose.
+
+              `e2e/shots-changes.mjs` reads `.changes-path`'s `textContent`, so
+              the selector and the text both have to survive — which they do: an
+              icon nested inside would not, and is why there is none.
+
+              The full absolute path was already here as the `title`; this only
+              makes the row do what the tooltip always implied it could.
+            */}
+            <button
+              type="button"
+              className="changes-path"
+              title={file.path}
+              data-open-file={file.path}
+              disabled={onOpenFile === undefined}
+              onClick={() => {
+                onOpenFile?.(file.path)
+              }}
+            >
               {relativeTo(file.path, cwd)}
-            </span>
+            </button>
             <span
               className="changes-count"
               title={t('changes.wrote', { added: file.added, removed: file.removed })}
@@ -392,6 +414,8 @@ export const Entry = memo(function Entry({
   message,
   cwd = '',
   onHandOff,
+  onOpenFile,
+  onExplain,
   onRecap,
   onGo,
   answersThinking = false,
@@ -403,6 +427,25 @@ export const Entry = memo(function Entry({
   cwd?: string
   /** Absent when there is nobody to hand to — a one-agent conversation. */
   onHandOff?: ((message: TranscriptMessage) => void) | undefined
+  /**
+   * Opens a file this row names, in VS Code.
+   *
+   * The path is passed as the row holds it — the provider's own spelling,
+   * absolute for Claude and relative for Codex. Main resolves it against the
+   * conversation's directory and refuses anything outside; a path arriving from
+   * here is agent output and is not trusted with a process.
+   */
+  onOpenFile?: ((path: string) => void) | undefined
+  /**
+   * Explains this whole reply in the user's own language. Absent when no
+   * language has been set, which is the same gate the selection offer used.
+   *
+   * **Not `final`-gated, unlike Recap.** A recap is about where the work stands,
+   * which is only ever a question about the newest reply; the reply you did not
+   * follow is usually not the newest one. The rect is the button's own, as
+   * Recap's is, because there is no selection to anchor the card to.
+   */
+  onExplain?: ((message: TranscriptMessage, from: DOMRect) => void) | undefined
   /**
    * Opens a recap card on this reply. Absent when the pane cannot host one.
    *
@@ -479,7 +522,7 @@ export const Entry = memo(function Entry({
         data-actor={message.actor}
         data-kind={message.kind}
       >
-        <ChangesCard files={message.changes ?? []} cwd={cwd} />
+        <ChangesCard files={message.changes ?? []} cwd={cwd} onOpenFile={onOpenFile} />
       </article>
     )
   }
@@ -619,9 +662,36 @@ export const Entry = memo(function Entry({
                 aria-label={t(`tool.${message.toolStatus ?? 'running'}`)}
               />
               <span className="tool-name">{message.text}</span>
-              {message.detail !== undefined && (
-                <span className="tool-detail">{message.detail}</span>
-              )}
+              {message.detail !== undefined &&
+                (message.path === undefined || onOpenFile === undefined ? (
+                  <span className="tool-detail">{message.detail}</span>
+                ) : (
+                  /*
+                    Clickable only where the row genuinely names a file.
+
+                    `detail` is whichever input best identifies the call, so it
+                    is often a search pattern, a URL or a subagent's brief —
+                    `path` is set beside it only for the keys that are paths, and
+                    only then is there anything to open. What is *shown* is still
+                    `detail`, cut to a line; what is opened is the whole path,
+                    which is why the two are separate fields at all.
+
+                    A button rather than an anchor: there is no URL here, and an
+                    `href` that goes nowhere is a link that cannot be middle-
+                    clicked, copied or trusted.
+                  */
+                  <button
+                    type="button"
+                    className="tool-detail tool-detail--path"
+                    data-open-file={message.path}
+                    title={message.path}
+                    onClick={() => {
+                      if (message.path !== undefined) onOpenFile(message.path)
+                    }}
+                  >
+                    {message.detail}
+                  </button>
+                ))}
             </p>
             {message.patch !== undefined && (
               <ToolPatch
@@ -737,6 +807,7 @@ export const Entry = memo(function Entry({
       {message.kind === 'message' &&
         message.status === 'complete' &&
         (onHandOff !== undefined ||
+          onExplain !== undefined ||
           (final && onRecap !== undefined) ||
           (final && onGo !== undefined && offersToAct(message.text))) && (
           <div className="entry-actions">
@@ -759,6 +830,36 @@ export const Entry = memo(function Entry({
                   }}
                 >
                   {t('handoff.action')}
+                </button>
+              )}
+              {/*
+                Under the reply, not on a selection, and that is the fix rather
+                than a convenience.
+
+                It used to live on the quote offer, so the input was whatever the
+                pointer had dragged over — and `openAside` re-checks that text
+                against the reply as the log holds it. Every element of chrome
+                inside `.entry` that the projection cannot produce was therefore
+                a way to be told "That passage is not part of that reply", which
+                is what someone selecting a long answer kept meeting. A whole
+                reply is a prefix of what the log holds by construction, so this
+                path has nothing to disagree about.
+
+                Beside Hand off because it is the same kind of act — something
+                you do with the reply once you have read it — and because the two
+                answers to "I do not follow this" are asking the other agent and
+                asking this one again in your own language.
+              */}
+              {onExplain !== undefined && (
+                <button
+                  type="button"
+                  className="entry-action"
+                  data-entry-action="explain"
+                  onClick={(e) => {
+                    onExplain(message, e.currentTarget.getBoundingClientRect())
+                  }}
+                >
+                  {t('conversation.explainSimply')}
                 </button>
               )}
               {/*

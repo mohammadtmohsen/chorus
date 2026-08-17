@@ -2187,7 +2187,14 @@ export const specs = [
           app,
           'Reply with only a markdown numbered list of the numbers 1 to 40, one item per line. No other text.'
         )
-        await app.until(`!!document.querySelector('.turn-head .entry--thinking')`, {
+        /*
+         * `.turn`, not `.turn-head`. The working line moved to the foot of the
+         * turn: pinned under the question it was at the top of the window while
+         * the reader watched output arrive at the bottom, which is how a running
+         * turn came to look silent. It is still inside the turn and still below
+         * the question, which is what the geometry below actually checks.
+         */
+        await app.until(`!!document.querySelector('.turn .entry--thinking')`, {
           label: 'an agent is thinking under the question',
         })
         await wait(400)
@@ -2196,7 +2203,7 @@ export const specs = [
           const score = document.querySelector('.score').getBoundingClientRect()
           const head = document.querySelector('.turn-head')
           const asked = head.querySelector('.entry--user')
-          const think = head.querySelectorAll('.entry--thinking')
+          const think = document.querySelectorAll('.turn .entry--thinking')
           return {
             heads: document.querySelectorAll('.turn-head').length,
             says: asked.innerText.includes('markdown numbered list'),
@@ -2239,7 +2246,7 @@ export const specs = [
             offTop: Math.abs(r.top - box.top),
             visible: r.bottom > box.top && r.top < box.bottom,
             sideways: score.scrollWidth - score.clientWidth,
-            waiting: Array.from(head.querySelectorAll('.entry--thinking')).map(named),
+            waiting: Array.from(document.querySelectorAll('.turn .entry--thinking')).map(named),
             writing: Array.from(document.querySelectorAll('.turn .entry'))
               .filter(e => e.querySelector('.said[data-streaming="true"]'))
               .map(named),
@@ -3390,25 +3397,33 @@ export const specs = [
         assert(
           JSON.stringify(await offerLabels(app)) ===
             JSON.stringify(['Quote in message', 'Ask about this']),
-          'and explaining and translating stay away until a language is set'
+          'and translating stays away until a language is set'
         )
 
         await app.evaluate(
           `window.chorus.readSettings().then((s) => window.chorus.writeSettings({ ...s, explainLanguage: 'Arabic' })).then(() => true)`
         )
-        // Re-selected rather than waited on: the language is read per selection,
-        // which is the behaviour being asserted.
+        /*
+         * Reopened rather than re-selected, and that is the behaviour change.
+         *
+         * The language used to be read once per selection, so a fresh drag was
+         * enough to see a new one. It is `App`'s now — read on mount and again
+         * when the settings sheet closes — because it decides whether Explain
+         * exists under *every* reply, which no selection can be waited on for.
+         * Nothing here opens the sheet, so this asserts the half that still
+         * belongs to the offer: Translate appears, Explain never does.
+         */
         await selectInside(
           app,
           '.entry[data-kind="message"][data-actor="claude"][data-status="complete"]'
         )
-        await app.until(`document.querySelectorAll('.quote-offer-action').length === 4`, {
-          label: 'setting a language offers both language actions',
+        await app.until(`document.querySelectorAll('.quote-offer-action').length === 3`, {
+          label: 'setting a language offers translating',
         })
         assert(
           JSON.stringify(await offerLabels(app)) ===
-            JSON.stringify(['Quote in message', 'Ask about this', 'Explain simply', 'Translate']),
-          'all four, in the order they were added'
+            JSON.stringify(['Quote in message', 'Ask about this', 'Translate']),
+          'three, and Explain is not among them — it is a button under the reply now'
         )
 
         /*

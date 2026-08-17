@@ -1006,6 +1006,23 @@ export const IPC_CONTRACT = {
     response: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
   },
 
+  /**
+   * Open one file from this conversation in VS Code.
+   *
+   * **The request names a conversation and a path, never a directory.** Main
+   * resolves the path against that conversation's own project directory and
+   * refuses anything outside it — the same shape `ide:snapshot` uses, and for
+   * the same reason: a path arriving from the renderer is untrusted input about
+   * to be handed to a process.
+   *
+   * `reason` mirrors `ide:openProject`'s: `cli-missing`, `open-failed`, plus
+   * `outside-project` for a path that failed containment.
+   */
+  'ide:openFile': {
+    request: z.object({ conversationId: z.string(), path: z.string() }),
+    response: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
+  },
+
   'ide:snapshot': {
     request: z.object({ conversationId: z.string() }),
     response: IdeSnapshotResult,
@@ -1229,6 +1246,34 @@ export const TasksPush = z.object({
 export type TasksPush = z.infer<typeof TasksPush>
 
 /**
+ * What an agent says it is doing, for one conversation.
+ *
+ * The fourth of the same family and the one that arrives most often — many
+ * times a turn, which is exactly why it is a push and never a `ChorusEventPayload`:
+ * written down it would append to SQLite for the length of every turn, and
+ * "claude was requesting at 09:23" read back a week later is worse than nothing.
+ *
+ * `activity: null` is a real value, not an absence. It says the agent has
+ * stopped doing the thing it named — a finished compaction — and is what stops
+ * the working line insisting on a word that is no longer true. The renderer
+ * still shows its own rotating word underneath, because an agent says nothing
+ * for most of a turn.
+ *
+ * It carries no notion of whether a turn is running. `turn.started` and
+ * `turn.completed` are the boundaries and they are in the log where they can be
+ * replayed; a second opinion travelling on a channel nothing persists is how
+ * the two would drift apart.
+ */
+export const ACTIVITY_PUSH_CHANNEL = 'agents:activity'
+
+export const ActivityPush = z.object({
+  conversationId: z.string(),
+  agentId: z.enum(['codex', 'claude']),
+  activity: z.enum(['requesting', 'compacting', 'thinking', 'awaitingInput']).nullable(),
+})
+export type ActivityPush = z.infer<typeof ActivityPush>
+
+/**
  * Terminal output, and the shell's exit.
  *
  * A push and **never a log event**. The log records the conversation, a shell is
@@ -1345,6 +1390,7 @@ export interface ChorusApi {
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly onTasks: (listener: (tasks: TasksPush) => void) => () => void
+  readonly onActivity: (listener: (activity: ActivityPush) => void) => () => void
 
   /**
    * Subscribe **before** attaching, not after.
@@ -1411,6 +1457,9 @@ export interface ChorusApi {
   readonly ideOpenProject: (
     request: IpcRequest<'ide:openProject'>
   ) => Promise<IpcResponse<'ide:openProject'>>
+  readonly ideOpenFile: (
+    request: IpcRequest<'ide:openFile'>
+  ) => Promise<IpcResponse<'ide:openFile'>>
   readonly ideSnapshot: (
     request: IpcRequest<'ide:snapshot'>
   ) => Promise<IpcResponse<'ide:snapshot'>>

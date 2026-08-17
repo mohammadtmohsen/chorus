@@ -185,6 +185,27 @@ export class ClaudeSession implements AgentSession {
   private bashToolIds: ReadonlySet<string> = new Set()
   /** Running totals, so usage means the same thing here as it does for Codex. */
   private readonly usageSoFar = { inputTokens: 0, outputTokens: 0 }
+  /**
+   * Whether a turn is open, so exactly one `turn.started` is raised per turn.
+   *
+   * **Claude has no per-turn start message and this is what stands in for one.**
+   * Codex sends `turn/started` for every turn; the SDK's nearest frame is
+   * `system/init`, which describes the *session* — cwd, model, tools, MCP
+   * servers, slash commands, the CLI version — and this adapter runs one
+   * long-lived `query()` in streaming-input mode, so it arrives once and the
+   * mapping raised one `turn.started` for a session's worth of turns while
+   * `result` closed each of them. Everything downstream that folds the pair
+   * therefore reported idle from the second turn onwards: no working line in the
+   * transcript, no Stop button in the composer, and a sidebar mark that said
+   * nothing was running. `runtime.ts`'s `stillAnswering` counts a *signed*
+   * balance and would have gone negative on the same asymmetry.
+   *
+   * Raised in `send` rather than off a message, because that is the moment a
+   * turn genuinely begins and it needs no guess about frame ordering. Cleared by
+   * `result`. A message sent mid-turn — steering — folds into the running turn
+   * and must not open a second one, which is what the flag is for.
+   */
+  private turnOpen = false
 
   constructor(
     sessionRef: string,
@@ -207,6 +228,27 @@ export class ClaudeSession implements AgentSession {
   }
 
   send(input: AgentInput): Promise<void> {
+    /*
+     * The turn starts here, and only if one is not already open — see
+     * `turnOpen`. Emitted before the push so the transcript says an agent is
+     * working from the moment the message leaves, rather than after a round
+     * trip through a CLI that may take seconds to say anything.
+     *
+     * The ref is ours. Nothing pairs a start with its completion by ref — the
+     * log's readers fold by actor and `lifecycle` only appends — so inventing
+     * one is honest, where reusing the session id would claim a correspondence
+     * with `result`'s uuid that does not exist.
+     */
+    if (!this.turnOpen) {
+      this.turnOpen = true
+      this.emit({
+        agentId: 'claude',
+        seq: ++this.seq,
+        at: this.now(),
+        type: 'turn.started',
+        turnRef: `${this.resolvedSessionRef}:${String(this.seq)}`,
+      })
+    }
     // Streaming-input mode: messages are pushed onto the prompt iterable rather
     // than passed at construction. It is also what makes interrupt() and
     // setModel() available at all.
@@ -595,6 +637,10 @@ export class ClaudeSession implements AgentSession {
         // Only at the end of a turn: the window cannot have moved until the
         // agent has actually said something.
         if (kind === 'result') void this.readContextUsage()
+        // The other half of `turnOpen`. `result` is what the mapping turns into
+        // `turn.completed`, so this is the same moment, read from the same
+        // message rather than inferred from the event it becomes.
+        if (kind === 'result') this.turnOpen = false
 
         for (const event of mapSdkMessage(message as never, {
           seq: this.seq + 1,

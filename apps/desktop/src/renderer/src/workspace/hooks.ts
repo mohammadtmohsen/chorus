@@ -75,6 +75,7 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
+    ingestActivity,
   } = state
   return {
     hydrate,
@@ -109,6 +110,7 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
+    ingestActivity,
   }
 }
 
@@ -190,6 +192,30 @@ export function useTabPaneId(conversationId: string): string | null {
 
 export function useSessionPulse(conversationId: string): SessionPulse | undefined {
   return useWorkspaceStore((state) => state.pulses[conversationId])
+}
+
+/**
+ * What each agent in one conversation says it is doing, and nothing else.
+ *
+ * Narrow on purpose, for the reason `useWorkingSessionCount` was written down
+ * the file: subscribing a mounted transcript to its whole pulse would re-render
+ * it on every streamed delta. This changes only when a provider changes its
+ * mind about what it is doing, which is a few times a turn.
+ *
+ * A string rather than the record, so the comparison is by value — a fresh
+ * object would compare unequal on every push and defeat the point.
+ */
+export function useSessionActivity(conversationId: string): string {
+  return useWorkspaceStore((state) =>
+    Object.entries(state.pulses[conversationId]?.activityByActor ?? {})
+      // `null` is a real value on this channel — the agent saying it stopped
+      // doing the thing it named — and it belongs out of the string rather than
+      // in it, because an absent entry is what the row reads as "no word".
+      .filter(([, activity]) => activity !== null)
+      .map(([agentId, activity]) => `${agentId}:${String(activity)}`)
+      .sort()
+      .join(',')
+  )
 }
 
 /**

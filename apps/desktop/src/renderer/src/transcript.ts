@@ -132,6 +132,15 @@ export interface TranscriptMessage {
    * there was no summary: an empty card and no card are different things.
    */
   readonly summary?: readonly string[]
+  /**
+   * The file a tool row is about, when it is about one.
+   *
+   * Never `detail`, which is a display string: it may be a search pattern or a
+   * subagent's brief, and it is cut to a line in the adapter. This is the whole
+   * path, present only when the row genuinely names a file — which is what
+   * decides whether the row is something you can click to open.
+   */
+  readonly path?: string
 }
 
 export interface PendingApproval {
@@ -373,6 +382,9 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       // An empty detail on the refining event must not erase the subject the
       // first one carried.
       const detail = str('detail') === '' ? prev?.detail : str('detail')
+      // Same rule as `detail`: a refining event that names no file must not
+      // erase the one the first event carried.
+      const path = str('path') === '' ? prev?.path : str('path')
       const message: TranscriptMessage = {
         key: prev?.key ?? event.id,
         eventId: prev?.eventId ?? event.id,
@@ -386,6 +398,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         toolStatus: prev?.toolStatus ?? 'running',
         ...(parent === '' ? {} : { parentRef: parent }),
         ...(detail === undefined || detail === '' ? {} : { detail }),
+        ...(path === undefined || path === '' ? {} : { path }),
       }
       if (prev === undefined) view.messages.push(message)
       else view.messages[at] = message

@@ -1,9 +1,10 @@
 import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { buildDiagnostics } from '@chorus/shared'
 import { homedir } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import {
+  ACTIVITY_PUSH_CHANNEL,
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
   CONTEXT_PUSH_CHANNEL,
@@ -17,13 +18,14 @@ import {
   type IpcResponse,
   type TranscriptEvent,
 } from '../shared/ipc.js'
-import { toDisplayRange, type EditorMetadata } from '@chorus/ide-protocol'
+import { isInside, toDisplayRange, type EditorMetadata } from '@chorus/ide-protocol'
 import { projectRelativePath, type CanonicalRoot } from '@chorus/workspace'
 import type { IdeBridge } from './ide-bridge.js'
 import {
   defaultDeps,
   extensionStatus,
   installBundledExtension,
+  openFileInEditor,
   openProjectInEditor,
   readBundledVersion,
   resolveVsix,
@@ -499,6 +501,34 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
     'ide:openProject': (request: { conversationId: string }) =>
       openProjectInEditor(runtime.projectDirectory(request.conversationId), extensionDeps()),
 
+    /*
+     * Resolved and contained here, never trusted from the renderer.
+     *
+     * The path comes off a transcript row, and a transcript is agent output —
+     * so this is the boundary that decides whether `code -g` may be pointed at
+     * it. `resolve` against the conversation's own directory makes a relative
+     * path meaningful (Codex reports them) and an absolute one unchanged;
+     * `isInside` is the check, and it is segment-wise because `/a/project-old`
+     * must not count as inside `/a/project`.
+     *
+     * A conversation that is no longer open throws from `projectDirectory` —
+     * caught, because a pane closing mid-click is a normal race and not
+     * something to surface as an unhandled rejection.
+     */
+    'ide:openFile': async (request: { conversationId: string; path: string }) => {
+      let cwd: string
+      try {
+        cwd = runtime.projectDirectory(request.conversationId)
+      } catch {
+        return { ok: false, reason: 'outside-project' as const }
+      }
+      const target = resolve(cwd, request.path)
+      if (cwd === '' || !isInside(cwd, target)) {
+        return { ok: false, reason: 'outside-project' as const }
+      }
+      return openFileInEditor(target, extensionDeps())
+    },
+
     'ide:snapshot': async (request: { conversationId: string }) => {
       const bridge = ideBridge
       if (bridge === null) return { outcome: 'unavailable', reason: 'unavailable' } as const
@@ -727,6 +757,20 @@ export function forwardTasksToRenderer(runtime: ChorusRuntime): void {
   runtime.onTasksReported((push) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(TASKS_PUSH_CHANNEL, push)
+    }
+  })
+}
+
+/**
+ * Sends what each conversation's agents say they are doing, as they say it.
+ *
+ * The loudest of the four state channels — many pushes a turn — and the one
+ * whose whole point is that it never reaches SQLite. See `ActivityPush`.
+ */
+export function forwardActivityToRenderer(runtime: ChorusRuntime): void {
+  runtime.onActivityReported((push) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(ACTIVITY_PUSH_CHANNEL, push)
     }
   })
 }

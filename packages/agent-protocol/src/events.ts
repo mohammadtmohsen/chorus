@@ -191,6 +191,20 @@ export interface ToolStarted extends AgentEventBase {
   readonly parentRef?: string
   /** One line: the path read, the pattern searched, the subagent's brief. */
   readonly detail?: string
+  /**
+   * The file this call is about, when it is about one.
+   *
+   * **Separate from `detail`, which is a display string and cannot be used.**
+   * `detail` is whichever input field best identifies the call — a pattern, a
+   * URL, a subagent's brief — and it is truncated to a line before it is ever
+   * stored. Clicking a row to open what it names therefore needs the path as
+   * data: untruncated, and present only when the row really does name a file.
+   *
+   * As the provider gave it, absolute or relative. Nothing here resolves it;
+   * main does, against the conversation's own directory, because a path from a
+   * renderer is not something to hand to a process untested.
+   */
+  readonly path?: string
 }
 
 export interface ToolProgress extends AgentEventBase {
@@ -336,6 +350,44 @@ export interface TasksChanged extends AgentEventBase {
   readonly tasks: readonly BackgroundTask[]
 }
 
+/**
+ * What the agent says it is doing right now, in its own terms.
+ *
+ * A key rather than a sentence, because nothing down here has a translator and
+ * a phrase composed in an adapter would be English written into a stream the
+ * renderer is supposed to word. The renderer turns these into language, the way
+ * it already does for `notice.source`.
+ *
+ * `requesting` and `compacting` are the provider's own two, verbatim.
+ * `thinking` is reported as a token count and read here as a state, because a
+ * number is not what a person waiting wants. `awaitingInput` is the SDK's
+ * `requires_action`, renamed only to say who is being waited on.
+ */
+export type AgentActivity = 'requesting' | 'compacting' | 'thinking' | 'awaitingInput'
+
+/**
+ * The fourth member of the state family, and the one that changes fastest.
+ *
+ * **Never logged, and this is the sharpest case of the rule.** `status` is the
+ * spinner's heartbeat: written to SQLite it would append for as long as a turn
+ * runs, and read back a week later "claude was requesting at 09:23" is worse
+ * than nothing. It is exactly what `LimitsUpdated` and `ContextUsage` are —
+ * a fact about the agent now, not about the conversation.
+ *
+ * `null` means the agent is working but has not said what at, which is most of
+ * a turn. It clears the last word rather than leaving it standing: a line that
+ * still said _compacting_ ten minutes after the compaction would be worse than
+ * one that says only that work is happening.
+ *
+ * It says nothing about whether a turn is running. `turn.started` and
+ * `turn.completed` are the boundaries and they are history; this only ever
+ * refines what an already-visible working line says.
+ */
+export interface ActivityChanged extends AgentEventBase {
+  readonly type: 'activity.changed'
+  readonly activity: AgentActivity | null
+}
+
 export type AgentEvent =
   /*
    * Account-wide usage limits, not conversation history.
@@ -354,6 +406,11 @@ export type AgentEvent =
    * The third of the same kind. Never logged; replaces rather than accumulates.
    */
   | TasksChanged
+  /*
+   * The fourth, and the one the rule was hardest to hold for: it arrives many
+   * times a turn. Never logged; see `ActivityChanged`.
+   */
+  | ActivityChanged
   | TurnStarted
   | ContextCompacted
   | MessageDelta

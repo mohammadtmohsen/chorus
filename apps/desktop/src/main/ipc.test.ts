@@ -32,6 +32,67 @@ const choose = async (runtime: ChorusRuntime) =>
     conversationId: 'c1',
   })) as { cwd: string; changed: boolean }
 
+/**
+ * Which paths a transcript row may open, decided in main.
+ *
+ * The path comes off agent output by way of the renderer, and is about to be
+ * handed to `code -g`. `isInside` is segment-wise on purpose — `/p/a-old` is not
+ * inside `/p/a` — and these are the cases that would otherwise be found by a
+ * user opening someone else's file.
+ */
+describe('ide:openFile', () => {
+  const open = async (cwd: string, path: string) => {
+    const runtime = { projectDirectory: () => cwd } as unknown as ChorusRuntime
+    return (await (buildHandlers(runtime)['ide:openFile'] as (r: unknown) => Promise<unknown>)({
+      conversationId: 'c1',
+      path,
+    })) as { ok: boolean; reason: string | null }
+  }
+
+  it('refuses a path outside the project', async () => {
+    expect(await open('/p/a', '/p/b/secret.ts')).toEqual({ ok: false, reason: 'outside-project' })
+  })
+
+  it('refuses a sibling whose name merely starts the same', async () => {
+    expect(await open('/p/a', '/p/a-old/rate.ts')).toEqual({
+      ok: false,
+      reason: 'outside-project',
+    })
+  })
+
+  it('refuses an escape through ..', async () => {
+    expect(await open('/p/a', '../b/secret.ts')).toEqual({ ok: false, reason: 'outside-project' })
+  })
+
+  it('refuses everything when the conversation has no project folder', async () => {
+    expect(await open('', '/p/a/rate.ts')).toEqual({ ok: false, reason: 'outside-project' })
+  })
+
+  it('refuses when the conversation is no longer open', async () => {
+    const runtime = {
+      projectDirectory: () => {
+        throw new Error('Conversation "c1" is not active')
+      },
+    } as unknown as ChorusRuntime
+    const result = await (
+      buildHandlers(runtime)['ide:openFile'] as (r: unknown) => Promise<unknown>
+    )({ conversationId: 'c1', path: '/p/a/rate.ts' })
+    expect(result).toEqual({ ok: false, reason: 'outside-project' })
+  })
+
+  /*
+   * **Only refusals are asserted here, deliberately.** A contained path reaches
+   * `code -g` for real — there is no seam between this handler and
+   * `extensionDeps()` — so a "lets it through" test spawns VS Code on whoever
+   * runs `pnpm check`. It did, twice, before this comment replaced it.
+   *
+   * Nothing is lost that matters. The refusals are the half with teeth, the
+   * segment-wise comparison behind them has its own tests in
+   * `ide-protocol/src/paths.test.ts`, and the positive path is what driving the
+   * app checks.
+   */
+})
+
 describe('conversation:chooseCwd', () => {
   it('applies the folder that was picked', () => {
     showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: ['/tmp/picked'] })

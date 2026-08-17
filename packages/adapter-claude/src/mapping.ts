@@ -1,5 +1,6 @@
 import {
   toEpochMs,
+  type AgentActivity,
   type AgentEvent,
   type ApprovalRequest,
   type BackgroundTask,
@@ -211,10 +212,20 @@ interface SystemFields {
  * turns it into `context.compacted`; mapping it twice would double the row.
  */
 const QUIET_SUBTYPES: ReadonlySet<string> = new Set([
+  /*
+   * These three are quiet **in the log** and are no longer thrown away.
+   *
+   * They are what the agent says it is doing — `requesting`, `compacting`, a
+   * thinking-token tick, `running`/`idle`/`requires_action` — and dropping them
+   * outright left the UI with nothing to say during the long stretches a turn
+   * spends between rows. They now become `activity.changed`, which is state and
+   * never reaches SQLite, so the reason they are listed here is untouched: the
+   * catch-all below would have written a durable row for every heartbeat.
+   */
   'status',
   'thinking_tokens',
-  'control_request_progress',
   'session_state_changed',
+  'control_request_progress',
   'compact_boundary',
   /*
    * `task_updated` is a patch keyed on `task_id` alone — it carries no
@@ -233,6 +244,36 @@ const QUIET_SUBTYPES: ReadonlySet<string> = new Set([
   'hook_started',
   'hook_progress',
 ])
+
+/**
+ * The activity a `system` subtype reports, or `undefined` when it reports none.
+ *
+ * `undefined` and `null` are different answers and the difference matters:
+ * `undefined` means this message says nothing about activity, so whatever was
+ * showing stands; `null` means the agent has explicitly stopped doing the thing
+ * it named, and the word must go.
+ *
+ * `requires_action` is the only state read off `session_state_changed`.
+ * `running` and `idle` are turn boundaries, and those belong to the log —
+ * `turn.started` and `turn.completed` — where they can be replayed. A second,
+ * unlogged opinion about whether a turn is open is how the two would drift.
+ */
+function activityOf(
+  subtype: string,
+  msg: Record<string, unknown>
+): AgentActivity | null | undefined {
+  if (subtype === 'status') {
+    const status = msg['status']
+    if (status === 'compacting' || status === 'requesting') return status
+    // Explicitly null on the wire when the phase ends, which is what clears it.
+    return null
+  }
+  if (subtype === 'thinking_tokens') return 'thinking'
+  if (subtype === 'session_state_changed') {
+    return msg['state'] === 'requires_action' ? 'awaitingInput' : undefined
+  }
+  return undefined
+}
 
 function notice(
   base: Omit<AgentEvent, 'type'> & { seq: number },
@@ -261,11 +302,41 @@ function mapSystem(
 ): AgentEvent[] {
   const subtype = msg.subtype ?? ''
 
-  // `init` is the start of a turn's work and carries the CLI version we record
-  // on session.started (plan §2.5).
-  if (subtype === 'init') {
-    return [{ ...base, type: 'turn.started', turnRef: msg.uuid ?? msg.session_id ?? '' }]
-  }
+  /*
+   * `init` describes the **session**, not a turn, and reading it as one was a
+   * bug rather than a simplification.
+   *
+   * Its own fields say so — cwd, model, tools, MCP servers, slash commands,
+   * skills, plugins, the CLI version — and `sdk.d.ts` is where that was finally
+   * read rather than assumed. The adapter runs one long-lived `query()` in
+   * streaming-input mode, so this frame arrives once while `result` closes every
+   * turn: one start, many completions. From the second turn on, everything that
+   * folds the pair believed the agent was idle — no working line, no Stop
+   * button, no sidebar mark — which is what was reported as "silent periods with
+   * no working indicator at all".
+   *
+   * `ClaudeSession.send` raises the start now, once per turn, because that is
+   * the moment a turn begins and it depends on no frame ordering. Nothing is
+   * lost here: no consumer reads anything else off `init`.
+   */
+  if (subtype === 'init') return []
+
+  /*
+   * What the agent says it is doing, read before the quiet list swallows it.
+   *
+   * Three messages, one output. `status` carries the provider's own two words;
+   * `session_state_changed` is documented in `sdk.d.ts` as the authoritative
+   * turn-over signal and is read here only for `requires_action`, because the
+   * turn boundaries are the log's and this must not become a second opinion
+   * about them; `thinking_tokens` is a token count that means one thing to a
+   * person waiting — it is thinking.
+   *
+   * `null` is emitted rather than nothing, so a finished compaction clears the
+   * word instead of leaving it standing. The shapes come from `sdk.d.ts`
+   * (`SDKStatusMessage`, `SDKSessionStateChangedMessage`), not from memory.
+   */
+  const activity = activityOf(subtype, msg as unknown as Record<string, unknown>)
+  if (activity !== undefined) return [{ ...base, type: 'activity.changed', activity }]
   if (QUIET_SUBTYPES.has(subtype)) return []
 
   const s = msg as unknown as SystemFields
@@ -548,7 +619,7 @@ function mapAssistant(
     if (block.name === undefined || block.name === USER_INPUT_TOOL) continue
     if (block.id === undefined || block.id === '') continue
 
-    const detail = describeToolInput(block.input ?? {})
+    const described = describeToolInput(block.input ?? {})
     events.push({
       ...base,
       seq: ctx.seq + events.length,
@@ -558,7 +629,16 @@ function mapAssistant(
       ...(typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== ''
         ? { parentRef: msg.parent_tool_use_id }
         : {}),
-      ...(detail === undefined ? {} : { detail }),
+      ...(described?.detail === undefined ? {} : { detail: described.detail }),
+      /*
+       * Only when the line really is a path, and untruncated.
+       *
+       * `detail` is a display string: it may be a regex, a URL or a subagent's
+       * brief, and it is cut to `MAX_TOOL_DETAIL` before it is stored. A row you
+       * can click to open a file needs the path as data, and needs to know that
+       * the row names one at all — clicking a grep pattern should do nothing.
+       */
+      ...(described?.path === undefined ? {} : { path: described.path }),
     })
   }
 
@@ -576,7 +656,9 @@ const MAX_TOOL_DETAIL = 120
  * listed shows as the bare tool name, which is still infinitely more than the
  * nothing this replaced.
  */
-function describeToolInput(input: Record<string, unknown>): string | undefined {
+function describeToolInput(
+  input: Record<string, unknown>
+): { detail: string; path?: string } | undefined {
   /*
    * `TodoWrite` first, because its input has no string field at all.
    *
@@ -592,8 +674,9 @@ function describeToolInput(input: Record<string, unknown>): string | undefined {
    * and the fallback is the bare name it already showed — a schema change costs
    * a line of detail, not a broken row.
    */
+  // A checklist names no file, so it carries a line and nothing to open.
   const todo = describeTodos(input['todos'])
-  if (todo !== undefined) return todo
+  if (todo !== undefined) return { detail: todo }
 
   for (const key of [
     // First, because when a tool has one it *is* the request: `ExitPlanMode`
@@ -611,10 +694,22 @@ function describeToolInput(input: Record<string, unknown>): string | undefined {
     const value = input[key]
     if (typeof value !== 'string' || value.trim() === '') continue
     const text = value.trim().replace(/\s+/g, ' ')
-    return text.length > MAX_TOOL_DETAIL ? `${text.slice(0, MAX_TOOL_DETAIL - 1)}…` : text
+    return {
+      detail: text.length > MAX_TOOL_DETAIL ? `${text.slice(0, MAX_TOOL_DETAIL - 1)}…` : text,
+      /*
+       * The path travels beside the line, whole, and only from a key that is
+       * one. `pattern` beats `path` for a search, so the row reads as the search
+       * it is — and then `path` here would open the directory it searched, which
+       * is not what the row says. Whichever key won is the one that decides.
+       */
+      ...(PATH_KEYS.has(key) ? { path: value.trim() } : {}),
+    }
   }
   return undefined
 }
+
+/** Input keys that name a file, as opposed to describing the call. */
+const PATH_KEYS: ReadonlySet<string> = new Set(['file_path', 'notebook_path', 'path'])
 
 /**
  * What a todo list is currently on, as one line.

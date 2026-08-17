@@ -80,6 +80,12 @@
       "weighing it up",
       "following the thread"
     ],
+    "activity": {
+      "requesting": "asking the model",
+      "compacting": "compacting its context",
+      "thinking": "thinking",
+      "awaitingInput": "waiting on you"
+    },
     "waitingWords": ["waiting", "reaching the agent", "handing it over", "getting started"],
     "go": "Go ahead"
   },
@@ -144,7 +150,7 @@
     "explainHeading": "Your language",
     "explainLanguage": "Answer in",
     "explainPlaceholder": "Arabic",
-    "explainNote": "When you select part of a reply, an agent can explain it plainly in this language, or translate the passage into it. Write it however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. An explanation follows what you write; a translation uses the standard written form of the language. Leave it empty and neither is offered. This does not change Chorus's own language.",
+    "explainNote": "Every finished reply gets an Explain simply button, which asks the agent to say the whole answer again plainly in this language. Select part of a reply and it can also translate that passage into it. Write the language however you like — “Arabic”, “Lebanese Arabic”, “simple Arabic”. An explanation follows what you write; a translation uses the standard written form of the language. Leave it empty and neither is offered. This does not change Chorus's own language.",
     "catalogue": {
       "unqueried": "Its models are read from a running session — start one to choose.",
       "loading": "Reading its models…",
@@ -322,8 +328,9 @@
     "openProject": "Open this project in VS Code",
     "openError": {
       "cli-missing": "VS Code's `code` command is not on your PATH. In VS Code, run \"Shell Command: Install 'code' command in PATH\".",
-      "open-failed": "VS Code could not open this folder.",
-      "unknown": "VS Code could not open this folder."
+      "open-failed": "VS Code could not open that.",
+      "unknown": "VS Code could not open that.",
+      "outside-project": "That file is not inside this session's project folder."
     },
     "extension": {
       "title": "VS Code extension",

@@ -247,9 +247,17 @@ describe('message mapping', () => {
     })
   })
 
-  it('treats system init as the start of a turn', () => {
-    const events = mapSdkMessage({ type: 'system', subtype: 'init', uuid: 'u3' }, CTX)
-    expect(events[0]).toMatchObject({ type: 'turn.started' })
+  /*
+   * The inverse of what this used to assert, and the change is the bug fix.
+   *
+   * `init` describes the session — cwd, model, tools, the CLI version — and the
+   * adapter holds one long-lived `query()`, so it arrives once while `result`
+   * closes every turn. Read as a turn start it produced one start for a whole
+   * session, and everything folding the pair believed the agent went idle after
+   * the first reply. `ClaudeSession.send` raises the start now.
+   */
+  it('does not treat system init as the start of a turn: it describes the session', () => {
+    expect(mapSdkMessage({ type: 'system', subtype: 'init', uuid: 'u3' }, CTX)).toEqual([])
   })
 
   it('maps a success result to completed, with usage', () => {
@@ -300,10 +308,11 @@ describe('system notices', () => {
       approvalTtlMs: 1_000,
     })
 
-  it('still starts a turn on init', () => {
-    expect(sys({ type: 'system', subtype: 'init', uuid: 'u1' })).toMatchObject([
-      { type: 'turn.started', turnRef: 'u1' },
-    ])
+  // Silent rather than a notice: the default arm raises a low-level `notice` so
+  // an unknown subtype degrades to a muted line, and `init` is known — it is
+  // simply not something the transcript has anything to say about.
+  it('says nothing about init, which is session detail rather than a turn', () => {
+    expect(sys({ type: 'system', subtype: 'init', uuid: 'u1' })).toEqual([])
   })
 
   it('reports a hook that failed', () => {
@@ -418,13 +427,47 @@ describe('system notices', () => {
     }
   })
 
-  it('says nothing for the heartbeat subtypes', () => {
+  it('writes nothing durable for the heartbeat subtypes', () => {
     /*
      * `status` ticks for as long as a turn runs, and every notice is a durable
-     * row. Telemetry is the one thing silence is still right for.
+     * row — so none of these may become one. What changed is that they are no
+     * longer *thrown away*: they become `activity.changed`, which is state and
+     * never reaches SQLite, so the working line can say what the agent says it
+     * is doing instead of a rotating word invented here.
      */
     for (const subtype of ['status', 'thinking_tokens', 'session_state_changed']) {
-      expect(sys({ type: 'system', subtype })).toEqual([])
+      const events = sys({ type: 'system', subtype })
+      expect(events.every((e) => e.type === 'activity.changed')).toBe(true)
+    }
+    expect(sys({ type: 'system', subtype: 'control_request_progress' })).toEqual([])
+  })
+
+  it('reads the provider’s own words off `status`, and clears them when it stops', () => {
+    // The two words the SDK sends, verbatim. `compacting` is the one worth
+    // having: it is slow, and the line used to say "considering" throughout.
+    expect(sys({ type: 'system', subtype: 'status', status: 'compacting' })).toMatchObject([
+      { type: 'activity.changed', activity: 'compacting' },
+    ])
+    expect(sys({ type: 'system', subtype: 'status', status: 'requesting' })).toMatchObject([
+      { type: 'activity.changed', activity: 'requesting' },
+    ])
+    // Null on the wire when the phase ends, and null is what clears the word.
+    expect(sys({ type: 'system', subtype: 'status', status: null })).toMatchObject([
+      { type: 'activity.changed', activity: null },
+    ])
+  })
+
+  it('reads only `requires_action` off the session state, never the turn boundaries', () => {
+    /*
+     * `running` and `idle` are turn boundaries, and those live in the log as
+     * `turn.started` / `turn.completed` where they can be replayed. A second
+     * opinion arriving on a channel nothing persists is how the two drift.
+     */
+    expect(
+      sys({ type: 'system', subtype: 'session_state_changed', state: 'requires_action' })
+    ).toMatchObject([{ type: 'activity.changed', activity: 'awaitingInput' }])
+    for (const state of ['running', 'idle']) {
+      expect(sys({ type: 'system', subtype: 'session_state_changed', state })).toEqual([])
     }
   })
 
@@ -512,6 +555,62 @@ describe('tool calls', () => {
     expect(assistant([{ type: 'tool_use', id: 'q1', name: USER_INPUT_TOOL, input: {} }])).toEqual(
       []
     )
+  })
+
+  /*
+   * The path travels beside the line, not as the line.
+   *
+   * `detail` is a display string — whichever input best identifies the call, cut
+   * to 120 characters — so a row you can click to open a file cannot use it. A
+   * deep path is a prefix of itself by the time it is stored, and a `Grep` row's
+   * detail is a regex. Both are why `path` exists.
+   */
+  describe('the file a row names', () => {
+    const long = `/Users/someone/code/tpa/tpa-web-2/src/features/${'insurance-info/'.repeat(9)}pricing.ts`
+
+    it('carries the whole path even when the line beside it was truncated', () => {
+      const [event] = assistant([
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: long } },
+      ])
+      expect(long.length).toBeGreaterThan(120)
+      expect(event).toMatchObject({ type: 'tool.started', path: long })
+      // The visible line is still cut, which is the whole reason for two fields.
+      expect((event as { detail?: string }).detail?.endsWith('…')).toBe(true)
+    })
+
+    it('names no file for a search, whose subject is the pattern', () => {
+      const [event] = assistant([
+        { type: 'tool_use', id: 't2', name: 'Grep', input: { pattern: 'TODO', path: '/p/src' } },
+      ])
+      // `pattern` wins the line, so the row reads as the search it is — and a
+      // click that opened the directory it searched would not match what it says.
+      expect(event).toMatchObject({ detail: 'TODO' })
+      expect(event).not.toHaveProperty('path')
+    })
+
+    it('names no file for a subagent brief or a URL', () => {
+      const [brief] = assistant([
+        { type: 'tool_use', id: 't3', name: 'Task', input: { description: 'map the adapter' } },
+      ])
+      expect(brief).not.toHaveProperty('path')
+      const [fetched] = assistant([
+        { type: 'tool_use', id: 't4', name: 'WebFetch', input: { url: 'https://example.com/x' } },
+      ])
+      expect(fetched).not.toHaveProperty('path')
+    })
+
+    it('takes a notebook path too', () => {
+      expect(
+        assistant([
+          {
+            type: 'tool_use',
+            id: 't5',
+            name: 'NotebookEdit',
+            input: { notebook_path: '/a.ipynb' },
+          },
+        ])
+      ).toMatchObject([{ path: '/a.ipynb' }])
+    })
   })
 
   it('carries the enclosing call, so a subagent’s work can be nested', () => {

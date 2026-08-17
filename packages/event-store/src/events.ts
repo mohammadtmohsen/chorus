@@ -332,6 +332,15 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     name: z.string(),
     parentRef: z.string().nullable(),
     detail: z.string().nullable(),
+    /**
+     * The file the call is about, when it is about one — never the display
+     * string beside it. `detail` is truncated to a line and may be a pattern or
+     * a prompt; this is what a click can actually open.
+     *
+     * Optional rather than nullable, because every row written before this
+     * existed has no key at all and must keep parsing.
+     */
+    path: z.string().optional(),
   }),
   z.object({
     type: z.literal('tool.progress'),

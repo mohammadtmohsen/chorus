@@ -73,6 +73,60 @@ describe('reduceEvents', () => {
     expect(view.busy).toBe(false)
   })
 
+  /*
+   * The middle of a turn, which nothing covered.
+   *
+   * `busy` is what the working line, the Stop button and the sidebar mark all
+   * read, and the bug reported as "silent periods with no working indicator"
+   * was a turn that was genuinely running while every one of them said idle.
+   * The reducer was not the culprit — it holds `busy` across all of this — and
+   * these exist so that stays true, because the next repair of that symptom
+   * will be tempted to touch this file.
+   */
+  it('stays busy through everything a long turn is made of', () => {
+    let view = reduceEvents(EMPTY_VIEW, [event('turn.started', { turnRef: 't1' })])
+    for (const during of [
+      event('agent.message.completed', { text: 'a first answer' }),
+      event('agent.reasoning.delta', { text: 'thinking about it' }),
+      event('tool.started', { itemRef: 'i1', name: 'Read', detail: 'src/a.ts' }),
+      event('approval.requested', { approvalId: 'a1', kind: 'command', command: 'ls' }),
+      event('approval.decided', { approvalId: 'a1', decision: 'allow', by: 'policy' }),
+      event('command.started', { itemRef: 'c1', command: 'ls' }),
+      event('command.completed', { itemRef: 'c1', exitCode: 0 }),
+      event('tool.completed', { itemRef: 'i1', status: 'ok' }),
+      event('notice', { level: 'info', source: 'harness', text: 'allowed automatically' }),
+    ]) {
+      view = reduceEvents(view, [during])
+      expect(view.busy).toBe(true)
+    }
+    view = reduceEvents(view, [event('turn.completed', { turnRef: 't1', status: 'completed' })])
+    expect(view.busy).toBe(false)
+  })
+
+  it('keeps one agent busy while the other finishes', () => {
+    // Per agent, not a boolean: in a shared room one can be thinking while the
+    // other is idle, and a single flag would flatten that away.
+    let view = reduceEvents(EMPTY_VIEW, [
+      event('turn.started', { turnRef: 't1' }, 'codex'),
+      event('turn.started', { turnRef: 't2' }, 'claude'),
+    ])
+    expect(view.working).toEqual(['codex', 'claude'])
+    view = reduceEvents(view, [event('turn.completed', { turnRef: 't2' }, 'claude')])
+    expect(view.working).toEqual(['codex'])
+    expect(view.busy).toBe(true)
+  })
+
+  it('survives a completion with no start, which is what an unbalanced pair looks like', () => {
+    // Claude has no per-turn start message; the adapter raises one per send. A
+    // completion arriving without its start must not leave anything negative or
+    // stuck — the reducer holds a set, and this is what says so.
+    const view = reduceEvents(EMPTY_VIEW, [
+      event('turn.completed', { turnRef: 't1', status: 'completed' }),
+    ])
+    expect(view.working).toEqual([])
+    expect(view.busy).toBe(false)
+  })
+
   it('says "Stopped." for a user-initiated interrupt, not an error', () => {
     // Claude reports a user stop identically to a failure on the wire (S3b);
     // the log carries userInitiated so the UI can tell the difference.
