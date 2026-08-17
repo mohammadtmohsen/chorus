@@ -30,6 +30,38 @@ Nothing here can be finished by me alone.
 
 ## Open
 
+### C-042 · Nine e2e specs fail on `main`, and it is not flake
+
+Measured on 2026-08-17 by running the suite in a clean worktree of `main` at
+83db87f, to tell a branch's breakage from the suite's own: **22 passed, 10
+failed.** The branch under test failed 9, a strict subset. Two runs on the same
+tree produced 12 and 11 failures with a shifting membership, so there is flake on
+top — but there is a floor of failures that is present every time.
+
+C-029 describes this as _"passes about 6 runs in 10"_, which reads as a whole
+suite that occasionally trips. What the baseline actually shows is a **cluster**:
+
+```
+the collapsed rail runs the day on its own
+a session is one row, one preview and one menu
+a rail drag places a session, and only Arrange reorders
+the drawer docks, resizes within its range, and comes back that width
+a terminal belongs to one session, and the global one is a different thing
+```
+
+Five of the ten are the workspace shell, which suggests one cause rather than
+five, and the rest — reopening, usage, the pinned question, an agent's question —
+have not been looked at at all.
+
+**This is worse than the flake it is filed under**, because a suite with a known
+failing floor cannot be read at a glance: "9 failed" means nothing until someone
+re-derives which nine were expected. That is a manual baseline before every use,
+which is exactly the cost a test suite exists to remove.
+
+**Done when:** a run of the suite on `main` either passes or fails only specs
+that are marked as known-failing in the runner's own output, so a number is
+readable without a second run to compare against.
+
 ### C-041 · A selection is checked against a projection that cannot see the chrome
 
 `openAside` refuses an excerpt it cannot find in the reply the log holds, and it
