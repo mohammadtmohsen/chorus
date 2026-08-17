@@ -1,4 +1,5 @@
 import { shell, type BrowserWindow, type Session } from 'electron'
+import { isSafeHref } from '../shared/markdown.js'
 
 /**
  * Chorus renders untrusted model output. Without these, an injection in an
@@ -63,8 +64,26 @@ export function lockDownNavigation(window: BrowserWindow, devServerUrl: string |
     if (!isInternal(url)) event.preventDefault()
   })
 
+  /*
+   * The renderer's own allowlist, not a second one.
+   *
+   * This used to read `url.startsWith('https://')`, which is narrower than what
+   * `MarkdownView` is willing to draw as a link — `isSafeHref` admits `http:`
+   * and `mailto:` too. The gap was silent by construction: the transcript
+   * rendered an underlined, coloured link, the click reached here, and `deny`
+   * ended it with nothing on screen to say why. Measured before it was fixed, a
+   * plain-`http` link opened zero connections while an `https` one opened four.
+   *
+   * Sharing the predicate is the point rather than adding two schemes. Two
+   * allowlists over the same decision drift, and the drift shows up as a dead
+   * control rather than as an error.
+   *
+   * The scheme was never the protection anyway — a model can write `https://`
+   * as easily as `http://`. What protects the app is that this hands the URL to
+   * the OS browser and denies the window, which is unchanged.
+   */
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void shell.openExternal(url)
+    if (isSafeHref(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 

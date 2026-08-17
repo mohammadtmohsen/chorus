@@ -38,7 +38,10 @@ lets something private leave it:
   tree, never HTML — there is no `dangerouslySetInnerHTML` anywhere and adding
   one would be the bug. The hand-written markdown parser and syntax highlighter
   are the interesting targets.
-- **Link handling.** `security.ts` only hands `https` to `shell.openExternal`;
+- **Link handling.** `security.ts` hands `shell.openExternal` exactly what the
+  renderer is willing to draw as a link — `isSafeHref`, which admits `http`,
+  `https` and `mailto` and nothing else. One predicate, shared, because two
+  allowlists over the same decision drift and the drift is a dead link;
   anything that gets another scheme past it is in scope.
 - **The VS Code extension bridge**, which is a local socket. It is supposed to
   send metadata for the open folder only — a path escaping that boundary is a
