@@ -7,6 +7,65 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.17.0
+
+### An agent that is working says so, for the whole turn
+
+A long turn went quiet. Commands scrolled past, an approval was allowed
+automatically, a new reply began — and nothing anywhere said anyone was busy.
+The Send button sat there looking ready while a reply was still arriving.
+
+Two faults, and the second is the one that mattered. Claude sends no per-turn
+start signal, so Chorus derived one from the frame the CLI sends when a _session_
+opens — which arrives once, while the end-of-turn signal arrives every turn. From
+your second message onward, Chorus believed nothing was running: no working line,
+no Stop button, and a sidebar that said the session was idle while it worked. The
+other fault was narrower and just as total — the first time an agent showed its
+thinking, the working line was suppressed for the rest of the session.
+
+The line has also moved to the foot of the turn, under the newest output, which
+is where you are reading. It now says what the agent itself reports it is doing —
+_asking the model_, _compacting its context_ — and falls back to its own wording
+through the long silences in between. The Send button is outlined while a turn
+runs, so a filled one means idle and nothing else. Sending mid-turn still steers.
+
+### Explain simply is a button under the reply
+
+It used to work on a selection, and refused most of them: _"That passage is not
+part of that reply"_. Selecting an answer means starting above the first line and
+dragging to the end, which picks up the timestamp and the summary card — neither
+of which is anything the agent said, so the check that guards against putting
+words in an agent's mouth threw the whole thing out.
+
+It is a button under every finished reply now, and it explains the whole answer
+in your language rather than the part you managed to select. Nothing to drag, and
+nothing that can be refused. Translate still works on a selection, where a
+passage really is the subject.
+
+### Clicking a path opens the file
+
+A path in a tool row or in the list of files a turn changed opens in VS Code, at
+the project that conversation belongs to. Rows that name a search pattern or a
+subagent's brief stay as text, because they name nothing to open.
+
+### Send a problem from VS Code into a conversation
+
+Right-click a diagnostic — a type error, a lint rule, a compiler complaint — and
+choose **Send this problem to Chorus**. The file, the line, the message and the
+code it is about arrive in the composer of the conversation whose project the
+file belongs to, as a draft. Nothing is sent until you send it, so you add what
+you actually want done first.
+
+**This needs the new extension.** Chorus and the extension refuse to talk across
+a protocol change rather than guessing, so the status bar in VS Code will say to
+update it: Settings → VS Code extension → Update, then reload VS Code.
+
+### Links that are not https now open
+
+A link to an `http` address, or a `mailto:`, was drawn as a link and did
+nothing at all when clicked. Chorus was willing to draw more kinds of link than
+it was willing to open. Both ends now agree.
+
 ## 0.16.0
 
 ### The transcript follows the reply again, all the way down
