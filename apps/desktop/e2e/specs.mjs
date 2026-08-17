@@ -2772,6 +2772,90 @@ export const specs = [
   },
 
   {
+    name: 'a problem sent from the editor lands in the composer, unsent',
+    /*
+     * Protocol 3's whole reason, end to end: a frame the *extension* initiates,
+     * carrying source Chorus never asked for, routed by main to the conversation
+     * whose project it belongs to, and staged rather than sent.
+     *
+     * The staging is the part worth a spec. Everything else in this feature is a
+     * unit test away, but "it reached a draft and did not become a turn" is a
+     * claim about three processes agreeing.
+     */
+    async run(assert) {
+      const before = existingDescriptors()
+      const app = await launch()
+      let ide = null
+      try {
+        await started(app)
+
+        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-diag-'))
+        mkdirSync(join(project, 'src'), { recursive: true })
+        writeFileSync(join(project, 'src/rate.ts'), 'const a = 1\n')
+
+        const conversationId = await app.evaluate(
+          `document.querySelector('.pane').dataset.conversation`
+        )
+        await app.evaluate(
+          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
+        )
+
+        const descriptor = await waitForDescriptor(before)
+        ide = await FakeIde.connect(descriptor)
+        const roots = await ide.awaitRoots()
+        const root = roots[0]
+        assert(typeof root === 'string', 'Chorus published its root')
+
+        ide.sendDiagnostic(root, { file: join(root, 'src/rate.ts') })
+
+        await app.until(
+          `document.querySelector('.composer textarea').value.includes('src/rate.ts')`,
+          { timeout: 15_000, label: 'the problem reached the composer' }
+        )
+        const draft = await app.evaluate(`document.querySelector('.composer textarea').value`)
+
+        assert(
+          draft.includes('src/rate.ts:55'),
+          `the reference is one-based: ${draft.slice(0, 80)}`
+        )
+        assert(
+          draft.includes('> Existing memoization could not be preserved'),
+          'the message is quoted, not pasted as an instruction'
+        )
+        assert(
+          draft.includes('react-compiler(memoization)'),
+          'and says which tool objected, and to what'
+        )
+        assert(
+          draft.includes('const providerTypeSelected = useMemo('),
+          'the offending code came with it'
+        )
+        assert(!draft.includes(root), 'and the absolute path did not')
+
+        /*
+         * The point of staging. A gesture in another application must not spend
+         * a turn here — so nothing may have been sent, which is what the absence
+         * of a Stop button and of any agent row says.
+         */
+        const sent = await app.evaluate(`(() => ({
+          stop: document.querySelectorAll('.send--stop').length,
+          said: document.querySelectorAll('.entry--user[data-kind="message"]').length,
+        }))()`)
+        assert(sent.stop === 0, 'no turn was started')
+        assert(sent.said === 0, 'and nothing was said in the conversation')
+
+        // A root Chorus never asked about is dropped in main, not staged.
+        ide.sendDiagnostic('/somewhere/else', { file: '/somewhere/else/src/x.ts' })
+        await wait(1_000)
+        const after = await app.evaluate(`document.querySelector('.composer textarea').value`)
+        assert(after === draft, 'a diagnostic for an unknown root changes nothing')
+      } finally {
+        ide?.close()
+        await app.quit()
+      }
+    },
+  },
+  {
     name: 'follows the editor for its own project, and only that one',
     /*
      * The whole path, end to end: descriptor discovery, the token handshake,

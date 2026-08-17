@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import {
   ACTIVITY_PUSH_CHANNEL,
+  DIAGNOSTIC_PUSH_CHANNEL,
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
   CONTEXT_PUSH_CHANNEL,
@@ -837,6 +838,58 @@ export function forwardIdeContextToRenderer(runtime: ChorusRuntime, bridge: IdeB
     unsubscribeBridge()
     unsubscribeRuntime()
   }
+}
+
+/**
+ * Sends a problem from VS Code to the conversation whose project it belongs to.
+ *
+ * **Routing is main's, not the extension's.** The extension knows a root; only
+ * main knows which conversations are open on it. A root with no conversation is
+ * dropped here rather than guessed at — a compiler error landing in a
+ * conversation about something else is worse than one landing nowhere, and the
+ * person who pressed the button is told by VS Code either way.
+ *
+ * Every conversation on that root is sent to, which is the honest reading of
+ * "this project": two panes on one repository are both looking at the file, and
+ * choosing between them from main — which cannot see which pane has focus —
+ * would be a guess dressed as a decision. The renderer stages it in each; a
+ * draft is not a turn.
+ *
+ * The absolute path is dropped and the range becomes one-based here, exactly as
+ * `toPushFile` does, so a pane never holds where the project sits on disk.
+ */
+export function forwardDiagnosticsToRenderer(
+  runtime: ChorusRuntime,
+  bridge: IdeBridge
+): () => void {
+  return bridge.onDiagnostic((params) => {
+    const targets = runtime
+      .openConversations()
+      .filter(({ cwd }) => String(bridge.rootFor(cwd)) === params.root)
+
+    for (const { conversationId, cwd } of targets) {
+      const relativePath = projectRelativePath(bridge.rootFor(cwd), params.filePath)
+      // Re-checked after the extension already filtered, for the reason
+      // `ide:snapshot` re-checks: main is the security boundary.
+      if (relativePath === null) continue
+      const range = toDisplayRange({ start: params.range.start, end: params.range.end })
+      const payload = {
+        conversationId,
+        relativePath,
+        languageId: params.languageId,
+        severity: params.severity,
+        ...(params.source === undefined ? {} : { source: params.source }),
+        ...(params.code === undefined ? {} : { code: params.code }),
+        message: params.message,
+        startLine: range.startLine,
+        endLine: range.endLine,
+        text: params.text,
+      }
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(DIAGNOSTIC_PUSH_CHANNEL, payload)
+      }
+    }
+  })
 }
 
 export function forwardEventsToRenderer(runtime: ChorusRuntime): () => void {

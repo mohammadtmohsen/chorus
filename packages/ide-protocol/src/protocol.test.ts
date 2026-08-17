@@ -8,6 +8,8 @@ import {
   encodeFrame,
   ERROR_CODES,
   extensionMessage,
+  MAX_DIAGNOSTIC_MESSAGE,
+  MAX_DIAGNOSTIC_TEXT,
   MAX_FRAME_BYTES,
   MAX_SELECTED_BYTES,
   PROTOCOL_VERSION,
@@ -135,6 +137,83 @@ describe('stateChanged root states', () => {
 
   it('accepts unmatched with no editor', () => {
     expect(extensionMessage.safeParse(frame('unmatched', null)).success).toBe(true)
+  })
+})
+
+/**
+ * The frame the extension sends on its own, unasked.
+ *
+ * Everything else it says is a handshake or an answer. This one carries source
+ * text at a moment Chorus did not choose, which is why every bound on it is part
+ * of the contract rather than a nicety.
+ */
+describe('a diagnostic', () => {
+  const good = {
+    jsonrpc: '2.0',
+    method: 'sendDiagnostic',
+    params: {
+      root: '/p',
+      filePath: '/p/src/a.ts',
+      languageId: 'typescript',
+      provenance: { kind: 'worktree' },
+      severity: 'error',
+      source: 'react-compiler',
+      code: 'memoization',
+      message: 'Existing memoization could not be preserved',
+      range: { start: { line: 54, character: 4 }, end: { line: 54, character: 60 } },
+      text: 'const providerTypeSelected = useMemo(',
+    },
+  }
+
+  it('travels from the extension, and only from it', () => {
+    expect(extensionMessage.safeParse(good).success).toBe(true)
+    expect(chorusMessage.safeParse(good).success).toBe(false)
+  })
+
+  it('is optional about its source and code, because not every tool names them', () => {
+    const { source: _s, code: _c, ...rest } = good.params
+    expect(extensionMessage.safeParse({ ...good, params: rest }).success).toBe(true)
+  })
+
+  it('refuses a severity VS Code does not have', () => {
+    // Its own enum is numeric and inverted — 0 is Error — so a number crossing
+    // the wire would mean whatever the sender's copy of the enum meant.
+    for (const severity of ['fatal', 'Error', 0, 3]) {
+      expect(
+        extensionMessage.safeParse({ ...good, params: { ...good.params, severity } }).success
+      ).toBe(false)
+    }
+  })
+
+  it('bounds the message and the code it is about', () => {
+    const huge = (n: number): string => 'x'.repeat(n + 1)
+    expect(
+      extensionMessage.safeParse({
+        ...good,
+        params: { ...good.params, message: huge(MAX_DIAGNOSTIC_MESSAGE) },
+      }).success
+    ).toBe(false)
+    expect(
+      extensionMessage.safeParse({
+        ...good,
+        params: { ...good.params, text: huge(MAX_DIAGNOSTIC_TEXT) },
+      }).success
+    ).toBe(false)
+  })
+
+  it('refuses a frame that names no root, which is what routing depends on', () => {
+    const { root: _r, ...rest } = good.params
+    expect(extensionMessage.safeParse({ ...good, params: rest }).success).toBe(false)
+  })
+
+  /* `strictObject`, so a field nobody agreed on cannot ride along. */
+  it('refuses an unknown field', () => {
+    expect(
+      extensionMessage.safeParse({
+        ...good,
+        params: { ...good.params, wholeFile: 'everything' },
+      }).success
+    ).toBe(false)
   })
 })
 

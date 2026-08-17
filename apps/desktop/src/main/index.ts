@@ -9,6 +9,7 @@ import {
   forwardContextUsageToRenderer,
   forwardTasksToRenderer,
   forwardActivityToRenderer,
+  forwardDiagnosticsToRenderer,
   forwardTerminalToRenderer,
   forwardLimitsToRenderer,
   registerIpcHandlers,
@@ -146,6 +147,7 @@ void app.whenReady().then(async () => {
     ideBridge = bridge
     attachIdeBridge(bridge)
     forwardIdeContextToRenderer(started, bridge)
+    forwardDiagnosticsToRenderer(started, bridge)
     const syncRoots = (): void => {
       bridge.setRoots(started.openConversations().map((c) => c.cwd))
     }

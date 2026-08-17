@@ -8,8 +8,10 @@ import {
   runtimeDirectory,
   utf8ByteLength,
   type CurrentContextResult,
+  type DiagnosticSeverity,
 } from '@chorus/ide-protocol'
 import { ChorusConnection } from './connection.js'
+import { diagnosticFrame, type Refusal } from './diagnostic-pick.js'
 import {
   countStates,
   diagnosticLines,
@@ -226,6 +228,69 @@ export function activate(context: vscode.ExtensionContext): void {
       connections.clear()
       rescan()
     }),
+    /*
+     * The one thing this extension does at a person's request rather than in
+     * response to the editor changing under them — and the only one that ships
+     * source Chorus did not ask for. Everything narrow about it is deliberate:
+     * the problem under the cursor, from a document inside a root Chorus named,
+     * to every connected Chorus that has finished its handshake.
+     *
+     * It reports what happened through a message rather than the output channel:
+     * this is a gesture with an expected effect elsewhere, so silence would read
+     * as a broken command.
+     */
+    vscode.commands.registerCommand('chorus.sendDiagnostic', () => {
+      const editor = vscode.window.activeTextEditor
+      const resolved = currentEditor()
+      if (editor === undefined || resolved === null) {
+        void vscode.window.showInformationMessage(NO_EDITOR)
+        return
+      }
+
+      const roots = [...new Set([...connections.values()].flatMap((c) => [...c.roots]))]
+      const frame = diagnosticFrame(
+        {
+          filePath: resolved.filePath,
+          languageId: resolved.languageId,
+          provenance: resolved.provenance,
+          cursor: {
+            line: editor.selection.active.line,
+            character: editor.selection.active.character,
+          },
+          diagnostics: vscode.languages.getDiagnostics(editor.document.uri).map((d) => ({
+            severity: SEVERITIES[d.severity] ?? 'error',
+            message: d.message,
+            ...(typeof d.source === 'string' ? { source: d.source } : {}),
+            ...(codeOf(d.code) === undefined ? {} : { code: codeOf(d.code) }),
+            range: {
+              start: { line: d.range.start.line, character: d.range.start.character },
+              end: { line: d.range.end.line, character: d.range.end.character },
+            },
+          })),
+          /*
+           * Read from the *document*, not from disk. A buffer the user has not
+           * saved is exactly the one they are asking about, and the range the
+           * editor reported indexes the buffer rather than the file.
+           */
+          linesOf: (start, end) =>
+            editor.document.getText(
+              new vscode.Range(
+                new vscode.Position(Math.max(0, start), 0),
+                new vscode.Position(Math.max(0, end - 1), Number.MAX_SAFE_INTEGER)
+              )
+            ),
+        },
+        roots,
+        vscode.workspace.isTrusted
+      )
+
+      if (!frame.ok) {
+        void vscode.window.showInformationMessage(REFUSALS[frame.reason])
+        return
+      }
+      const sent = [...connections.values()].filter((c) => c.sendDiagnostic(frame.params)).length
+      void vscode.window.showInformationMessage(sent === 0 ? NOT_CONNECTED : SENT)
+    }),
     vscode.commands.registerCommand('chorus.diagnose', () => {
       /*
        * `cache.resolve` rather than `reportAll`, which would `observe` and so
@@ -301,6 +366,49 @@ function canonical(path: string): string {
  * its scheme and carries `provenance: null`, so the diagnostics can still say
  * *what* was refused rather than reporting nothing at all.
  */
+/**
+ * VS Code's `DiagnosticSeverity` is a numeric enum whose order is inverted —
+ * `0` is Error and `3` is Hint. Named here so the wire never carries a number
+ * whose meaning depends on the sender's copy of the enum.
+ */
+const SEVERITIES: Record<number, DiagnosticSeverity> = {
+  0: 'error',
+  1: 'warning',
+  2: 'information',
+  3: 'hint',
+}
+
+/** A rule id or an error number; the API allows either, and an object too. */
+function codeOf(code: unknown): string | undefined {
+  if (typeof code === 'string' && code !== '') return code
+  if (typeof code === 'number') return String(code)
+  if (typeof code === 'object' && code !== null && 'value' in code) {
+    // `in` has already narrowed it; the cast the first draft had was the
+    // compiler being told something it had just worked out for itself.
+    const { value } = code
+    if (typeof value === 'string' && value !== '') return value
+    if (typeof value === 'number') return String(value)
+  }
+  return undefined
+}
+
+/*
+ * Said to the person who pressed the button, in the editor they pressed it in.
+ *
+ * Not `package.nls.json`: these are the command's own answers rather than its
+ * name, and the extension has no other user-facing prose. English here matches
+ * everything else this extension shows.
+ */
+const SENT = 'Sent to Chorus. It is waiting in the composer.'
+const NOT_CONNECTED = 'No Chorus is connected to this window.'
+const NO_EDITOR = 'Open a file to send a problem from it.'
+const REFUSALS: Record<Refusal, string> = {
+  'no-diagnostic': 'Put the cursor on a problem — the squiggly part — and try again.',
+  'unsupported-document': 'Chorus cannot reference this kind of document.',
+  'outside-roots': 'This file is not inside a project any connected Chorus is open on.',
+  untrusted: 'This workspace is restricted, so Chorus sends nothing from it.',
+}
+
 function currentEditor(): EditorLike | null {
   const editor = vscode.window.activeTextEditor
   if (editor === undefined) return null

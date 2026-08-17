@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
+import { formatDiagnosticBlock } from './editor-context.js'
 import { fitCard, type AsidePurpose } from './aside.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
@@ -764,6 +765,37 @@ export function Session(props: {
       window.getSelection()?.removeAllRanges()
     },
     [conversationId]
+  )
+
+  /*
+   * A problem sent from VS Code, staged in this pane's composer.
+   *
+   * Staged and never sent, which is the whole shape of the feature: a gesture in
+   * another application must not spend a turn here. What to *do* about the
+   * problem is what the composer is for.
+   *
+   * Scoped to this conversation by main, which is the only place that knows
+   * which conversations are open on the root the extension named. The pane also
+   * takes focus — you pressed a button in VS Code expecting to end up here, and
+   * a draft appearing in a background tab is a message you never find.
+   */
+  useEffect(
+    () =>
+      window.chorus.onDiagnostic((diagnostic) => {
+        if (diagnostic.conversationId !== conversationId) return
+        /*
+         * `insert` rather than `withEditorContext`, and the difference is where
+         * it lands: editor context is prepended because it qualifies whatever
+         * you were already writing, while this *is* the subject. It appends,
+         * like a promoted aside, and focuses the box — which is the same
+         * behaviour arriving from a different direction.
+         */
+        composer.current?.insert(
+          formatDiagnosticBlock(diagnostic, { heading: t('ide.diagnostic.heading') })
+        )
+        props.onActivate()
+      }),
+    [conversationId, t, props]
   )
 
   /**

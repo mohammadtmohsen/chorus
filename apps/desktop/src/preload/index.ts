@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   ACTIVITY_PUSH_CHANNEL,
   ActivityPush,
+  DIAGNOSTIC_PUSH_CHANNEL,
+  DiagnosticPush,
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
   IdeContextPush,
@@ -180,6 +182,16 @@ const api: ChorusApi = {
     ipcRenderer.on(TERMINAL_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(TERMINAL_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onDiagnostic: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = DiagnosticPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(DIAGNOSTIC_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(DIAGNOSTIC_PUSH_CHANNEL, wrapped)
     }
   },
   onSettings: (listener) => {

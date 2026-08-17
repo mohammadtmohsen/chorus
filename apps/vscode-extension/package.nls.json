@@ -1,6 +1,7 @@
 {
   "chorus.command.reconnect": "Reconnect to Chorus",
   "chorus.command.diagnose": "Diagnose editor context",
+  "chorus.command.sendDiagnostic": "Send this problem to Chorus",
   "chorus.config.trace": "Log one line per editor-context frame to the Chorus output channel. Reason codes, schemes and counts only — never a file path, a token, or selected text.",
   "chorus.trust.description": "In a restricted workspace Chorus reports that the window exists, but sends no file path, range, or text."
 }

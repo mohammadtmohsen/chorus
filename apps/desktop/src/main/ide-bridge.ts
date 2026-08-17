@@ -15,6 +15,7 @@ import {
   PROTOCOL_VERSION,
   runtimeDirectory,
   type CurrentContextResult,
+  type DiagnosticParams,
   type EditorMetadata,
   type IdeStatus,
 } from '@chorus/ide-protocol'
@@ -90,6 +91,8 @@ export class IdeBridge {
   readonly #timers = new Set<NodeJS.Timeout>()
   readonly #pendingRequests = new Map<string, (result: CurrentContextResult) => void>()
   readonly #listeners = new Set<() => void>()
+  /** Kept apart from `#listeners`: a diagnostic is an event, not state. */
+  readonly #diagnosticListeners = new Set<(params: DiagnosticParams) => void>()
   #roots: CanonicalRoot[] = []
   #nextRequestId = 0
   #closed = false
@@ -306,6 +309,19 @@ export class IdeBridge {
     return () => this.#listeners.delete(listener)
   }
 
+  /**
+   * Told when a window sends a diagnostic, with the frame itself.
+   *
+   * Separate from `subscribe`, which says only "something about the editors
+   * changed" and lets the caller re-read. That shape is right for state and
+   * wrong for this: there is nothing to re-read, and a listener that arrived
+   * late has missed it rather than being behind.
+   */
+  onDiagnostic(listener: (params: DiagnosticParams) => void): () => void {
+    this.#diagnosticListeners.add(listener)
+    return () => this.#diagnosticListeners.delete(listener)
+  }
+
   #notify(): void {
     for (const listener of this.#listeners) listener()
   }
@@ -512,7 +528,33 @@ export class IdeBridge {
       return CLOSED
     }
 
-    // `initialize` returned above, so this is the only remaining variant.
+    /*
+     * A diagnostic somebody chose to send, which is the one frame here that a
+     * person initiates rather than the editor's state changing under them.
+     *
+     * Re-checked against the roots Chorus asked about, exactly as a state report
+     * is and for the same reason: the extension filters to minimize disclosure,
+     * and main is the security boundary. A diagnostic for a root nobody asked
+     * about is dropped in silence — there is no user waiting on this socket, and
+     * the person who pressed the button is told by the editor.
+     *
+     * Handed out whole rather than folded into `#windows`: it is an event, not
+     * state. Nothing about it is true a second later, so there is nothing to
+     * hold and nothing for a window opened afterwards to catch up on.
+     */
+    if (frame.method === 'sendDiagnostic') {
+      const { params } = frame
+      if (!this.#roots.some((r) => String(r) === params.root)) {
+        this.#log.warn('ide diagnostic dropped', { reason: 'root' })
+        return { kind: 'open', windowId }
+      }
+      this.#log.info('ide diagnostic received', { severity: params.severity })
+      for (const listener of this.#diagnosticListeners) listener(params)
+      return { kind: 'open', windowId }
+    }
+
+    // `initialize` and `sendDiagnostic` returned above, so this is the only
+    // remaining variant.
     if (frame.params.focused && !window.focused) window.lastFocusedAt = this.#now()
     window.focused = frame.params.focused
     window.roots.clear()

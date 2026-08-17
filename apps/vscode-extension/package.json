@@ -36,8 +36,22 @@
         "command": "chorus.diagnose",
         "title": "%chorus.command.diagnose%",
         "category": "Chorus"
+      },
+      {
+        "command": "chorus.sendDiagnostic",
+        "title": "%chorus.command.sendDiagnostic%",
+        "category": "Chorus"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "chorus.sendDiagnostic",
+          "when": "editorTextFocus",
+          "group": "9_cutcopypaste@100"
+        }
+      ]
+    },
     "configuration": {
       "title": "Chorus",
       "properties": {

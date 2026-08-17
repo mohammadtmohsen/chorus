@@ -202,6 +202,64 @@ export function versionFor(provenance: IdeProvenanceShape, relativePath: string)
  * that is not the keyboard, so it is appended as its own block rather than
  * inserted wherever the caret happened to be.
  */
+/**
+ * A problem sent from VS Code, as the lines that go into the composer.
+ *
+ * **Written for an agent to act on, not to admire.** The reference comes first,
+ * for the reason `formatContextBlock` gives above and `attach.ts` sets: Chorus
+ * hands agents paths, not attachments, so the file and line are the load-bearing
+ * part and the rest is what a path cannot say. The message is quoted rather than
+ * pasted bare, so a compiler's paragraph cannot be read as the user's own
+ * instruction.
+ *
+ * The code is fenced with the document's language, and the fence is measured
+ * against the text — a diagnostic about a markdown file can contain backticks.
+ *
+ * No instruction is added. What to *do* about a problem is the thing the user
+ * came to type, and a composer that has already said "fix this" has answered the
+ * only question it was there to ask.
+ */
+export function formatDiagnosticBlock(
+  diagnostic: {
+    readonly relativePath: string
+    readonly startLine: number
+    readonly endLine: number
+    readonly languageId: string
+    readonly message: string
+    readonly source?: string | undefined
+    readonly code?: string | undefined
+    readonly text: string
+  },
+  labels: { readonly heading: string }
+): string {
+  const lines =
+    diagnostic.startLine === diagnostic.endLine
+      ? String(diagnostic.startLine)
+      : `${String(diagnostic.startLine)}-${String(diagnostic.endLine)}`
+  /* `eslint(no-shadow)` — the producer and its rule, when both are known, in the
+     spelling every linter already prints. */
+  const attribution =
+    diagnostic.source === undefined
+      ? diagnostic.code === undefined
+        ? ''
+        : ` (${diagnostic.code})`
+      : diagnostic.code === undefined
+        ? ` (${diagnostic.source})`
+        : ` (${diagnostic.source}(${diagnostic.code}))`
+
+  const quoted = diagnostic.message
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => (line.trim() === '' ? '>' : `> ${line.trimEnd()}`))
+    .join('\n')
+
+  const head = `${labels.heading}: \`${diagnostic.relativePath}:${lines}\`${attribution}`
+  if (diagnostic.text === '') return `${head}\n\n${quoted}`
+
+  const fence = fenceFor(diagnostic.text)
+  return `${head}\n\n${quoted}\n\n${fence}${safeLanguageId(diagnostic.languageId)}\n${diagnostic.text}\n${fence}`
+}
+
 export function withEditorContext(draft: string, block: string): string {
   if (block === '') return draft
   const body = draft.trimStart()

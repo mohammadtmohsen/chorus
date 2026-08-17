@@ -201,6 +201,49 @@ export class FakeIde {
     })
   }
 
+  /**
+   * Send a problem, as the context-menu command does.
+   *
+   * The only frame this fake sends that a *person* initiates rather than the
+   * editor's state changing underneath them, and the only one carrying source
+   * text Chorus did not ask for — so a spec driving it is exercising the whole
+   * point of protocol 3.
+   */
+  sendDiagnostic(
+    root,
+    {
+      file,
+      message = 'Existing memoization could not be preserved',
+      severity = 'error',
+      source = 'react-compiler',
+      code = 'memoization',
+      startLine = 54,
+      endLine = 54,
+      text = 'const providerTypeSelected = useMemo(',
+      provenance = { kind: 'worktree' },
+    } = {}
+  ) {
+    this.#write({
+      jsonrpc: '2.0',
+      method: 'sendDiagnostic',
+      params: {
+        root,
+        filePath: file,
+        languageId: 'typescript',
+        provenance,
+        severity,
+        source,
+        code,
+        message,
+        range: {
+          start: { line: startLine, character: 4 },
+          end: { line: endLine, character: 60 },
+        },
+        text,
+      },
+    })
+  }
+
   /** Report that this window has nothing to offer for `root`. */
   reportNothing(root, status = 'unmatched') {
     this.#write({

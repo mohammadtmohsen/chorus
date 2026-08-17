@@ -6,6 +6,7 @@ import {
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
   type CurrentContextResult,
+  type DiagnosticParams,
 } from '@chorus/ide-protocol'
 import type { ConnectionState } from './diagnostics.js'
 import type { Descriptor } from './discovery.js'
@@ -141,6 +142,20 @@ export class ChorusConnection {
         },
       })
     )
+  }
+
+  /**
+   * Send one diagnostic. Returns whether it went, so the caller can say so.
+   *
+   * The only thing this extension sends that a person asked for rather than the
+   * editor's own state changing underneath them — and the only one carrying
+   * source text Chorus did not request. A notification, not a request: nothing
+   * here waits on what Chorus does with it.
+   */
+  sendDiagnostic(params: DiagnosticParams): boolean {
+    if (!this.#handshaken || this.#socket === null) return false
+    this.#socket.write(encodeFrame({ jsonrpc: '2.0', method: 'sendDiagnostic', params }))
+    return true
   }
 
   #open(): void {

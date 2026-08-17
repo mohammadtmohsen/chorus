@@ -1169,6 +1169,40 @@ export const EVENTS_PUSH_CHANNEL = 'conversation:events'
 export const IDE_PUSH_CHANNEL = 'ide:context'
 
 /**
+ * A problem someone sent from VS Code, on its way to a composer.
+ *
+ * **The one push that begins outside Chorus.** Everything else on these channels
+ * is Chorus reporting its own state; this is a person in another application
+ * asking for something to appear here. It carries source text, which no other
+ * push does — `IdeContextPush` deliberately carries none — and that is why it
+ * lands in a draft for the user to send rather than reaching an agent.
+ *
+ * `conversationId` is decided in main, not by the extension, which knows only a
+ * root. A root with no conversation open on it is dropped there: putting a
+ * compiler error into a conversation about something else is worse than putting
+ * it nowhere.
+ *
+ * The path is relative, as `IdeContextPush`'s is, so a pane cannot display —
+ * or screenshot — where the project sits on disk.
+ */
+export const DIAGNOSTIC_PUSH_CHANNEL = 'ide:diagnostic'
+
+export const DiagnosticPush = z.object({
+  conversationId: z.string(),
+  relativePath: z.string(),
+  languageId: z.string(),
+  severity: z.enum(['error', 'warning', 'information', 'hint']),
+  source: z.string().optional(),
+  code: z.string().optional(),
+  message: z.string(),
+  /** One-based and inclusive, converted once in main like every other range. */
+  startLine: z.number().int(),
+  endLine: z.number().int(),
+  text: z.string(),
+})
+export type DiagnosticPush = z.infer<typeof DiagnosticPush>
+
+/**
  * Settings, pushed to every window whenever any of them writes.
  *
  * **A read on mount is not enough for anything a pane draws continuously.**
@@ -1404,6 +1438,7 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'conversation:setCwd'>>
   readonly onScale: (listener: (scale: number) => void) => () => void
   readonly onSettings: (listener: (settings: IpcResponse<'settings:read'>) => void) => () => void
+  readonly onDiagnostic: (listener: (diagnostic: DiagnosticPush) => void) => () => void
   readonly onLimits: (listener: (limits: LimitsPush) => void) => () => void
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly onTasks: (listener: (tasks: TasksPush) => void) => () => void

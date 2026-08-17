@@ -344,6 +344,9 @@
       "done": "Installed. Reload the VS Code window to start using it.",
       "failed": "Install failed ({{reason}}).",
       "unavailable": "This build of Chorus does not ship the extension."
+    },
+    "diagnostic": {
+      "heading": "VS Code problem"
     }
   },
   "notice": {
