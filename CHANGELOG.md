@@ -7,6 +7,51 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.17.1
+
+Corrections to what 0.17.0 shipped, all found by using it.
+
+### Explain and Translate keep answering in your language
+
+A card answered in your language once and then switched to English the moment
+you asked a second question. Only the first request named a language, and an
+agent answers in the language it was asked in — so typing a follow-up in English
+got you an English answer, which is no use if your language is why you opened
+the card. It now stays in your language for the whole exchange, however the
+question is typed.
+
+Technical terms stay in English inside it — `event`, `status`, `props`, a file
+name, a library. A term translated is one you have to translate back before you
+can search for it or match it against the code in front of you.
+
+### The card survives, and follows its own answer
+
+Looking at another session closed the card and ended the side conversation
+inside it. It stays now: go to another tab, come back, and the answer is where
+you left it. Clicking away inside the same pane still dismisses it, which is the
+gesture that means "I am done with this".
+
+A long answer used to arrive below the fold, because the card never scrolled to
+follow it. It does now, and stops following the moment you scroll up to read
+something — the same rule the main transcript uses. It is also a little taller,
+since two exchanges were enough to start scrolling.
+
+### Right-to-left replies read properly, everywhere
+
+An agent answering in Arabic was laid out left-to-right in the main transcript:
+the sentence read, but its full stop sat on the wrong end and a list's bullets
+stayed on the left. Every paragraph, heading, list item, quote and table cell now
+takes its direction from its own first word, so an English identifier at the top
+of an Arabic answer no longer turns the whole thing around.
+
+Code blocks stay left-to-right whatever surrounds them. A fenced block that
+followed the prose moved its own punctuation — `);` to the far side of the line —
+which is code that no longer says what it says.
+
+### Smaller
+
+The rule above the message box is gone; the box already separates itself.
+
 ## 0.17.0
 
 ### An agent that is working says so, for the whole turn
