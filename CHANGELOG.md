@@ -7,6 +7,34 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.0
+
+### Enter on an approval now grants it for the session
+
+When an agent asks permission, the card arms a button so you can answer without
+reaching for the mouse — an approval stops the agent dead, so the fastest answer
+is the point. That button was **Allow once**, on the reasoning that the wider
+grant should cost a deliberate press.
+
+It is **Allow for this session** now. A session grant ends when you close the
+window, so the reach of a mistaken Enter is this sitting — and a mistaken Enter
+on _Allow once_ costs you a command you had not read either. The narrower button
+was not safer by enough to be worth answering the same question four times,
+which is the commonest way an approval queue turns into something you stop
+reading. The hint under the card says which grant Enter gives.
+
+**One kind is deliberately left alone.** For an MCP tool call, the wider button
+is not a session grant at all — it says _Always allow this tool_, and it means
+it: that answer is remembered across restarts. A key that was already armed when
+the card appeared should not be able to make a permanent change to what agents
+may do, so MCP approvals still arm _Allow once_. The wider button is where it
+always was, one press away.
+
+Two protections are unchanged and now follow whichever button is armed. Space
+does not approve, because a card can arrive while you are mid-sentence and the
+next space of ordinary typing would answer it. And a held Enter approves once
+rather than walking the whole queue.
+
 ## 0.18.1
 
 ### A file reference in your own message is readable again
