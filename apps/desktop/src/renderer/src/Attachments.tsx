@@ -11,11 +11,54 @@ export interface Attachment {
 }
 
 /**
+ * How much of the stem survives in a tile's caption.
+ *
+ * Five, and it was measured rather than picked: the caption may not be wider
+ * than the tile, and at 9px the tile fits about eleven characters. Seven put
+ * `1787033….png` in a 56px box, CSS ellipsis took the overflow, and the caption
+ * rendered `178703…` — the extension cut off after all, which is the exact
+ * failure this function exists to prevent. If `--thumb` changes, re-measure.
+ */
+const STEM = 5
+
+/**
+ * The name, cut down to a glance, with the extension kept.
+ *
+ * Pasted images arrive as `1787033349300-3-image.png` — a millisecond timestamp
+ * nobody reads. Left to CSS, `text-overflow: ellipsis` keeps the front and so
+ * throws away the only readable part; every pasted screenshot then captions as
+ * `17870333…`, which is both unreadable *and* identical to the one beside it.
+ *
+ * The picture is what identifies the file now that the thumbnail is large
+ * enough to show it. The caption's remaining job is to say what *kind* of thing
+ * this is, so the extension is what is protected and the stem is what is cut.
+ * The full name is still on `title`, and the path under it.
+ */
+export function shortName(name: string): string {
+  const dot = name.lastIndexOf('.')
+  // `dot > 0` rather than `!== -1`: a dotfile's leading dot is not an extension,
+  // so `.env` keeps its whole name instead of captioning as an empty stem.
+  const stem = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ''
+  return stem.length > STEM ? `${stem.slice(0, STEM)}…${ext}` : name
+}
+
+/**
  * What is about to be sent, above the box you are typing in.
  *
  * A path in the draft was honest and unreadable — you could not tell a
  * screenshot from a log without reading the filename, and could not tell whether
  * you had grabbed the right screenshot at all. A thumbnail answers both.
+ *
+ * **A square tile rather than a pill**, and the change is about the picture
+ * rather than the shape. At 22px in a round crop the thumbnail showed a few
+ * dozen pixels from the middle of a screenshot — for a dark one, an empty
+ * circle — so the chip was in practice a filename with a dot in front of it,
+ * which is the state the thumbnail existed to fix. A square is also the honest
+ * frame: images are rectangles, and a circle crops the corners of every one.
+ *
+ * So the tile is the picture, and the name is a caption under it rather than
+ * the main event.
  *
  * The path is still what the agent receives. This is only how it looks while it
  * is yours.
@@ -49,8 +92,8 @@ export function Attachments(props: {
               <img src={item.dataUrl} alt={item.name} />
             </button>
           )}
-          <span className="attachment-name" title={item.path}>
-            {item.name}
+          <span className="attachment-name" title={`${item.name}\n${item.path}`}>
+            {shortName(item.name)}
           </span>
           <button
             type="button"

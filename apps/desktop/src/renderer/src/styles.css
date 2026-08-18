@@ -4823,30 +4823,50 @@ input::placeholder {
 .attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: calc(var(--step) * 2);
-  padding-bottom: var(--step);
+  gap: calc(var(--step) * 3);
+  /* Top padding is for the ✕, which sits 6px outside its tile's corner and would
+     otherwise land on whatever the composer draws above this row. */
+  padding: 6px 0 var(--step);
 }
 
+/*
+ * A tile, and the picture is the tile.
+ *
+ * It was a pill: a 22px round crop, then the whole filename, then a ✕. At that
+ * size the crop is a few dozen pixels out of the middle of a screenshot — a
+ * dark one showed as an empty circle — so the thumbnail carried nothing and the
+ * row was really a filename with a dot in front of it. Widening the pill was
+ * not the fix; a picture beside text is always the small half.
+ *
+ * `--thumb` is the one number here. The tile is exactly as wide as its picture,
+ * so the caption cannot stretch it and a row of attachments lines up.
+ */
 .attachment {
+  /* 56 rather than 44: the caption has to fit under it, and a 44px box held
+     eight characters — not enough for a cut stem *and* an extension. */
+  --thumb: 56px;
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: calc(var(--step) * 1.5);
-  max-width: 15rem;
-  padding: 2px 2px 2px 4px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--ground);
-  font-size: 11px;
+  gap: 2px;
+  width: var(--thumb);
+  font-size: 9px;
   color: var(--muted);
 }
 
+/*
+ * Square, because images are. The circle cropped the corners off every one, and
+ * the corners are where a screenshot keeps its window chrome — often the only
+ * part that says which app you grabbed.
+ */
 .attachment-thumb {
   display: block;
-  width: 22px;
-  height: 22px;
+  width: var(--thumb);
+  height: var(--thumb);
   padding: 0;
-  border: 0;
-  border-radius: 50%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
   overflow: hidden;
   background: var(--sunken);
   cursor: zoom-in;
@@ -4859,35 +4879,57 @@ input::placeholder {
   display: block;
 }
 
+/* Not an image, so there is nothing to show: the glyph fills the same square. */
 .attachment-file {
-  width: 22px;
-  text-align: center;
+  display: grid;
+  place-items: center;
+  width: var(--thumb);
+  height: var(--thumb);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--sunken);
+  font-size: 14px;
   color: var(--text-muted);
 }
 
+/*
+ * A caption, not a label. `shortName` has already cut the stem, so the ellipsis
+ * here only catches a long extension or a name with no stem to cut — it is a
+ * floor under the width, not the mechanism.
+ */
 .attachment-name {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.3;
 }
 
+/*
+ * On the picture's corner rather than after the name, which is what buys the
+ * tile its width. Filled rather than bare, because it now sits over an
+ * arbitrary image and a transparent ✕ is invisible on half of them.
+ */
 .attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
+  width: 16px;
+  height: 16px;
   padding: 0;
-  border: 0;
+  border: 1px solid var(--line);
   border-radius: 50%;
-  background: transparent;
+  background: var(--raised);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 9px;
   cursor: pointer;
 }
 
 .attachment-remove:hover {
-  background: color-mix(in srgb, var(--alert) 16%, transparent);
+  border-color: color-mix(in srgb, var(--alert) 40%, var(--line));
+  background: color-mix(in srgb, var(--alert) 16%, var(--raised));
   color: var(--alert);
 }
 
