@@ -266,7 +266,8 @@
     "waiting_other": "{{count}} more waiting",
     "allowOnce": "Allow once",
     "deny": "Deny",
-    "enterHint": "Enter to allow",
+    "enterHint": "Enter to allow once",
+    "enterHintSession": "Enter allows for this session",
     "allowAlways": "Allow for this session",
     "allowRemembered": "Always allow this tool"
   },

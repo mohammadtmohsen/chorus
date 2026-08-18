@@ -2180,7 +2180,16 @@ function QuestionCard({
   )
 }
 
-function ApprovalCard({
+/**
+ * Exported for `ApprovalCard.test.tsx`, which mounts it.
+ *
+ * The rule here is "pure reducers, exported for tests" — and this is the
+ * documented exception to it, because the behaviour under test *is* the
+ * lifecycle: which button takes focus when the card appears, and which keys it
+ * refuses once it has. There is no pure part to extract; the judgement is the
+ * effect.
+ */
+export function ApprovalCard({
   approval,
   waiting,
   active,
@@ -2202,7 +2211,25 @@ function ApprovalCard({
   const allow = useRef<HTMLButtonElement | null>(null)
 
   /*
-   * The Allow button takes focus as the card appears, so Enter answers it.
+   * Which button Enter answers, and it is the session grant — except for one
+   * kind, where the same button means something else entirely.
+   *
+   * The wider button is `session` scope for everything but an MCP tool call,
+   * and a session grant dies with the window. For `mcpToolCall` it is `always`:
+   * an MCP call may never be auto-decided, so a session grant for one was
+   * silently refused and the button had to widen further or not exist — it
+   * writes to `remembered-grants.json` and outlives restarts.
+   *
+   * A keystroke that is already armed when the card appears may grant the
+   * first. It may not grant the second: a permanent policy change made by a
+   * key that was pointed at something else is exactly the failure the focus
+   * rules below are written against, and the label there does not even say
+   * "for this session".
+   */
+  const defaultsToSession = approval.kind !== 'mcpToolCall'
+
+  /*
+   * The default button takes focus as the card appears, so Enter answers it.
    *
    * An approval stops the agent dead, so the fastest possible answer is the
    * point: reaching for the mouse, or Tabbing in from the composer, is friction
@@ -2212,7 +2239,7 @@ function ApprovalCard({
    *
    * Never out of a sentence someone is part-way through, though. The card
    * arrives when the *agent* decides, not when the user does, and it used to
-   * land on Allow mid-word — scattering the rest of the typing across a button
+   * land on the button mid-word — scattering the rest of the typing across it
    * and leaving the next Enter to approve a command nobody had read.
    */
   useEffect(() => {
@@ -2220,6 +2247,28 @@ function ApprovalCard({
     if (!mayTakeCaret(focusedNow())) return
     allow.current?.focus()
   }, [approval.approvalId, active])
+
+  /*
+   * Enter approves. Space does not, and a held Enter approves once.
+   *
+   * Both guards exist because whichever button this lands on takes focus on its
+   * own, which makes the usual button keys dangerous here:
+   *
+   *  - **Space.** If a request lands while you are typing, focus moves
+   *    mid-sentence and the next space of ordinary prose would activate the
+   *    button — approving a command you had not read. Nothing else the user can
+   *    type reaches this button, so Space is dropped and Enter is the only key
+   *    that approves.
+   *  - **Repeat.** Auto-repeat fires ~30 times a second, and every approval
+   *    unmounts this card and focuses the next one's button — so one leant-on
+   *    key would walk the whole queue. Each approval costs its own deliberate
+   *    press.
+   *
+   * Deny keeps both keys: refusing is the safe direction.
+   */
+  const guardKeys = (e: React.KeyboardEvent): void => {
+    if (e.key === ' ' || (e.repeat && e.key === 'Enter')) e.preventDefault()
+  }
 
   return (
     <section
@@ -2242,47 +2291,42 @@ function ApprovalCard({
       {approval.detail !== null && <pre className="approval-detail">{approval.detail}</pre>}
       <div className="approval-actions">
         <button
-          ref={allow}
+          ref={defaultsToSession ? undefined : allow}
           type="button"
-          className="btn btn--go"
+          className={`btn${defaultsToSession ? '' : ' btn--go'}`}
           onClick={onAllow}
-          /*
-           * Enter approves. Space does not, and a held Enter approves once.
-           *
-           * Both guards exist because this button takes focus on its own, which
-           * makes the usual button keys dangerous here:
-           *
-           *  - **Space.** If a request lands while you are typing, focus moves
-           *    mid-sentence and the next space of ordinary prose would activate
-           *    the button — approving a command you had not read. Nothing else
-           *    the user can type reaches this button, so Space is dropped and
-           *    Enter is the only key that approves.
-           *  - **Repeat.** Auto-repeat fires ~30 times a second, and every
-           *    approval unmounts this card and focuses the next one's button —
-           *    so one leant-on key would walk the whole queue. Each approval
-           *    costs its own deliberate press.
-           *
-           * Deny keeps both keys: refusing is the safe direction.
-           */
-          onKeyDown={(e) => {
-            if (e.key === ' ' || (e.repeat && e.key === 'Enter')) e.preventDefault()
-          }}
+          onKeyDown={defaultsToSession ? undefined : guardKeys}
         >
           {t('approval.allowOnce')}
         </button>
         {/*
-          Granted for the session, not remembered past it.
-          
+          Granted for the session, not remembered past it — and the default.
+
           The same ask arriving four times in a row is the commonest way an
           approval queue becomes something you stop reading, which is the
-          failure mode the whole card exists to avoid. Scoped to the session
-          because a permission that outlived the window would be a policy
-          change, and those are made in Settings where they can be seen.
-          
-          Deliberately not the focused button: it is the wider grant, so it
-          costs a deliberate press rather than the Enter that is already armed.
+          failure mode the whole card exists to avoid. Answering it once per
+          session is the answer most people mean, and making them reach past
+          the armed key to say so produced the queue it was meant to prevent.
+
+          It used to cost a deliberate press, on the argument that the wider
+          grant should. What that argument missed is *how much* wider: a
+          session grant ends with the window, so the blast radius of a mistaken
+          Enter is this sitting, and the same mistake on Allow once costs a
+          command you had not read either. The narrower button is not the safer
+          one by enough to be worth the friction.
+
+          Scoped to the session because a permission that outlived the window
+          would be a policy change, and those are made in Settings where they
+          can be seen — which is exactly why `mcpToolCall`, where this button
+          means `always`, keeps Allow once as its default instead.
         */}
-        <button type="button" className="btn" onClick={onAllowAlways}>
+        <button
+          ref={defaultsToSession ? allow : undefined}
+          type="button"
+          className={`btn${defaultsToSession ? ' btn--go' : ''}`}
+          onClick={onAllowAlways}
+          onKeyDown={defaultsToSession ? guardKeys : undefined}
+        >
           {approval.kind === 'mcpToolCall'
             ? t('approval.allowRemembered')
             : t('approval.allowAlways')}
@@ -2290,9 +2334,14 @@ function ApprovalCard({
         <button type="button" className="btn" onClick={onDeny}>
           {t('approval.deny')}
         </button>
-        {/* Focus alone is a quiet affordance; saying it makes it discoverable. */}
+        {/*
+          Focus alone is a quiet affordance; saying it makes it discoverable —
+          and now it has to say *what* Enter does, because the two cases grant
+          different things and "Enter to allow" would be true of both while
+          telling you neither.
+        */}
         <span className="approval-hint" aria-hidden="true">
-          {t('approval.enterHint')}
+          {t(defaultsToSession ? 'approval.enterHintSession' : 'approval.enterHint')}
         </span>
       </div>
     </section>
