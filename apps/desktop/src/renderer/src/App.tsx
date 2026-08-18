@@ -58,9 +58,10 @@ export function App(): React.JSX.Element {
   const [probes, setProbes] = useState<AgentProbeResult[] | null>(null)
   const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
   const [defaults, setDefaults] = useState<Defaults>({
-    /* Matches the main process's default. It only stands until `readSettings`
-       answers, but a session started in that window used to open with both. */
-    agents: ['claude'],
+    /* Matches the main process's default, and has to keep matching it: this
+       stands only until `readSettings` answers, but a session started inside
+       that window opens with whatever is written here. */
+    agents: ['claude', 'codex'],
     cwd: '',
     profileId: 'read-only',
   })
@@ -664,7 +665,24 @@ export function App(): React.JSX.Element {
     carries.current.set(conversationId, trimCarry(carry))
   }, [])
 
-  /** Who is in a conversation, changed from wherever the cast is shown. */
+  /**
+   * Who is in a conversation, changed from wherever the cast is shown.
+   *
+   * **A cast is not a preference, and this used to write one back as if it
+   * were** — `remember({ agents })` on every toggle, so bringing the other agent
+   * into one conversation silently decided what every future conversation would
+   * start with. The drift is invisible from where it is caused: the sheet says
+   * "new sessions start with", nobody edited it, and it now reads differently
+   * because of a chip pressed in a session days ago.
+   *
+   * It also costs real money in the wrong direction. A cast that grows never
+   * shrinks back on its own, so the sticky value is always the *more* expensive
+   * one — two provider processes and two waits on every new session, including
+   * the one the app opens for you at launch.
+   *
+   * So the default is only ever what the settings sheet says. Bringing an agent
+   * into this conversation changes this conversation.
+   */
   const setParticipants = useCallback(
     (conversationId: string, participants: AgentId[]) => {
       updateSessions((current) =>
@@ -672,9 +690,8 @@ export function App(): React.JSX.Element {
           candidate.conversationId === conversationId ? { ...candidate, participants } : candidate
         )
       )
-      if (participants.length > 0) remember({ agents: participants })
     },
-    [updateSessions, remember]
+    [updateSessions]
   )
 
   /*

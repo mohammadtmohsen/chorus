@@ -98,18 +98,25 @@ export type Settings = z.infer<typeof Settings>
 
 export const DEFAULT_SETTINGS: Settings = {
   /*
-   * One agent, not two.
+   * Both, and Claude first.
    *
-   * A session opens the moment the app does, so its cast is what you pay for
-   * without asking — and two agents is two provider processes and twice the
-   * wait before anything can be typed. One alone is the cheap start; the other
-   * can be brought in from its chip whenever the conversation needs it, and it
-   * reads everything said so far when it arrives.
+   * This said one agent, and the argument was cost: two agents is two provider
+   * processes and twice the wait before anything can be typed, so the other
+   * could be brought in from its chip when the conversation needed it. What that
+   * missed is that **the product is the shared room** — a conversation with one
+   * agent in it is the thing Chorus exists to replace, and asking for the second
+   * one is a step nobody takes before they know they want it. An agent brought in
+   * late reads the transcript as catch-up, which works, but it has not been
+   * *present* for the reasoning it is catching up on.
    *
-   * Only the default. Toggling the cast on any session persists it, so this is
-   * what a machine with no settings file yet begins with, not a rule.
+   * Claude first because the order is read: it leads the composer's placeholder
+   * and the cast toggles, and something has to be named first.
+   *
+   * Only the default. A session still chooses its own cast, and toggling one no
+   * longer writes back here — see `setParticipants` in `App.tsx` for why a cast
+   * is not a preference.
    */
-  agents: ['claude'],
+  agents: ['claude', 'codex'],
   cwd: '',
   // Permissive defaults ship by accident, not on purpose (plan §4.4).
   profileId: 'read-only',

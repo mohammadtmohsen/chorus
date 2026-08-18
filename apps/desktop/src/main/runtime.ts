@@ -2498,7 +2498,20 @@ export class ChorusRuntime {
     title: string
   }> {
     const existing = this.require(conversationId)
-    const agents = [...existing.participants.keys()]
+    /*
+     * The default cast, not this conversation's.
+     *
+     * Restart is "start this session over, with nothing said in it" — a fresh
+     * room, and a fresh room gets what a fresh room gets. Carrying the old cast
+     * forward made restart the one action that could not recover from a
+     * conversation whose agents were wrong: an agent that failed to start was
+     * still in the participants, so restarting reproduced the state you were
+     * restarting to escape.
+     *
+     * The directory and the profile still carry, because those are *where* and
+     * *how much you trust it* — facts about the work rather than about the room.
+     */
+    const agents = readSettings(this.userDataPath).agents
     const { cwd, title } = existing
     const profileId = existing.profile.id
     const order = [...this.active.keys()]

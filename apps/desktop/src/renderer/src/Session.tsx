@@ -73,8 +73,15 @@ function sourceEntryAt(node: Node | null): SourceEntry | null {
 }
 
 export type AgentId = 'codex' | 'claude'
-/** Every agent Chorus knows how to seat, present or not. */
-export const ALL_AGENTS: AgentId[] = ['codex', 'claude']
+/**
+ * Every agent Chorus knows how to seat, present or not.
+ *
+ * The order is read, so it is not arbitrary: this drives the cast toggles and
+ * the composer's placeholder — _Ask Claude or Codex…_ — and something has to be
+ * named first. It matches `DEFAULT_SETTINGS.agents`, and the two should move
+ * together or the sheet will disagree with the room.
+ */
+export const ALL_AGENTS: AgentId[] = ['claude', 'codex']
 
 export interface SessionInfo {
   readonly conversationId: string

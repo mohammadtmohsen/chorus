@@ -9,7 +9,9 @@ import {
 import { useDialog } from './useDialog.js'
 
 type AgentId = 'codex' | 'claude'
-const AGENTS: AgentId[] = ['codex', 'claude']
+/* Claude first, matching `ALL_AGENTS` and `DEFAULT_SETTINGS.agents`. The sheet
+   saying "new sessions start with" must list them in the order they arrive. */
+const AGENTS: AgentId[] = ['claude', 'codex']
 
 export interface Defaults {
   agents: AgentId[]
