@@ -7,6 +7,27 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.18.1
+
+### A file reference in your own message is readable again
+
+Send a question with VS Code context attached and the reference was longer than
+the question. Chorus writes those references for the agent — the whole relative
+path so it can open the file, the whole commit sha so `git show` reproduces the
+version you were looking at — and a single context line carried an
+eighty-character path three times and a forty-character commit twice. A six-word
+question drew as four wrapped lines of monospace with the question lost inside
+them.
+
+The transcript now shortens them: a path keeps its file name and the folder above
+it, a commit shows as the seven characters git itself prints. Hovering gives you
+the whole value. The reported message went from four lines to two.
+
+Only the drawing changes. What was sent is exactly what was always sent, which is
+what lets an agent open the right file at the right version — and only your own
+messages are shortened, because cutting a path down inside an agent's reply would
+be editing the reply.
+
 ## 0.18.0
 
 ### Both agents are in the room from the start

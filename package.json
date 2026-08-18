@@ -1,6 +1,6 @@
 {
   "name": "chorus",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "private": true,
   "type": "module",
   "description": "A local-first workspace for collaborating with multiple coding agents in one shared conversation.",
