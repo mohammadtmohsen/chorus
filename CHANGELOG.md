@@ -7,6 +7,43 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.17.2
+
+Two things under a reply and above the message box, both of which said the
+wrong thing by being the wrong shape.
+
+### Hand off is on its own line
+
+Under a reply the row read `Hand off → Explain simply`. Two separate controls,
+but the arrow at the end of the first invites the next word to complete it, so
+it scanned as one instruction — hand off _in order to_ explain, which is not
+what either does. Hand off now sits on its own line underneath.
+
+It is also the only thing on that row that sends your reply out of the
+conversation to the other agent. Explain simply and Where are we? ask this one;
+a line to itself is the honest grouping and not only a way of breaking up a
+phrase.
+
+### An attachment shows what it is a picture of
+
+Paste or drop an image and you got a 22px circle, then its whole filename. At
+that size the circle is a few dozen pixels out of the middle of the image — for
+a dark screenshot, an empty grey dot — so the picture told you nothing and you
+were back to reading a filename, which is what the thumbnail was added to
+replace.
+
+It is a tile now: a 56px square showing the image, with a short name captioned
+underneath and the ✕ on the corner. Square because pictures are, and because a
+circle crops away exactly the corners where a screenshot keeps the window
+chrome that says which app you grabbed.
+
+The name is cut to fit, and it keeps the end rather than the beginning. Pasted
+images are named for the millisecond they arrived — `1787033349300-3-image.png`
+— so cutting from the front leaves the half nobody can read and throws away the
+extension, and two screenshots pasted a second apart caption identically. It now
+reads `17870….png`. Hovering still gives the full name and the path underneath,
+and the path is still what the agent receives.
+
 ## 0.17.1
 
 Corrections to what 0.17.0 shipped, all found by using it.
