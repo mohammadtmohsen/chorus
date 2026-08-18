@@ -4118,6 +4118,23 @@ input::placeholder {
 }
 
 /*
+ * `Hand off →` on a line of its own, under `Explain simply`.
+ *
+ * Beside it the arrow swallowed the next label — the row read "Hand off →
+ * Explain simply", one phrase rather than two controls. The break is the fix,
+ * and it is also the truer grouping: this is the only action here that sends
+ * the reply out of this thread to the other agent.
+ *
+ * Same `flex-basis: 100%` line break as `.entry-actions-go`, for the same
+ * reason — no new grid area, so `.entry` keeps its three-row template.
+ */
+.entry-actions-handoff {
+  flex-basis: 100%;
+  display: flex;
+  margin-top: var(--step);
+}
+
+/*
  * The second line, which exists so `Go ahead` is not read as part of the first.
  *
  * `flex-basis: 100%` in a wrapping row is a line break without a new grid area,

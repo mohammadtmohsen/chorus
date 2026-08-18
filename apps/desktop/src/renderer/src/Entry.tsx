@@ -825,20 +825,13 @@ export const Entry = memo(function Entry({
               reply; a recap is a way of looking at where the work stands. With
               `space-between` on the row that split puts the two acts together at
               the left and leaves the right edge to the one that only reads.
+
+              Hand off has since left this group for a line of its own below —
+              see the comment on its own block — so the first line is now
+              "ask this reply again" on the left and "where does the work
+              stand" on the right, which is the same split one level narrower.
             */}
             <span className="entry-actions-do">
-              {onHandOff !== undefined && (
-                <button
-                  type="button"
-                  className="entry-action"
-                  data-entry-action="handoff"
-                  onClick={() => {
-                    onHandOff(message)
-                  }}
-                >
-                  {t('handoff.action')}
-                </button>
-              )}
               {/*
                 Under the reply, not on a selection, and that is the fix rather
                 than a convenience.
@@ -852,10 +845,10 @@ export const Entry = memo(function Entry({
                 reply is a prefix of what the log holds by construction, so this
                 path has nothing to disagree about.
 
-                Beside Hand off because it is the same kind of act — something
-                you do with the reply once you have read it — and because the two
-                answers to "I do not follow this" are asking the other agent and
-                asking this one again in your own language.
+                First on the line now that Hand off has its own. The two answers
+                to "I do not follow this" are asking the other agent and asking
+                this one again in your own language — still a pair, but read one
+                under the other rather than side by side.
               */}
               {onExplain !== undefined && (
                 <button
@@ -898,6 +891,38 @@ export const Entry = memo(function Entry({
               >
                 {t('aside.recap')}
               </button>
+            )}
+            {/*
+              Its own line, under Explain simply.
+
+              It shared the left of the first line with Explain simply, and the
+              two ran together as one phrase: "Hand off → Explain simply" reads
+              as an instruction to hand off in order to explain, which is not
+              what either does. The arrow is what makes it happen — a label
+              ending in `→` invites the next word to complete it.
+
+              Sending the reply to the *other* agent is also the only thing on
+              this row that leaves this conversation's own thread, so a line to
+              itself is the honest shape rather than only a way of breaking the
+              phrase.
+
+              Same mechanism as `Go ahead` below: `flex-basis: 100%` in the
+              wrapping row, so `.entry` keeps its three-row grid template and
+              this stays a change to one rule.
+            */}
+            {onHandOff !== undefined && (
+              <span className="entry-actions-handoff">
+                <button
+                  type="button"
+                  className="entry-action"
+                  data-entry-action="handoff"
+                  onClick={() => {
+                    onHandOff(message)
+                  }}
+                >
+                  {t('handoff.action')}
+                </button>
+              </span>
             )}
             {/*
               Its own line, and a shape rather than a word.
