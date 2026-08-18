@@ -13,33 +13,51 @@
  */
 
 /**
- * Never slower than this, or a long reply would still be typing minutes later.
+ * The pace text is written at, in characters a second.
  *
- * Raised from 160 once the rate was measured rather than assumed: what a reader
- * notices is not the pace but the gap between an agent finishing and the last
- * word landing, and 160 spent most of a second on it.
+ * **This is the rate, not a floor**, and that is the whole of the change made on
+ * 2026-08-18. It used to be a floor of 320 under a rule that cleared whatever
+ * had arrived within 80ms, which meant the floor almost never bound: a coalesced
+ * paragraph of 300 characters was revealed at 3,750 a second, so what you saw
+ * was a paragraph appearing every quarter-second. Every individual number was
+ * defensible and the result was not writing — it was blocks, which is what the
+ * pacing exists to avoid.
+ *
+ * 200 is picked to be read rather than watched. At a 60Hz frame that is a little
+ * over three characters, which is fast typing rather than a cursor crawling, and
+ * a reply arrives faster than it is generated for anything an agent takes more
+ * than a few seconds to write — so the text keeps moving for the whole turn
+ * instead of stopping and jumping.
  */
-export const MIN_CHARS_PER_SECOND = 320
+export const TYPING_CHARS_PER_SECOND = 200
 
 /**
- * How long a fresh backlog should take to clear.
+ * How far behind the arrived text the display may fall before it speeds up.
  *
- * This is the lag while a reply is still arriving. It was 500, then 140, and is
- * now 80: at 500 a four-sentence reply carried a 399ms tail — small enough to
- * sound harmless, long enough to read as the app being behind the agent — and
- * 140 still spent a tenth of a second saying nothing new.
+ * The safety valve, and the reason a steady rate is safe to want. An agent can
+ * deliver faster than anyone reads — a cached reply, a tool result summarised in
+ * one delta, a whole message at once from a provider that does not stream — and
+ * a strict 200 a second would then be minutes behind by the end.
  *
- * It is no longer the number that decides what happens at the *end* of a turn.
- * `useTypewriter` flushes the whole authoritative text the moment a message is
- * complete, so this only ever paces text that is still being written. That is
- * what a smoothing window should do; before the flush existed, this constant
- * was also a promise that the app would keep animating after the agent had
- * finished, which is the opposite of what it was for.
+ * So the pace is the typing rate *or* whatever clears the backlog inside this
+ * window, whichever is faster. In normal streaming the backlog is a line or two
+ * and this never binds; it only takes over when something arrives in a lump,
+ * which is exactly when nobody is watching it be written anyway.
  */
-export const DRAIN_MS = 80
+export const MAX_LAG_MS = 1_200
 
 /**
- * The rate to clear `remaining` within the drain window.
+ * The same, once the message has finished arriving.
+ *
+ * The tail still types — that is the point of the change, and a message that
+ * jumps to its last paragraph is the block this is here to remove — but there is
+ * no longer any reason to stay a second behind an agent that has stopped. A
+ * tighter window keeps the ending prompt without making it a cut.
+ */
+export const FINISH_LAG_MS = 500
+
+/**
+ * The rate to clear `remaining` at.
  *
  * Chosen once when text arrives and then held, rather than recomputed from what
  * is left. Recomputing looks reasonable and is not: the backlog shrinks as it
@@ -48,8 +66,9 @@ export const DRAIN_MS = 80
  * fixed at the moment of arrival is linear, finishes when it says it will, and
  * is the one that can be reasoned about.
  */
-export function paceFor(remaining: number): number {
-  return Math.max(MIN_CHARS_PER_SECOND, (remaining * 1000) / DRAIN_MS)
+export function paceFor(remaining: number, complete = false): number {
+  const window = complete ? FINISH_LAG_MS : MAX_LAG_MS
+  return Math.max(TYPING_CHARS_PER_SECOND, (remaining * 1000) / window)
 }
 
 /**

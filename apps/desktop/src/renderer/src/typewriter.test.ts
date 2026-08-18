@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { DRAIN_MS, MIN_CHARS_PER_SECOND, nextShown, paceFor } from './typewriter.js'
+import {
+  FINISH_LAG_MS,
+  MAX_LAG_MS,
+  TYPING_CHARS_PER_SECOND,
+  nextShown,
+  paceFor,
+} from './typewriter.js'
 
 /** Plays a backlog through at 16ms a frame, the way the hook does. */
-function play(total: number, from = 0): { shown: number; elapsed: number } {
-  const perSecond = paceFor(total - from)
+function play(total: number, from = 0, complete = false): { shown: number; elapsed: number } {
+  const perSecond = paceFor(total - from, complete)
   let shown = from
   let elapsed = 0
   while (shown < total && elapsed < 30_000) {
@@ -14,12 +20,28 @@ function play(total: number, from = 0): { shown: number; elapsed: number } {
 }
 
 describe('paceFor', () => {
-  it('clears a big backlog inside the drain window', () => {
-    expect(paceFor(4_000)).toBe((4_000 * 1000) / DRAIN_MS)
+  /*
+   * The rate is the contract, and this is the assertion the old one could not
+   * make. It used to clear whatever had arrived within 80ms, so a paragraph of
+   * 300 characters was revealed at 3,750 a second — a block appearing, which is
+   * what the pacing exists to prevent.
+   */
+  it('types a normal delta at the reading pace', () => {
+    for (const delta of [12, 80, 200]) expect(paceFor(delta)).toBe(TYPING_CHARS_PER_SECOND)
   })
 
-  it('never drops below the floor for a small one', () => {
-    expect(paceFor(1)).toBe(MIN_CHARS_PER_SECOND)
+  it('speeds up only for a backlog it could not otherwise clear', () => {
+    // The valve opens where the two rules meet, and not before.
+    const knee = (TYPING_CHARS_PER_SECOND * MAX_LAG_MS) / 1000
+    expect(paceFor(knee - 1)).toBe(TYPING_CHARS_PER_SECOND)
+    expect(paceFor(4_000)).toBe((4_000 * 1000) / MAX_LAG_MS)
+  })
+
+  it('finishes a completed message sooner, without abandoning the pace', () => {
+    // Brisk, not a cut: a small tail still types at the reading pace.
+    expect(paceFor(40, true)).toBe(TYPING_CHARS_PER_SECOND)
+    expect(paceFor(4_000, true)).toBe((4_000 * 1000) / FINISH_LAG_MS)
+    expect(paceFor(4_000, true)).toBeGreaterThan(paceFor(4_000))
   })
 })
 
@@ -39,7 +61,7 @@ describe('nextShown', () => {
     // The remainder is carried between frames, so a fraction of a character is
     // real progress and nothing stalls. That replaced a forced whole character
     // per frame, which was a cap as much as a floor.
-    expect(nextShown(0, 1_000, 1, MIN_CHARS_PER_SECOND)).toBeGreaterThan(0)
+    expect(nextShown(0, 1_000, 1, TYPING_CHARS_PER_SECOND)).toBeGreaterThan(0)
     expect(nextShown(10, 100, 0, 500)).toBe(10)
     expect(nextShown(10, 100, -50, 500)).toBe(10)
   })
@@ -55,44 +77,48 @@ describe('nextShown', () => {
       let shown = 0
       let elapsed = 0
       while (shown < 400 && elapsed < 30_000) {
-        shown = nextShown(shown, 400, frameMs, MIN_CHARS_PER_SECOND)
+        shown = nextShown(shown, 400, frameMs, TYPING_CHARS_PER_SECOND)
         elapsed += frameMs
       }
       return elapsed
     }
-    const ideal = (400 / MIN_CHARS_PER_SECOND) * 1000
+    const ideal = (400 / TYPING_CHARS_PER_SECOND) * 1000
     for (const frameMs of [8, 16, 33]) {
       expect(Math.abs(msToReveal(frameMs) - ideal)).toBeLessThanOrEqual(frameMs)
     }
   })
 
-  it('reads as typing when text trickles in', () => {
-    const perSecond = paceFor(20)
-    const afterAFrame = nextShown(0, 20, 16, perSecond)
-    expect(afterAFrame).toBeGreaterThan(0)
-    expect(afterAFrame).toBeLessThan(20)
+  /*
+   * Letter by letter, and this is the test that says so.
+   *
+   * A frame may not carry a whole line: at the reading pace a 60Hz frame is
+   * about three characters, so a sentence takes many frames and is watched
+   * being written. The old contract failed this — a 20-character delta was
+   * revealed inside one 16ms frame.
+   */
+  it('reveals a delta over many frames rather than in one', () => {
+    const perSecond = paceFor(60)
+    let shown = 0
+    let frames = 0
+    while (shown < 60 && frames < 1_000) {
+      shown = nextShown(shown, 60, 16, perSecond)
+      frames += 1
+    }
+    expect(frames).toBeGreaterThan(8)
+    expect(nextShown(0, 60, 16, perSecond)).toBeLessThan(6)
   })
 
-  it('clears a burst within the window rather than crawling', () => {
+  it('keeps a burst bounded rather than falling minutes behind', () => {
     // The reason the rate is fixed at arrival: recomputing it from what is left
     // decays exponentially and the tail dawdles.
-    const { shown, elapsed } = play(4_000)
-    expect(shown).toBe(4_000)
-    expect(elapsed).toBeLessThanOrEqual(DRAIN_MS + 32)
+    const { shown, elapsed } = play(20_000)
+    expect(shown).toBe(20_000)
+    expect(elapsed).toBeLessThanOrEqual(MAX_LAG_MS + 32)
   })
 
-  /*
-   * Still typing rather than appearing.
-   *
-   * The threshold was 100ms against a 140ms drain window. The window is 80ms
-   * now — the plan's range, and the point below which motion stops reading as
-   * writing — so the claim this makes has to be the same claim measured against
-   * the current contract: several frames, not one. Asserting 100 against an
-   * 80ms window would only ever have been asserting the constant.
-   */
   it('takes a readable moment over a short one', () => {
     const { elapsed } = play(40)
-    expect(elapsed).toBeGreaterThan(48)
-    expect(elapsed).toBeLessThanOrEqual(DRAIN_MS + 16)
+    // 40 characters at the reading pace is 200ms — watched, not blinked.
+    expect(elapsed).toBeGreaterThan(150)
   })
 })

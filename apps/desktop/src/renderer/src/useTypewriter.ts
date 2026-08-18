@@ -21,12 +21,18 @@ import { nextShown, paceFor } from './typewriter.js'
 const STALL_MS = 1_000
 
 /**
- * @param complete The message has finished arriving, so there is nothing left
- *   to smooth. The authoritative text is shown at once rather than paced out:
- *   a reveal that continues after the agent has stopped is the app saying it is
- *   behind, and it is behind *nothing* — the text is already here. This is the
- *   half of the contract that used to be missing, and `DRAIN_MS` was carrying
- *   it by being small rather than by being right.
+ * @param complete The message has finished arriving. The rest is still typed
+ *   out rather than shown at once — a reply whose last paragraph appears in one
+ *   piece is the block this hook exists to remove, and it is the most visible
+ *   one because it is where the eye already is. It is typed *promptly*: the
+ *   pace is recomputed against `FINISH_LAG_MS`, so the ending is brisk without
+ *   being a cut.
+ *
+ *   This used to flush the whole authoritative text instantly, on the argument
+ *   that a reveal continuing after the agent has stopped is the app saying it is
+ *   behind. That argument holds only if the animation is long, and it was
+ *   settled by making the *rate* the contract: the tail is now bounded by half a
+ *   second, which is shorter than the pause before anyone reads it.
  */
 export function useTypewriter(text: string, startWhole: boolean, complete = false): string {
   const [shown, setShown] = useState(startWhole ? text.length : 0)
@@ -35,11 +41,6 @@ export function useTypewriter(text: string, startWhole: boolean, complete = fals
   const perSecond = useRef(paceFor(text.length))
 
   useEffect(() => {
-    if (complete && position.current < text.length) {
-      position.current = text.length
-      setShown(text.length)
-      return
-    }
     if (position.current >= text.length) {
       // Nothing new, or the message was replaced by a shorter one.
       position.current = Math.min(position.current, text.length)
@@ -53,7 +54,7 @@ export function useTypewriter(text: string, startWhole: boolean, complete = fals
       return
     }
 
-    perSecond.current = paceFor(text.length - position.current)
+    perSecond.current = paceFor(text.length - position.current, complete)
     let frame = 0
     let last = performance.now()
 
