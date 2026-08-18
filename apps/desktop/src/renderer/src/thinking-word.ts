@@ -22,6 +22,20 @@
 export const THINKING_WORD_MS = 2_600
 
 /**
+ * How long the waiting row may claim a turn is starting before it gives up.
+ *
+ * Every other way out of that row is an event that arrives — an agent starting,
+ * a system notice, a send that rejects. A send that neither lands nor fails
+ * clears none of them, and the row was then permanent: a finished reply with
+ * `getting started •••` under it, seen in the field.
+ *
+ * Ninety seconds is chosen to be uncontroversial rather than tight. The gap this
+ * row covers is a cold CLI start, which is seconds; a wait that reaches a minute
+ * and a half is not a slow start, so ending it cannot cut a real one short.
+ */
+export const AWAITING_MAX_MS = 90_000
+
+/**
  * Which word to show, from a list, after `elapsedMs`.
  *
  * Deterministic on elapsed time rather than random: two agents thinking side by

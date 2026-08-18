@@ -5025,6 +5025,25 @@ input::placeholder {
   font-size: 13px;
 }
 
+/*
+ * A row with nobody to name: the words take the head's place beside the mark.
+ *
+ * `.entry`'s template spends its first row on the head, which is right when a
+ * head exists — the face lines up with the name, and the words start under
+ * them. A waiting row in a two-agent conversation has no name to show, because
+ * naming who is working would be a guess, and the row then rendered a mark on
+ * an empty first row with its word stranded on the second.
+ *
+ * The template rather than the markup, because the mark must stay in the avatar
+ * column: a flex row would pull it out of the gutter that lines every entry in
+ * the transcript up with every other.
+ */
+.entry--unnamed {
+  grid-template-areas:
+    'avatar said'
+    '.      actions';
+}
+
 .thinking-word {
   letter-spacing: 0.04em;
   opacity: 0.85;

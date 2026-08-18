@@ -6,7 +6,7 @@ import { fitCard, type AsidePurpose } from './aside.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
 import { focusedNow, mayTakeCaret } from './focus.js'
-import { thinkingWord, offsetForActor, THINKING_WORD_MS } from './thinking-word.js'
+import { thinkingWord, offsetForActor, THINKING_WORD_MS, AWAITING_MAX_MS } from './thinking-word.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import { QuickQuestion } from './QuickQuestion.js'
 import {
@@ -999,6 +999,35 @@ export function Session(props: {
   }, [view.working.length, view.messages])
 
   /*
+   * And a deadline, because both clauses above are things that *arrive*.
+   *
+   * Seen in the field: a finished reply with `getting started •••` sitting under
+   * it, permanently. Every route out of the row is an event — an agent starting,
+   * a system notice, a send that rejects and calls `onSendFailed` — so a send
+   * that neither lands nor fails clears nothing, and the row waits for a turn
+   * that was never going to start.
+   *
+   * **This bounds the symptom and does not fix the cause**, which is why C-043
+   * is on the board: the honest fix is a send that cannot hang. What it does buy
+   * is that the transcript stops asserting something false. Ninety seconds is
+   * far past a cold CLI start — the gap this row exists to cover — so a wait
+   * that reaches it is not a slow start, it is a lost message.
+   *
+   * Going quiet is the right end state rather than a second lie: the row's whole
+   * job is to say "it is on its way", and once that cannot be claimed, the
+   * transcript showing your message with no answer under it is the truth.
+   */
+  useEffect(() => {
+    if (!awaiting) return
+    const timer = setTimeout(() => {
+      setAwaiting(false)
+    }, AWAITING_MAX_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [awaiting])
+
+  /*
    * What VS Code is showing for *this* pane's project.
    *
    * Metadata only: a path already relative to this conversation's cwd, and a
@@ -1319,16 +1348,34 @@ export function Session(props: {
   const soleAgent = participants.length === 1 ? participants[0] : undefined
   const waitingRow =
     awaiting && view.working.length === 0 ? (
-      <article key="awaiting" className={`entry entry--${soleAgent ?? 'system'} entry--thinking`}>
+      <article
+        key="awaiting"
+        className={`entry entry--${soleAgent ?? 'system'} entry--thinking${
+          soleAgent === undefined ? ' entry--unnamed' : ''
+        }`}
+      >
         {/* The same mark-and-head a step wears in `Entry`: these two rows are
             built here rather than by the reducer, so they have to follow the
             row structure by hand or they land in the wrong grid cells. */}
         <span className="entry-mark" aria-hidden="true">
           <span className="tick" />
         </span>
-        <div className="entry-head">
-          <span className="speaker">{soleAgent === undefined ? '' : t(`actor.${soleAgent}`)}</span>
-        </div>
+        {/*
+          No head at all when there is nobody to name, rather than a head
+          holding an empty string.
+
+          An empty `.speaker` is invisible but not absent: `.entry`'s first grid
+          row is still spent on it, so the mark sat on the head row and the word
+          dropped to the row below — a dot floating above its own sentence. It
+          only ever looked right with one agent in the room, which is the case
+          where the head has a name in it, and that is why it survived: the
+          two-agent room is exactly the room that cannot name who is working.
+        */}
+        {soleAgent !== undefined && (
+          <div className="entry-head">
+            <span className="speaker">{t(`actor.${soleAgent}`)}</span>
+          </div>
+        )}
         <p className="said thinking" role="status">
           <ThinkingWord kind="waiting" />
           <span className="thinking-dots" aria-hidden="true">

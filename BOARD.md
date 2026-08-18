@@ -30,6 +30,35 @@ Nothing here can be finished by me alone.
 
 ## Open
 
+### C-043 · A send can leave a pane waiting for a turn that never starts
+
+Seen in the field on 0.17.2: a finished Claude reply with `getting started •••`
+sitting under it, permanently, and a red mark on the tab. The waiting row is
+`awaiting && view.working.length === 0`, and **every route out of it is
+something that arrives** — an agent entering `working`, a system notice, or a
+send that rejects and calls `onSendFailed`. A send that neither lands nor fails
+clears none of them.
+
+`Composer.send` is not the hole: it calls `onSending()` and then `onSendFailed()`
+from a single `.catch` covering both the IDE snapshot and `sendMessage`. So the
+suspect is a `sendMessage` that never settles — the conversation had codex in it,
+and C-037 is a codex app-server wedging for seventeen minutes.
+
+**A 90-second deadline now bounds the row** (`AWAITING_MAX_MS`), so the
+transcript stops asserting something false. That is a bound on the symptom and
+should not be read as the fix: the message is still gone, and nothing tells the
+person that. Worse, the deadline makes the underlying failure quieter — the row
+disappears and no evidence is left.
+
+Not reproduced deliberately. The screenshot is the whole of the evidence, the
+log has nothing at the time it happened, and which of the two halves hung is
+unestablished.
+
+**Done when:** an IPC send that hangs is impossible or observable — either
+`sendMessage` cannot outlive a turn's start without settling, or a send that has
+not landed reports itself as failed rather than as in progress — reproduced by
+wedging the send on purpose and watching the pane say something true.
+
 ### C-042 · Nine e2e specs fail on `main`, and it is not flake
 
 Measured on 2026-08-17 by running the suite in a clean worktree of `main` at
