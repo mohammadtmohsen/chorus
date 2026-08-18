@@ -4841,6 +4841,21 @@ input::placeholder {
  * `--thumb` is the one number here. The tile is exactly as wide as its picture,
  * so the caption cannot stretch it and a row of attachments lines up.
  */
+/*
+ * The same tiles, inside a message that has already been sent.
+ *
+ * A row of its own under the words rather than beside them: what was attached
+ * is a second thing the message says, and wrapping text around a picture would
+ * make a two-line question look like a layout.
+ *
+ * No top padding, because nothing overhangs here — a sent attachment has no ✕,
+ * since the agent has had the path since the moment you pressed send.
+ */
+.attachments--sent {
+  padding-top: 0;
+  margin-top: calc(var(--step) * 2);
+}
+
 .attachment {
   /* 56 rather than 44: the caption has to fit under it, and a 44px box held
      eight characters — not enough for a cut stem *and* an extension. */

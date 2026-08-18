@@ -44,11 +44,7 @@ export function shortName(name: string): string {
 }
 
 /**
- * What is about to be sent, above the box you are typing in.
- *
- * A path in the draft was honest and unreadable — you could not tell a
- * screenshot from a log without reading the filename, and could not tell whether
- * you had grabbed the right screenshot at all. A thumbnail answers both.
+ * One tile: the picture, its caption, and whatever the caller lets you do to it.
  *
  * **A square tile rather than a pill**, and the change is about the picture
  * rather than the shape. At 22px in a round crop the thumbnail showed a few
@@ -60,14 +56,71 @@ export function shortName(name: string): string {
  * So the tile is the picture, and the name is a caption under it rather than
  * the main event.
  *
+ * Its own component because the same tile appears in two places — above the box
+ * while it is still a draft, and inside the message once it has been sent — and
+ * those must not drift apart. What differs is only whether there is a ✕, which
+ * is `onRemove` being there or not: a sent message cannot have its attachment
+ * taken back, because the agent already has the path.
+ */
+export function AttachmentTile(props: {
+  item: Attachment
+  onOpen: (item: Attachment) => void
+  onRemove?: (path: string) => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const { item, onRemove } = props
+  return (
+    <span className="attachment">
+      {item.dataUrl === null ? (
+        <span className="attachment-file" aria-hidden="true">
+          ◆
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="attachment-thumb"
+          title={t('attachments.view', { name: item.name })}
+          onClick={() => {
+            props.onOpen(item)
+          }}
+        >
+          <img src={item.dataUrl} alt={item.name} />
+        </button>
+      )}
+      <span className="attachment-name" title={`${item.name}\n${item.path}`}>
+        {shortName(item.name)}
+      </span>
+      {onRemove !== undefined && (
+        <button
+          type="button"
+          className="attachment-remove"
+          aria-label={t('attachments.remove', { name: item.name })}
+          title={t('attachments.remove', { name: item.name })}
+          onClick={() => {
+            onRemove(item.path)
+          }}
+        >
+          <span aria-hidden="true">✕</span>
+        </button>
+      )}
+    </span>
+  )
+}
+
+/**
+ * What is about to be sent, above the box you are typing in.
+ *
+ * A path in the draft was honest and unreadable — you could not tell a
+ * screenshot from a log without reading the filename, and could not tell whether
+ * you had grabbed the right screenshot at all. A thumbnail answers both.
+ *
  * The path is still what the agent receives. This is only how it looks while it
- * is yours.
+ * is yours — and, since `SentAttachments`, how it looks afterwards too.
  */
 export function Attachments(props: {
   items: readonly Attachment[]
   onRemove: (path: string) => void
 }): React.JSX.Element | null {
-  const { t } = useTranslation()
   const [viewing, setViewing] = useState<Attachment | null>(null)
 
   if (props.items.length === 0) return null
@@ -75,38 +128,7 @@ export function Attachments(props: {
   return (
     <div className="attachments">
       {props.items.map((item) => (
-        <span key={item.path} className="attachment">
-          {item.dataUrl === null ? (
-            <span className="attachment-file" aria-hidden="true">
-              ◆
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="attachment-thumb"
-              title={t('attachments.view', { name: item.name })}
-              onClick={() => {
-                setViewing(item)
-              }}
-            >
-              <img src={item.dataUrl} alt={item.name} />
-            </button>
-          )}
-          <span className="attachment-name" title={`${item.name}\n${item.path}`}>
-            {shortName(item.name)}
-          </span>
-          <button
-            type="button"
-            className="attachment-remove"
-            aria-label={t('attachments.remove', { name: item.name })}
-            title={t('attachments.remove', { name: item.name })}
-            onClick={() => {
-              props.onRemove(item.path)
-            }}
-          >
-            <span aria-hidden="true">✕</span>
-          </button>
-        </span>
+        <AttachmentTile key={item.path} item={item} onOpen={setViewing} onRemove={props.onRemove} />
       ))}
 
       {viewing?.dataUrl != null && (
@@ -128,7 +150,7 @@ export function Attachments(props: {
  * the only thing you are doing, and the transcript underneath is not competing
  * for the space.
  */
-function Viewer(props: { item: Attachment; onClose: () => void }): React.JSX.Element {
+export function Viewer(props: { item: Attachment; onClose: () => void }): React.JSX.Element {
   const { t } = useTranslation()
   const dialog = useDialog<HTMLElement>(props.onClose)
 

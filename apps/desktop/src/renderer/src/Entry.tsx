@@ -7,6 +7,8 @@ import { FileDiff } from './FileDiff.js'
 import { MarkdownView } from './MarkdownView.js'
 import { offersToAct } from './offer.js'
 import type { TranscriptMessage } from './transcript.js'
+import { splitTrailingPaths } from './attach.js'
+import { SentAttachments } from './SentAttachments.js'
 import { useTypewriter } from './useTypewriter.js'
 
 /**
@@ -492,6 +494,25 @@ export const Entry = memo(function Entry({
    * left every reply with a visible tail after the agent had stopped.
    */
   const typed = useTypewriter(message.text, wasComplete.current, message.status !== 'streaming')
+  /*
+   * Only your own messages, and only for drawing them.
+   *
+   * An agent naming a file is talking about it; a person ending a message with
+   * one attached it. The two look identical in the text, so the distinction has
+   * to come from who is speaking — and `splitTrailingPaths` is anchored to the
+   * end of the message for the same reason.
+   *
+   * Computed from `message.text` rather than from `typed`: a user message is
+   * never typed out anyway, and splitting a half-revealed string would find a
+   * path that is still half a path.
+   */
+  const sent = useMemo(
+    () =>
+      message.actor === 'user' && message.kind === 'message'
+        ? splitTrailingPaths(message.text)
+        : { body: message.text, paths: [] },
+    [message.actor, message.kind, message.text]
+  )
 
   if (message.kind === 'handoff') {
     return (
@@ -770,7 +791,20 @@ export const Entry = memo(function Entry({
            * recognise what was said without it becoming the screen.
            */
           <Clamped>
-            <MarkdownView source={typed} />
+            {/*
+              The words without the paths, and the paths as the tiles they were
+              in the composer.
+
+              `sent.body` is only what is *drawn*: the message in the log still
+              ends with the path, and the agent was still handed the path, which
+              is the whole mechanism by which it can open the file. Nothing here
+              is allowed to change either.
+
+              Tiles inside the clamp with the words rather than under it, so a
+              long quoted passage cannot push its own attachment out of view.
+            */}
+            <MarkdownView source={sent.body} />
+            <SentAttachments paths={sent.paths} />
           </Clamped>
         ) : (
           <MarkdownView source={typed} />

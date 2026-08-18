@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { quotePath, withPaths } from './attach.js'
+import { quotePath, splitTrailingPaths, withPaths } from './attach.js'
 
 describe('quotePath', () => {
   it('leaves an ordinary path alone', () => {
@@ -42,5 +42,67 @@ describe('withPaths', () => {
 
   it('takes several at once', () => {
     expect(withPaths('', ['/tmp/a.png', '/tmp/b log.txt'])).toBe("/tmp/a.png '/tmp/b log.txt' ")
+  })
+})
+
+/**
+ * Reading a sent message back.
+ *
+ * The round trip is the property worth pinning: whatever `withPaths` put on the
+ * end, this has to take off again — including the case that made it necessary,
+ * a pasted screenshot under `Application Support`, whose path has a space in it
+ * and is therefore quoted.
+ */
+describe('splitTrailingPaths', () => {
+  it('leaves a message with no path alone', () => {
+    expect(splitTrailingPaths('what does this mean?')).toEqual({
+      body: 'what does this mean?',
+      paths: [],
+    })
+  })
+
+  it('takes a bare path off the end', () => {
+    expect(splitTrailingPaths('look at this /tmp/a.png')).toEqual({
+      body: 'look at this',
+      paths: ['/tmp/a.png'],
+    })
+  })
+
+  it('takes a quoted path off the end, unquoted', () => {
+    const path = '/Users/me/Library/Application Support/@chorus/desktop/pasted/1-image.png'
+    expect(splitTrailingPaths(`why this ${quotePath(path)}`)).toEqual({
+      body: 'why this',
+      paths: [path],
+    })
+  })
+
+  it('round-trips whatever withPaths wrote', () => {
+    const paths = ['/tmp/a.png', "/tmp/o'brien's shot.png", '/tmp/b log.txt']
+    expect(splitTrailingPaths(withPaths('three of them', paths))).toEqual({
+      body: 'three of them',
+      paths,
+    })
+  })
+
+  /*
+   * The rule that keeps this from editing what someone said: a path in the
+   * middle of a sentence is being talked about, not attached, and turning it
+   * into a picture would silently drop the words after it.
+   */
+  it('ignores a path that is not at the end', () => {
+    expect(splitTrailingPaths('is /tmp/a.png the one you meant?')).toEqual({
+      body: 'is /tmp/a.png the one you meant?',
+      paths: [],
+    })
+  })
+
+  it('does not take a relative path or a bare word', () => {
+    // Only an absolute path is something main can be asked to preview.
+    expect(splitTrailingPaths('see src/App.tsx').paths).toEqual([])
+    expect(splitTrailingPaths('done').paths).toEqual([])
+  })
+
+  it('keeps a message that is nothing but a path', () => {
+    expect(splitTrailingPaths('/tmp/a.png')).toEqual({ body: '', paths: ['/tmp/a.png'] })
   })
 })
