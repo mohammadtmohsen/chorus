@@ -7,6 +7,75 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.18.0
+
+### Both agents are in the room from the start
+
+A new session used to open with Claude alone, and the second agent was something
+you added from its chip when you decided you wanted it. That is the wrong way
+round: the shared room is the whole point, a conversation with one agent in it is
+the thing Chorus exists to replace, and an agent brought in late has _read_ the
+transcript rather than been present for it. New sessions now start with both.
+
+Two smaller changes come with it, and one of them may be the one you notice.
+**Toggling the cast no longer changes what future sessions start with.** It used
+to: bringing Codex into one conversation quietly rewrote the default for every
+conversation after it, which is drift you cannot see from where you caused it —
+the setting says "new sessions start with", nobody edited it, and it reads
+differently because of a chip pressed days ago. The sheet is the only thing that
+decides the default now, and a cast you change belongs to that conversation.
+
+**Restarting a session gives it the default cast** rather than the one it had.
+Restart means "start this session over, with nothing said in it", and carrying
+the old cast forward made it the one action that could not rescue a conversation
+whose agents were wrong — an agent that had failed to start was still listed, so
+restarting reproduced the state you were restarting to escape. Where it runs and
+how much it is trusted still carry, because those are facts about the work.
+
+### Replies are written, not delivered in blocks
+
+An agent's answer arrived a paragraph at a time, a quarter-second apart. The
+pacing that was meant to smooth that had the wrong rule — it cleared whatever had
+arrived inside 80 milliseconds, so a 300-character paragraph was "paced" at 3,750
+characters a second, which is a block appearing. It now writes at a readable 200
+a second and only speeds up when it would otherwise fall more than a moment
+behind, so a message that arrives in one lump still cannot leave the screen
+stuck in the past.
+
+The end of a reply was the worst of it: the last paragraph appeared all at once,
+because finishing dumped the remaining text in one go. That is the most visible
+jump of the lot, since it happens exactly where you are already reading. The tail
+is written out now too, just briskly.
+
+If you have asked your system for less motion, everything still appears at once.
+
+### An attachment you have sent looks like what it is
+
+0.17.2 made an attachment a picture _before_ you send it. Afterwards it was still
+forty characters of `/Users/…/1787054491497-3-image.png` in your own message —
+the least useful description of a screenshot available, over two lines. Your sent
+message now shows the same tile the composer showed, and clicking it opens the
+picture full size.
+
+Nothing about the message itself changed: agents are handed paths, not uploads,
+and the path is still exactly what was sent — that is how an agent can open your
+screenshot at all. This is only how the message is drawn. A path that turns out
+not to be a picture — a folder, a log, a file since deleted — stays as text.
+
+### The waiting line stops lying
+
+The line under your message that says an agent is starting had two faults. Its
+dot sat a line above its own word whenever two agents were in the room, because
+the row has no name to show there and the empty space still took a line.
+
+And it could stay forever: a finished reply with _getting started_ sitting
+underneath it, permanently. Everything that used to dismiss that line was
+something that _arrives_ — an agent starting, an error, a refusal — so a message
+that neither landed nor failed dismissed nothing. It now gives up after ninety
+seconds, which is far longer than any real start. That bounds the symptom rather
+than curing it: if you see it give up, the message did not reach the agent, and
+sending it again is the right move.
+
 ## 0.17.2
 
 Two things under a reply and above the message box, both of which said the
