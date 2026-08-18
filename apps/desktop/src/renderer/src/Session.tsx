@@ -1263,10 +1263,34 @@ export function Session(props: {
           (m) => (m.actor === 'codex' || m.actor === 'claude') && m.kind === 'message'
         )?.key ?? null)
 
+  /**
+   * The newest message of each speaker still working, so its dot can say so.
+   *
+   * **The dot used to pulse while a *message* streamed**, and stop the moment
+   * the words stopped — which is not the moment the agent stops. A turn that
+   * says a sentence, runs three commands and then says another spends most of
+   * itself with a solid dot above a finished-looking reply, and that is the
+   * whole of the report: you cannot tell whether what you are reading is the
+   * last thing you will get. Bound to the turn instead, the dot is honest in
+   * both directions — moving means more is coming, still means done.
+   *
+   * Only the speaker's *newest* message, and that is what makes it affordable:
+   * `Entry` is memoised, and a prop that changes while an agent works would
+   * re-render every row it has ever written if it were passed to all of them.
+   * One row per working agent changes; the rest keep their stable element.
+   */
+  const liveKeys = new Set(
+    view.working.map(
+      (actor) => view.messages.findLast((m) => m.actor === actor && m.kind === 'message')?.key
+    )
+  )
+
   const entry = (message: TranscriptMessage, index: number): React.JSX.Element => (
     <Entry
       key={message.key}
       message={message}
+      /* Its speaker has not finished, whatever this message's own status says. */
+      live={liveKeys.has(message.key)}
       /* So a `Changes` card can print `src/rate.ts` rather than the whole
          absolute path an agent reports. Stable per session, so it costs the
          memoisation nothing. */

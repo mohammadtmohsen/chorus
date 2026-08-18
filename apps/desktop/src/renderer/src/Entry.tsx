@@ -425,8 +425,18 @@ export const Entry = memo(function Entry({
   answersThinking = false,
   final = false,
   grouped = false,
+  live = false,
 }: {
   message: TranscriptMessage
+  /**
+   * This message's speaker has not finished its turn.
+   *
+   * Separate from `message.status`, which is about the *words*: a reply can be
+   * complete while the agent that wrote it is still running commands and about
+   * to say more. `Session` passes it only for each working speaker's newest
+   * message, so this stays affordable against the memoisation.
+   */
+  live?: boolean
   /** The project directory, so a changed file reads as a project path. */
   cwd?: string
   /** Absent when there is nobody to hand to — a one-agent conversation. */
@@ -628,7 +638,14 @@ export const Entry = memo(function Entry({
       data-headless={grouped ? 'true' : undefined}
     >
       {message.kind === 'message' ? (
-        <ActorAvatar actor={message.actor} streaming={message.status === 'streaming'} />
+        /*
+         * Moving means more is coming; still means the turn is over.
+         *
+         * `live` as well as `status`, because the two answer different
+         * questions — the words can stop long before the agent does — and the
+         * dot is the only thing near what you are reading that can say which.
+         */
+        <ActorAvatar actor={message.actor} streaming={message.status === 'streaming' || live} />
       ) : (
         /*
          * Commands, tools and notices keep the compact mark they have always
