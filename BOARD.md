@@ -111,6 +111,16 @@ green — which is how a real failure gets waved through. `pnpm check` locally
 prints the error; CI did not, because turbo buffers each task's output and the
 failing task's was lost.
 
+**Seen again on the 0.17.2 release, and this time the exit code said something.**
+`@chorus/agent-protocol#typecheck` failed with `-1073741502` — `0xC0000142`,
+`STATUS_DLL_INIT_FAILED`, which is Windows refusing to *start* the process, not
+`tsc` objecting to anything in it. So the silence above is not always total: the
+number is the diagnostic when there is no diagnostic, and reading it settled in
+one step what took four log queries the first time. The rest matched: a release
+commit touching only the changelog and two version numbers, macOS green on the
+same tree, a package neither commit had touched, and a re-run green. Worth
+decoding the exit code before assuming turbo swallowed a real error.
+
 **Done when:** a task that fails in CI names its own cause in the log —
 `--output-logs=errors-only`, or whatever turbo now offers — verified by making a
 task fail on purpose and reading the error out of the run.
