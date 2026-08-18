@@ -113,7 +113,7 @@ failing task's was lost.
 
 **Seen again on the 0.17.2 release, and this time the exit code said something.**
 `@chorus/agent-protocol#typecheck` failed with `-1073741502` — `0xC0000142`,
-`STATUS_DLL_INIT_FAILED`, which is Windows refusing to *start* the process, not
+`STATUS_DLL_INIT_FAILED`, which is Windows refusing to _start_ the process, not
 `tsc` objecting to anything in it. So the silence above is not always total: the
 number is the diagnostic when there is no diagnostic, and reading it settled in
 one step what took four log queries the first time. The rest matched: a release
