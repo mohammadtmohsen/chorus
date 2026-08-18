@@ -1,5 +1,6 @@
 import { CodeRun } from './CodeRun.js'
-import { memo, useMemo } from 'react'
+import { createContext, memo, useContext, useMemo } from 'react'
+import { shortenCodeSpan } from './shorten.js'
 import {
   parseMarkdown,
   splitBlocks,
@@ -21,7 +22,27 @@ import {
  * fact (plan §4.4).
  */
 
-export function MarkdownView({ source }: { source: string }): React.JSX.Element {
+/**
+ * Whether long inline references in this message are cut down for display.
+ *
+ * A context rather than a prop, because the only place that needs it is
+ * `InlineRun`'s `code` arm and that sits at the bottom of a recursion — a link
+ * inside a list item inside a table cell. Threading a display option through
+ * every one of those is how the option ends up missing from one of them.
+ *
+ * Off by default: an agent's reply says what it says, and shortening a path in
+ * an answer would be editing it. It is `Entry` that turns this on, and only for
+ * your own messages, where the long references were written by Chorus.
+ */
+const ShortenCode = createContext(false)
+
+export function MarkdownView({
+  source,
+  shortenCode = false,
+}: {
+  source: string
+  shortenCode?: boolean
+}): React.JSX.Element {
   /*
    * Split first, then memoise each block on its own text.
    *
@@ -33,11 +54,11 @@ export function MarkdownView({ source }: { source: string }): React.JSX.Element 
    */
   const blocks = useMemo(() => splitBlocks(source), [source])
   return (
-    <>
+    <ShortenCode.Provider value={shortenCode}>
       {blocks.map((raw, i) => (
         <MemoBlock key={i} source={raw} />
       ))}
-    </>
+    </ShortenCode.Provider>
   )
 }
 
@@ -192,18 +213,30 @@ function alignStyle(align: Align | undefined): React.CSSProperties | undefined {
 }
 
 function InlineRun({ content }: { content: readonly Inline[] }): React.JSX.Element {
+  const shorten = useContext(ShortenCode)
   return (
     <>
       {content.map((node, i) => {
         switch (node.kind) {
           case 'text':
             return <span key={i}>{node.text}</span>
-          case 'code':
+          case 'code': {
+            /*
+             * The whole value stays on `title`, and it is the only copy of it
+             * on screen — what the *agent* received is untouched either way,
+             * since this shortens the drawing and not the message.
+             */
+            const shown = shorten ? shortenCodeSpan(node.text) : node.text
             return (
-              <code key={i} className="md-inline-code">
-                {node.text}
+              <code
+                key={i}
+                className="md-inline-code"
+                title={shown === node.text ? undefined : node.text}
+              >
+                {shown}
               </code>
             )
+          }
           case 'strong':
             return (
               <strong key={i}>

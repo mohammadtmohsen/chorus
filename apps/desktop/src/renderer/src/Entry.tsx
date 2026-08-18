@@ -803,7 +803,17 @@ export const Entry = memo(function Entry({
               Tiles inside the clamp with the words rather than under it, so a
               long quoted passage cannot push its own attachment out of view.
             */}
-            <MarkdownView source={sent.body} />
+            {/*
+              `shortenCode` here and nowhere else. The long references in a
+              message are ones Chorus wrote into it — the VS Code context block
+              names the path three times and the commit twice, because that is
+              what lets an agent open the right version — and an eighty-character
+              path in monospace wraps a six-word question into four lines.
+
+              Not for a reply: an agent's answer says what it says, and cutting a
+              path down inside one would be editing it.
+            */}
+            <MarkdownView source={sent.body} shortenCode />
             <SentAttachments paths={sent.paths} />
           </Clamped>
         ) : (
