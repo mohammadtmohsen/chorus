@@ -7,6 +7,30 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.1
+
+### You can tell whether a reply is the last one
+
+An agent's turn is rarely one message. It says a sentence, runs some commands,
+reads a file, then says more — and the dot beside its name only moved while
+_words_ were arriving. So for most of a turn you were looking at a still dot
+above a reply that looked finished, with no way to know whether that was the
+answer or the first third of it. The dot now follows the turn: moving means more
+is coming, still means done.
+
+### The button says it is working, by moving
+
+While an agent runs, the button in the corner of the composer was already
+outlined, or red with a square when there was nothing to send. Colour is a state
+you have to have learned; something turning is not. It now wears a turning ring
+in both those states — and it is the right place for the signal, because it is
+the button you would press to stop what is running. It stays still if you have
+asked your system for less motion.
+
+Neither of these invents information: they report what Chorus already believes
+about the turn. If it is wrong about that, it will now be wrong twice as
+visibly, which is the intended trade.
+
 ## 0.19.0
 
 ### Enter on an approval now grants it for the session
