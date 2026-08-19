@@ -10,7 +10,6 @@ Keep the user posted step by step. Nothing in this file overrides that — every
 assuming the work had already been agreed, which is exactly the assumption that
 keeps being wrong.
 
-
 A local-first workspace where a developer collaborates with several coding
 agents in one shared conversation. Electron + React, pnpm workspaces, Turbo.
 
