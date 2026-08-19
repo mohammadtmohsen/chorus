@@ -1,7 +1,16 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MarkdownView } from './MarkdownView.js'
+
+/*
+ * i18n stubbed to the key, the same way `ApprovalCard.test.tsx` does it: what is
+ * asserted is *which* string the copy control carries, not its wording, which
+ * lives in `en.json` and may change without breaking this.
+ */
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}))
 
 /**
  * The parser's tests prove the tree; these prove the elements.
@@ -98,6 +107,29 @@ describe('MarkdownView', () => {
     expect(html).not.toContain('<script>')
     expect(html).not.toContain('<b>')
     expect(html).toContain('&lt;script&gt;')
+  })
+
+  /**
+   * The copy control, and where it sits.
+   *
+   * The placement assertion is the one worth having: `.md-code` is
+   * `overflow-x: auto`, so a control positioned *inside* it scrolls away with
+   * the content on any block wider than the pane — which is most of them. The
+   * tools have to be a sibling of the `<pre>`, and this is what says so.
+   */
+  it('gives a fenced block a copy control outside the scroller', () => {
+    const html = render('```ts\nconst a = 1\n```')
+    expect(html).toContain('<div class="md-code-tools">')
+    expect(html).toContain('aria-label="conversation.copyCode"')
+    // The tools close before the `<pre>` opens, so they are not in the scroller.
+    expect(html.indexOf('</div><pre class="md-code"')).toBeGreaterThan(-1)
+  })
+
+  /** A fence with no language still gets the control — the code is the point. */
+  it('offers copy on an unlabelled fence too', () => {
+    const html = render('```\nplain\n```')
+    expect(html).toContain('class="md-copy"')
+    expect(html).not.toContain('md-lang')
   })
 
   it('opens links in the OS browser, never in the renderer', () => {

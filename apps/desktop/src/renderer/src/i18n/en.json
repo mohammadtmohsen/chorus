@@ -36,6 +36,8 @@
     "showMore": "Show the rest",
     "showLess": "Show less",
     "hideThinking": "Hide thinking",
+    "copyCode": "Copy",
+    "copied": "Copied",
     "newSession": "New session",
     "tryAgain": "Try again",
     "sessionLabel": "Session in {{path}}",

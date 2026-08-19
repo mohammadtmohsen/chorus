@@ -82,6 +82,7 @@ const api: ChorusApi = {
   describeTerminal: invoke('terminal:describe'),
   setBadge: invoke('app:setBadge'),
   focusWindow: invoke('app:focus'),
+  copyText: invoke('app:copyText'),
   renameConversation: invoke('conversation:rename'),
   chooseProjectDirectory: invoke('conversation:chooseCwd'),
   setProjectDirectory: invoke('conversation:setCwd'),

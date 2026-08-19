@@ -695,6 +695,23 @@ export const IPC_CONTRACT = {
   /** Brings Chorus forward — what clicking a notification has to do first. */
   'app:focus': { request: z.void(), response: z.object({ ok: z.literal(true) }) },
 
+  /**
+   * Puts text on the system clipboard, for the copy control on a code block.
+   *
+   * Main rather than the renderer, and it is not a preference. `security.ts`
+   * answers every renderer permission request with `false`, which is what
+   * `navigator.clipboard.writeText` has to ask for — and the preload runs
+   * sandboxed, where Electron exposes `ipcRenderer` and `webUtils` but not
+   * `clipboard`. Main is the only side of the bridge that can actually write.
+   *
+   * Write-only on purpose. Reading the clipboard would hand untrusted agent
+   * output a way to ask what the user last copied, and nothing here needs it.
+   */
+  'app:copyText': {
+    request: z.object({ text: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
   'conversation:layout': {
     request: z.object({ order: z.array(z.string()), workspace: WorkspaceSnapshot }),
     response: z.object({ ok: z.literal(true) }),
@@ -1382,6 +1399,7 @@ export interface ChorusApi {
   readonly refreshLimits: () => Promise<{ ok: true }>
   readonly setBadge: (request: { count: number }) => Promise<{ ok: true }>
   readonly focusWindow: () => Promise<{ ok: true }>
+  readonly copyText: (request: { text: string }) => Promise<{ ok: true }>
   readonly probeAgents: () => Promise<AgentProbeResult[]>
   readonly startConversation: (
     request: IpcRequest<'conversation:start'>

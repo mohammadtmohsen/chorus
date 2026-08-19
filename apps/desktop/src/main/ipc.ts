@@ -2,7 +2,15 @@ import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { buildDiagnostics } from '@chorus/shared'
 import { homedir } from 'node:os'
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  shell,
+  type OpenDialogOptions,
+} from 'electron'
 import {
   ACTIVITY_PUSH_CHANNEL,
   DIAGNOSTIC_PUSH_CHANNEL,
@@ -191,6 +199,13 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         window.show()
         window.focus()
       }
+      return Promise.resolve(OK)
+    },
+
+    'app:copyText': (request: IpcRequest<'app:copyText'>) => {
+      // `writeText`, never `write`: an HTML flavour would carry the transcript's
+      // markup onto the clipboard, and what the user pointed at is the source.
+      clipboard.writeText(request.text)
       return Promise.resolve(OK)
     },
 

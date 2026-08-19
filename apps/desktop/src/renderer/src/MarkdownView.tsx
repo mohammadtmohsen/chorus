@@ -1,5 +1,6 @@
 import { CodeRun } from './CodeRun.js'
-import { createContext, memo, useContext, useMemo } from 'react'
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { shortenCodeSpan } from './shorten.js'
 import {
   isFileHref,
@@ -134,19 +135,33 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
     case 'code':
       return (
         /*
-         * Code never flips, whatever the prose around it does.
+         * The wrapper exists so the corner controls are not inside the scroller.
          *
-         * `dir="ltr"` explicitly rather than by inheritance: a fenced block
-         * inside a right-to-left answer would otherwise take that direction and
-         * move its punctuation — `);` to the left of the line, a leading `-` in
-         * a diff to the right — which is code that no longer says what it says.
+         * `.md-code` is `overflow-x: auto`, and an absolutely positioned child of
+         * a scroll container scrolls with its content — the language label used
+         * to slide off the right edge of a wide block and disappear. Anchoring
+         * the tools to a static sibling wrapper instead pins them to the block,
+         * which is what "top right" has to mean for a block you can scroll.
          */
-        <pre className="md-code" dir="ltr">
-          {block.language !== null && <span className="md-lang">{block.language}</span>}
-          <code>
-            <CodeRun code={block.text} language={block.language} />
-          </code>
-        </pre>
+        <div className="md-code-wrap">
+          <div className="md-code-tools">
+            {block.language !== null && <span className="md-lang">{block.language}</span>}
+            <CopyCode text={block.text} />
+          </div>
+          {/*
+           * Code never flips, whatever the prose around it does.
+           *
+           * `dir="ltr"` explicitly rather than by inheritance: a fenced block
+           * inside a right-to-left answer would otherwise take that direction and
+           * move its punctuation — `);` to the left of the line, a leading `-` in
+           * a diff to the right — which is code that no longer says what it says.
+           */}
+          <pre className="md-code" dir="ltr">
+            <code>
+              <CodeRun code={block.text} language={block.language} />
+            </code>
+          </pre>
+        </div>
       )
 
     case 'list': {
@@ -222,6 +237,78 @@ function BlockView({ block }: { block: Block }): React.JSX.Element {
     case 'rule':
       return <hr className="md-hr" />
   }
+}
+
+/**
+ * Copies a fenced block's source, and says so for a moment.
+ *
+ * Through the bridge rather than `navigator.clipboard`: `security.ts` answers
+ * every renderer permission request with `false`, and the preload is sandboxed
+ * where Electron withholds the `clipboard` module — main is the only side that
+ * can write. `window.chorus` is touched in the handler and nowhere else, so this
+ * still renders under `renderToStaticMarkup`, which has no bridge at all.
+ *
+ * The state flips only after main has confirmed. A tick that appears on the
+ * click would claim a copy happened whether or not one did, and a clipboard the
+ * user cannot see is exactly the case where a lie is not discovered until they
+ * paste.
+ */
+function CopyCode({ text }: { text: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  /*
+   * The timer is held so unmounting clears it. Only the active tab of a pane is
+   * mounted, so switching tab within the confirmation window unmounts this
+   * button mid-flight — and a `setState` after that is a React warning plus a
+   * leak per code block, of which a long transcript has hundreds.
+   */
+  const revert = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(
+    () => () => {
+      clearTimeout(revert.current)
+    },
+    []
+  )
+
+  const label = copied ? t('conversation.copied') : t('conversation.copyCode')
+  return (
+    <button
+      type="button"
+      className="md-copy"
+      aria-label={label}
+      title={label}
+      data-copied={copied ? '' : undefined}
+      onClick={() => {
+        window.chorus
+          .copyText({ text })
+          .then(() => {
+            setCopied(true)
+            clearTimeout(revert.current)
+            revert.current = setTimeout(() => {
+              setCopied(false)
+            }, 1600)
+          })
+          .catch(() => {
+            // Nothing to say and nowhere to say it: the button stays on "Copy",
+            // which is the truth. A toast for a failed clipboard write would be
+            // more interruption than the failure is worth.
+          })
+      }}
+    >
+      {/* `aria-hidden`: the button's name carries the meaning, and a decorative
+          glyph announced beside it is just noise. */}
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        {copied ? (
+          <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+        ) : (
+          <>
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+            <path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1" />
+          </>
+        )}
+      </svg>
+    </button>
+  )
 }
 
 /** The value comes from a closed union, so there is nothing to sanitize. */

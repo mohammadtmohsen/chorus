@@ -2827,18 +2827,107 @@ body {
   font-size: 10px;
 }
 
-.md-code {
+/*
+ * The corner controls anchor to the wrapper, not to the `<pre>`.
+ *
+ * `.md-code` scrolls horizontally, and an absolutely positioned child of a
+ * scroll container travels with the content — the language label used to slide
+ * out of view on any block wider than the pane. The wrapper is static, so the
+ * tools stay in the corner of the *block* however far it is scrolled.
+ *
+ * The margin moves up here and the `<pre>` gives it up, rather than being left
+ * to collapse through a positioned ancestor: the tools are measured from this
+ * box's top edge, and an edge that depends on margin collapsing is one that
+ * moves when anything above the block changes.
+ */
+.md-code-wrap {
   position: relative;
+  margin: calc(var(--step) * 2) 0;
 }
 
-.md-lang {
+.md-code-wrap > .md-code {
+  margin: 0;
+}
+
+.md-code-tools {
   position: absolute;
   top: calc(var(--step) * 1.5);
   right: calc(var(--step) * 2);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+}
+
+.md-lang {
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/*
+ * Always drawn, never on hover alone.
+ *
+ * A control that appears only under the pointer cannot be found by anyone
+ * reading with a keyboard, and on a touchpad it means the first gesture is a
+ * hunt. It rests at `--text-muted` — the language chip's own weight, because
+ * the two sit side by side and one of them fading out would read as a rendering
+ * fault rather than as restraint.
+ *
+ * The `--sunken` ground is load-bearing rather than decoration: the tools
+ * overlap the block's first line, and a bare glyph on top of code is
+ * unreadable in exactly the case that matters, a long first line.
+ */
+.md-copy {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--sunken);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+/*
+ * `:not([data-copied])` is not tidiness — it is the whole reason the tick keeps
+ * its colour. A descendant selector carrying `:hover` is (0,3,0) and outranks
+ * the (0,2,0) `[data-copied]` rule below, so while the pointer was anywhere over
+ * the block a confirmed copy drew a grey outline round a green tick. Measured,
+ * not guessed: the computed border came back as `--line`.
+ */
+.md-code-wrap:hover .md-copy:not([data-copied]) {
+  border-color: var(--line);
+}
+
+.md-copy:hover,
+.md-copy:focus-visible {
+  color: var(--bone);
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+/* Confirmation reads as a state of the control, not as a message elsewhere. */
+.md-copy[data-copied] {
+  color: var(--tok-added);
+  border-color: var(--tok-added);
+}
+
+.md-copy svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .md-inline-code {
