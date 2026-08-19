@@ -552,6 +552,37 @@ export function App(): React.JSX.Element {
   )
 
   /**
+   * A side task, branched off the conversation you are typing in.
+   *
+   * `promoteAside`'s twin, and deliberately the same three lines: main decides
+   * the room's profile, title and cwd, the renderer adds the tab it is handed
+   * and guesses none of them. The conversation it came from is left alone —
+   * nothing is appended to it and its agent is not interrupted, which is the
+   * entire point of the action.
+   */
+  const spinOffTask = useCallback(
+    (conversationId: string, agentId: 'codex' | 'claude', brief: string) => {
+      void (async () => {
+        try {
+          const task = await window.chorus.spinOffTask({
+            conversationId,
+            agentId,
+            brief,
+            // Able to change things, because a side task that cannot is the
+            // aside we already have. Changed per room from its own menu.
+            profileId: 'workspace-write',
+          })
+          updateSessions((current) => [...current, task])
+          useWorkspaceStore.getState().openSession(task.conversationId)
+        } catch (error) {
+          fail(setError)(error)
+        }
+      })()
+    },
+    [updateSessions]
+  )
+
+  /**
    * A session card dropped at a new place in the rail.
    *
    * The order is computed once, here, and the same value is both rendered and
@@ -968,6 +999,7 @@ export function App(): React.JSX.Element {
             carry={carries.current.get(session.conversationId)}
             onCarry={keepCarry}
             onPromoteAside={promoteAside}
+            onSpinOff={spinOffTask}
             /* Read once here rather than per pane: it decides whether Explain
                exists under every reply, and four panes asking the same question
                of the same file is four answers that must agree. */

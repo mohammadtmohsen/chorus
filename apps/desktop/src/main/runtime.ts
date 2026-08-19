@@ -50,6 +50,7 @@ import type { ActivityPush, ContextUsagePush, TasksPush } from '../shared/ipc.js
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
 import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-sessions.js'
 import { containsPassage } from '../shared/plain-text.js'
+import { questionSetText } from '../shared/question-text.js'
 import { readRemembered, writeRemembered } from './remembered.js'
 import { readSettings } from './settings.js'
 import {
@@ -1535,15 +1536,34 @@ export class ChorusRuntime {
     if (source === undefined) throw new Error('That passage is no longer in the log')
 
     /*
-     * Only a finished agent message. A fork inherits the session *as persisted*,
-     * so it cannot see a turn still in flight — asked about a reply that is
-     * still arriving it answers that no such reply exists. Measured, not assumed:
-     * see the plan's STATUS.
+     * A finished agent message, or a question the agent is blocked on.
+     *
+     * The first was the only case for a long time, and the reason is unchanged:
+     * a fork inherits the session *as persisted*, so it cannot see a turn still
+     * in flight — asked about a reply that is still arriving it answers that no
+     * such reply exists. Measured, not assumed: see the plan's STATUS.
+     *
+     * A question set is safe by the same test and was excluded only because
+     * nothing asked. It is already durable when the card appears — the card is
+     * drawn *from* the logged event — so there is no in-flight window at all,
+     * which is a stronger position than a reply's.
+     *
+     * `said` is re-derived here from the logged payload rather than taken from
+     * the request. That is what keeps the guard below meaning what it says: the
+     * renderer supplies an excerpt and main supplies the text it must be found
+     * in, so a caller that could name any event still cannot put words in an
+     * agent's mouth. `questionSetText` is the same projection the card renders
+     * with, so the two cannot drift apart into questions nobody can ask about.
      */
-    if (source.payload.type !== 'agent.message.completed') {
-      throw new Error('An aside can only be asked about a finished reply')
+    const said =
+      source.payload.type === 'agent.message.completed'
+        ? source.payload.text
+        : source.payload.type === 'userinput.requested'
+          ? questionSetText(source.payload.request)
+          : null
+    if (said === null) {
+      throw new Error('An aside can only be asked about a finished reply or a question')
     }
-    const said = source.payload.text
     const excerpt = request.excerpt.trim()
     /*
      * Checked against the reply as the transcript reads, not as the log stores
@@ -1863,6 +1883,72 @@ export class ChorusRuntime {
   }
 
   /**
+   * Explain or translate what the aside itself just said.
+   *
+   * A follow-up in the same fork, not a second aside, and that is the design
+   * rather than a shortcut. Forking again would be the honest analogue of the
+   * transcript's button, but the card is one floating panel: a nested aside
+   * would have to replace the one being read, which throws away the answer the
+   * person was in the middle of not understanding. A follow-up leaves the
+   * exchange intact and appends to it, which is what the card is already for.
+   *
+   * **The subject is the aside's own latest answer, and it is read from the log
+   * rather than taken from the renderer.** "I did not follow *that*" means the
+   * thing on screen, not the passage this aside was opened about — an
+   * explanation of the original excerpt is what the person already has. Reading
+   * it here also keeps `askAside`'s trust model from having to widen: nothing
+   * new is accepted from the renderer but the id and which of two things to do.
+   *
+   * No language, no action — the same rule `openAside` applies, restated
+   * because an aside opened as a plain question carries no language at all and
+   * would otherwise compose a prompt asking for a translation into nothing.
+   */
+  async restateAside(asideId: string, purpose: 'explanation' | 'translation'): Promise<void> {
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) {
+      throw new Error('That aside has ended — ask again to start a new one')
+    }
+
+    const language =
+      aside.language === '' ? readSettings(this.userDataPath).explainLanguage : aside.language
+    if (language === '') {
+      throw new Error(
+        purpose === 'translation'
+          ? 'No language is set to translate into'
+          : 'No language is set to explain in'
+      )
+    }
+
+    /*
+     * The last thing the agent finished saying in this aside.
+     *
+     * `agent.message.completed` only: a turn still streaming would be explained
+     * half-written, and the card offers these buttons once an answer has landed
+     * anyway. Searching from the end because an aside can be several turns long
+     * by the time someone gives up on one of them.
+     */
+    const said = this.store
+      .read(asideId)
+      .filter((e) => e.payload.type === 'agent.message.completed')
+      .map((e) => (e.payload.type === 'agent.message.completed' ? e.payload.text : ''))
+      .filter((text) => text.trim() !== '')
+    const latest = said.at(-1)
+    if (latest === undefined) throw new Error('That aside has not answered yet')
+
+    await aside.service.sendUserMessage(
+      // The log keeps the short line and the model gets the prompt, exactly as
+      // `openAside` does it: what is read back later should be what was asked
+      // for rather than the instructions that carried it.
+      purpose === 'translation'
+        ? `Translate this into ${language}.`
+        : `Explain this in ${language}.`,
+      purpose === 'translation'
+        ? translatePrompt(latest, language)
+        : explainPrompt(latest, language)
+    )
+  }
+
+  /**
    * Sends a decision from an aside into the conversation the aside came from.
    *
    * Deliberately `this.send` rather than a path of its own, and that is the
@@ -2067,6 +2153,148 @@ export class ChorusRuntime {
    * branch this one is not descended from — so without this the room would not
    * know the question it was opened to continue.
    */
+  /**
+   * A side task, branched off the conversation you are in, without touching it.
+   *
+   * The gap this closes: you are mid-flow with an agent, you notice something
+   * that needs a quick fix, and every existing route is wrong. Typing it into
+   * the composer redirects the turn you are in. **New session** starts an agent
+   * that knows nothing about what you have both been looking at. And the aside
+   * is read-only by construction — asking it to act was never possible, so
+   * "open an aside, then promote it" was a way of obtaining a room rather than
+   * a way of asking a question, which is a workaround and reads like one.
+   *
+   * So this is `runPromotion` with the aside taken out of the middle. It forks
+   * the same way promotion does — from the parent's own `sessionRef`, which is
+   * what carries the context you would otherwise have to re-describe — opens a
+   * persistent conversation under a profile chosen here, and sends the brief.
+   *
+   * **The parent is not touched at all.** No message is appended to it, its
+   * agent is not interrupted, and its watermark does not move. That is the
+   * whole requirement: the flow you were in is still exactly where you left it.
+   *
+   * Forking from disk means the branch sees the session *as persisted*, so it
+   * cannot see a turn still in flight — the same constraint `openAside` carries
+   * and for the same reason. `stillAnswering` is what refuses rather than
+   * letting it silently branch from a stale point.
+   */
+  async spinOffTask(request: {
+    conversationId: string
+    agentId: AgentId
+    brief: string
+    profileId: string
+  }): Promise<PromotedConversation> {
+    const parent = this.active.get(request.conversationId)
+    if (parent === undefined) throw new Error('That conversation is not open')
+    const source = parent.participants.get(request.agentId)
+    if (source === undefined) {
+      throw new Error(`${request.agentId} is no longer in this conversation`)
+    }
+    if (source.session.sessionRef === '') {
+      throw new Error(`${request.agentId} has not started a session yet`)
+    }
+    if (this.stillAnswering(request.conversationId)) {
+      throw new Error('Wait for the current turn to finish, then start the side task')
+    }
+    const brief = request.brief.trim()
+    if (brief === '') throw new Error('A side task needs something to do')
+
+    const taskId = newConversationId()
+    const profile = profileById(request.profileId)
+    const grants = this.newGrants()
+
+    let participant
+    try {
+      participant = await this.startParticipant(
+        request.agentId,
+        taskId,
+        (resuming) => this.sessionOptsFor({ cwd: parent.cwd, profile }, request.agentId, resuming),
+        profile,
+        grants,
+        undefined,
+        false,
+        source.session.sessionRef
+      )
+    } catch (error) {
+      throw new Error(
+        `Could not start the side task: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      )
+    }
+
+    /*
+     * No `spun-off` payload, and that is deliberate rather than a shortcut.
+     *
+     * Adding an event type is a five-file change here precisely so it is
+     * considered, and there is nothing this one would record that the log does
+     * not already hold: the room's first entry is the brief you actually typed,
+     * as an ordinary `user.message`. Reusing `aside.promoted` was the other
+     * option and is worse — it would write that an aside was promoted when no
+     * aside existed, into the one store this app treats as the truth.
+     *
+     * Provenance travels in the seed instead, where it is of use to the agent
+     * rather than to a query nobody has yet written.
+     */
+    participant.seedContext = [
+      'This is a side task, branched from a conversation you are already in.',
+      '',
+      'You have that conversation’s context because this session was forked from',
+      'it. The person has stepped aside to get one specific thing done without',
+      'interrupting what you were both in the middle of.',
+      '',
+      'Do the task below and nothing beyond it. Do not resume, summarise, or carry',
+      'on the work of the conversation this came from — it is still running',
+      'elsewhere and is not yours to continue.',
+    ].join('\n')
+    participant.seenSeq = this.store.lastSeq()
+
+    const conversation: ActiveConversation = {
+      conversationId: taskId,
+      participants: new Map([[request.agentId, participant]]),
+      grants,
+      profile,
+      cwd: parent.cwd,
+      title: brief.slice(0, 80),
+      lastAddressed: request.agentId,
+      lastSeenSeq: 0,
+      draft: '',
+      planning: false,
+    }
+    this.active.set(taskId, conversation)
+    this.rememberOpen()
+
+    /*
+     * The brief goes through `send`, not through the service directly.
+     *
+     * The same reason `forwardAside` does: routing, the log entry, the catch-up
+     * watermark and mention handling are the ones a typed message already gets,
+     * so a side task's first message cannot drift from an ordinary one. You did
+     * type these words, so `user.message` is what they are.
+     */
+    try {
+      await this.send(taskId, brief)
+    } catch (error) {
+      this.active.delete(taskId)
+      await participant.service.close('closed')
+      throw error
+    }
+
+    this.log.info('side task started', {
+      taskId,
+      parentId: request.conversationId,
+      agentId: request.agentId,
+      profileId: profile.id,
+    })
+    return {
+      conversationId: taskId,
+      participants: [request.agentId],
+      profileId: profile.id,
+      cwd: conversation.cwd,
+      title: conversation.title,
+      unread: 0,
+    }
+  }
+
   private asideSeed(asideId: string, excerpt: string): string {
     const said = this.store
       .read(asideId)

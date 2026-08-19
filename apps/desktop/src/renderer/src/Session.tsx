@@ -18,6 +18,7 @@ import {
   type SourceEntry,
 } from './quote.js'
 import type { ActivityPush, IdeContextPush, TerminalRefShape } from '../../shared/ipc.js'
+import { askableQuestion, questionText } from '../../shared/question-text.js'
 import { TerminalPanel } from './TerminalPanel.js'
 import { useSessionActivity, useSessionTerminal, useWorkspaceActions } from './workspace/hooks.js'
 import { ReviewPanel } from './ReviewPanel.js'
@@ -140,6 +141,14 @@ export function Session(props: {
   session: SessionInfo
   /** Turns an aside into a conversation and brings it up as a tab. */
   onPromoteAside: (asideId: string, profileId: string) => void
+  /**
+   * Branches this conversation into a side task and brings it up as a tab.
+   *
+   * The pane does not do it itself for the same reason promotion does not: it
+   * ends with a room that has to appear in the workspace, and only the shell
+   * knows how to put it there.
+   */
+  onSpinOff: (conversationId: string, agentId: 'codex' | 'claude', brief: string) => void
   /** Set when the sidenav asked for a panel this pane owns. */
   panelRequest?: 'review' | 'summary' | undefined
   /** Starting over and ending, offered in the composer as well as in the menu. */
@@ -873,6 +882,79 @@ export function Session(props: {
 
       setSelected(null)
       window.getSelection()?.removeAllRanges()
+    },
+    [conversationId]
+  )
+
+  /**
+   * The same three actions, aimed at a question instead of a reply.
+   *
+   * A question card is where they are needed most and where they were hardest
+   * to get: a reply you did not follow can be re-read at leisure, while a
+   * question is blocking, expires, and is often the densest thing in the
+   * transcript. The card that prompted this asked which of three data models to
+   * hand to the backend, and the prompt was one sentence over nine lines of
+   * `status` versus `activeFilter` versus `versionWindow`.
+   *
+   * `openExplain`'s shape, deliberately, down to the anchor: there is no
+   * selection here either, and the subject is the whole card. The difference is
+   * only what `excerpt` is, and `questionText` builds it — the header, the
+   * prompt, and every option, because the options are most of what is hard to
+   * read.
+   *
+   * **The excerpt is checked against a projection main builds for itself.** It
+   * used to be impossible to get here at all: `openAside` refused anything that
+   * was not `agent.message.completed`, and `PendingQuestion` did not even carry
+   * an event id to name. Both are fixed rather than bypassed, and the guard is
+   * no weaker — main re-derives the card's words from the logged payload with
+   * the same `question-text.ts` this call renders with, so the renderer still
+   * cannot make an agent appear to have said something it did not.
+   */
+  const openAboutQuestion = useCallback(
+    (
+      question: PendingQuestion,
+      field: QuestionField,
+      purpose: AsidePurpose,
+      from: DOMRect
+    ): void => {
+      const actor = question.agentId
+      if (actor !== 'codex' && actor !== 'claude') return
+      if (question.eventId === '' || !askableQuestion(field)) return
+
+      const paneEl = pane.current
+      if (paneEl === null) return
+      const paneRect = paneEl.getBoundingClientRect()
+
+      const excerpt = questionText(field)
+      const opened = window.chorus.openAside({
+        conversationId,
+        sourceEventId: question.eventId,
+        excerpt,
+        purpose,
+      })
+
+      setAskingAbout({
+        text: excerpt,
+        anchor: {
+          space: 'pane',
+          centreX: from.left + from.width / 2 - paneRect.left,
+          top: from.top - paneRect.top,
+          height: from.height,
+        },
+        source: {
+          eventId: question.eventId,
+          actor,
+          // Not `message`: `askableSource` uses these to decide what a *selection*
+          // may become, and a question is not a reply. Nothing downstream reads
+          // them for this path, and labelling it honestly is what keeps that true.
+          kind: 'question',
+          status: 'complete',
+        },
+        purpose,
+        opening: opened.then((result) => result.asideId),
+        // Main's answer, not this pane's copy of the setting.
+        language: opened.then((result) => result.language),
+      })
     },
     [conversationId]
   )
@@ -1832,6 +1914,8 @@ export function Session(props: {
             onDismiss={() => {
               answerQuestion(asking, 'cancel', [])
             }}
+            explainLanguage={explainLanguage}
+            onAsk={openAboutQuestion}
           />
         )}
 
@@ -1851,6 +1935,41 @@ export function Session(props: {
                   draft: props.carry.draft,
                   attached: props.carry.attached,
                   ideIncluded: props.carry.ideIncluded,
+                },
+              })}
+          /*
+           * Offered only once an agent is actually here to fork from. Main
+           * refuses a participant with no session anyway; this stops the button
+           * being live in the seconds before one exists.
+           */
+          {...(participants.length === 0
+            ? {}
+            : {
+                onSpinOff: (brief: string) => {
+                  /*
+                   * Whoever spoke last, not whoever is listed first.
+                   *
+                   * `participants[0]` was the first attempt and it is wrong in
+                   * the case this feature is *for*: you are reading an agent's
+                   * reply, you spot something, and you branch — so the context
+                   * worth forking is that agent's. In a two-agent room the list
+                   * order has nothing to do with who you were working with.
+                   *
+                   * Found by driving it: the room listed codex first, codex had
+                   * exhausted its weekly window, and the fork failed with no tab
+                   * and an error about an agent the person had not been talking
+                   * to for an hour.
+                   */
+                  const last = [...view.messages]
+                    .reverse()
+                    .find((m) => m.actor === 'codex' || m.actor === 'claude')
+                  const spoke = last?.actor
+                  const agentId =
+                    (spoke === 'codex' || spoke === 'claude') && participants.includes(spoke)
+                      ? spoke
+                      : participants[0]
+                  if (agentId !== 'codex' && agentId !== 'claude') return
+                  props.onSpinOff(conversationId, agentId, brief)
                 },
               })}
           onError={fail(setError)}
@@ -1910,6 +2029,8 @@ function QuestionCard({
   active,
   onAnswer,
   onDismiss,
+  explainLanguage,
+  onAsk,
 }: {
   request: PendingQuestion
   /** How many more sets are queued behind this one. */
@@ -1918,6 +2039,20 @@ function QuestionCard({
   active: boolean
   onAnswer: (answers: { questionId: string; values: string[] }[]) => void
   onDismiss: () => void
+  /**
+   * Empty means Explain and Translate are not offered, exactly as under a reply.
+   *
+   * The gate is the setting rather than a guess: there is no honest default for
+   * someone's own language, and an action that cannot say which one it would
+   * produce is worse than an absent one. Main enforces the same rule again.
+   */
+  explainLanguage: string
+  onAsk: (
+    question: PendingQuestion,
+    field: QuestionField,
+    purpose: AsidePurpose,
+    from: DOMRect
+  ) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   /*
@@ -2104,6 +2239,59 @@ function QuestionCard({
         )}
 
         {asked.isSecret && <span className="question-hint">{t('question.secretNote')}</span>}
+
+        {/*
+          Help with the question, kept away from the answer to it.
+
+          At the foot of the question rather than beside Send, and that is a
+          safety choice rather than a layout one: this card is blocking and
+          expires, so a row that reads "still stuck?" must not sit among the
+          buttons that commit an answer. Same reason the approval queue keeps its
+          deny apart from its allow.
+
+          Absent for a secret. The whole point of `isSecret` is that the prompt
+          and its answer stay out of anything durable, and handing the prompt to
+          a fork is the same kind of leak as logging it — `askableQuestion` is
+          where that is decided, so main and this agree by construction.
+        */}
+        {askableQuestion(asked) && (
+          <div className="question-help">
+            {explainLanguage !== '' && (
+              <button
+                type="button"
+                className="entry-action"
+                data-question-action="explain"
+                onClick={(e) => {
+                  onAsk(request, asked, 'explanation', e.currentTarget.getBoundingClientRect())
+                }}
+              >
+                {t('conversation.explainSimply')}
+              </button>
+            )}
+            {explainLanguage !== '' && (
+              <button
+                type="button"
+                className="entry-action"
+                data-question-action="translate"
+                onClick={(e) => {
+                  onAsk(request, asked, 'translation', e.currentTarget.getBoundingClientRect())
+                }}
+              >
+                {t('conversation.translateThis')}
+              </button>
+            )}
+            <button
+              type="button"
+              className="entry-action"
+              data-question-action="ask"
+              onClick={(e) => {
+                onAsk(request, asked, 'question', e.currentTarget.getBoundingClientRect())
+              }}
+            >
+              {t('conversation.askAboutThis')}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="question-actions">

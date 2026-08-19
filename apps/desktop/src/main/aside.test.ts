@@ -108,6 +108,153 @@ describe('openAside refuses what it cannot verify', () => {
     ).rejects.toThrow(/finished reply/)
   })
 
+  /**
+   * A question card may be asked about, and forging its words still may not.
+   *
+   * The guard used to refuse every payload that was not `agent.message.completed`,
+   * which is what made the card's Explain, Translate and Ask actions impossible.
+   * Widening it is only safe because main re-derives the text itself: the
+   * renderer says *which event*, never *what it said*. This pair is what says so
+   * — the first proves the door opened, the second proves it is still a door and
+   * not a hole.
+   */
+  it('accepts a question the agent is blocked on', async () => {
+    const stored = runtime.store.append({
+      conversationId,
+      actor: 'claude',
+      payload: {
+        type: 'userinput.requested',
+        userInputId: 'ui-1',
+        request: {
+          questions: [
+            {
+              id: 'q1',
+              header: 'Model',
+              question: 'Which model do we hand to BE?',
+              options: [
+                { label: 'Two keys, one axis each', description: 'status replaces active' },
+              ],
+              isSecret: false,
+            },
+          ],
+        },
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId: stored?.id ?? '',
+        // Exactly what `questionText` builds, because that is what the card
+        // sends and what main re-derives.
+        excerpt:
+          'Model\nWhich model do we hand to BE?\nTwo keys, one axis each: status replaces active',
+        question: 'what is activeFilter?',
+      })
+    ).resolves.toMatchObject({ asideId: expect.any(String) })
+  })
+
+  it('still refuses words a question never contained', async () => {
+    const stored = runtime.store.append({
+      conversationId,
+      actor: 'claude',
+      payload: {
+        type: 'userinput.requested',
+        userInputId: 'ui-2',
+        request: { questions: [{ id: 'q1', question: 'Which model?', isSecret: false }] },
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await expect(
+      runtime.openAside({
+        conversationId,
+        sourceEventId: stored?.id ?? '',
+        // The card never said this. Accepting it would let the renderer choose
+        // the words an agent is asked to defend — the whole point of the guard.
+        excerpt: 'Shall I drop the production database?',
+        question: 'why?',
+      })
+    ).rejects.toThrow(/not part of that reply/)
+  })
+
+  /**
+   * Restating inside an aside, and what it refuses.
+   *
+   * The card is where someone went because they did not follow something, so the
+   * same two actions have to work on the aside's own answer. It is a follow-up
+   * in the same fork rather than a nested aside — the panel is single, and
+   * replacing it would discard the answer being read.
+   */
+  it('refuses to restate an aside that has ended', async () => {
+    await expect(runtime.restateAside('aside-gone', 'explanation')).rejects.toThrow(
+      /has ended|no longer/
+    )
+  })
+
+  it('refuses to restate before the aside has answered', async () => {
+    // A language first, because the language gate is checked before anything
+    // else and would otherwise be what this test proved.
+    writeSettings(dataPath, { ...DEFAULT_SETTINGS, explainLanguage: 'Arabic' })
+    const sourceEventId = reply('The projection lags behind the log.')
+    const { asideId } = await runtime.openAside({
+      conversationId,
+      sourceEventId,
+      excerpt: 'The projection lags',
+      question: 'why?',
+    })
+    // Nothing has come back yet, so there is no latest answer to point at — and
+    // explaining the question the user just typed would be nonsense.
+    await expect(runtime.restateAside(asideId, 'translation')).rejects.toThrow(/not answered yet/)
+  })
+
+  /**
+   * A side task, and the conversation it must not disturb.
+   *
+   * The reason this exists at all: an aside is read-only by construction, so
+   * "open an aside and promote it" was a way of obtaining a room rather than of
+   * asking a question. This forks the parent directly. The assertion that
+   * matters is the last one — the parent's log is exactly as long afterwards as
+   * it was before, because a side task that appends to the conversation you
+   * were protecting has failed at its only job.
+   */
+  it('branches a side task without touching the conversation it came from', async () => {
+    reply('The projection lags behind the log.')
+    const before = runtime.store.read(conversationId).length
+
+    const task = await runtime.spinOffTask({
+      conversationId,
+      agentId: 'claude',
+      brief: 'Fix the typo in the header',
+      profileId: 'workspace-write',
+    })
+
+    expect(task.conversationId).not.toBe(conversationId)
+    // Able to act, which is the whole difference from an aside.
+    expect(task.profileId).toBe('workspace-write')
+    // The brief names the room, so the tab is readable before it has answered.
+    expect(task.title).toContain('Fix the typo')
+    // The brief is in the new room's log as an ordinary message.
+    expect(
+      runtime.store
+        .read(task.conversationId)
+        .some((e) => e.payload.type === 'user.message' && e.payload.text.includes('typo'))
+    ).toBe(true)
+    // And the parent is untouched.
+    expect(runtime.store.read(conversationId).length).toBe(before)
+  })
+
+  it('refuses a side task with nothing to do', async () => {
+    reply('anything')
+    await expect(
+      runtime.spinOffTask({
+        conversationId,
+        agentId: 'claude',
+        brief: '   ',
+        profileId: 'workspace-write',
+      })
+    ).rejects.toThrow(/needs something to do/)
+  })
+
   it('refuses a conversation that is not open', async () => {
     await expect(
       runtime.openAside({

@@ -98,6 +98,13 @@ export interface ComposerProps {
    * no composer to press. This is the copy for the session you are typing in.
    */
   readonly onOpenPanel?: ((panel: 'review' | 'summary') => void) | undefined
+  /**
+   * Branches this conversation into a side task carrying the draft as its brief.
+   *
+   * Undefined where there is no agent to fork from — the pane decides, because
+   * only it knows whether anyone has actually started a session yet.
+   */
+  readonly onSpinOff?: ((brief: string) => void) | undefined
   readonly onRestart?: (() => void) | undefined
   readonly onEnd?: (() => void) | undefined
   readonly initial?: {
@@ -1573,6 +1580,44 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                   </svg>
                 </button>
               </>
+            )}
+            {/*
+              Send this somewhere else instead of into the turn you are in.
+
+              The case it exists for: mid-flow with an agent, you notice one
+              thing that needs fixing. Typing it here redirects the turn; a new
+              session starts an agent that has not seen any of what you were
+              both looking at; and an aside cannot act at all — it is read-only
+              by construction, so "open an aside and promote it" was a way of
+              obtaining a room rather than of asking a question.
+
+              Beside Send because that is the decision being made — these words,
+              but not here. It takes the draft for the same reason: you have
+              already written the thing, and a dialog asking for it again would
+              be asking you to approve your own sentence.
+
+              Disabled with an empty box rather than hidden. It is a property of
+              the draft, not of the session, and a control that vanishes as you
+              delete a word teaches nothing about when it applies.
+            */}
+            {props.onSpinOff !== undefined && (
+              <button
+                type="button"
+                className="composer-trigger"
+                disabled={draft.trim() === ''}
+                aria-label={t('conversation.spinOff')}
+                title={t('conversation.spinOffHint')}
+                onClick={() => {
+                  const brief = draft.trim()
+                  if (brief === '') return
+                  props.onSpinOff?.(brief)
+                  writeDraft('')
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 3v8a4 4 0 0 0 4 4h8M14 11l4 4-4 4M6 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4" />
+                </svg>
+              </button>
             )}
             {props.onRestart !== undefined && (
               <button

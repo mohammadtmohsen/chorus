@@ -1,6 +1,7 @@
 import { parseDiff } from '@chorus/workspace/diff'
 import type { AgentId } from '@chorus/shared'
 import { trailingSummary } from '../../shared/markdown.js'
+import { questionFields, type QuestionField } from '../../shared/question-text.js'
 import type { TranscriptEvent } from '../../shared/ipc.js'
 
 /**
@@ -162,23 +163,31 @@ export interface PendingApproval {
  */
 export interface PendingQuestion {
   readonly userInputId: string
+  /**
+   * The log entry this question arrived on.
+   *
+   * Kept because an aside has to name one. `openAside` looks a `sourceEventId`
+   * up in the store and re-derives the text itself, so without this the card's
+   * Explain, Translate and Ask actions have nothing to point at — the reducer
+   * used to drop `event.id` here and that absence *was* the blocker.
+   *
+   * `userInputId` is the provider's own id for the request and cannot stand in:
+   * it is not an event id, and the store is keyed by event id.
+   */
+  readonly eventId: string
   /** Which agent asked — several can be waiting at once in a shared conversation. */
   readonly agentId: TranscriptEvent['actor']
   readonly questions: readonly QuestionField[]
   readonly expiresAt: number
 }
 
-export interface QuestionField {
-  readonly id: string
-  readonly header: string
-  readonly question: string
-  /** Empty means free text: the provider is asking you to type, not to choose. */
-  readonly options: readonly { readonly label: string; readonly description: string }[]
-  readonly multiSelect: boolean
-  readonly allowOther: boolean
-  /** The answer is a credential: never echoed on screen, never written down. */
-  readonly isSecret: boolean
-}
+/*
+ * The shape and its parser moved to `shared/question-text.ts`, and the move is
+ * the point rather than tidying: main now renders the same questions to decide
+ * whether an excerpt is genuinely one of them, and two parsers would disagree
+ * exactly where a person could not ask about a card.
+ */
+export type { QuestionField }
 
 /** What this conversation has cost so far, as the agents reported it. */
 export interface Spend {
@@ -493,10 +502,11 @@ function apply(view: Mutable, event: TranscriptEvent): void {
      * person, or the deadline.
      */
     case 'userinput.requested': {
-      const asked = questionSet(p['request'])
+      const asked = questionFields(p['request'])
       if (asked.length === 0) return
       view.questions.push({
         userInputId: str('userInputId'),
+        eventId: event.id,
         agentId: event.actor,
         questions: asked,
         expiresAt: num('expiresAt'),
@@ -1118,51 +1128,6 @@ function appendStreamed(
   // A completed message is authoritative; a late delta must not append to it.
   if (previous.status === 'complete') return
   view.messages[index] = { ...previous, text: previous.text + text }
-}
-
-/**
- * The questions inside a logged request, read rather than trusted.
- *
- * Every field is checked because this comes off disk: a log written by an older
- * build, or by a provider that has since changed its mind about what it sends,
- * must produce a card that is missing a label rather than a renderer that
- * throws. A set with no readable questions is dropped — there would be nothing
- * to answer.
- *
- * The capability flags are copied exactly and never inferred. `options: []`
- * means the provider asked for typed text; adding a synthetic option would put
- * an answer in front of the user that their agent cannot accept back.
- */
-function questionSet(request: unknown): QuestionField[] {
-  if (typeof request !== 'object' || request === null) return []
-  const asked = (request as { questions?: unknown }).questions
-  if (!Array.isArray(asked)) return []
-
-  return asked
-    .filter((q): q is Record<string, unknown> => typeof q === 'object' && q !== null)
-    .map((q, index) => {
-      const options = Array.isArray(q['options']) ? q['options'] : []
-      return {
-        // Position is a usable fallback: Claude's questions carry no id of their
-        // own, and the adapter already keys them this way on the wire.
-        id: typeof q['id'] === 'string' ? q['id'] : String(index),
-        header: typeof q['header'] === 'string' ? q['header'] : '',
-        question: typeof q['question'] === 'string' ? q['question'] : '',
-        options: options
-          .filter((o): o is Record<string, unknown> => typeof o === 'object' && o !== null)
-          .map((o) => ({
-            label: typeof o['label'] === 'string' ? o['label'] : '',
-            description: typeof o['description'] === 'string' ? o['description'] : '',
-          }))
-          .filter((o) => o.label !== ''),
-        multiSelect: q['multiSelect'] === true,
-        allowOther: q['allowOther'] === true,
-        // Fails closed: an unreadable flag is treated as a secret, because
-        // showing a credential once cannot be undone by fixing this later.
-        isSecret: q['isSecret'] !== false,
-      }
-    })
-    .filter((q) => q.question !== '' || q.header !== '')
 }
 
 /** The diff or arguments behind an approval, shown under the summary line. */

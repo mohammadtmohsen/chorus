@@ -379,6 +379,33 @@ export function QuickQuestion(props: {
   }
 
   /**
+   * "I did not follow *that* either" — aimed at the aside's own last answer.
+   *
+   * The card is where you came to have something explained, so it is the one
+   * place the same two actions must not be missing. A follow-up in this fork
+   * rather than a fork of it: a nested aside would have to replace the panel
+   * being read, throwing away the answer the person is in the middle of not
+   * understanding.
+   *
+   * Nothing is sent but the id and which of the two to do. Main reads the aside's
+   * latest reply out of the log and composes the prompt with the same builders
+   * `openAside` uses, so the wording of an explanation cannot drift depending on
+   * where it was asked for.
+   */
+  const restate = (purpose: 'explanation' | 'translation'): void => {
+    if (asking) return
+    setAsking(true)
+    props.opening
+      .then((id) => window.chorus.restateAside({ asideId: id, purpose }))
+      .catch((e: unknown) => {
+        props.onError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        setAsking(false)
+      })
+  }
+
+  /**
    * The same box, sent the other way: to the conversation instead of the fork.
    *
    * The reason the aside exists is to work out *whether* to go on — you ask where
@@ -566,6 +593,64 @@ export function QuickQuestion(props: {
           */}
           {(state.turns.length === 0 || state.working) && state.failed === null && (
             <Thinking agent={props.agent} />
+          )}
+        </div>
+      )}
+
+      {/*
+        The two restate actions, above the box rather than beside Send.
+
+        Beside the box they would read as ways of sending what you typed, which
+        is what they are not: they act on the answer above and ignore the box
+        entirely. Above it they read as the last thing offered about the reply,
+        which is what they are — the same position, and the same two words, as
+        the row under a question card.
+
+        Only once an answer exists. Offering to explain a reply that has not
+        arrived is offering to explain nothing, and `state.answer` is the same
+        signal the follow-up box already keys its own appearance on.
+
+        `Ask about this` is deliberately absent: it is the box directly below,
+        and a button that duplicates the control under it teaches that one of
+        them does something else.
+      */}
+      {state.answer !== '' && language !== '' && state.failed === null && (
+        <div className="quick-restate">
+          <button
+            type="button"
+            className="entry-action"
+            data-aside-action="explain"
+            disabled={asking || state.working}
+            onClick={() => {
+              restate('explanation')
+            }}
+          >
+            {t('conversation.explainSimply')}
+          </button>
+          {/*
+            Not on a card that already answers in your language.
+
+            Measured rather than reasoned about: translating an explanation into
+            the language it was written in came back `النص مكتوب بالعربية أصلاً`
+            — "the text is already in Arabic". The agent handles it gracefully,
+            which is exactly why it would have survived unnoticed as a button
+            that costs a turn to tell you it had nothing to do.
+
+            A question or a recap answers in whatever the agent chose, so there
+            it is worth offering.
+          */}
+          {props.purpose !== 'explanation' && props.purpose !== 'translation' && (
+            <button
+              type="button"
+              className="entry-action"
+              data-aside-action="translate"
+              disabled={asking || state.working}
+              onClick={() => {
+                restate('translation')
+              }}
+            >
+              {t('conversation.translateThis')}
+            </button>
           )}
         </div>
       )}

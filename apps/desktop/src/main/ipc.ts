@@ -679,6 +679,14 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       return { ok: true as const }
     },
 
+    'conversation:spinOff': (request: IpcRequest<'conversation:spinOff'>) =>
+      runtime.spinOffTask(request),
+
+    'aside:restate': async (request: IpcRequest<'aside:restate'>) => {
+      await runtime.restateAside(request.asideId, request.purpose)
+      return { ok: true as const }
+    },
+
     'aside:promote': (request: { asideId: string; profileId: string }) =>
       runtime.promoteAside(request.asideId, request.profileId),
 

@@ -50,6 +50,8 @@
     "addAgent": "Bring {{agent}} in — it reads the conversation so far",
     "removeAgent": "Take {{agent}} out of this conversation",
     "nobodyHere": "Nobody is in this conversation. Add an agent to start again.",
+    "spinOff": "Start this as a side task",
+    "spinOffHint": "Send this to a new session instead — it keeps this conversation's context, can make changes, and leaves this chat running",
     "restartLabel": "Start this session over, with nothing said in it",
     "endLabel": "End this session",
     "quoteInMessage": "Quote in message",

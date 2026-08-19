@@ -828,6 +828,50 @@ export const IPC_CONTRACT = {
     response: z.object({ asideId: z.string(), language: z.string() }),
   },
   /** A follow-up, which only works while the fork is still alive. */
+  /**
+   * Explain or translate what the aside last said, in the same aside.
+   *
+   * No excerpt, and that is the guard: main reads the aside's own latest answer
+   * out of the log, so the renderer chooses *which of two things to do* and
+   * never what words the agent is handed. `aside:open` needs an excerpt because
+   * it names a passage in someone else's conversation; this one cannot.
+   */
+  /**
+   * Branch the conversation you are in into a side task, in its own room.
+   *
+   * Not `conversation:start`, which knows nothing about what you were looking
+   * at, and not `aside:promote`, which needs an aside — and an aside is
+   * read-only by construction, so opening one purely to promote it was a way of
+   * obtaining a room rather than of asking a question.
+   *
+   * The parent is untouched: nothing is appended to it and its agent is not
+   * interrupted.
+   */
+  'conversation:spinOff': {
+    request: z.object({
+      conversationId: z.string(),
+      agentId: z.enum(['codex', 'claude']),
+      brief: z.string().min(1),
+      profileId: z.string(),
+    }),
+    response: z.object({
+      conversationId: z.string(),
+      participants: z.array(z.enum(['codex', 'claude'])),
+      profileId: z.string(),
+      cwd: z.string(),
+      title: z.string(),
+      unread: z.number().int().min(0),
+    }),
+  },
+
+  'aside:restate': {
+    request: z.object({
+      asideId: z.string(),
+      purpose: z.enum(['explanation', 'translation']),
+    }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
   'aside:ask': {
     request: z.object({ asideId: z.string(), question: z.string().min(1) }),
     response: z.object({ ok: z.literal(true) }),
@@ -1542,9 +1586,15 @@ export interface ChorusApi {
   ) => Promise<IpcResponse<'handoff:send'>>
   readonly openAside: (request: IpcRequest<'aside:open'>) => Promise<IpcResponse<'aside:open'>>
   readonly askAside: (request: IpcRequest<'aside:ask'>) => Promise<IpcResponse<'aside:ask'>>
+  readonly restateAside: (
+    request: IpcRequest<'aside:restate'>
+  ) => Promise<IpcResponse<'aside:restate'>>
   readonly promoteAside: (
     request: IpcRequest<'aside:promote'>
   ) => Promise<IpcResponse<'aside:promote'>>
+  readonly spinOffTask: (
+    request: IpcRequest<'conversation:spinOff'>
+  ) => Promise<IpcResponse<'conversation:spinOff'>>
   readonly forwardAside: (
     request: IpcRequest<'aside:forward'>
   ) => Promise<IpcResponse<'aside:forward'>>

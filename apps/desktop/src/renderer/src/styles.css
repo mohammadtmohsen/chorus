@@ -1030,8 +1030,35 @@ body {
 .quick-head,
 .quick-excerpt,
 .quick-form,
-.quick-actions {
+.quick-actions,
+.quick-restate {
   flex: 0 0 auto;
+}
+
+/*
+ * Explain and translate again, on the aside's own answer.
+ *
+ * `.entry-action` reused for the third time, and by now that is the rule rather
+ * than a saving: these two words mean the same thing under a reply, under a
+ * question and here, so they had better not be three different controls. The
+ * card sets no `--voice`, so they inherit the one the pane already carries for
+ * the agent being asked.
+ *
+ * A gap above and none below, because the follow-up box sits directly under and
+ * the two are a pair — ways of saying "not that, more like this" about the same
+ * answer. Spacing them apart would file the buttons with the answer instead.
+ */
+.quick-restate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+  margin-top: calc(var(--step) * 2);
+}
+
+.quick-restate .entry-action:disabled {
+  color: var(--text-disabled);
+  cursor: default;
 }
 
 /*
@@ -3341,6 +3368,30 @@ body {
 .question-hint {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/*
+ * Help with the question, at the foot of the question.
+ *
+ * `.entry-action` is reused rather than restyled: these are the same three
+ * actions offered under a reply, and a person who has learned that small
+ * monospace word at the end of an answer should meet the same one here. It
+ * inherits `--voice` from `.question--*` above, so the words come up in the
+ * colour of whichever agent is asking.
+ *
+ * A rule above the row and a gap below it, because the card's own separation is
+ * doing a lot of work already: the question, its options and its Send button
+ * are three groups in one box, and a fourth with no boundary read as a stray
+ * pair of links under the last option.
+ */
+.question-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+  margin-top: calc(var(--step) * 3);
+  padding-top: calc(var(--step) * 2);
+  border-top: 1px solid color-mix(in srgb, var(--bone) 10%, transparent);
 }
 
 .question-options {
