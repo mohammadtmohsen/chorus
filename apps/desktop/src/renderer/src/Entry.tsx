@@ -371,19 +371,41 @@ function CommandEntry(props: {
  */
 function Clamped(props: { children: React.ReactNode }): React.JSX.Element {
   const body = useRef<HTMLDivElement>(null)
+  const wrapper = useRef<HTMLDivElement>(null)
   const [tall, setTall] = useState(false)
   const [open, setOpen] = useState(false)
   const { t } = useTranslation()
 
   useLayoutEffect(() => {
     const element = body.current
-    if (element === null) return undefined
+    const box = wrapper.current
+    if (element === null || box === null) return undefined
+    /*
+     * The transcript this message is in, not the window it is on.
+     *
+     * `.score` is the pane's own scroller, so its height is what a reader of
+     * *this* conversation can see — which is the thing a message should not
+     * take a fifth of. `window.innerHeight` reported the same number for a
+     * pane taking a quarter of a split workspace as for one filling it.
+     *
+     * The limit is published as a custom property rather than an inline
+     * `max-height`, so the stylesheet keeps the rule and the fallback in one
+     * place and this only supplies the number.
+     */
     const measure = (): void => {
-      setTall(element.scrollHeight > window.innerHeight * LIMIT + 1)
+      const scroller = element.closest('.score')
+      const within = scroller === null ? window.innerHeight : scroller.clientHeight
+      const limit = Math.round(within * LIMIT)
+      box.style.setProperty('--clamp-max', `${String(limit)}px`)
+      setTall(element.scrollHeight > limit + 1)
     }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(element)
+    /* The pane resizes when the workspace is split, dragged or a tab is added,
+       and none of those change the window or this message's own height. */
+    const scroller = element.closest('.score')
+    if (scroller !== null) observer.observe(scroller)
     window.addEventListener('resize', measure)
     return () => {
       observer.disconnect()
@@ -392,7 +414,7 @@ function Clamped(props: { children: React.ReactNode }): React.JSX.Element {
   }, [])
 
   return (
-    <div className="clamp" data-open={open || !tall ? 'true' : 'false'}>
+    <div className="clamp" ref={wrapper} data-open={open || !tall ? 'true' : 'false'}>
       <div className="clamp-body" ref={body}>
         {props.children}
       </div>
@@ -411,8 +433,22 @@ function Clamped(props: { children: React.ReactNode }): React.JSX.Element {
   )
 }
 
-/** A quarter of the view: enough to recognise, not enough to bury. */
-const LIMIT = 0.25
+/**
+ * A fifth of the pane: enough to recognise, not enough to bury.
+ *
+ * **A fifth of the *pane*, not of the window**, and that is the whole of the
+ * 2026-08-19 change. It was measured against `window.innerHeight`, which is the
+ * same number whether one conversation fills the screen or four are tiled in
+ * it — so in a split workspace a "quarter of the view" was most of the pane the
+ * message was actually in. Reported against a pasted editor selection that took
+ * around half of its own pane.
+ *
+ * Four panes is the case that decides the fraction, not the one-pane case: a
+ * quarter of a quarter-height pane is a couple of lines, but so is anything
+ * else, and a message you cannot recognise is worth no more room than one you
+ * cannot get past.
+ */
+const LIMIT = 0.2
 
 export const Entry = memo(function Entry({
   message,
