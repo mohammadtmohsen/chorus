@@ -44,15 +44,27 @@ from a single `.catch` covering both the IDE snapshot and `sendMessage`. So the
 suspect is a `sendMessage` that never settles — the conversation had codex in it,
 and C-037 is a codex app-server wedging for seventeen minutes.
 
-**A 90-second deadline now bounds the row** (`AWAITING_MAX_MS`), so the
-transcript stops asserting something false. That is a bound on the symptom and
-should not be read as the fix: the message is still gone, and nothing tells the
-person that. Worse, the deadline makes the underlying failure quieter — the row
-disappears and no evidence is left.
+**A 90-second deadline bounds the row** (`AWAITING_MAX_MS`), so the transcript
+stops asserting something false. That is a bound on the symptom and not the fix:
+the message is still gone.
 
-Not reproduced deliberately. The screenshot is the whole of the evidence, the
-log has nothing at the time it happened, and which of the two halves hung is
-unestablished.
+**The deadline used to go quiet, and that was worse.** This entry predicted it —
+"the row disappears and no evidence is left" — and it came back as a second
+report, _"still no thinking indicators when asking"_, with a screenshot of a
+message alone above an empty pane. Nothing on screen said anything had ever been
+expected. The row now stays and says the message may not have reached the agent;
+`WaitingRow.test.tsx` pins both states, and has to, because with a healthy agent
+the row is on screen for under a frame and the stalled state cannot be reached by
+driving the app at all.
+
+**`send` now logs a pair** — `message accepted` before delivery is awaited and
+`message delivered` after it returns. `deliver` is awaited inside the IPC call,
+so an adapter that hangs there hangs the call, which is invisible from every
+side; accepted-without-delivered names that shape, and neither line means the
+send never reached main. Both were the missing evidence: the first report's log
+had nothing at all at the minute it happened.
+
+Still not reproduced deliberately, and which half hangs is still unestablished.
 
 **Done when:** an IPC send that hangs is impossible or observable — either
 `sendMessage` cannot outlive a turn's start without settling, or a send that has

@@ -54,6 +54,7 @@
     "endConfirm": "An agent is working — press again to end this session",
     "cancel": "Cancel",
     "waiting": "waiting",
+    "noAnswer": "No answer yet — the message may not have reached the agent. Try sending it again.",
     "askAboutThis": "Ask about this",
     "explainSimply": "Explain simply",
     "translateThis": "Translate",

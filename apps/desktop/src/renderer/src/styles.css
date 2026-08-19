@@ -5127,6 +5127,19 @@ input::placeholder {
   opacity: 0.85;
 }
 
+/*
+ * The wait, once it has stopped being one.
+ *
+ * Muted rather than alarming: nothing has definitely gone wrong — a machine can
+ * be slow — and a red row for a message that then arrives would be the same
+ * false claim in the other direction. It reads as a note, and its own words say
+ * what to do about it.
+ */
+.said.thinking[data-stalled='true'] {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .thinking-dots {
   display: inline-flex;
   gap: 3px;

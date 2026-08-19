@@ -960,6 +960,13 @@ export function Session(props: {
    * moment the agent speaks for itself.
    */
   const [awaiting, setAwaiting] = useState(false)
+  /**
+   * The wait outlasted any real start, so it stops claiming to be one.
+   *
+   * Separate from `awaiting` rather than replacing it, because the row still
+   * belongs on screen — what changes is what it says. See the deadline below.
+   */
+  const [stalled, setStalled] = useState(false)
 
   useEffect(() => {
     /*
@@ -969,6 +976,7 @@ export function Session(props: {
      */
     if (view.working.length === 0 && view.messages.at(-1)?.actor !== 'system') return
     setAwaiting(false)
+    setStalled(false)
   }, [view.working.length, view.messages])
 
   /*
@@ -986,14 +994,23 @@ export function Session(props: {
    * far past a cold CLI start — the gap this row exists to cover — so a wait
    * that reaches it is not a slow start, it is a lost message.
    *
-   * Going quiet is the right end state rather than a second lie: the row's whole
-   * job is to say "it is on its way", and once that cannot be claimed, the
-   * transcript showing your message with no answer under it is the truth.
+   * **It used to go quiet at the deadline, and that was wrong.** The argument
+   * was that the row's job is to say "it is on its way", so once that cannot be
+   * claimed it should stop saying anything. What that produces is a message
+   * sitting alone under a transcript with no indication that anything was ever
+   * expected — reported as "still no thinking indicators when asking", which is
+   * a fair reading of a screen that has nothing on it. It also destroyed the
+   * only evidence a user could send: C-043 says as much in its own entry, that
+   * the deadline "makes the underlying failure quieter".
+   *
+   * So the row stays and changes what it says. It stops animating, stops
+   * claiming progress, and says the message may not have arrived — which is
+   * both true and the one thing worth doing about it.
    */
   useEffect(() => {
     if (!awaiting) return
     const timer = setTimeout(() => {
-      setAwaiting(false)
+      setStalled(true)
     }, AWAITING_MAX_MS)
     return () => {
       clearTimeout(timer)
@@ -1344,43 +1361,7 @@ export function Session(props: {
   const soleAgent = participants.length === 1 ? participants[0] : undefined
   const waitingRow =
     awaiting && view.working.length === 0 ? (
-      <article
-        key="awaiting"
-        className={`entry entry--${soleAgent ?? 'system'} entry--thinking${
-          soleAgent === undefined ? ' entry--unnamed' : ''
-        }`}
-      >
-        {/* The same mark-and-head a step wears in `Entry`: these two rows are
-            built here rather than by the reducer, so they have to follow the
-            row structure by hand or they land in the wrong grid cells. */}
-        <span className="entry-mark" aria-hidden="true">
-          <span className="tick" />
-        </span>
-        {/*
-          No head at all when there is nobody to name, rather than a head
-          holding an empty string.
-
-          An empty `.speaker` is invisible but not absent: `.entry`'s first grid
-          row is still spent on it, so the mark sat on the head row and the word
-          dropped to the row below — a dot floating above its own sentence. It
-          only ever looked right with one agent in the room, which is the case
-          where the head has a name in it, and that is why it survived: the
-          two-agent room is exactly the room that cannot name who is working.
-        */}
-        {soleAgent !== undefined && (
-          <div className="entry-head">
-            <span className="speaker">{t(`actor.${soleAgent}`)}</span>
-          </div>
-        )}
-        <p className="said thinking" role="status">
-          <ThinkingWord kind="waiting" />
-          <span className="thinking-dots" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-        </p>
-      </article>
+      <WaitingRow soleAgent={soleAgent} stalled={stalled} />
     ) : null
 
   /** `claude:compacting,codex:thinking` back into something addressable. */
@@ -2380,6 +2361,80 @@ export function shortenPath(path: string): string {
  * word: the point is reassurance for someone watching, not a stream of
  * interruptions for someone listening.
  */
+/**
+ * Sent, and nothing has come back yet — or nothing is coming.
+ *
+ * Its own component so the two things it can say are testable without a live
+ * agent. That is not a convenience: with a healthy agent this row is on screen
+ * for under a frame — `working` fills within tens of milliseconds — so the
+ * state that matters here, the one after the deadline, cannot be reached by
+ * driving the app at all. It is exactly the case where a mounted test is the
+ * only honest verification available.
+ *
+ * Exported for `WaitingRow.test.tsx`.
+ */
+export function WaitingRow({
+  soleAgent,
+  stalled,
+}: {
+  /** Named only when there is one agent; naming either of two would be a guess. */
+  readonly soleAgent: string | undefined
+  /** The wait outlasted any real start, so the row stops claiming to be one. */
+  readonly stalled: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <article
+      className={`entry entry--${soleAgent ?? 'system'} entry--thinking${
+        soleAgent === undefined ? ' entry--unnamed' : ''
+      }`}
+    >
+      {/* The same mark-and-head a step wears in `Entry`: this row is built here
+          rather than by the reducer, so it has to follow the row structure by
+          hand or it lands in the wrong grid cells. */}
+      <span className="entry-mark" aria-hidden="true">
+        <span className="tick" />
+      </span>
+      {/*
+        No head at all when there is nobody to name, rather than a head holding
+        an empty string.
+
+        An empty `.speaker` is invisible but not absent: `.entry`'s first grid
+        row is still spent on it, so the mark sat on the head row and the word
+        dropped to the row below — a dot floating above its own sentence. It
+        only ever looked right with one agent in the room, which is the case
+        where the head has a name in it, and that is why it survived: the
+        two-agent room is exactly the room that cannot name who is working.
+      */}
+      {soleAgent !== undefined && (
+        <div className="entry-head">
+          <span className="speaker">{t(`actor.${soleAgent}`)}</span>
+        </div>
+      )}
+      {/*
+        Two things this row can be, and the second is not a failure state so
+        much as an honest one: the wait outlasted any real start, so it stops
+        animating and says what that means. No dots, because three dots that
+        never resolve are the claim being withdrawn.
+      */}
+      <p className="said thinking" data-stalled={stalled ? 'true' : undefined} role="status">
+        {stalled ? (
+          t('conversation.noAnswer')
+        ) : (
+          <>
+            <ThinkingWord kind="waiting" />
+            <span className="thinking-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+          </>
+        )}
+      </p>
+    </article>
+  )
+}
+
 function ThinkingWord({
   kind,
   offset = 0,

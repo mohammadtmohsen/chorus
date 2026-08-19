@@ -1409,6 +1409,21 @@ export class ChorusRuntime {
     if (stored === null) throw new Error('Chorus is shutting down')
     conversation.lastAddressed = route.targets.at(-1)
 
+    /*
+     * Logged before the delivery is awaited, and again after it returns.
+     *
+     * C-043 is open because a send that neither lands nor fails leaves the pane
+     * waiting for a turn that never starts — and the log said nothing at all
+     * about it, so the only evidence was a screenshot. `deliver` is awaited
+     * below and an adapter that hangs there hangs this call, which hangs the
+     * IPC, which is invisible from every side.
+     *
+     * A pair of lines makes that shape readable after the fact: `accepted`
+     * without a matching `delivered` is a delivery that hung, and neither line
+     * is a send that never reached main at all. Cheap, and only once per turn.
+     */
+    this.log.info('message accepted', { conversationId, targets: route.targets.join(',') })
+
     // Filtered rather than optional-chained: `Promise.all` over a list that can
     // contain `undefined` is a silent no-op waiting to happen.
     await Promise.all(
@@ -1467,6 +1482,7 @@ export class ChorusRuntime {
           delete p.catchupBudget
         })
     )
+    this.log.info('message delivered', { conversationId, targets: route.targets.join(',') })
     // Cheap, and it keeps the resume refs current if the app dies without a
     // clean quit.
     this.rememberOpen()
