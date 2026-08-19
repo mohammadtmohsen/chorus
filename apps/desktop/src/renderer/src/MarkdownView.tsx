@@ -2,6 +2,7 @@ import { CodeRun } from './CodeRun.js'
 import { createContext, memo, useContext, useMemo } from 'react'
 import { shortenCodeSpan } from './shorten.js'
 import {
+  isFileHref,
   parseMarkdown,
   splitBlocks,
   type Align,
@@ -36,12 +37,26 @@ import {
  */
 const ShortenCode = createContext(false)
 
+/**
+ * How to open a file this message links to, when there is a way.
+ *
+ * A context for the same reason as `ShortenCode`: the only consumer is one arm
+ * of `InlineRun`, at the bottom of a recursion that can nest a link inside a
+ * list item inside a table cell. Undefined where a caller has no opener, and
+ * the link then draws as plain words — a path nobody can act on should not
+ * pretend to be pressable.
+ */
+const OpenFile = createContext<((path: string) => void) | undefined>(undefined)
+
 export function MarkdownView({
   source,
   shortenCode = false,
+  onOpenFile,
 }: {
   source: string
   shortenCode?: boolean
+  /** Opens a project file in the editor. Main resolves and refuses outside cwd. */
+  onOpenFile?: ((path: string) => void) | undefined
 }): React.JSX.Element {
   /*
    * Split first, then memoise each block on its own text.
@@ -55,9 +70,11 @@ export function MarkdownView({
   const blocks = useMemo(() => splitBlocks(source), [source])
   return (
     <ShortenCode.Provider value={shortenCode}>
-      {blocks.map((raw, i) => (
-        <MemoBlock key={i} source={raw} />
-      ))}
+      <OpenFile.Provider value={onOpenFile}>
+        {blocks.map((raw, i) => (
+          <MemoBlock key={i} source={raw} />
+        ))}
+      </OpenFile.Provider>
     </ShortenCode.Provider>
   )
 }
@@ -214,6 +231,7 @@ function alignStyle(align: Align | undefined): React.CSSProperties | undefined {
 
 function InlineRun({ content }: { content: readonly Inline[] }): React.JSX.Element {
   const shorten = useContext(ShortenCode)
+  const openFile = useContext(OpenFile)
   return (
     <>
       {content.map((node, i) => {
@@ -255,7 +273,42 @@ function InlineRun({ content }: { content: readonly Inline[] }): React.JSX.Eleme
                 <InlineRun content={node.content} />
               </del>
             )
-          case 'link':
+          case 'link': {
+            /*
+             * A path goes to the editor, never to a browser.
+             *
+             * Agents link project files constantly, and until `isFileHref`
+             * existed every one of them rendered as its own source — brackets,
+             * parens and all — because a relative path has no scheme to be
+             * "safe". They are links now, and pressing one calls `onOpenFile`,
+             * which main resolves against this conversation's directory and
+             * refuses outside it.
+             *
+             * A button rather than an anchor, for the reason the tool rows give:
+             * there is no URL here, and an `href` that goes nowhere is a link
+             * that cannot be middle-clicked, copied or trusted. Without an
+             * opener it is words, not a control.
+             */
+            if (isFileHref(node.href)) {
+              return openFile === undefined ? (
+                <span key={i}>
+                  <InlineRun content={node.content} />
+                </span>
+              ) : (
+                <button
+                  key={i}
+                  type="button"
+                  className="md-file-link"
+                  data-open-file={node.href}
+                  title={node.href}
+                  onClick={() => {
+                    openFile(node.href)
+                  }}
+                >
+                  <InlineRun content={node.content} />
+                </button>
+              )
+            }
             // The main process denies in-app navigation and hands https links to
             // the OS browser, so this cannot navigate the renderer anywhere.
             return (
@@ -263,6 +316,7 @@ function InlineRun({ content }: { content: readonly Inline[] }): React.JSX.Eleme
                 <InlineRun content={node.content} />
               </a>
             )
+          }
           case 'image':
             /*
              * A link, not an `<img>`.

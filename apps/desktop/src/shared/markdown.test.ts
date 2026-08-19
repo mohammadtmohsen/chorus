@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isFileHref,
   isSafeHref,
   parseInline,
   parseMarkdown,
@@ -344,6 +345,49 @@ describe('link safety', () => {
   it('degrades an unsafe image the same way', () => {
     expect(parseInline('![x](javascript:alert(1))')).toEqual([
       { kind: 'text', text: '![x](javascript:alert(1))' },
+    ])
+  })
+})
+
+/**
+ * Paths agents write, which are not URLs and must not be confused with them.
+ *
+ * The reported line, verbatim: a plan link rendered as its own source —
+ * brackets, parens and backticks — because a relative path has no scheme and
+ * `isSafeHref` is about schemes.
+ */
+describe('links to files in the project', () => {
+  it('takes a relative path, with or without a directory', () => {
+    expect(isFileHref('docs/plans/contract-workspace/08-rename-to-pact.md')).toBe(true)
+    expect(isFileHref('./src/App.tsx')).toBe(true)
+    expect(isFileHref('README.md')).toBe(true)
+  })
+
+  it('refuses anything carrying a scheme, so the two rules cannot be conflated', () => {
+    for (const href of [
+      'javascript:alert(1)',
+      'data:text/html,x',
+      'file:///etc/passwd',
+      'https://a.b',
+    ])
+      expect(isFileHref(href)).toBe(false)
+  })
+
+  it('refuses a protocol-relative url and an in-document anchor', () => {
+    expect(isFileHref('//evil.example/x')).toBe(false)
+    expect(isFileHref('#section')).toBe(false)
+  })
+
+  it('refuses a bare word, which is prose rather than a path', () => {
+    expect(isFileHref('later')).toBe(false)
+    expect(isFileHref('')).toBe(false)
+  })
+
+  /* The report itself: a link whose text is a code span. */
+  it('parses the reported line into a link rather than into its own source', () => {
+    const path = 'docs/plans/contract-workspace/08-rename-to-pact.md'
+    expect(parseInline(`[\`${path}\`](${path})`)).toEqual([
+      { kind: 'link', href: path, content: [{ kind: 'code', text: path }] },
     ])
   })
 })

@@ -517,11 +517,19 @@ function scanInline(source: string, depth: number): Inline[] {
       if (link !== null) {
         const href = stripAngles(link[2] ?? '')
         flush()
-        // Only safe schemes become links. A `javascript:` or `data:` url would
-        // be a live exploit path handed to us by the model; rendering it as text
-        // shows the user exactly what was attempted instead of hiding it.
+        /*
+         * Only safe schemes and project paths become links. A `javascript:` or
+         * `data:` url would be a live exploit path handed to us by the model;
+         * rendering it as text shows the user exactly what was attempted
+         * instead of hiding it.
+         *
+         * A path is a link here and *not* a URL: the renderer opens it through
+         * `onOpenFile`, which main resolves against the conversation's
+         * directory and refuses outside it. `isFileHref` says why the two
+         * cannot be conflated.
+         */
         out.push(
-          isSafeHref(href)
+          isSafeHref(href) || isFileHref(href)
             ? { kind: 'link', href, content: scanInline(link[1] ?? '', depth + 1) }
             : { kind: 'text', text: link[0] }
         )
@@ -707,6 +715,33 @@ function coalesceText(nodes: readonly Inline[]): Inline[] {
 
 export function isSafeHref(href: string): boolean {
   return /^(https?:\/\/|mailto:)/i.test(href)
+}
+
+/**
+ * A link to a file in the project rather than to somewhere on the internet.
+ *
+ * Agents write these constantly — `[docs/plans/…/08-rename-to-pact.md](docs/plans/…/08-rename-to-pact.md)`
+ * — and `isSafeHref` refused every one, because a relative path has no scheme.
+ * The whole link then rendered as its own source, brackets and all, which is
+ * how it was reported: a path you can read and cannot open.
+ *
+ * **Not a loosening of `isSafeHref`, and it must not become one.** That
+ * function guards what may be handed to the OS as a URL, and `javascript:` or
+ * `data:` reaching it would be a live exploit path written by a model. This
+ * answers a different question — is this string shaped like a path in the
+ * project — and what the renderer does with a yes is call `onOpenFile`, which
+ * goes to main, is resolved against the conversation's own directory, and is
+ * refused if it lands outside. A path is never handed to a browser.
+ *
+ * Anything carrying a scheme is rejected here precisely so the two cannot be
+ * confused, `//host` because that is a protocol-relative URL, and `#anchor`
+ * because it addresses this document rather than a file. What is left has to
+ * look like a path: a separator, or an extension.
+ */
+export function isFileHref(href: string): boolean {
+  if (href === '' || href.startsWith('//') || href.startsWith('#')) return false
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return false
+  return href.includes('/') || /\.[a-z0-9]{1,8}$/i.test(href)
 }
 
 /**

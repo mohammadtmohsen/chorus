@@ -830,11 +830,17 @@ export const Entry = memo(function Entry({
               Not for a reply: an agent's answer says what it says, and cutting a
               path down inside one would be editing it.
             */}
-            <MarkdownView source={sent.body} shortenCode />
+            <MarkdownView source={sent.body} shortenCode onOpenFile={onOpenFile} />
             <SentAttachments paths={sent.paths} />
           </Clamped>
         ) : (
-          <MarkdownView source={typed} />
+          /*
+            A reply that names a file can open it, the way a tool row can.
+            `onOpenFile` is already here for those rows; passing it down is the
+            whole of what makes an agent's `[docs/…/plan.md](docs/…/plan.md)`
+            pressable rather than a path you retype into the editor.
+          */
+          <MarkdownView source={typed} onOpenFile={onOpenFile} />
         )}
         {/*
           Under the words, inside the same row.

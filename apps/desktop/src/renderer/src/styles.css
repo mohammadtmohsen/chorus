@@ -2853,6 +2853,43 @@ body {
   overflow-wrap: anywhere;
 }
 
+/*
+ * A link to a file in the project, which opens in the editor rather than a
+ * browser.
+ *
+ * A `button`, for the reason the tool rows give — there is no URL, and an
+ * `href` that goes nowhere cannot be middle-clicked, copied or trusted — so it
+ * has to be stripped back to text and then made to read as a link. Underlined
+ * on hover rather than always, because an agent naming six files would draw six
+ * underlines through a paragraph.
+ *
+ * `inherit` on the font and colour keeps whatever is inside it intact: these
+ * are usually written with the path in backticks, and a `.md-inline-code` chip
+ * inside the button should still look exactly like the chips around it.
+ */
+.md-file-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  /* The chip inside carries its own box; this is only the hit area. */
+  vertical-align: baseline;
+}
+
+.md-file-link:hover,
+.md-file-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-file-link:hover .md-inline-code,
+.md-file-link:focus-visible .md-inline-code {
+  border-color: color-mix(in srgb, var(--accent-text) 55%, var(--line));
+}
+
 .md-h {
   margin: calc(var(--step) * 4) 0 var(--step);
   font-size: 13px;
