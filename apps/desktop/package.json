@@ -1,6 +1,6 @@
 {
   "name": "@chorus/desktop",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "private": true,
   "description": "Work with several coding agents in one conversation, on your own machine.",
   "main": "./out/main/index.js",

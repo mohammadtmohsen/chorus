@@ -7,6 +7,24 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.2
+
+### No more screen of blank under a short reply
+
+Asking a question padded the transcript out to a full window, so your question
+could jump straight to the top and stay there as the heading of its own answer.
+The cost was the empty screen underneath every reply shorter than the window —
+a two-line answer with a page of nothing below it.
+
+The padding is gone. Your question now rises as the answer is written, and once
+a turn grows taller than the screen it sticks to the top exactly as before, so a
+long reply still says what it is answering. A short one simply sits where it
+landed, with nothing beneath it that is not really there.
+
+The trade is deliberate and you may notice it: a question asked at the bottom of
+a long history no longer leaps to the top the moment you press send. It gets
+there as the reply arrives.
+
 ## 0.19.1
 
 ### You can tell whether a reply is the last one
