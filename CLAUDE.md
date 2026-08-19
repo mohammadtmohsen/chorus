@@ -1,5 +1,16 @@
 # Chorus
 
+## Before anything: rule zero in `~/.claude/CLAUDE.md`
+
+Ask, in detail, before starting any task, and do not begin until the questions
+are answered. **Never test anything unless explicitly asked** — no test runs, no
+gates, no launching the app, no screenshots, no verification harnesses. Write the
+code and stop; say in one line what is unverified. Never do an unrequested task.
+Keep the user posted step by step. Nothing in this file overrides that — everything below was written
+assuming the work had already been agreed, which is exactly the assumption that
+keeps being wrong.
+
+
 A local-first workspace where a developer collaborates with several coding
 agents in one shared conversation. Electron + React, pnpm workspaces, Turbo.
 
