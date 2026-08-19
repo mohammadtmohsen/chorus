@@ -183,7 +183,8 @@
     "resets": "resets in {{time}}",
     "detail": "{{agent}} · {{percent}}% of a {{minutes}}-minute window · resets {{at}}",
     "unknownReset": "no reset time reported",
-    "runsOutEarly": "runs out {{time}} early"
+    "runsOutEarly": "runs out {{time}} early",
+    "resetsOn": "resets on {{when}}"
   },
   "spend": {
     "tokens": "{{input}} in · {{output}} out",

@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+import { Fragment, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { resetMoment } from '../format.js'
 import type { SessionInfo } from '../Session.js'
 import {
   useActiveConversationId,
@@ -395,7 +396,16 @@ function RailUsage(): React.JSX.Element {
         ref={anchor}
         data-refreshing={refreshing ? 'true' : undefined}
         disabled={refreshing}
-        title={t('activity.refresh')}
+        /*
+         * No `title`, and that is the fix rather than an omission.
+         *
+         * The native tooltip and the popover below open on the same hover, from
+         * the same element, saying different things — the OS one named the
+         * action while the panel gave the readings, so the thing that appeared
+         * under the pointer depended on where it settled. Reported as the
+         * tooltip not matching the panel. The action is named inside the panel
+         * now, which is the one surface this control has.
+         */
         onPointerEnter={show}
         onPointerLeave={() => {
           setDetail(null)
@@ -572,7 +582,15 @@ function RailUsage(): React.JSX.Element {
             })}
           </span>
         ))}
-        <span className="sr-only">{readings.map(say).join('. ')}</span>
+        {/*
+          The readings, then what pressing this does.
+          
+          A button's name has to say its action, and this one read out four
+          figures and stopped — so the only control in the rail that does
+          anything announced itself as a status line. The `title` used to carry
+          the action and has gone with the duplicate tooltip above.
+        */}
+        <span className="sr-only">{`${readings.map(say).join('. ')}. ${t('activity.refresh')}`}</span>
       </button>
       {/*
         The full reading, on hover or focus.
@@ -586,68 +604,112 @@ function RailUsage(): React.JSX.Element {
         createPortal(
           <div className="usage-tip" style={{ top: detail.top, left: detail.left }} role="tooltip">
             <ul className="limits">
-              {readings.map((reading) => (
-                <li
-                  key={`${reading.agentId}:${reading.kind}`}
-                  className={`limit voice--${reading.agentId}`}
-                  data-agent={reading.agentId}
-                  data-window={reading.kind}
-                  data-reported={reading.reported}
-                >
-                  <span className="voice-dot" aria-hidden="true" />
-                  <span className="limit-window">{reading.label}</span>
-                  {reading.percent === null ? (
-                    /*
-                       A slot nothing has answered for keeps its place and says
-                       so. A bar drawn at zero width would be a full window
-                       reported as empty, which is the one reading that must
-                       never be invented.
-                    */
-                    <span className="limit-unreported">{t('activity.notReported')}</span>
-                  ) : (
-                    <>
-                      <span
-                        className="limit-bar"
-                        aria-hidden="true"
-                        data-full={reading.percent >= 90}
-                      >
-                        <i style={{ width: `${String(reading.percent)}%` }} />
-                      </span>
-                      <span className="limit-percent">{reading.percent}%</span>
-                      <span
-                        className="limit-reset"
-                        /*
-                         * The moment itself, beside the phrase for it.
-                         *
-                         * `untilReset` says "now" for anything already past,
-                         * which is right for a boundary that has just gone and
-                         * indistinguishable from a timestamp in 1970 — the shape
-                         * a seconds-for-milliseconds mistake takes. The reading
-                         * cannot tell them apart; the number can.
-                         */
-                        data-resets-at={reading.resetsAt ?? undefined}
-                      >
-                        {t('limits.resets', { time: reading.full })}
-                      </span>
+              {accounts.map((account) => (
+                <Fragment key={account.agentId}>
+                  {/*
+                    Whose windows these are, for the same reason the rail names
+                    them: two agents installed means two sets of readings, and
+                    unlabelled the four figures read as one account's. The rail
+                    learned that and the panel it opens had not — a colour dot
+                    is a distinction you can see and not one you can name.
+                  */}
+                  <li className={`limit-account voice--${account.agentId}`}>{account.agentId}</li>
+                  {account.windows.map((reading) => (
+                    <li
+                      key={`${reading.agentId}:${reading.kind}`}
+                      className={`limit voice--${reading.agentId}`}
+                      data-agent={reading.agentId}
+                      data-window={reading.kind}
+                      data-reported={reading.reported}
+                    >
                       {/*
-                        The pace, in words, where there is room for words.
+                        Three lines per window, in the order they are read.
 
-                        The rail draws it and the popover names it: the red on a
-                        52px bar says *that* the allowance runs out early, and
-                        this says by how long. Only when it does — a line saying
-                        "on pace" under every healthy window would be four lines
-                        of reassurance nobody asked for.
+                        The bar shares its line with the label that names it and
+                        the figure it draws — `5h ———— 56%` — and takes whatever
+                        width those two leave. Under it, when it comes back; under
+                        that, the moment itself.
                       */}
+                      <span className="limit-head">
+                        <span className="voice-dot" aria-hidden="true" />
+                        <span className="limit-window">{reading.label}</span>
+                        {reading.percent === null ? (
+                          <span className="limit-unreported">{t('activity.notReported')}</span>
+                        ) : (
+                          <>
+                            <span className="limit-meter rail-meter-wrap" aria-hidden="true">
+                              {/*
+                                The rail's own meter: the fill is the spend
+                                keeping pace, the alarm segment is the spend past
+                                the clock, and the tick is how much of the window
+                                has gone.
+                              */}
+                              <span className="rail-meter">
+                                <i
+                                  style={{
+                                    width: `${String(
+                                      reading.elapsedPercent === null
+                                        ? reading.percent
+                                        : Math.min(reading.percent, reading.elapsedPercent)
+                                    )}%`,
+                                  }}
+                                />
+                                {reading.elapsedPercent !== null &&
+                                  reading.percent > reading.elapsedPercent && (
+                                    <i
+                                      className="rail-meter-over"
+                                      style={{
+                                        left: `${String(reading.elapsedPercent)}%`,
+                                        width: `${String(
+                                          reading.percent - reading.elapsedPercent
+                                        )}%`,
+                                      }}
+                                    />
+                                  )}
+                              </span>
+                              {reading.elapsedPercent !== null && (
+                                <span
+                                  className="rail-meter-pace"
+                                  style={{ left: `${String(reading.elapsedPercent)}%` }}
+                                />
+                              )}
+                            </span>
+                            <span className="limit-percent">{reading.percent}%</span>
+                          </>
+                        )}
+                      </span>
+
+                      {reading.percent !== null && (
+                        <span
+                          className="limit-reset"
+                          data-resets-at={reading.resetsAt ?? undefined}
+                        >
+                          {t('limits.resets', { time: reading.full })}
+                        </span>
+                      )}
+                      {reading.percent !== null && reading.resetsAt !== null && (
+                        <span className="limit-when">
+                          {t('limits.resetsOn', { when: resetMoment(reading.resetsAt) })}
+                        </span>
+                      )}
                       {reading.dryMinutes !== null && reading.dryMinutes > 0 && (
                         <span className="limit-pace">
                           {t('limits.runsOutEarly', { time: reading.dry })}
                         </span>
                       )}
-                    </>
-                  )}
-                </li>
+                    </li>
+                  ))}
+                </Fragment>
               ))}
             </ul>
+            {/*
+              What pressing it does, under the readings it would refresh.
+              
+              This is where the `title` went. Muted and last, because it is the
+              only line here that is not a number: the panel is opened to read
+              the windows, and the action is what you learn on the way past.
+            */}
+            <p className="usage-tip-action">{t('activity.refresh')}</p>
           </div>,
           document.body
         )}

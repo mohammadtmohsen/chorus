@@ -6509,59 +6509,131 @@ input::placeholder {
 }
 
 /*
- * One grid for every row, not one grid per row.
+ * A block per window, not a row in a shared grid.
  *
- * Each `.limit` was its own grid container, so its `auto` tracks were sized
- * from its own content — three rows meant three independent column layouts and
- * nothing lined up, however the tracks were written. `display: contents` on the
- * rows lifts their cells into this grid, where one set of columns serves all of
- * them. The rows keep their `voice--*` class, and with it the custom property
- * the bar's colour reads.
+ * It was one five-column grid with `display: contents` rows, and the columns
+ * were the problem rather than the alignment: five cells across made the panel
+ * 500px wide, and the two figures actually compared sat at opposite ends of it.
+ * Stacked, each window is three short lines.
  */
 .usage-tip .limits {
-  display: grid;
-  grid-template-columns: auto auto 44px auto auto;
-  align-items: center;
-  gap: var(--step) calc(var(--step) * 1.5);
+  display: flex;
+  flex-direction: column;
+  /*
+   * `stretch`, and it is not the default here — it is a reset.
+   *
+   * `.limits` and `.limit` both declare `align-items: center` for the masthead
+   * row they were written for, where it centres items on a horizontal axis.
+   * Turned upright by `flex-direction: column` that same declaration centres
+   * everything *horizontally*, which is why the whole panel drew down its
+   * middle: headings, readings and dates all centred, and the bars inset by
+   * whatever their line did not use.
+   */
+  align-items: stretch;
+  gap: calc(var(--step) * 3);
   margin: 0;
   padding: 0;
 }
 
-/*
- * Shared columns, so the rows read down as well as across.
- *
- * As flex each row sized its own parts, and the percentages are not the same
- * width — a 100% row pushed its reset time further right than a 3% row beside
- * it, so five short columns came out looking like a ragged paragraph. A grid
- * with fixed tracks lines them up; the percentage is right-aligned inside its
- * track so the digits stack on the % sign rather than drifting off it.
- */
 .usage-tip .limit {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  /* `.limit` declares its own 10px, which beats anything inherited however
+     specific the parent — a declared value always wins over an inherited one. */
+  font-size: 13px;
+  text-align: left;
 }
 
 /*
- * On the row, not the list.
+ * The account, over its own windows, with a rule between accounts.
  *
- * `.limit` carries its own `font-size: 10px`, which beats anything inherited
- * from its parent however specific that parent's selector is — a declared value
- * always wins over an inherited one. The size has to be set on the element that
- * declares it.
+ * A full-width heading rather than a cell: it names the two readings under it.
+ * The divider is on the *second* and later headings only — a line above the
+ * first would fence the list off from the panel's own edge, which is a border
+ * about nothing.
  */
-.usage-tip .limit {
-  font-size: 14px;
+.usage-tip .limit-account {
+  color: var(--voice);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
 }
 
-/* Likewise: `.limit-bar` declares its own 34px width, so the wider track alone
-   left it the old size with a gap after it. */
-.usage-tip .limit-bar {
-  width: 44px;
-  height: 5px;
+.usage-tip .limit-account:not(:first-child) {
+  margin-top: calc(var(--step) * 2);
+  padding-top: calc(var(--step) * 3);
+  border-top: 1px solid var(--line);
 }
 
-/* Right-aligned so the % signs stack, whatever the digit count. */
+/* Line one: the window, its bar, and the figure the bar draws. */
+.usage-tip .limit-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+}
+
+/*
+ * The meter takes whatever the label and the figure leave.
+ *
+ * A fixed 44px was the old grid's doing, and at that size a ten-point gap
+ * between the fill and the tick is four pixels — which is the reading the panel
+ * exists to show.
+ */
+.usage-tip .limit-meter {
+  flex: 1 1 auto;
+  min-width: 80px;
+}
+
+.usage-tip .rail-meter {
+  height: 6px;
+}
+
+/*
+ * The tick's halo is the surface it sits on, and the panel's is not the rail's.
+ *
+ * `.rail-meter-pace` haloes with `--bg-chrome` so the mark stays legible over
+ * the fill and over the empty track. Inherited unchanged it would ring the tick
+ * in the rail's grey on the panel's `--raised` ground, which reads as a
+ * rendering fault rather than as a mark.
+ */
+.usage-tip .rail-meter-pace {
+  box-shadow: 0 0 0 2px var(--raised);
+}
+
 .usage-tip .limit-percent {
-  text-align: right;
+  flex: none;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Line two: when it comes back. Line three: the moment itself. */
+.usage-tip .limit-reset {
+  color: var(--text-secondary);
+}
+
+.usage-tip .limit-when {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.usage-tip .limit-pace {
+  font-size: 11px;
+}
+
+/* Nothing reported: the window keeps its place and says so, on line one. */
+.usage-tip .limit-unreported {
+  color: var(--text-muted);
+}
+
+.usage-tip-action {
+  margin: calc(var(--step) * 2) 0 0;
+  padding-top: calc(var(--step) * 2);
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 /*
@@ -6573,7 +6645,7 @@ input::placeholder {
  * marches one column further along. Spanning is what keeps one row to one line.
  */
 .limit-unreported {
-  grid-column: span 3;
+  grid-column: 3 / -1;
   color: var(--text-muted);
 }
 

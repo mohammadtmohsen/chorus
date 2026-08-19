@@ -43,6 +43,29 @@ export function clockTime(at: number, locale?: string): string {
 }
 
 /**
+ * The moment itself — day and clock time, in the reader's own conventions.
+ *
+ * `clockTime` is not enough for a reset: a weekly window lands days away, and
+ * "resets at 06:14" without a day is a time you cannot plan around and a
+ * sentence you have to ask a follow-up question about. The relative form
+ * (`untilReset`) answers "how long"; this answers "when", and the panel shows
+ * both because they are different questions.
+ *
+ * The locale argument exists for tests, for the same reason `clockTime` has one:
+ * asserting against the machine's own locale is asserting against whatever CI
+ * happens to be set to.
+ */
+export function resetMoment(at: number, locale?: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(at))
+}
+
+/**
  * How long until a moment, in the largest unit that still says something.
  *
  * "2h" rather than "2h 14m 3s": a limit resetting is something you plan around,

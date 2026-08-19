@@ -86,6 +86,17 @@ export interface UsageReading {
   readonly dryMinutes: number | null
   /** `dryMinutes` in the same shorthand as `reset`; an em dash when not dry. */
   readonly dry: string
+  /**
+   * How much of the window has actually gone, as a duration.
+   *
+   * The same fact as `elapsedPercent` and the readable half of it: "86%
+   * elapsed" of a week is a figure you have to convert before it means
+   * anything, and the thing being compared against it — the reset — is already
+   * a duration. Null exactly when `elapsedPercent` is.
+   */
+  readonly elapsedMinutes: number | null
+  /** `elapsedMinutes` in the same shorthand as `reset`; an em dash when unknown. */
+  readonly elapsed: string
 }
 
 /**
@@ -107,9 +118,9 @@ function pace(
   windowMinutes: number | null,
   resetsAt: number | null,
   now: number
-): { elapsedPercent: number | null; dryMinutes: number | null } {
+): { elapsedPercent: number | null; elapsedMinutes: number | null; dryMinutes: number | null } {
   if (windowMinutes === null || windowMinutes <= 0 || resetsAt === null) {
-    return { elapsedPercent: null, dryMinutes: null }
+    return { elapsedPercent: null, elapsedMinutes: null, dryMinutes: null }
   }
   /*
    * Clamped at both ends. A reset already past reads as a finished window rather
@@ -120,6 +131,8 @@ function pace(
   const elapsed = 1 - left
   return {
     elapsedPercent: Math.round(elapsed * 100),
+    // The same share of the same window, in the unit the row reads in.
+    elapsedMinutes: Math.round(elapsed * windowMinutes),
     dryMinutes: Math.round(Math.max(percent / 100 - elapsed, 0) * windowMinutes),
   }
 }
@@ -183,10 +196,17 @@ export function usageReadings(pushes: readonly LimitsPush[], now: number): reado
           elapsedPercent: null,
           dryMinutes: null,
           dry: '—',
+          elapsedMinutes: null,
+          elapsed: '—',
         }
       }
       const percent = Math.round(Math.min(found.usedPercent ?? 0, 100))
-      const { elapsedPercent, dryMinutes } = pace(percent, found.windowMinutes, found.resetsAt, now)
+      const { elapsedPercent, elapsedMinutes, dryMinutes } = pace(
+        percent,
+        found.windowMinutes,
+        found.resetsAt,
+        now
+      )
       return {
         agentId,
         kind: slot.kind,
@@ -197,6 +217,16 @@ export function usageReadings(pushes: readonly LimitsPush[], now: number): reado
         resetsAt: found.resetsAt,
         reported: true,
         elapsedPercent,
+        elapsedMinutes,
+        /*
+         * Through `untilReset` for the reason `dry` is: three durations sit in
+         * one row and the one saying `1d 3h` must not have a neighbour saying
+         * `27h`.
+         */
+        elapsed:
+          elapsedMinutes === null || elapsedMinutes <= 0
+            ? '—'
+            : untilReset(now + elapsedMinutes * 60_000, now),
         dryMinutes,
         /*
          * Formatted through `untilReset` rather than by a second formatter, so a
