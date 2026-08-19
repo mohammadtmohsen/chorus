@@ -7,6 +7,19 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.4
+
+### A long message you paste stops taking over its pane
+
+Pasting a chunk of code or a long selection into a conversation left it filling
+most of the pane it was in. The cap was there, but it measured the _window_ — so
+it was the same number whether one conversation fills the screen or four are
+tiled in it, which meant a "quarter of the view" was most of a quarter-height
+pane.
+
+It is now a fifth of the pane the message is in, and it re-measures when you
+split the workspace or drag a divider. _Show the rest_ still opens it in full.
+
 ## 0.19.3
 
 ### A file an agent names can be opened by clicking it
