@@ -7,6 +7,33 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.3
+
+### A file an agent names can be opened by clicking it
+
+Agents link to files constantly — a plan they just wrote, the module they just
+changed — and every one of those links rendered as its own source code, brackets
+and parentheses included. The link checker only recognised web addresses, and a
+path inside your project is not one, so it refused them all. A path you could
+read and could not open.
+
+They are links now, and clicking one opens the file in VS Code. Where it opens
+is decided the same way it is for the file names on a tool row: Chorus resolves
+the path against that conversation's own directory and refuses anything outside
+it. A path is never handed to a browser, and a link with a genuine web address
+still opens in your browser exactly as before.
+
+### A message that never reaches an agent says so
+
+After ninety seconds with nothing coming back, the line under your message used
+to disappear, leaving your question alone above an empty pane with nothing to
+say anything had ever been expected. It now stays and tells you what happened —
+that the message may not have reached the agent, and to try sending it again.
+
+Chorus also writes a line to its own log when a message is accepted and again
+when it is handed to an agent. If this happens to you, those two lines are what
+tell us where it stopped; before, there was nothing in the log at all.
+
 ## 0.19.2
 
 ### No more screen of blank under a short reply
