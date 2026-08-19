@@ -284,7 +284,6 @@ export function Session(props: {
   /** The current turn — what you last said and whatever is answering it. */
   const turn = useRef<HTMLDivElement | null>(null)
   /** Empty space at the foot of the current turn, so its question can reach the top. */
-  const tail = useRef<HTMLDivElement | null>(null)
   /** Read once: whether this pane was the active one at the moment it mounted. */
   const activeOnMount = useRef(props.active)
 
@@ -337,47 +336,31 @@ export function Session(props: {
    */
   const following = useRef(props.carry?.following ?? true)
 
-  /**
-   * Makes the current turn a view tall, however little has been said in it.
+  /*
+   * There used to be a `makeRoom` here, and its removal is the point.
    *
-   * Two things need the height, and both need it *inside* the turn. A pinned
-   * header can only travel as far as the block it belongs to, so a turn no
-   * taller than its own question gives the pin nowhere to go. And there has to
-   * be something below to scroll, or a question asked at the foot of a long
-   * history stays where it landed until the answer happens to be tall enough to
-   * lift it — which reads as the layout waiting for the agent's permission.
+   * It padded the current turn out to a full view — a spacer sized to exactly
+   * what the turn was short of — so a question could rise to the top of the
+   * window the instant it was asked, whatever the reply turned out to be. The
+   * pin then had somewhere to travel and the question was the heading of its
+   * own answer from the first token.
    *
-   * Spare rather than fixed: exactly what the turn is short of, so it is gone
-   * the moment a reply fills the view. It used to publish the same figure as
-   * `--spare`, which held the rail up out of the emptiness; the rail went with
-   * the bubble when the transcript became rows, and nothing reads it now.
+   * What it also produced was a screen of blank under every short reply, which
+   * is what it was reported as. The argument for it was that otherwise "a
+   * question asked at the foot of a long history stays where it landed until
+   * the answer happens to be tall enough to lift it — which reads as the layout
+   * waiting for the agent's permission". That is a fair description of what now
+   * happens, and it was chosen deliberately over the void: the question rises
+   * as the answer is written, which is the same information arriving as it is
+   * earned rather than a promise made in advance.
+   *
+   * Nothing replaces it, because nothing has to. `.turn-head` is `position:
+   * sticky` inside `.turn`, and a sticky header pins only while its own block
+   * is taller than the scrollport — so a reply longer than the screen holds the
+   * question at the top by construction, and a short one leaves it in the flow
+   * where it belongs. That is exactly the rule asked for, expressed as the one
+   * line of CSS it already was.
    */
-  const makeRoom = useCallback(() => {
-    const el = score.current
-    const content = transcript.current
-    const spacer = tail.current
-    if (el === null || content === null) return
-    if (spacer === null) return
-    const block = turn.current
-    // The turn's own height, less whatever room was added last time — measuring
-    // the block whole would feed the spacer its own size.
-    const said = block === null ? 0 : block.offsetHeight - spacer.offsetHeight
-    /*
-     * The scroller's own bottom padding counts as room.
-     *
-     * Without this the turn was a whole view tall *and* the padding sat under
-     * it, so the bottom of the scroll range fell a padding's width past the
-     * point where the question reaches the top — and the reader, sitting at the
-     * bottom, had that much of the answer's first line hidden behind the pinned
-     * header. On a short reply that is most of the only line there is.
-     *
-     * Read each time rather than cached: it is 21px normally and 18px at phone
-     * width, and a stale one would put the slice back at one size or the other.
-     */
-    const below = parseFloat(getComputedStyle(el).paddingBottom) || 0
-    const spare = Math.max(0, el.clientHeight - below - said)
-    spacer.style.height = `${String(spare)}px`
-  }, [])
 
   useEffect(() => {
     const el = score.current
@@ -396,48 +379,42 @@ export function Session(props: {
      * ancestor and would drag the whole grid around when panes sit side by side.
      */
     /*
-     * The work happens a frame later, and that is the fix rather than a tidying.
+     * The work happens a frame later, and that is a fix rather than a tidying.
      *
-     * `makeRoom` writes `spacer.style.height`, and the spacer is a child of the
-     * observed element. Done inside the delivery, that is a guaranteed
-     * ResizeObserver loop: Chromium re-runs the observation, hits its depth
-     * limit, reports "loop completed with undelivered notifications" and **drops
-     * the rest**. Measured against a real streaming reply, eleven times per
-     * answer — on healthy runs too, which is why it went unnoticed.
+     * It was written for `makeRoom`, which wrote to a child of the observed
+     * element and so made a guaranteed ResizeObserver loop: Chromium re-ran the
+     * observation, hit its depth limit, reported "loop completed with
+     * undelivered notifications" and **dropped the rest**. Eleven times per
+     * answer, measured, on healthy runs too. When the dropped one was the last
+     * of a turn — the typewriter's final jump, a diff card committing at once —
+     * nothing ever resized again to correct it, and the transcript sat stranded
+     * below the fold. That was the "stops dead mid-reply" report: 182px hidden,
+     * 7 observer firings against a healthy run's 25.
      *
-     * Usually the next token resizes the content again and the dropped
-     * notification is made good. When the dropped one is the *last* of a turn —
-     * the typewriter's jump to the whole text, or a diff card committing at once
-     * — nothing ever changes size again, so nothing corrects it and the
-     * transcript sits stranded below the fold until the reader scrolls. That is
-     * the "stops dead mid-reply" report. Driven: 182px left hidden, with the
-     * observer having fired 7 times against a healthy run's 25.
-     *
-     * A frame later the write is an ordinary resize rather than an undelivered
-     * one, so the loop cannot form. It also coalesces a burst of notifications
-     * into one layout, where the old shape paid for each.
+     * `makeRoom` is gone, so the loop it caused cannot form either way. The
+     * frame stays for the other half of what it bought: a burst of
+     * notifications coalesces into one layout, where the old shape paid for
+     * each. Removing it would be a performance change, not a simplification.
      */
     let frame = 0
     const settle = (): void => {
       if (frame !== 0) return
       frame = requestAnimationFrame(() => {
         frame = 0
-        // Before following, not after: the spare room decides where the bottom is.
-        makeRoom()
         if (following.current) el.scrollTop = el.scrollHeight
       })
     }
 
     const follow = new ResizeObserver(settle)
     follow.observe(content)
-    // The pane itself, because how much room the turn is short of is measured
-    // against the view — and a window resize changes that without changing a word.
+    // The pane too: a window resize changes where the bottom is without
+    // changing a word, and a following transcript has to stay pinned to it.
     follow.observe(el)
     return () => {
       follow.disconnect()
       cancelAnimationFrame(frame)
     }
-  }, [makeRoom])
+  }, [])
 
   /**
    * A short watch after the reply ends, for what arrives after it.
@@ -454,9 +431,7 @@ export function Session(props: {
    * one notification.
    *
    * Bounded by wall clock and cheap on purpose: it reads two numbers a frame and
-   * only touches layout when it actually has to correct. `makeRoom` is *not*
-   * called on every pass — it forces a layout, and 150 forced layouts to catch
-   * one late card would cost more than the card.
+   * only touches layout when it actually has to correct.
    *
    * `following` is re-read each pass rather than captured, so scrolling up to
    * read during the watch ends it. The reader wins, as everywhere else here.
@@ -470,7 +445,6 @@ export function Session(props: {
     const until = Date.now() + 2_500
     const watch = (): void => {
       if (following.current && el.scrollHeight - el.scrollTop - el.clientHeight > 1) {
-        makeRoom()
         el.scrollTop = el.scrollHeight
       }
       if (Date.now() < until) frame = requestAnimationFrame(watch)
@@ -479,7 +453,7 @@ export function Session(props: {
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [view.busy, makeRoom])
+  }, [view.busy])
 
   /**
    * Agents already writing: their words say more than a label would.
@@ -526,19 +500,18 @@ export function Session(props: {
 
   useEffect(() => {
     /*
-     * A new turn takes the top, whether or not the page grew.
+     * The message you just sent is on screen before anything answers it.
      *
-     * Following is driven by the transcript getting taller, and a short question
-     * asked below a long answer can add less height than the spare room it takes
-     * away — the observer sees nothing, and the message you just sent stays
-     * halfway up. Keyed on which message the turn is, so this fires once per
+     * Following is driven by the transcript getting taller, and the observer
+     * that watches for that runs a frame later — so without this the question
+     * sits below the fold for a frame, or longer if the growth is small enough
+     * to be coalesced. Keyed on which message the turn is, so it fires once per
      * question rather than on every token of the reply.
      */
     const el = score.current
     if (el === null || turnKey === null) return
-    makeRoom()
     if (following.current) el.scrollTop = el.scrollHeight
-  }, [turnKey, makeRoom])
+  }, [turnKey])
 
   /**
    * Offers to quote whatever was just selected in this pane's transcript.
@@ -1078,8 +1051,7 @@ export function Session(props: {
    * (line 308 reads it back) and was then ignored here, so a conversation that
    * was sitting at the bottom came back to whatever number `scrollTop` last
    * happened to be. The bottom is a *position* that survives the content being
-   * measured again; a number is not. `makeRoom` first, because the spare room
-   * decides where the bottom is — the same order `settle` uses.
+   * measured again; a number is not.
    *
    * **And one assignment cannot land before the content has a height.** In a
    * layout effect the transcript has not measured: markdown, diff cards and
@@ -1521,9 +1493,10 @@ export function Session(props: {
          *
          * This used to read `scrollTop` moving backwards as "the reader scrolled
          * up", and several things move it backwards that are not a reader:
-         * `makeRoom` shrinking the spare room clamps it, and Chromium's scroll
-         * anchoring used to drag it back to hold the view still while cards
-         * landed above the foot. Either one turned following off for good, and a
+         * `makeRoom` shrinking the spare room clamped it while it existed, and
+         * Chromium's scroll anchoring used to drag it back to hold the view
+         * still while cards landed above the foot. Either turned following off
+         * for good, and a
          * transcript that stops following mid-reply never starts again on its
          * own — which is exactly the report.
          *
@@ -1599,13 +1572,6 @@ export function Session(props: {
               */}
               {thinking}
               {waitingRow}
-              {/*
-                Room for the question to rise into, and for the pin to hold it
-                there. Inside the turn because a pinned header travels only
-                within its own block; sized in `makeRoom`, which is the only
-                thing that knows how much of the view is still empty.
-              */}
-              <div className="turn-tail" ref={tail} aria-hidden="true" />
             </div>
           )}
           {/*

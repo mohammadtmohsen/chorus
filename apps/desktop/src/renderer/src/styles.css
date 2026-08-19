@@ -1645,15 +1645,19 @@ body {
 }
 
 /*
- * Room for the current turn to rise into, and for its pin to hold within.
+ * `.turn-tail` was here, and it is gone.
  *
- * Sized in `makeRoom` to exactly what the turn is short of a full view, so it
- * vanishes the moment a reply fills one. The rail is inset by the same amount
- * rather than following it down.
+ * A spacer padding the current turn out to a full view, so a question could
+ * reach the top of the window the moment it was asked. What it also produced
+ * was a screen of blank under every reply shorter than the window, which is how
+ * it was reported.
+ *
+ * Nothing takes its place. `.turn-head` above is `position: sticky`, and a
+ * sticky header pins only while its own block is taller than the scrollport —
+ * so a reply longer than the screen holds the question at the top by
+ * construction, and a shorter one leaves it in the flow, rising as the answer
+ * is written rather than the layout promising room in advance.
  */
-.turn-tail {
-  height: 0;
-}
 
 /*
  * One turn, with room around it.
