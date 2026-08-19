@@ -7,6 +7,48 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.6
+
+### A side task, without derailing the conversation you are in
+
+You are working with an agent, and you notice one thing that needs fixing. Until
+now there was nowhere to put it. Typing it into the box redirects the turn you
+are in the middle of. Starting a new session gives you an agent that has seen
+none of what you were both looking at. And an aside can only ever answer
+questions — it is read-only by design, so it was never able to go and do the
+thing.
+
+Type it and press **Start this as a side task**, beside Send. It opens in its
+own tab, forked from the agent you were just talking to so it already has the
+context, and able to make changes. The conversation you left is untouched — not
+interrupted, nothing added to it, still exactly where you were.
+
+### Explain, translate or ask about a question an agent asks you
+
+The card where an agent asks you to choose is often the densest thing on screen
+— a one-line question over three options full of names from the code — and it
+blocks until you answer. It now carries the same **Explain simply**, **Translate**
+and **Ask about this** actions the rest of the transcript has, at the foot of the
+question. They read the whole card, options included, because the options are
+usually the part that is hard.
+
+Questions asking for a password or a token never offer them.
+
+### An aside can explain itself
+
+If the side answer is not much clearer than what you asked about, **Explain
+simply** and **Translate** now sit above the follow-up box and act on the aside's
+own latest reply. It continues the same exchange rather than opening a second
+card over the one you are reading.
+
+### The file reference above the box stops hiding the lines
+
+The chip showing what VS Code has open was cut off from the right, so on a
+deep path the line numbers were the first thing to disappear — leaving
+`…/procedure-pricing/hcpc-pri…`, which names neither the file nor the lines it
+was there to report. It now shortens the folders instead and keeps the file name
+and the range, with the whole path on hover.
+
 ## 0.19.5
 
 ### Code an agent writes can be copied with one click
