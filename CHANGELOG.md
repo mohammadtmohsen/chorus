@@ -7,6 +7,24 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.5
+
+### Code an agent writes can be copied with one click
+
+Every fenced code block now carries a copy button in its top right, beside the
+language label. Press it and the block's source goes to your clipboard exactly
+as the agent wrote it — the button turns into a green tick for a moment to say
+so, and only after the copy has actually happened rather than the instant you
+click.
+
+Until now the only way to lift a command or a snippet out of a reply was to
+select it by hand, which on a block that scrolls sideways meant dragging past
+the edge of the pane and hoping you had caught the end of the line.
+
+The language label got a fix on the way past: it used to be positioned inside
+the block's own scroller, so on any block wider than its pane it slid out of
+view as soon as you scrolled right. It stays in the corner now.
+
 ## 0.19.4
 
 ### A long message you paste stops taking over its pane
