@@ -7,6 +7,46 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.19.7
+
+### The usage bars say whether your allowance is keeping up with the clock
+
+A bar told you how much of a window you had spent and nothing about whether that
+was fast. Each one now carries an upright mark showing how far through the
+window you are: fill short of the mark means the allowance is lasting, and fill
+past it is drawn in red — where the length of the red is exactly how long the
+account will be shut before it resets.
+
+### Hovering the usage block tells you the whole story
+
+The panel that opens on hover reported the same windows as the rail and looked
+nothing like it — one flat bar with no sense of pace, spread wide enough that
+the two figures you compare sat at opposite ends of it.
+
+Each window is now three short lines: the bar, with the label naming it and the
+percentage it draws; under it, when the window resets; under that, the exact day
+and time, because "in 11h 3m" is not something you can put in a calendar and a
+weekly window lands days away. The bar is the same one the rail draws rather
+than a second attempt at it. The two accounts are named and separated by a rule
+— with both agents installed there are four readings, and under coloured dots
+alone they read as one account's.
+
+### Errors can be dismissed
+
+Every error banner now has a close button. The one above a conversation was the
+worse case: nothing anywhere cleared it, so a single failed click left a red bar
+pinned above the transcript for the rest of the session, describing something
+that had stopped being true minutes earlier.
+
+### A file link into a symlinked project opens
+
+Clicking a file an agent mentioned could fail with "that file is not inside this
+session's project folder" when the file plainly was. Chorus compared the two
+paths as text, so a project reached by one name and a file reported by another —
+on macOS, any project under `/tmp` or `/var` — looked like two different places.
+It resolves both before deciding now. When it does refuse, the message names the
+file and the folder, so you can see which is which instead of guessing.
+
 ## 0.19.6
 
 ### A side task, without derailing the conversation you are in
