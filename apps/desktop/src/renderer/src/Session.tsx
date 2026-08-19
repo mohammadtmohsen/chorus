@@ -5,6 +5,7 @@ import { formatDiagnosticBlock } from './editor-context.js'
 import { fitCard, type AsidePurpose } from './aside.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
 import { Entry } from './Entry.js'
+import { ErrorNotice } from './ErrorNotice.js'
 import { focusedNow, mayTakeCaret } from './focus.js'
 import { thinkingWord, offsetForActor, THINKING_WORD_MS, AWAITING_MAX_MS } from './thinking-word.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
@@ -818,7 +819,16 @@ export function Session(props: {
       window.chorus
         .ideOpenFile({ conversationId, path })
         .then((result) => {
-          if (!result.ok) setError(t(`ide.openError.${result.reason ?? 'unknown'}`))
+          if (!result.ok) {
+            // The path and folder go into the sentence, so a refusal can be
+            // acted on rather than only read.
+            setError(
+              t(`ide.openError.${result.reason ?? 'unknown'}`, {
+                path: result.path ?? path,
+                project: result.project ?? '',
+              })
+            )
+          }
         })
         .catch(fail(setError))
     },
@@ -1540,9 +1550,12 @@ export function Session(props: {
       data-file-over={fileOver}
     >
       {error !== null && (
-        <p className="notice notice--bad" role="alert">
-          {error}
-        </p>
+        <ErrorNotice
+          message={error}
+          onDismiss={() => {
+            setError(null)
+          }}
+        />
       )}
 
       <div

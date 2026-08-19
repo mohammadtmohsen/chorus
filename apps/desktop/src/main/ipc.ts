@@ -40,6 +40,7 @@ import {
   readBundledVersion,
   resolveVsix,
 } from './ide-extension.js'
+import { canonicalPath } from './real-path.js'
 import { probeAgents } from './agent-probe.js'
 import { completeFiles } from './files.js'
 import { listPlugins } from './plugins.js'
@@ -547,11 +548,34 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       try {
         cwd = runtime.projectDirectory(request.conversationId)
       } catch {
-        return { ok: false, reason: 'outside-project' as const }
+        return { ok: false, reason: 'outside-project' as const, path: request.path, project: '' }
       }
       const target = resolve(cwd, request.path)
-      if (cwd === '' || !isInside(cwd, target)) {
-        return { ok: false, reason: 'outside-project' as const }
+      /*
+       * Two ways to say yes, and the order is the design.
+       *
+       * The lexical check is the boundary as it has always been, and it stays
+       * first because it is what keeps a symlinked `node_modules` or a linked
+       * package in a monorepo working — those resolve *outside* the project and
+       * are meant to.
+       *
+       * The canonical check is an additional way to say yes, never a new way to
+       * say no. It exists because the lexical one refused files that were
+       * genuinely inside: a project opened as `/var/folders/…` against a path an
+       * agent printed as `/private/var/folders/…` is one directory and its own
+       * realpath. Measured in the running app, not reasoned about.
+       *
+       * Trusting the canonical answer *alone* would also close the reverse hole
+       * — an outward symlink inside the project passes today — but that refuses
+       * the linked dependencies above, so it is a change to what the boundary
+       * means rather than a repair of it. Left as a decision, on the board.
+       */
+      const contained = isInside(cwd, target) || isInside(canonicalPath(cwd), canonicalPath(target))
+      if (cwd === '' || !contained) {
+        // The path and the folder travel with the refusal: the message used to
+        // name neither, so "not inside this session's project folder" could not
+        // be told apart from a bug in the check itself.
+        return { ok: false, reason: 'outside-project' as const, path: target, project: cwd }
       }
       return openFileInEditor(target, extensionDeps())
     },

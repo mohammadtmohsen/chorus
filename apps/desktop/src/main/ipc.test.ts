@@ -49,23 +49,34 @@ describe('ide:openFile', () => {
     })) as { ok: boolean; reason: string | null }
   }
 
+  /*
+   * `toMatchObject`, not `toEqual`: the refusal now carries the path it refused
+   * and the folder it measured against, so the message can name them. What these
+   * guard is the *reason*, which is unchanged.
+   */
   it('refuses a path outside the project', async () => {
-    expect(await open('/p/a', '/p/b/secret.ts')).toEqual({ ok: false, reason: 'outside-project' })
+    expect(await open('/p/a', '/p/b/secret.ts')).toMatchObject({
+      ok: false,
+      reason: 'outside-project',
+    })
   })
 
   it('refuses a sibling whose name merely starts the same', async () => {
-    expect(await open('/p/a', '/p/a-old/rate.ts')).toEqual({
+    expect(await open('/p/a', '/p/a-old/rate.ts')).toMatchObject({
       ok: false,
       reason: 'outside-project',
     })
   })
 
   it('refuses an escape through ..', async () => {
-    expect(await open('/p/a', '../b/secret.ts')).toEqual({ ok: false, reason: 'outside-project' })
+    expect(await open('/p/a', '../b/secret.ts')).toMatchObject({
+      ok: false,
+      reason: 'outside-project',
+    })
   })
 
   it('refuses everything when the conversation has no project folder', async () => {
-    expect(await open('', '/p/a/rate.ts')).toEqual({ ok: false, reason: 'outside-project' })
+    expect(await open('', '/p/a/rate.ts')).toMatchObject({ ok: false, reason: 'outside-project' })
   })
 
   it('refuses when the conversation is no longer open', async () => {
@@ -77,7 +88,7 @@ describe('ide:openFile', () => {
     const result = await (
       buildHandlers(runtime)['ide:openFile'] as (r: unknown) => Promise<unknown>
     )({ conversationId: 'c1', path: '/p/a/rate.ts' })
-    expect(result).toEqual({ ok: false, reason: 'outside-project' })
+    expect(result).toMatchObject({ ok: false, reason: 'outside-project' })
   })
 
   /*

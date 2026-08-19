@@ -30,6 +30,50 @@ Nothing here can be finished by me alone.
 
 ## Open
 
+### C-045 · An outward symlink inside a project still opens
+
+`ide:openFile` decides containment two ways since 0.19.6: the lexical
+`isInside`, or the same check on both paths canonicalized. The second was added
+because the first refused files that were genuinely inside — a project reached
+as `/var/folders/…` against a path an agent printed as `/private/var/folders/…`
+is one directory and its own realpath, and every absolute link into a symlinked
+project failed.
+
+The canonical check only ever _adds_ an acceptance, deliberately. Trusting it
+alone would also close the reverse hole — a symlink **inside** the project
+pointing outside passes today, so an agent that writes one and then links
+through it reaches any file on the machine — but it would equally refuse a
+symlinked `node_modules` and a linked package in a monorepo, which are ordinary
+and which people rely on. That is a change to what the boundary _means_ rather
+than a repair of it, so it was not made silently. `real-path.test.ts` has a test
+asserting the hole, so nobody closes it by accident either.
+
+Worth weighing against how little it buys an attacker: an agent that can create
+a symlink in the project can already read and write the target directly. The
+guard is about where `code -g` is pointed, not about what an agent can reach.
+
+**Done when:** someone decides whether linked dependencies or the closed hole
+matters more, and the test above is rewritten to assert the chosen behaviour.
+
+### C-044 · Forking fails after a session's project folder changes
+
+`spinOffTask` and `promoteAside` both branch from the agent's own `sessionRef`,
+and a provider files that session under the directory it started in. Change a
+conversation's folder with `setProjectDirectory` and the fork then looks for it
+under the new one: `Session 069e00cb… not found in project directory for /var/…`.
+The side task shows an error and no tab; promotion has always had this and
+nobody noticed, because promoting after moving a folder is rarer than branching
+after one.
+
+Found by driving the app, not by reading — the first attempt at a side-task
+verification set the folder first and failed for this reason rather than for
+anything to do with the feature.
+
+**Done when:** either the fork resolves the session against the directory it was
+_started_ in (which the runtime knows), or the folder change ends the session so
+the mismatch cannot arise. The first keeps more working; the second is honest
+about what a folder change means.
+
 ### C-043 · A send can leave a pane waiting for a turn that never starts
 
 Seen in the field on 0.17.2: a finished Claude reply with `getting started •••`

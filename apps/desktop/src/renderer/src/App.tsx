@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ErrorNotice } from './ErrorNotice.js'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import type { AgentProbeResult } from '../../shared/ipc.js'
@@ -955,9 +956,13 @@ export function App(): React.JSX.Element {
       </header>
 
       {error !== null && (
-        <p className="notice notice--bad notice--workspace" role="alert">
-          {error}
-        </p>
+        <ErrorNotice
+          message={error}
+          className="notice--workspace"
+          onDismiss={() => {
+            setError(null)
+          }}
+        />
       )}
 
       <Workspace

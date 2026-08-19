@@ -1081,7 +1081,19 @@ export const IPC_CONTRACT = {
    */
   'ide:openFile': {
     request: z.object({ conversationId: z.string(), path: z.string() }),
-    response: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
+    /*
+     * `path` and `project` are what the refusal is *about*, and they are here
+     * because the message could not be acted on without them: "that file is not
+     * inside this session's project folder" named neither the file nor the
+     * folder, so a genuine escape and a bug in the check read identically.
+     * Optional, because only the containment refusal has anything to say.
+     */
+    response: z.object({
+      ok: z.boolean(),
+      reason: z.string().nullable(),
+      path: z.string().optional(),
+      project: z.string().optional(),
+    }),
   },
 
   'ide:snapshot': {

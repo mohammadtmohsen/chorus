@@ -336,7 +336,7 @@
       "cli-missing": "VS Code's `code` command is not on your PATH. In VS Code, run \"Shell Command: Install 'code' command in PATH\".",
       "open-failed": "VS Code could not open that.",
       "unknown": "VS Code could not open that.",
-      "outside-project": "That file is not inside this session's project folder."
+      "outside-project": "{{path}} is outside this session's folder ({{project}}), so Chorus will not open it."
     },
     "extension": {
       "title": "VS Code extension",
@@ -357,6 +357,7 @@
   },
   "notice": {
     "detail": "Details",
+    "dismiss": "Dismiss this message",
     "source": {
       "hook": "Hook",
       "command": "Command",

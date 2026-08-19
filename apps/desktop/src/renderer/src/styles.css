@@ -4224,6 +4224,67 @@ input::placeholder {
   color: var(--alert);
 }
 
+/*
+ * The message and the way out, on one line.
+ *
+ * `flex` on the paragraph rather than a wrapper, because `role="alert"` belongs
+ * on the element that holds the words and moving it to a `div` would change what
+ * a screen reader announces. A `button` is phrasing content, so it is legal
+ * inside a `<p>` — which is what lets the markup stay one element.
+ *
+ * `align-items: start` so the × sits with the first line of a message that wraps
+ * to three, rather than floating in the middle of the block.
+ */
+.notice-message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notice:has(.notice-close) {
+  display: flex;
+  align-items: start;
+  gap: calc(var(--step) * 3);
+}
+
+/*
+ * Inherits `--alert` from the banner rather than naming a colour, so a notice
+ * that is not an error gets the right one for free if one is ever added.
+ */
+.notice-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin: -1px -2px 0 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  transition:
+    opacity 120ms ease,
+    border-color 120ms ease;
+}
+
+.notice-close:hover,
+.notice-close:focus-visible {
+  opacity: 1;
+  border-color: currentColor;
+  outline: none;
+}
+
+.notice-close svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
 /* ----------------------------------------------------------------- narrow */
 
 @media (max-width: 720px) {
