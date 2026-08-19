@@ -129,6 +129,92 @@ describe('usageReadings', () => {
   })
 })
 
+/**
+ * The comparison the rail could not previously make.
+ *
+ * A percentage on its own cannot be judged: 63% of a week is healthy on day six
+ * and alarming on day two, and the rail drew both the same. These cases pin the
+ * two things that fixes it — where the window has got to, and how much of its end
+ * the allowance will not reach.
+ */
+describe('usageReadings pace', () => {
+  const at = (usedPercent: number, minutesLeft: number, windowMinutes = 300): LimitsPush =>
+    push('codex', [{ id: 'w', usedPercent, windowMinutes, resetsAt: NOW + minutesLeft * 60_000 }])
+
+  it('reads how far through the window the reading sits', () => {
+    // Four of five hours left, so the window is one fifth gone.
+    expect(usageReadings([at(10, 240)], NOW)[0]?.elapsedPercent).toBe(20)
+  })
+
+  it('calls spending slower than the clock no shortfall at all', () => {
+    const reading = usageReadings([at(10, 240)], NOW)[0]
+    expect(reading?.dryMinutes).toBe(0)
+    expect(reading?.dry).toBe('—')
+  })
+
+  /*
+   * The arithmetic that makes the red segment mean something: what is left of
+   * the allowance (40%) falls short of what is left of the window (60%) by 20%,
+   * and 20% of five hours is an hour.
+   */
+  it('measures the shortfall as the stretch of window the allowance will not reach', () => {
+    const reading = usageReadings([at(60, 180)], NOW)[0]
+    expect(reading?.elapsedPercent).toBe(40)
+    expect(reading?.dryMinutes).toBe(60)
+    expect(reading?.dry).toBe('1h')
+  })
+
+  /* A spent account is shut until the reset, and the shortfall says exactly that. */
+  it('counts a fully spent window as dry for the whole of what is left', () => {
+    const reading = usageReadings([at(100, 97)], NOW)[0]
+    expect(reading?.dryMinutes).toBe(97)
+    expect(reading?.dry).toBe(reading?.reset)
+  })
+
+  it('has no pace to report when the provider gave no reset moment', () => {
+    const readings = usageReadings(
+      [push('codex', [{ id: 'w', usedPercent: 50, windowMinutes: 300, resetsAt: null }])],
+      NOW
+    )
+    expect(readings[0]?.elapsedPercent).toBeNull()
+    expect(readings[0]?.dryMinutes).toBeNull()
+    expect(readings[0]?.dry).toBe('—')
+  })
+
+  /*
+   * Without a length there is no share to compare against — a tick placed from
+   * the slot's assumed duration would be Chorus claiming a window the provider
+   * never reported.
+   */
+  it('has no pace to report when the provider gave no window length', () => {
+    const readings = usageReadings(
+      [
+        push('codex', [
+          { id: 'w', usedPercent: 50, windowMinutes: null, resetsAt: NOW + 3_600_000 },
+        ]),
+      ],
+      NOW
+    )
+    expect(readings[0]?.elapsedPercent).toBeNull()
+    expect(readings[0]?.dryMinutes).toBeNull()
+  })
+
+  it('reads a reset already past as a finished window, not a negative one', () => {
+    const reading = usageReadings([at(80, -30)], NOW)[0]
+    expect(reading?.elapsedPercent).toBe(100)
+    expect(reading?.dryMinutes).toBe(0)
+  })
+
+  /* An unreported slot has no figure, so there is nothing to pace it against. */
+  it('leaves the pace of an unreported slot null', () => {
+    for (const reading of usageReadings([], NOW)) {
+      expect(reading.elapsedPercent).toBeNull()
+      expect(reading.dryMinutes).toBeNull()
+      expect(reading.dry).toBe('—')
+    }
+  })
+})
+
 describe('describeWindow', () => {
   it('says each duration in the shortest honest form', () => {
     expect(describeWindow(300)).toBe('5h')

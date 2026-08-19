@@ -71,6 +71,57 @@ export interface UsageReading {
   /** The raw moment, so a reading can be checked rather than parsed back. */
   readonly resetsAt: number | null
   readonly reported: boolean
+  /**
+   * How far through the window this reading sits, 0-100.
+   *
+   * Null when the window's length or its reset moment went unreported: pace is a
+   * comparison and it takes both, and a tick drawn from a guess would be a claim
+   * about the provider's window that the provider never made.
+   */
+  readonly elapsedPercent: number | null
+  /**
+   * Minutes at the end of the window the remaining allowance will not reach, at
+   * an even pace. 0 when on or under pace, null when pace is unknowable.
+   */
+  readonly dryMinutes: number | null
+  /** `dryMinutes` in the same shorthand as `reset`; an em dash when not dry. */
+  readonly dry: string
+}
+
+/**
+ * How far through the window, and how much of its end the allowance will not reach.
+ *
+ * The two sides are shares of the same window — `usedPercent` a share of the
+ * allowance, `elapsed` a share of the duration — which is what makes them
+ * comparable at all, and it is the comparison the rail could not previously make.
+ * Spending faster than the clock shows up as the first overtaking the second.
+ *
+ * The shortfall is that overtake, and it is exact rather than an estimate: what
+ * is left of the allowance (`100 - used`) falls short of what is left of the
+ * window (`100 - elapsed`) by precisely `used - elapsed`. At 100% used it is the
+ * whole remaining window, which is the plain truth — the account is shut until
+ * the reset.
+ */
+function pace(
+  percent: number,
+  windowMinutes: number | null,
+  resetsAt: number | null,
+  now: number
+): { elapsedPercent: number | null; dryMinutes: number | null } {
+  if (windowMinutes === null || windowMinutes <= 0 || resetsAt === null) {
+    return { elapsedPercent: null, dryMinutes: null }
+  }
+  /*
+   * Clamped at both ends. A reset already past reads as a finished window rather
+   * than as a negative one, and a provider that reports a moment further out than
+   * its own window is long would otherwise put the tick off the left of the bar.
+   */
+  const left = Math.min(Math.max((resetsAt - now) / (windowMinutes * 60_000), 0), 1)
+  const elapsed = 1 - left
+  return {
+    elapsedPercent: Math.round(elapsed * 100),
+    dryMinutes: Math.round(Math.max(percent / 100 - elapsed, 0) * windowMinutes),
+  }
 }
 
 export function useUsage(): readonly UsageReading[] {
@@ -129,17 +180,31 @@ export function usageReadings(pushes: readonly LimitsPush[], now: number): reado
           full: '—',
           resetsAt: null,
           reported: false,
+          elapsedPercent: null,
+          dryMinutes: null,
+          dry: '—',
         }
       }
+      const percent = Math.round(Math.min(found.usedPercent ?? 0, 100))
+      const { elapsedPercent, dryMinutes } = pace(percent, found.windowMinutes, found.resetsAt, now)
       return {
         agentId,
         kind: slot.kind,
         label: describeWindow(found.windowMinutes),
-        percent: Math.round(Math.min(found.usedPercent ?? 0, 100)),
+        percent,
         reset: found.resetsAt === null ? '—' : untilReset(found.resetsAt, now),
         full: fullRemaining(found.resetsAt, now),
         resetsAt: found.resetsAt,
         reported: true,
+        elapsedPercent,
+        dryMinutes,
+        /*
+         * Formatted through `untilReset` rather than by a second formatter, so a
+         * shortfall and a countdown cannot drift into different shapes — the one
+         * that says `1d 3h` must not have a neighbour saying `27h`.
+         */
+        dry:
+          dryMinutes === null || dryMinutes <= 0 ? '—' : untilReset(now + dryMinutes * 60_000, now),
       }
     })
   })

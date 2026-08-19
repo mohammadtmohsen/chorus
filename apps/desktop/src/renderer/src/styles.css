@@ -1413,6 +1413,19 @@ body {
 }
 
 /*
+ * The shortfall, named beside the bar that draws it.
+ *
+ * Carries the alarm colour because it only ever appears when there is one — the
+ * row is silent about pace while the allowance is keeping up, so this line
+ * existing at all is half of what it says.
+ */
+.limit-pace {
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
  * What a limit sheds as the window narrows, in the order it can afford to lose
  * it — the same bargain the composer row makes.
  *
@@ -7897,8 +7910,23 @@ input::placeholder {
  * 4px tall rather than 5, because two meters in the space of one is twice the
  * horizontal rule and the block should not read as striped.
  */
+/*
+ * Holds the track and the pace mark on one axis.
+ *
+ * The mark cannot live inside the track: the track clips its overflow so the
+ * fill keeps its rounded ends, and anything standing proud of 4px would be cut
+ * off at the bar's own edge.
+ */
+.rail-meter-wrap {
+  position: relative;
+  display: block;
+}
+
 .rail-meter {
   display: block;
+  /* The positioning context for the overspend segment, which is placed from the
+     tick rather than from the left edge. */
+  position: relative;
   height: 4px;
   border: 0;
   border-radius: 999px;
@@ -7913,6 +7941,49 @@ input::placeholder {
   height: 100%;
   border-radius: inherit;
   background: var(--voice);
+}
+
+/*
+ * The part of the window the allowance will not reach.
+ *
+ * Square rather than pilled: it is a stretch of the bar and not a bar of its
+ * own, and at the widths this takes — a few percent when it first appears — a
+ * 999px radius turns it into a dot. The track's own overflow rounds the end
+ * that reaches the far edge, which is the only end that should be round.
+ *
+ * Qualified by the track it sits in, and it has to be: `.rail-meter i` is one
+ * class and one element to this rule's one class, so the fill's `--voice` won on
+ * specificity and the overspend drew in the account's own colour — the one
+ * reading it exists to distinguish itself from.
+ */
+.rail-meter i.rail-meter-over {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 0;
+  background: var(--danger);
+}
+
+/*
+ * How much of the window has gone.
+ *
+ * Read against the fill: fill short of this mark is spending slower than the
+ * window refills, and fill past it is the overspend drawn beside it. The halo is
+ * the rail's own surface, which is what keeps a light mark legible on the fill
+ * and a dark one legible on the empty track without either theme needing its own
+ * colour for it.
+ */
+.rail-meter-pace {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  /* Centred on its percentage: the mark stands for a point on the axis, and left
+     edge alignment would put it a whole width late. */
+  transform: translateX(-1px);
+  border-radius: 1px;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-chrome);
 }
 
 .rail-usage:focus-visible {

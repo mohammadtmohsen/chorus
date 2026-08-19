@@ -182,7 +182,8 @@
   "limits": {
     "resets": "resets in {{time}}",
     "detail": "{{agent}} · {{percent}}% of a {{minutes}}-minute window · resets {{at}}",
-    "unknownReset": "no reset time reported"
+    "unknownReset": "no reset time reported",
+    "runsOutEarly": "runs out {{time}} early"
   },
   "spend": {
     "tokens": "{{input}} in · {{output}} out",

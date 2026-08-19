@@ -13,7 +13,7 @@ import { countRender } from './render-count.js'
 import { projectRow, monogramsFor, stepSlot, type SessionPlacement } from './session-row.js'
 import { previewTriggerProps, type PreviewController } from './SessionPreview.js'
 import { StateMark } from './SessionRow.js'
-import { useUsage } from './useUsage.js'
+import { useUsage, type UsageReading } from './useUsage.js'
 
 /**
  * The 60px column that runs the day.
@@ -348,6 +348,35 @@ function RailUsage(): React.JSX.Element {
     windows: readings.filter((reading) => reading.agentId === agentId),
   }))
 
+  /*
+   * One reading in words, for the hover title and for the screen-reader line.
+   *
+   * The two said the same sentence from two copies of the same expression, and
+   * the pace clause has to reach both: the tick and the red are `aria-hidden`
+   * decoration, so a reader that only ever hears "63%, in 1d 3h" is told the
+   * figure and not the thing the figure now means.
+   */
+  const say = (reading: UsageReading): string => {
+    if (reading.percent === null) {
+      return t('activity.usageUnreported', { agent: reading.agentId, window: reading.label })
+    }
+    const said = t('activity.usage', {
+      agent: reading.agentId,
+      percent: reading.percent,
+      window: reading.label,
+      reset: reading.reset,
+    })
+    /*
+     * Semicolon, not a space. The two clauses run together as "resets 14h 57m
+     * runs out 14h 57m early", which a screen reader reads as one breathless
+     * sentence with two durations in it; the readings themselves are joined with
+     * a full stop, so this keeps the two levels apart.
+     */
+    return reading.dryMinutes !== null && reading.dryMinutes > 0
+      ? `${said}; ${t('limits.runsOutEarly', { time: reading.dry })}`
+      : said
+  }
+
   const show = (): void => {
     const box = anchor.current?.getBoundingClientRect()
     if (box === undefined) return
@@ -411,20 +440,35 @@ function RailUsage(): React.JSX.Element {
               save width, which saved the width and cost the reading.
             */}
             <span className="rail-account-name">{account.agentId}</span>
-            {account.windows.map((reading) => (
-              <span
-                key={reading.kind}
-                className="rail-window"
-                data-agent={reading.agentId}
-                data-window={reading.kind}
-                data-reported={reading.reported}
-                data-spent={
-                  reading.percent !== null && reading.percent >= 90 ? 'nearly' : undefined
-                }
-              >
-                <span className="rail-window-row">
-                  <span className="rail-window-label">
-                    {/*
+            {account.windows.map((reading) => {
+              /*
+               * The bar is cut at the tick, not at the figure.
+               *
+               * `used` past `elapsed` is spending faster than the window refills,
+               * and the stretch between them is drawn in the alarm colour because
+               * its *length* is the answer: it is exactly how long the account
+               * will be shut before the reset. Where no pace could be worked out
+               * the fill is the whole figure and there is no tick, which is the
+               * bar this rail has always drawn.
+               */
+              const used = reading.percent ?? 0
+              const elapsed = reading.elapsedPercent
+              const over = elapsed === null ? 0 : Math.max(used - elapsed, 0)
+              const fill = elapsed === null ? used : Math.min(used, elapsed)
+              return (
+                <span
+                  key={reading.kind}
+                  className="rail-window"
+                  data-agent={reading.agentId}
+                  data-window={reading.kind}
+                  data-reported={reading.reported}
+                  data-spent={
+                    reading.percent !== null && reading.percent >= 90 ? 'nearly' : undefined
+                  }
+                >
+                  <span className="rail-window-row">
+                    <span className="rail-window-label">
+                      {/*
                     The provider's own duration, in the word it is usually
                     called by. `describeWindow` says `1w` for a seven-day window,
                     which is right in a popover of exact figures and reads as a
@@ -432,43 +476,31 @@ function RailUsage(): React.JSX.Element {
                     "Week". Derived from the reported minutes either way; nothing
                     here invents a window the provider did not report.
                   */}
-                    {reading.kind === 'long' && reading.label === '1w'
-                      ? t('activity.week')
-                      : reading.label}
-                  </span>
-                  <span
-                    className="rail-window-percent"
-                    /*
-                     * The em dash explains itself on hover.
-                     *
-                     * This machine's Codex account reports no windows, so its two
-                     * slots are dashes — and a dash with no explanation reads as a
-                     * bug in Chorus rather than as silence from the provider. The
-                     * screen-reader line below has said so all along; this is the
-                     * same sentence for everyone else.
-                     */
-                    title={
-                      reading.percent === null
-                        ? t('activity.usageUnreported', {
-                            agent: reading.agentId,
-                            window: reading.label,
-                          })
-                        : t('activity.usage', {
-                            agent: reading.agentId,
-                            percent: reading.percent,
-                            window: reading.label,
-                            reset: reading.reset,
-                          })
-                    }
-                  >
-                    {/*
+                      {reading.kind === 'long' && reading.label === '1w'
+                        ? t('activity.week')
+                        : reading.label}
+                    </span>
+                    <span
+                      className="rail-window-percent"
+                      /*
+                       * The em dash explains itself on hover.
+                       *
+                       * This machine's Codex account reports no windows, so its two
+                       * slots are dashes — and a dash with no explanation reads as a
+                       * bug in Chorus rather than as silence from the provider. The
+                       * screen-reader line below has said so all along; this is the
+                       * same sentence for everyone else.
+                       */
+                      title={say(reading)}
+                    >
+                      {/*
                     An em dash, not `0%`. Zero says the account is empty; this
                     says nobody has answered yet, and they are different facts.
                   */}
-                    {reading.percent === null ? '—' : `${String(reading.percent)}%`}
+                      {reading.percent === null ? '—' : `${String(reading.percent)}%`}
+                    </span>
                   </span>
-                </span>
-                {/*
+                  {/*
                   When the window turns over, under the figure it belongs to.
 
                   Nothing new is computed: `reading.reset` has existed all along
@@ -489,12 +521,12 @@ function RailUsage(): React.JSX.Element {
                   to prevent. It is quiet enough to read as an annotation of the
                   figure rather than as a divider.
                 */}
-                {reading.resetsAt !== null && (
-                  <span className="rail-window-reset">
-                    {t('activity.resetsIn', { time: reading.reset })}
-                  </span>
-                )}
-                {/*
+                  {reading.resetsAt !== null && (
+                    <span className="rail-window-reset">
+                      {t('activity.resetsIn', { time: reading.reset })}
+                    </span>
+                  )}
+                  {/*
                   Each window's own bar, directly under the figure it belongs to.
 
                   There used to be one bar per account, drawing the short window
@@ -508,30 +540,39 @@ function RailUsage(): React.JSX.Element {
                   read as a layout fault rather than as silence from a provider.
                   The em dash above already says nobody answered.
                 */}
-                <span className="rail-meter">
-                  <i style={{ width: `${String(reading.percent ?? 0)}%` }} />
+                  <span className="rail-meter-wrap">
+                    <span className="rail-meter">
+                      <i style={{ width: `${String(fill)}%` }} />
+                      {over > 0 && (
+                        <i
+                          className="rail-meter-over"
+                          style={{
+                            left: `${String(elapsed ?? 0)}%`,
+                            width: `${String(over)}%`,
+                          }}
+                        />
+                      )}
+                    </span>
+                    {/*
+                    How much of the window has gone, as one mark on the same axis.
+
+                    Outside the track rather than in it: the track clips its
+                    overflow to keep the fill's ends rounded, and a mark the same
+                    height as a 4px bar is a mark you have to look for. It stands
+                    3px proud at either end with a halo of the rail's own surface,
+                    which is what makes it legible over the fill and over the
+                    empty track in both themes.
+                  */}
+                    {elapsed !== null && (
+                      <span className="rail-meter-pace" style={{ left: `${String(elapsed)}%` }} />
+                    )}
+                  </span>
                 </span>
-              </span>
-            ))}
+              )
+            })}
           </span>
         ))}
-        <span className="sr-only">
-          {readings
-            .map((reading) =>
-              reading.percent === null
-                ? t('activity.usageUnreported', {
-                    agent: reading.agentId,
-                    window: reading.label,
-                  })
-                : t('activity.usage', {
-                    agent: reading.agentId,
-                    percent: reading.percent,
-                    window: reading.label,
-                    reset: reading.reset,
-                  })
-            )
-            .join('. ')}
-        </span>
+        <span className="sr-only">{readings.map(say).join('. ')}</span>
       </button>
       {/*
         The full reading, on hover or focus.
@@ -588,6 +629,20 @@ function RailUsage(): React.JSX.Element {
                       >
                         {t('limits.resets', { time: reading.full })}
                       </span>
+                      {/*
+                        The pace, in words, where there is room for words.
+
+                        The rail draws it and the popover names it: the red on a
+                        52px bar says *that* the allowance runs out early, and
+                        this says by how long. Only when it does — a line saying
+                        "on pace" under every healthy window would be four lines
+                        of reassurance nobody asked for.
+                      */}
+                      {reading.dryMinutes !== null && reading.dryMinutes > 0 && (
+                        <span className="limit-pace">
+                          {t('limits.runsOutEarly', { time: reading.dry })}
+                        </span>
+                      )}
                     </>
                   )}
                 </li>
