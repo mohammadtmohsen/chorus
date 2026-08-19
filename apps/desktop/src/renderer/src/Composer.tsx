@@ -15,6 +15,7 @@ import { ComposerMenu, type MenuItem } from './ComposerMenu.js'
 import { useSessionMenu } from './workspace/session-menu-context.js'
 import { Attachments, type Attachment } from './Attachments.js'
 import { formatContextBlock, markFor, versionFor, withEditorContext } from './editor-context.js'
+import { pillReference } from './shorten.js'
 import {
   applyMention,
   commandOptions,
@@ -1069,15 +1070,36 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         <div className="composer-context">
           {ide !== null && ide.status !== 'unavailable' && (
             <div className="ide-pill" data-status={ide.status}>
-              <span className="ide-pill-what">
-                {ide.status === 'ready' && ide.file !== null
-                  ? `${ide.file.relativePath}:${String(ide.file.startLine)}${
-                      ide.file.isEmpty || ide.file.startLine === ide.file.endLine
-                        ? ''
-                        : `-${String(ide.file.endLine)}`
-                    }`
-                  : t(`ide.status.${ide.status}`)}
-              </span>
+              {/*
+               * The lines are split off the path, and that is the whole point of
+               * the two spans.
+               *
+               * This was one span with `text-overflow: ellipsis`. CSS elides
+               * from the end, so on a deep path the line range went first and
+               * the pill read `…/procedure-pricing/hcpc-pri…` — a reference with
+               * no file name and no lines. `pillReference` shortens the path at
+               * a directory boundary and hands the range back separately; the
+               * stylesheet pins it against shrinking, so what gets dropped is a
+               * directory rather than the one part you cannot see for yourself.
+               *
+               * `formatReference` rather than the template literal that used to
+               * be here: it is the same string the *message* carries, and two
+               * copies of "when does a range collapse to one number" is one copy
+               * too many.
+               */}
+              {ide.status === 'ready' && ide.file !== null ? (
+                (() => {
+                  const shown = pillReference(ide.file)
+                  return (
+                    <span className="ide-pill-what ide-pill-ref" title={shown.full}>
+                      <span className="ide-pill-path">{shown.path}</span>
+                      {shown.lines !== '' && <span className="ide-pill-lines">{shown.lines}</span>}
+                    </span>
+                  )
+                })()
+              ) : (
+                <span className="ide-pill-what">{t(`ide.status.${ide.status}`)}</span>
+              )}
               {/*
                * Which selection this is, when the path does not already say it: a
                * merge request commit, a git ref, or that these lines are

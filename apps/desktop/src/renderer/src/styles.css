@@ -6520,10 +6520,41 @@ input::placeholder {
 }
 
 .ide-pill-what {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
+}
+
+/*
+ * The reference, in two spans, and the split is what keeps the lines.
+ *
+ * One span ellipsised from the end threw the line range away first — the pill
+ * read `…/procedure-pricing/hcpc-pri…`, which names neither the file nor the
+ * lines. `pillReference` shortens the path at a directory boundary, and these
+ * rules decide what happens when even that does not fit: the path gives, the
+ * range does not.
+ */
+.ide-pill-ref {
+  display: flex;
+  align-items: baseline;
+}
+
+.ide-pill-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * `flex: none` is the guarantee, not a tidy-up. Everything else in the pill can
+ * be reconstructed by looking at the editor; which lines are going with the
+ * message cannot, so it is the one part that never shrinks.
+ */
+.ide-pill-lines {
+  flex: none;
 }
 
 /*
@@ -6628,7 +6659,15 @@ input::placeholder {
  * needs to while a truncated path does not.
  */
 .ide-pill-mark {
-  flex-shrink: 1;
+  /*
+   * The comment above said the mark gives up its width first, and until this
+   * number it did not. Both children sat at `flex-shrink: 1`, and flexbox
+   * distributes shrinkage in proportion to each item's *own* width — so the
+   * long path absorbed most of it and ellipsised while a nine-character
+   * `MR a1b2c3d` stayed almost whole, itself clipped to `MR`. A high factor is
+   * what actually expresses the priority the comment claims.
+   */
+  flex-shrink: 12;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

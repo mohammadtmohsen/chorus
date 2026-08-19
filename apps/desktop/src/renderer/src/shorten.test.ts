@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_CODE_SPAN, shortenCodeSpan } from './shorten.js'
+import { MAX_CODE_SPAN, pillReference, shortenCodeSpan } from './shorten.js'
 
 /**
  * The case this was written for, from a real message.
@@ -78,5 +78,58 @@ describe('shortenCodeSpan', () => {
     expect(shortened).toContain('…')
     expect(shortened.length).toBeLessThanOrEqual(MAX_CODE_SPAN)
     expect(long.startsWith(shortened.split('…')[0] ?? '')).toBe(true)
+  })
+})
+
+/**
+ * The composer pill, and the part of it that used to be thrown away.
+ *
+ * The reported case, verbatim: a deep path in a pane narrow enough that CSS
+ * elided the span, and because CSS elides from the end what went was the line
+ * range — the one thing in the pill you cannot read off the editor. The pill
+ * showed `…/procedure-pricing/hcpc-pri…` and named neither the file nor the
+ * lines.
+ */
+describe('pillReference', () => {
+  const reference = (relativePath: string, startLine: number, endLine: number) => ({
+    relativePath,
+    startLine,
+    endLine,
+    isEmpty: false,
+  })
+
+  it('keeps the lines and the file name of a path too long to show', () => {
+    const shown = pillReference(
+      reference('src/features/insurance-info/procedure-pricing/hcpc-pricing.tsx', 120, 135)
+    )
+    expect(shown.path).toBe('…/procedure-pricing/hcpc-pricing.tsx')
+    expect(shown.lines).toBe(':120-135')
+  })
+
+  /* `title` is the only place the elided directories still exist. */
+  it('carries the whole reference for the tooltip', () => {
+    const shown = pillReference(reference('src/a/b/c/d/e/f/g/h/i/j/k/verylongname.ts', 4, 31))
+    expect(shown.full).toBe('src/a/b/c/d/e/f/g/h/i/j/k/verylongname.ts:4-31')
+    expect(shown.path.length).toBeLessThan(shown.full.length)
+  })
+
+  it('leaves a short reference exactly as it is', () => {
+    const shown = pillReference(reference('src/a.ts', 12, 14))
+    expect(shown.path).toBe('src/a.ts')
+    expect(shown.lines).toBe(':12-14')
+    // What the e2e specs assert on `.ide-pill-what` — the two spans still read
+    // as one string, so splitting them changed no existing expectation.
+    expect(shown.path + shown.lines).toBe('src/a.ts:12-14')
+  })
+
+  /* A bare cursor collapses to one number, and it is still not elidable. */
+  it('splits a single-line reference too', () => {
+    const shown = pillReference({
+      relativePath: 'src/a.ts',
+      startLine: 12,
+      endLine: 12,
+      isEmpty: true,
+    })
+    expect(shown.lines).toBe(':12')
   })
 })

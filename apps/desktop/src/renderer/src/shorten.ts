@@ -1,4 +1,4 @@
-import { shortSha } from './editor-context.js'
+import { formatReference, shortSha, type EditorReference } from './editor-context.js'
 
 /**
  * Long identifiers in your own message, cut down to what identifies them.
@@ -87,6 +87,50 @@ function shortenPart(part: string): string {
  * Returns the input unchanged whenever there is nothing worth cutting, so a
  * caller can compare identity to decide whether a `title` is worth adding.
  */
+/**
+ * The composer pill's reference, in the three parts it has to be drawn in.
+ *
+ * The pill used to build its own `path:start-end` string and hand the whole
+ * thing to one span with `text-overflow: ellipsis`. CSS elides from the *end*,
+ * so the first thing thrown away was the line range — the one part of a
+ * reference you cannot reconstruct by looking at the editor, and the reason the
+ * pill is there at all. A real one read
+ * `src/features/insurance-info/procedure-pricing/hcpc-pri…`: no file name, no
+ * lines, and four directory names nobody needed.
+ *
+ * Two things fix it together, and both are needed. `shortenCodeSpan` cuts the
+ * path at a directory boundary so the *text* is short enough to fit — the same
+ * rule the transcript already uses, so a reference reads the same in both
+ * places. Splitting `lines` off then guarantees the rest: the caller pins that
+ * span against shrinking, so even in a pane too narrow for the shortened form
+ * the range survives and it is a directory that goes.
+ *
+ * `full` is what belongs on `title`, because eliding text without keeping the
+ * whole of it somewhere is just losing it.
+ */
+export interface PillReference {
+  /** The complete reference, for `title`. */
+  readonly full: string
+  /** Shortened, and the part that may be elided further. */
+  readonly path: string
+  /** `:12-18`, including the colon, and never elided. Empty if there is none. */
+  readonly lines: string
+}
+
+export function pillReference(reference: EditorReference): PillReference {
+  const full = formatReference(reference)
+  const shown = shortenCodeSpan(full)
+  /*
+   * The last colon, not the first: a path may contain one, and the line range
+   * is always the tail. `formatReference` always writes at least `:12`, so the
+   * empty case is unreachable through it — handled anyway rather than asserted,
+   * because a caller passing something else should degrade to "all path".
+   */
+  const cut = shown.lastIndexOf(':')
+  if (cut < 0) return { full, path: shown, lines: '' }
+  return { full, path: shown.slice(0, cut), lines: shown.slice(cut) }
+}
+
 export function shortenCodeSpan(text: string): string {
   /*
    * Shas first, and unconditionally.
