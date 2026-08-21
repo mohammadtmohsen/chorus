@@ -7,6 +7,60 @@ Downloaded builds are not notarized yet, so macOS objects on first launch.
 [Installing Chorus on macOS](docs/install-macos.md) covers every dialog,
 including the one that means something is actually wrong.
 
+## 0.20.0
+
+### Long conversations open quickly again
+
+Opening a conversation with thousands of messages froze the app — every window,
+not just the one you clicked. It read the entire history, parsed it, validated
+it twice, cloned it across a process boundary and mounted every row before
+anything appeared.
+
+It now reads the most recent stretch and fetches earlier pages as you scroll
+back. On the heaviest conversation in the author's own database the work of
+turning events into a transcript fell from **199 ms to under 1 ms**, and the
+work of putting it on screen from **752 ms to 33 ms**. Nothing is lost: scroll
+up and the rest arrives.
+
+Two-thirds of what used to cross the boundary never did anything. Command
+output, diff snapshots and the like were read and thrown away by the code that
+draws the transcript — 30% of the entire log on that database. They stay in the
+log, where they belong, and are no longer carried to a window that had no use
+for them.
+
+### Hook output can no longer fill your database
+
+A single `SessionStart` hook printing a task board wrote 47 MB of notices into
+one database — 29% of everything stored. Hook output is now capped, and a
+shortened notice says how much was left out.
+
+**A related fix worth stating plainly:** that text was never being scrubbed for
+credentials. Hooks run arbitrary shell commands, so their output can contain
+anything you have in your environment. It is now redacted before it is stored —
+and redacted _before_ it is shortened, so a token sitting across the cut cannot
+survive as an unrecognisable fragment.
+
+### Past conversations are reachable again
+
+The button that opens the list of every conversation the log holds had gone
+missing in an earlier redesign. The list was still built, still worked, and
+nothing anywhere could open it — so an ended conversation could not be found at
+all. It is back, in the rail beside the settings gear.
+
+### Changes have their own panel, and it works like an editor
+
+Reviewing what an agent wrote used to mean a single flat list. There is now a
+file tree beside the diff, with the file icons you already recognise, staging
+controls that read as buttons rather than glyphs, and a divider you can drag —
+which stays where you put it. Files open in a real editor view when you want
+one, with autosave.
+
+### Upgrading
+
+This release migrates your database on first launch. It takes well under a
+second on a large one, and it preserves questions an agent was already waiting
+on — those would otherwise have vanished from the transcript.
+
 ## 0.19.7
 
 ### The usage bars say whether your allowance is keeping up with the clock
