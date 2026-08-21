@@ -3841,4 +3841,75 @@ export const specs = [
       }
     },
   },
+
+  /**
+   * The Changes panel, bridged in from the script it already lives in.
+   *
+   * **Why it was outside the suite at all:** `changes-panel.mjs` predates being
+   * a spec. It builds a diverged repository, a bare remote and a symlink out of
+   * the project at module scope, launches twice because a session keeps the cwd
+   * it opened with, and reports through its own `say`. None of that fits
+   * `{ name, run(assert) }` without rewriting a thousand lines, so it was run by
+   * hand and `pnpm e2e` never touched it.
+   *
+   * That was tolerable when it covered one panel. It stopped being tolerable
+   * when the panel became the surface the diff, the icons, the SCM letters and
+   * the default view all live on — a regression in any of them could not fail
+   * the gate.
+   *
+   * **A subprocess rather than an import**, because that file does its work at
+   * module scope: importing it would run the fixture and both launches as a
+   * side effect of loading the registry, before the runner had started.
+   *
+   * Its own `ok`/`FAIL` lines are replayed through `assert` rather than
+   * collapsed into one exit-code check, so a failure names the claim that broke
+   * instead of saying the script exited 1. `assert` throws on the first
+   * failure, which is the runner's own semantics — the ✓ lines before it still
+   * print, so the output reads as far as the break.
+   *
+   * It costs about a minute and two more Electrons. That is the price of the
+   * panel being gated at all.
+   */
+  {
+    name: 'the Changes panel drives git end to end',
+    async run(assert) {
+      const { spawnSync } = await import('node:child_process')
+      const { fileURLToPath } = await import('node:url')
+      const script = fileURLToPath(new URL('./changes-panel.mjs', import.meta.url))
+
+      const result = spawnSync(process.execPath, [script], {
+        encoding: 'utf8',
+        // Not `inherit`: the child's own output is replayed below, and letting
+        // it through as well would print every claim twice.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10 * 60 * 1000,
+      })
+      const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+      const claims = output
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => /^(ok|FAIL)\s/.test(line))
+
+      /*
+       * No claims at all means it died before asserting — a build failure, a
+       * missing binary, a timeout. The runner's `AssertedNothing` guard would
+       * catch the silence, but not say why, so the tail goes in the message.
+       */
+      if (claims.length === 0) {
+        const tail = output.split('\n').slice(-12).join('\n')
+        assert(false, `changes-panel asserted nothing (exit ${String(result.status)})\n${tail}`)
+      }
+
+      for (const claim of claims) {
+        assert(claim.startsWith('ok'), claim.replace(/^(ok|FAIL)\s+—?\s*/, ''))
+      }
+
+      // Every claim passed but the process still failed: caught something the
+      // `ok`/`FAIL` lines do not cover, such as a throw after the last one.
+      assert(
+        result.status === 0,
+        `changes-panel exited ${String(result.status)} with every claim passing`
+      )
+    },
+  },
 ]

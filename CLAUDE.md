@@ -287,6 +287,28 @@ enforces this (`UNIVERSAL_DENIES` may not carry a `pathPattern`).
   `@xterm/headless` + `@xterm/addon-serialize` in main, because VT state is
   cumulative and a trimmed ring of raw bytes loses the alternate-screen entry
   that came before it.
+- **`monaco-editor` is the second exception, and it was measured before it was
+  accepted.** It arrived on a branch as the _default_ diff view without an
+  argument attached, which is the failure mode the xterm entry exists to
+  prevent — so it was priced rather than grandfathered. Two builds from one
+  tree, the second with `MonacoDiff` aliased to a stub, put it at **4.87 MB** on
+  the main chunk (6,639,312 B against 1,767,433 B) plus a 598 KB worker and 82
+  lazy grammar chunks. Paired first-paint measurement found **no detectable
+  penalty** — the paired median was −8 ms, though with differences spanning
+  −572 to +460 ms, which is far too wide to claim the penalty is _under_ any
+  particular bound; "none measured" is not "proven small", and why a 3.75×
+  bundle difference costs nothing at first paint is **unexplained** (lazy V8
+  compilation is a guess, not a finding) — but a shared
+  panel-open-to-content boundary found it
+  costs **~156 ms more than the hand-written hunks viewer**, every one of ten
+  paired runs in the same direction. So: **hunks is the default and the fast
+  review path; Monaco is the opt-in Editor view** for whole-file navigation,
+  intra-line detail, folding and `⌘S`. The import stays **static**, because
+  making it lazy would move the chunk fetch onto exactly the opt-in transition a
+  user chose deliberately. The 4.87 MB is an accepted distribution cost, not a
+  free one. `FileDiff.tsx` is therefore not a fallback awaiting deletion — it is
+  the primary viewer, and the 7.1× DOM-node advantage that kept it is why.
+  Details in `docs/plans/the-editor-you-already-know-2026-08-20/plan.md`.
 - **No hardcoded user-facing strings** — `i18n/en.json`. The reducers have no
   translator, which is why events carry keys (`notice.source`) and the renderer
   turns them into words.

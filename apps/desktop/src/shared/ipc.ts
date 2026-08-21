@@ -117,7 +117,31 @@ export const SettingsShape = z.object({
    * and the system locale is a fact about the machine rather than the person.
    */
   explainLanguage: z.string().default('').transform(normaliseExplainLanguage),
+  /**
+   * Appearance, global rather than per conversation.
+   *
+   * Must track `Settings` in `main/settings.ts`. `.default(...)` matters as much
+   * here as there: a required field would reject every settings payload written
+   * before this shipped.
+   */
+  theme: z.enum(['system', 'light', 'dark']).default('system'),
 })
+
+/**
+ * One side of a file comparison, mirroring `FileVersion` in `@chorus/workspace`.
+ *
+ * Restated rather than imported, the way `IdeStatusShape` mirrors the
+ * protocol's statuses: the renderer must not take a dependency on the git
+ * package. Drift is not silent — the handler builds this from a `FileVersion`
+ * and would stop typechecking.
+ */
+export const FileVersionShape = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('text'), text: z.string() }),
+  z.object({ kind: z.literal('absent') }),
+  z.object({ kind: z.literal('binary') }),
+  z.object({ kind: z.literal('tooLarge') }),
+])
+export type FileVersionShape = z.infer<typeof FileVersionShape>
 
 export const ApprovalChoice = z.object({
   conversationId: z.string(),
@@ -270,6 +294,46 @@ export const TerminalRefShape = z.discriminatedUnion('scope', [
   z.object({ scope: z.literal('session'), conversationId: z.string(), id: z.string() }),
 ])
 export type TerminalRefShape = z.infer<typeof TerminalRefShape>
+
+/**
+ * What a paged transcript read cannot fold for itself.
+ *
+ * Kept beside the channel rather than derived from the store's own type, because
+ * this is the wire contract: main validates it on the way out and preload on the
+ * way in, and a shape imported from the store would make those two checks agree
+ * with each other for the wrong reason.
+ */
+const TranscriptStateShape = z.object({
+  approvals: z.array(
+    z.object({
+      approvalId: z.string(),
+      agentId: z.string(),
+      kind: z.string(),
+      request: z.unknown(),
+      expiresAt: z.number().int(),
+    })
+  ),
+  questions: z.array(
+    z.object({
+      userInputId: z.string(),
+      eventId: z.string(),
+      agentId: z.string(),
+      request: z.unknown(),
+      expiresAt: z.number().int(),
+    })
+  ),
+  working: z.array(z.string()),
+  usageByActor: z.record(
+    z.string(),
+    z.object({
+      inputTokens: z.number(),
+      outputTokens: z.number(),
+      costUsd: z.number().nullable(),
+    })
+  ),
+})
+
+export type TranscriptStatePayload = z.infer<typeof TranscriptStateShape>
 
 export const IPC_CONTRACT = {
   'app:getInfo': { request: z.void(), response: AppInfo },
@@ -742,6 +806,55 @@ export const IPC_CONTRACT = {
     request: z.object({ conversationId: z.string(), afterSeq: z.number().int().optional() }),
     response: z.array(TranscriptEvent),
   },
+  /**
+   * The transcript's own read: only the events it draws, plus how far it got.
+   *
+   * Separate from `conversation:history` rather than a filter on it, because
+   * that channel has three consumers with different appetites — `SummaryPanel`
+   * counts failures from `command.completed`, and the e2e specs assert on
+   * `repo.changed.byUser`. Narrowing the shared one would have broken both
+   * without a word.
+   *
+   * **`throughSeq` is not decoration.** `Session` asks for everything after
+   * `view.lastSeq`, and the reducer advances `lastSeq` from the events it
+   * renders. Filter the newest events away — and `command.output` is the
+   * commonest event in the log, so this is the normal case rather than an edge
+   * — and the response is empty, `lastSeq` never moves, and the same rows are
+   * queried again on every push. Forever. The caller advances to
+   * `max(lastSeq, throughSeq)` *without* feeding the skipped events to the
+   * reducer: a filter that forgets what it filtered is a loop.
+   */
+  'conversation:transcript': {
+    request: z.object({
+      conversationId: z.string(),
+      /** Incremental catch-up: everything since. The live path. */
+      afterSeq: z.number().int().optional(),
+      /**
+       * Paging: the newest `limit` events *before* this seq.
+       *
+       * Absent with `limit` present means the first page — the newest `limit`
+       * events, which is what opening a conversation wants. `afterSeq` and
+       * `beforeSeq` are different questions and never combine: one asks what has
+       * happened since, the other what was said before.
+       */
+      beforeSeq: z.number().int().optional(),
+      limit: z.number().int().positive().optional(),
+    }),
+    response: z.object({
+      events: z.array(TranscriptEvent),
+      /** The log position this read covered, including events it filtered out. */
+      throughSeq: z.number().int(),
+      /**
+       * State a page cannot contain, queried rather than folded.
+       *
+       * Present only on a read that is not incremental — a catch-up already has
+       * the state in the view it is being folded into. A page is a *suffix*, so
+       * an approval requested before it, a question still waiting, or what has
+       * been spent are all invisible to the events it returns.
+       */
+      state: TranscriptStateShape.optional(),
+    }),
+  },
   'approval:decide': {
     request: ApprovalChoice,
     response: z.object({ ok: z.literal(true) }),
@@ -940,7 +1053,29 @@ export const IPC_CONTRACT = {
    * differ after a crash, a manual edit, or a denied approval.
    */
   'workspace:read': {
-    request: z.object({ conversationId: z.string() }),
+    request: z.object({
+      conversationId: z.string(),
+      /**
+       * Compare against this branch instead of showing uncommitted work.
+       *
+       * Optional, so the old call — and the modal review sheet that still makes
+       * it — keeps meaning exactly what it did.
+       */
+      base: z.string().optional(),
+      committedOnly: z.boolean().optional(),
+      /**
+       * Whether the caller will render the hunks.
+       *
+       * The Changes panel says `false` while it is showing Monaco, which aligns
+       * two whole files fetched through `workspace:fileVersions` and never
+       * looks at a hunk. Every file still comes back with its counts and its
+       * status letter, so the list is identical — what is skipped is building,
+       * validating twice and cloning several thousand line objects that nothing
+       * renders. Absent means true, so `ReviewPanel` and the handoff are
+       * unchanged.
+       */
+      hunks: z.boolean().optional(),
+    }),
     response: z.object({
       status: z.object({
         branch: z.string().nullable(),
@@ -952,7 +1087,18 @@ export const IPC_CONTRACT = {
           z.object({
             path: z.string(),
             from: z.string().optional(),
-            state: z.enum(['added', 'modified', 'deleted', 'renamed', 'untracked', 'conflicted']),
+            // Must track `FileState` in `packages/workspace/src/status.ts`.
+            // `ignored` is absent there by decision, not by omission.
+            state: z.enum([
+              'added',
+              'modified',
+              'deleted',
+              'renamed',
+              'copied',
+              'typechanged',
+              'untracked',
+              'conflicted',
+            ]),
             staged: z.boolean(),
             unstaged: z.boolean(),
           })
@@ -965,6 +1111,11 @@ export const IPC_CONTRACT = {
           added: z.number().int(),
           removed: z.number().int(),
           binary: z.boolean(),
+          // Computed by `parseDiff` from git's own headers and, until 2026-08-19,
+          // dropped here — so the renderer could not tell an added file from a
+          // renamed one and would have had to guess from the hunks, which
+          // `diff.ts` explicitly warns against.
+          status: z.enum(['added', 'removed', 'modified', 'renamed']),
           hunks: z.array(
             z.object({
               header: z.string(),
@@ -981,7 +1132,167 @@ export const IPC_CONTRACT = {
         })
       ),
       problem: z.string().nullable(),
+      /**
+       * Which baseline the diff is against, or null for the working tree.
+       *
+       * Null also when a base was asked for and could not be resolved — the diff
+       * is then empty and `problem` says why. A panel labelled "vs develop" that
+       * is quietly showing something else is worse than one showing nothing.
+       */
+      comparison: z.object({ base: z.string(), mergeBase: z.string() }).nullable().default(null),
     }),
+  },
+  /**
+   * The branches a base picker can offer, most recently committed first.
+   *
+   * Separate from `workspace:read` because it changes on a different clock: the
+   * diff is re-read whenever the tree moves, and the branch list only when
+   * someone opens the picker.
+   */
+  'workspace:branches': {
+    request: z.object({ conversationId: z.string() }),
+    response: z.object({
+      branches: z.array(z.object({ name: z.string(), remote: z.boolean(), head: z.boolean() })),
+      problem: z.string().nullable(),
+    }),
+  },
+  /**
+   * One directory of the project, for the file tree.
+   *
+   * One directory per call, not a walk: a recursive listing of a repository
+   * with `node_modules` is hundreds of thousands of entries crossing IPC to
+   * draw a tree that is collapsed. `path` is repo-relative; `''` is the root.
+   */
+  'workspace:tree': {
+    request: z.object({ conversationId: z.string(), path: z.string() }),
+    response: z.object({
+      entries: z.array(z.object({ name: z.string(), path: z.string(), directory: z.boolean() })),
+      problem: z.string().nullable(),
+    }),
+  },
+  /**
+   * One file's two versions, whole, for an editor that aligns them itself.
+   *
+   * Separate from `workspace:read` and requested per file on purpose: the panel
+   * lists forty changed files and shows one, and sending every file's full text
+   * to draw a list would be most of a repository over IPC.
+   */
+  'workspace:fileVersions': {
+    request: z.object({
+      conversationId: z.string(),
+      path: z.string(),
+      base: z.string().optional(),
+      committedOnly: z.boolean().optional(),
+    }),
+    response: z.object({
+      /**
+       * `absent` is an answer, not a failure — a file added on this branch has
+       * no original side, and a deleted one has no modified side.
+       */
+      original: FileVersionShape,
+      modified: FileVersionShape,
+      /**
+       * A digest of the working-tree bytes this read saw.
+       *
+       * Echoed back on save so a write can be refused when the file moved
+       * underneath the editor. Null when the modified side did not come from
+       * disk — an absent file, a binary one, or a `committedOnly` comparison —
+       * none of which is writable anyway.
+       */
+      sha: z.string().nullable(),
+      problem: z.string().nullable(),
+    }),
+  },
+  /**
+   * The person saving a file they edited in Chorus.
+   *
+   * **The first write into a project tree this app has ever had.** Everything
+   * else that mutates a project goes through an agent's CLI and the approval
+   * gate; this does not, and deliberately — the engine exists to decide what an
+   * *agent* may do on someone's behalf, and a person editing their own file on
+   * their own machine has already given the only consent there is.
+   *
+   * What the engine's primitive is for here is the path: every write resolves
+   * through `resolveWithinRoot`, so a `..` cannot escape however it arrived.
+   */
+  'workspace:write': {
+    request: z.object({
+      conversationId: z.string(),
+      path: z.string(),
+      content: z.string(),
+      /**
+       * The digest the editor loaded, so a save that would overwrite someone
+       * else's work is refused rather than silently winning.
+       *
+       * Null means "there was no file when I loaded this" — a save that creates
+       * one. The check is the same either way: what is on disk now has to match
+       * what the editor was looking at.
+       */
+      expectedSha: z.string().nullable(),
+      /** Save anyway, after the conflict has been shown and accepted. */
+      force: z.boolean().optional(),
+    }),
+    response: z.object({
+      /**
+       * `conflict` is not a failure — it is the file having moved, and the only
+       * outcome the panel offers a choice about.
+       */
+      outcome: z.enum(['written', 'conflict', 'failed']),
+      problem: z.string().nullable(),
+      /** What was appended to the log, so the caller knows the agents were told. */
+      added: z.number().int(),
+      removed: z.number().int(),
+      /**
+       * The digest of what was written, for the editor to save against next.
+       *
+       * Autosave writes repeatedly, and every write after the first would be
+       * refused as stale without this — the editor's loaded `sha` describes a
+       * version its own previous save replaced. Null unless the outcome is
+       * `written`.
+       */
+      sha: z.string().nullable().default(null),
+    }),
+  },
+  /**
+   * Source control the person drives from the panel.
+   *
+   * One channel rather than five, because the shape is the same and the
+   * difference is a verb. Every one of these is a *mutation the user asked
+   * for*: no adapter can reach them, and the permission engine is not
+   * consulted, because the engine decides what an **agent** may do on someone's
+   * behalf and this is the someone.
+   *
+   * `discard` is the only one that destroys work, and the only one the panel
+   * confirms first — see `ConfirmDiscard`. The refusal to offer `--force` on a
+   * push is in `git-write.ts`, where it belongs.
+   */
+  'workspace:git': {
+    request: z.object({
+      conversationId: z.string(),
+      action: z.enum(['stage', 'unstage', 'discard', 'commit', 'push']),
+      /** For stage/unstage/discard. Empty for the rest. */
+      paths: z.array(z.string()).default([]),
+      /** For commit. */
+      message: z.string().optional(),
+      /** For push, when the branch has no upstream yet. */
+      setUpstream: z.boolean().optional(),
+    }),
+    response: z.object({
+      problem: z.string().nullable(),
+      /** The new commit, or the branch pushed — whatever names what happened. */
+      detail: z.string().nullable(),
+    }),
+  },
+  /**
+   * Move remote-tracking refs, so a base branch is current.
+   *
+   * A request and never a timer. It talks to the network on someone else's
+   * connection and can prompt for a passphrase, which is not a thing to do
+   * behind their back — see `fetchRef`.
+   */
+  'workspace:fetch': {
+    request: z.object({ conversationId: z.string(), remote: z.string().optional() }),
+    response: z.object({ problem: z.string().nullable() }),
   },
   /** Recent log entries, already redacted as they were written. */
   /**
@@ -1331,6 +1642,25 @@ export type LimitsPush = z.infer<typeof LimitsPush>
  * them together would mean a number that is only true for the pane you happen
  * to be looking at arriving on a channel that is not about panes.
  */
+/**
+ * A nudge that a repository moved. **Not the diff.**
+ *
+ * State, not history, and it is never written to the log: git is already the
+ * durable record of what is on disk, so a second copy in SQLite would be a
+ * history of a number that goes backwards every time someone checks out a
+ * branch. Reading it back a week later would be worse than having none.
+ *
+ * The payload is deliberately just an id. Each panel is showing its own base —
+ * one may be against `develop`, another against the working tree — so main
+ * cannot know what to recompute, and sending "something changed" lets every
+ * panel re-ask for the thing it is actually displaying. It also keeps the
+ * watcher cheap: no diff runs unless a panel is open to want one.
+ */
+export const WORKSPACE_PUSH_CHANNEL = 'workspace:changed'
+
+export const WorkspaceChangedPush = z.object({ conversationId: z.string() })
+export type WorkspaceChangedPush = z.infer<typeof WorkspaceChangedPush>
+
 export const CONTEXT_PUSH_CHANNEL = 'agents:context'
 
 export const ContextUsagePush = z.object({
@@ -1569,6 +1899,9 @@ export interface ChorusApi {
   readonly history: (
     request: IpcRequest<'conversation:history'>
   ) => Promise<IpcResponse<'conversation:history'>>
+  readonly transcript: (
+    request: IpcRequest<'conversation:transcript'>
+  ) => Promise<IpcResponse<'conversation:transcript'>>
   readonly decideApproval: (request: ApprovalChoice) => Promise<{ ok: true }>
   readonly answerQuestion: (request: QuestionAnswer) => Promise<{ ok: true }>
   readonly profiles: () => Promise<IpcResponse<'policy:profiles'>>
@@ -1578,6 +1911,26 @@ export interface ChorusApi {
   readonly readWorkspace: (
     request: IpcRequest<'workspace:read'>
   ) => Promise<IpcResponse<'workspace:read'>>
+  readonly readBranches: (
+    request: IpcRequest<'workspace:branches'>
+  ) => Promise<IpcResponse<'workspace:branches'>>
+  readonly fetchRemote: (
+    request: IpcRequest<'workspace:fetch'>
+  ) => Promise<IpcResponse<'workspace:fetch'>>
+  readonly readTree: (
+    request: IpcRequest<'workspace:tree'>
+  ) => Promise<IpcResponse<'workspace:tree'>>
+  readonly writeProjectFile: (
+    request: IpcRequest<'workspace:write'>
+  ) => Promise<IpcResponse<'workspace:write'>>
+  readonly runGitAction: (
+    request: IpcRequest<'workspace:git'>
+  ) => Promise<IpcResponse<'workspace:git'>>
+  readonly readFileVersions: (
+    request: IpcRequest<'workspace:fileVersions'>
+  ) => Promise<IpcResponse<'workspace:fileVersions'>>
+  /** Fires when a conversation's repository moves. Carries no diff — see the channel. */
+  readonly onWorkspaceChanged: (listener: (payload: WorkspaceChangedPush) => void) => () => void
   readonly ideExtensionStatus: () => Promise<IpcResponse<'ide:extensionStatus'>>
   readonly ideInstallExtension: () => Promise<IpcResponse<'ide:installExtension'>>
   readonly ideOpenProject: (

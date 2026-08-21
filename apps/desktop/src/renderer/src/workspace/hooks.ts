@@ -3,7 +3,9 @@ import { useShallow } from 'zustand/react/shallow'
 import type { AgentId } from '@chorus/shared'
 import type { SessionRowState } from './session-row.js'
 import {
+  CLOSED_CHANGES_PANEL,
   CLOSED_TERMINAL_PANEL,
+  type ChangesPanelState,
   type TerminalPanelState,
   type WorkspaceLayoutNode,
   type WorkspacePane,
@@ -72,6 +74,16 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     removeSessionTerminalTab,
     activateGlobalTerminal,
     activateSessionTerminal,
+    toggleSessionChanges,
+    setSessionChangesHeight,
+    setSessionChangesWidth,
+    setSessionChangesListWidth,
+    setSessionChangesBase,
+    setSessionChangesCommittedOnly,
+    setSessionChangesSelection,
+    setSessionChangesView,
+    setSessionChangesColumn,
+    toggleSessionChangesExpanded,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -107,6 +119,16 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     removeSessionTerminalTab,
     activateGlobalTerminal,
     activateSessionTerminal,
+    toggleSessionChanges,
+    setSessionChangesHeight,
+    setSessionChangesWidth,
+    setSessionChangesListWidth,
+    setSessionChangesBase,
+    setSessionChangesCommittedOnly,
+    setSessionChangesSelection,
+    setSessionChangesView,
+    setSessionChangesColumn,
+    toggleSessionChangesExpanded,
     ingestEvents,
     ingestContextUsage,
     ingestTasks,
@@ -164,6 +186,17 @@ export function useGlobalTerminal(): TerminalPanelState {
  */
 export function useSessionTerminal(conversationId: string): TerminalPanelState {
   return useWorkspaceStore((state) => state.terminals[conversationId] ?? CLOSED_TERMINAL_PANEL)
+}
+
+/**
+ * One conversation's Changes panel.
+ *
+ * `CLOSED_CHANGES_PANEL` is a module constant for the reason `useSessionTerminal`
+ * gives directly above: a fresh object literal in the selector never equals
+ * itself, and the pane would re-render on every store change.
+ */
+export function useSessionChanges(conversationId: string): ChangesPanelState {
+  return useWorkspaceStore((state) => state.changes[conversationId] ?? CLOSED_CHANGES_PANEL)
 }
 
 export function useSidebarHidden(): boolean {

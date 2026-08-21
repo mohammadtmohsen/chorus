@@ -52,7 +52,25 @@ export interface DiffFile {
 const FILE_HEADER = /^diff --git a\/(.+?) b\/(.+)$/
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/
 
-export function parseDiff(source: string): DiffFile[] {
+export interface ParseDiffOptions {
+  /**
+   * Build the line-by-line hunks, or only the per-file summary.
+   *
+   * `false` still returns every file with its real `added`, `removed`, `status`
+   * and `binary` — everything a changed-files list draws — and leaves `hunks`
+   * empty. It exists because the Changes panel's default view is Monaco, which
+   * aligns two whole files and never reads a hunk: the panel was parsing every
+   * line of every file into an object, validating it twice across the IPC
+   * boundary, structured-cloning it, and rendering none of it.
+   *
+   * Measured on this repository at 26 files and 3,272 diff lines: 88ms for the
+   * read, of which git itself was 40ms. The rest was this.
+   */
+  readonly hunks?: boolean
+}
+
+export function parseDiff(source: string, options: ParseDiffOptions = {}): DiffFile[] {
+  const wantsHunks = options.hunks !== false
   const files: DiffFile[] = []
   const lines = source.split('\n')
   // `split` leaves a trailing empty element for the final newline. Keeping it
@@ -69,12 +87,23 @@ export function parseDiff(source: string): DiffFile[] {
     status: DiffFile['status']
   } | null = null
   let hunk: { header: string; lines: DiffLine[] } | null = null
+  /*
+   * Whether we are inside a hunk's body, tracked apart from `hunk` itself.
+   *
+   * With `hunks: false` there is no object to be inside, and the old
+   * `if (hunk === null) continue` sat *above* the counting — so reusing it as
+   * the position flag would have returned every file with `+0 −0`. The list is
+   * the thing that survives this option; silently zeroing its numbers would be
+   * a worse bug than the cost it saves.
+   */
+  let inHunk = false
   let before = 0
   let after = 0
 
   const closeHunk = (): void => {
     if (current !== null && hunk !== null) current.hunks.push(hunk)
     hunk = null
+    inHunk = false
   }
   const closeFile = (): void => {
     closeHunk()
@@ -122,37 +151,39 @@ export function parseDiff(source: string): DiffFile[] {
       closeHunk()
       before = Number(hunkHeader[1] ?? 1)
       after = Number(hunkHeader[3] ?? 1)
-      hunk = { header: line, lines: [] }
+      inHunk = true
+      hunk = wantsHunks ? { header: line, lines: [] } : null
       continue
     }
-    if (hunk === null) continue
+    if (!inHunk) continue
 
     // "\ No newline at end of file" is metadata about the previous line, not a
     // change; showing it as context would imply a line that is not there.
     if (line.startsWith('\\')) {
-      hunk.lines.push({ kind: 'meta', text: line.slice(1).trim() })
+      hunk?.lines.push({ kind: 'meta', text: line.slice(1).trim() })
       continue
     }
 
+    // `line.slice(1)` only where a line object is being built. It is one string
+    // allocation per diff line, and skipping it is most of what this saves.
     const marker = line[0]
-    const text = line.slice(1)
 
     if (marker === '+') {
-      hunk.lines.push({ kind: 'added', text, after })
+      hunk?.lines.push({ kind: 'added', text: line.slice(1), after })
       after += 1
       current.added += 1
     } else if (marker === '-') {
-      hunk.lines.push({ kind: 'removed', text, before })
+      hunk?.lines.push({ kind: 'removed', text: line.slice(1), before })
       before += 1
       current.removed += 1
     } else if (marker === ' ') {
-      hunk.lines.push({ kind: 'context', text, before, after })
+      hunk?.lines.push({ kind: 'context', text: line.slice(1), before, after })
       before += 1
       after += 1
     } else if (line === '') {
       // Some tools strip the trailing space from an empty context line, so an
       // interior blank still counts as unchanged content.
-      hunk.lines.push({ kind: 'context', text: '', before, after })
+      hunk?.lines.push({ kind: 'context', text: '', before, after })
       before += 1
       after += 1
     }

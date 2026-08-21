@@ -2,6 +2,8 @@ import { parseDiff } from '@chorus/workspace/diff'
 import type { AgentId } from '@chorus/shared'
 import { trailingSummary } from '../../shared/markdown.js'
 import { questionFields, type QuestionField } from '../../shared/question-text.js'
+import { TRANSCRIPT_DISPOSITION } from '../../shared/transcript-events.js'
+import type { ChorusEventType } from '@chorus/event-store'
 import type { TranscriptEvent } from '../../shared/ipc.js'
 
 /**
@@ -74,6 +76,13 @@ export interface TranscriptMessage {
    */
   readonly detail?: string
   /**
+   * Notices only: bytes dropped from `detail` because it was too large.
+   *
+   * A number, not a sentence: the reducer has no translator — the same reason
+   * `noticeSource` is a key. `Entry` turns it into words.
+   */
+  readonly detailOmittedBytes?: number
+  /**
    * Tools only: the provider's id for the call, so later events find this row.
    *
    * A subagent is reported twice — once as the `Task` tool call, then again by
@@ -122,7 +131,11 @@ export interface TranscriptMessage {
    * Absent for a lone notice, so a single hook still reads as a sentence rather
    * than as a group of one.
    */
-  readonly folded?: readonly { readonly text: string; readonly detail?: string }[]
+  readonly folded?: readonly {
+    readonly text: string
+    readonly detail?: string
+    readonly detailOmittedBytes?: number
+  }[]
   /** `changes` only: the files this turn wrote, one row each. */
   readonly changes?: readonly ChangedFile[]
   /**
@@ -206,6 +219,14 @@ export interface TranscriptView {
   readonly working: readonly TranscriptEvent['actor'][]
   readonly busy: boolean
   readonly lastSeq: number
+  /**
+   * The oldest `seq` this view holds, and what an earlier page is asked for.
+   *
+   * `0` means nothing has been loaded yet, or the beginning has been reached —
+   * the two are distinguished by `messages.length`, not by this number, because
+   * `seq` is 1-based and there is no sentinel below it that is not also a lie.
+   */
+  readonly firstSeq: number
   readonly spend: Spend
   /** The latest total each agent reported, which `spend` is the sum of. */
   readonly usageByActor: Readonly<Record<string, Spend>>
@@ -232,6 +253,7 @@ export const EMPTY_VIEW: TranscriptView = {
   working: [],
   busy: false,
   lastSeq: 0,
+  firstSeq: 0,
   spend: { inputTokens: 0, outputTokens: 0, costUsd: null },
   usageByActor: {},
   openChanges: { codex: null, claude: null },
@@ -247,6 +269,7 @@ interface Mutable {
   working: TranscriptEvent['actor'][]
   busy: boolean
   lastSeq: number
+  firstSeq: number
 }
 
 export function reduceEvents(
@@ -260,6 +283,7 @@ export function reduceEvents(
     working: [...view.working],
     busy: view.busy,
     lastSeq: view.lastSeq,
+    firstSeq: view.firstSeq,
     spend: view.spend,
     usageByActor: { ...view.usageByActor },
     openChanges: { ...view.openChanges },
@@ -270,11 +294,187 @@ export function reduceEvents(
     // deduplication a comparison rather than a guess.
     if (event.seq <= next.lastSeq) continue
     next.lastSeq = event.seq
+    if (next.firstSeq === 0) next.firstSeq = event.seq
+    /*
+     * The disposition map decides, here, rather than the switch below quietly
+     * having no case.
+     *
+     * `conversation:transcript` never *reads* an ignored type, but the live push
+     * still delivers every type — so without this line the two paths disagree by
+     * construction, and the disagreement is invisible. Add a case for
+     * `command.completed` tomorrow and it would work perfectly while the app is
+     * open and vanish the moment the conversation is reopened, because the read
+     * that rebuilds it does not ask for that type. A reviewer found that the
+     * total map alone does not prevent this: it forces a *new* event type to be
+     * classified and says nothing about behaviour being added to an ignored one.
+     *
+     * After `lastSeq`, never before. `throughSeq` depends on these events
+     * advancing the high-water mark; skipping them earlier would re-query them
+     * forever.
+     */
+    if (TRANSCRIPT_DISPOSITION[event.type as ChorusEventType] === 'ignore') continue
     apply(next, event)
   }
 
   next.busy = next.working.length > 0
   return next
+}
+
+/**
+ * Puts the state a page cannot contain into the view it was read alongside.
+ *
+ * **This is the other half of paging.** `prependEvents` handles rows; everything
+ * accumulated — an approval requested thousands of events ago, a question still
+ * waiting, who is mid-turn, what has been spent — comes from `transcriptState`
+ * in the store, which reads projections and indexed queries rather than folding.
+ * A suffix of the log cannot produce any of it.
+ *
+ * The approvals and questions are rebuilt with the **same helpers the reducer
+ * uses**, not with a second formatter. `summarize` in particular has an ordering
+ * trap the codebase already records — it branches on approval kind before
+ * reading `toolName` — and two call sites that drift would show it as an
+ * approval card whose wording changes depending on how the transcript was
+ * loaded.
+ */
+export function applyTranscriptState(
+  view: TranscriptView,
+  state: {
+    readonly approvals: readonly {
+      approvalId: string
+      agentId: string
+      kind: string
+      request: unknown
+      expiresAt: number
+    }[]
+    readonly questions: readonly {
+      userInputId: string
+      eventId: string
+      agentId: string
+      request: unknown
+      expiresAt: number
+    }[]
+    readonly working: readonly string[]
+    readonly usageByActor: Readonly<Record<string, Spend>>
+  }
+): TranscriptView {
+  const approvals: PendingApproval[] = state.approvals.map((a) => {
+    const payload = { kind: a.kind, request: a.request } as Record<string, unknown>
+    return {
+      approvalId: a.approvalId,
+      agentId: a.agentId as TranscriptEvent['actor'],
+      kind: a.kind,
+      summary: summarize(payload),
+      detail: detailOf(payload),
+      expiresAt: a.expiresAt,
+    }
+  })
+
+  const questions: PendingQuestion[] = state.questions
+    .map((q) => ({
+      userInputId: q.userInputId,
+      eventId: q.eventId,
+      agentId: q.agentId as TranscriptEvent['actor'],
+      questions: questionFields(q.request),
+      expiresAt: q.expiresAt,
+    }))
+    // A question set with no fields is not something anyone can answer; the
+    // reducer drops it for the same reason.
+    .filter((q) => q.questions.length > 0)
+
+  const working = state.working as readonly TranscriptEvent['actor'][]
+
+  // Summed here rather than stored, because `spend` is the total across agents
+  // and `usageByActor` is what it is a sum of.
+  const spend = Object.values(state.usageByActor).reduce<Spend>(
+    (total, one) => ({
+      inputTokens: total.inputTokens + one.inputTokens,
+      outputTokens: total.outputTokens + one.outputTokens,
+      costUsd:
+        one.costUsd === null && total.costUsd === null
+          ? null
+          : (total.costUsd ?? 0) + (one.costUsd ?? 0),
+    }),
+    { inputTokens: 0, outputTokens: 0, costUsd: null }
+  )
+
+  return {
+    ...view,
+    approvals,
+    questions,
+    working: [...working],
+    busy: working.length > 0,
+    spend,
+    usageByActor: { ...state.usageByActor },
+  }
+}
+
+/**
+ * Folds an **earlier** page in ahead of what is already held.
+ *
+ * **A second entry point, not a relaxed guard.** `reduceEvents` skips anything at
+ * or below `lastSeq`, and that guard is what makes the live stream safe — it is
+ * the same guard that silently discarded a hundred backfilled rows when a push
+ * overtook the initial read, which is why `Session` buffers pushes until the
+ * first page lands. Loosening it so a prepend could get through would put that
+ * failure back for every live event. Two entry points with two guards is the
+ * version where neither has to be right about direction.
+ *
+ * **Rows only.** Everything else a fold produces — approvals, questions,
+ * working, spend — is *accumulated* state, and an earlier page is a suffix of
+ * the conversation's beginning rather than its end, so folding it would produce
+ * an approval that was decided later, a turn that has since finished, a usage
+ * total from before most of the tokens were spent. That state comes from
+ * `transcriptState`, queried, and this must not touch it.
+ *
+ * `openChanges` is untouched for the same reason and one more: it is held
+ * *between* events within a turn, so it is only meaningful in the newest page.
+ */
+export function prependEvents(
+  view: TranscriptView,
+  older: readonly TranscriptEvent[]
+): TranscriptView {
+  if (older.length === 0) return view
+
+  // Folded from empty so the rows are built by exactly the same cases that build
+  // them anywhere else — there is no second row-builder to keep in step.
+  const rows = reduceEvents(EMPTY_VIEW, older).messages
+  if (rows.length === 0) {
+    // A page of nothing renderable still moves the boundary, or the next request
+    // asks for the same range forever. The same reasoning as `throughSeq`.
+    return { ...view, firstSeq: older[0]?.seq ?? view.firstSeq }
+  }
+
+  return {
+    ...view,
+    messages: [...rows, ...view.messages],
+    firstSeq: older[0]?.seq ?? view.firstSeq,
+  }
+}
+
+/**
+ * Folds one `conversation:transcript` response, high-water mark included.
+ *
+ * Extracted from `Session` so the rule can be tested without mounting a pane —
+ * the judgement is here, the component is plumbing.
+ *
+ * **Advance past what was filtered, not just past what was drawn.** The read
+ * excludes the types the transcript has no case for, and `command.output` is the
+ * commonest event in the log, so the newest rows are routinely ones that never
+ * arrive. Reducing alone would leave `lastSeq` behind them and re-query the same
+ * range on every push, forever. `throughSeq` is the position the read actually
+ * covered.
+ *
+ * `max`, not assignment: a live push can carry the view past `throughSeq` while
+ * the read is in flight, and moving `lastSeq` *backwards* would replay events
+ * the view already holds.
+ */
+export function reduceTranscriptRead(
+  view: TranscriptView,
+  events: readonly TranscriptEvent[],
+  throughSeq: number
+): TranscriptView {
+  const next = reduceEvents(view, events)
+  return next.lastSeq >= throughSeq ? next : { ...next, lastSeq: throughSeq }
 }
 
 function apply(view: Mutable, event: TranscriptEvent): void {
@@ -656,6 +856,31 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       return
 
     /*
+     * A hand edit belongs in the transcript, not only in catch-up.
+     *
+     * The agents are told through `catchup.ts`; this is so the *person*
+     * scrolling back can see why an agent suddenly re-read a file, and why its
+     * next patch looks different from the one before. Otherwise the
+     * conversation has a cause with no visible event.
+     *
+     * A notice rather than a message: it is something that happened, not
+     * something that was said, and filing it as speech would put words in the
+     * user's mouth in their own transcript — the argument `sendUserMessage`
+     * already makes about what gets logged.
+     */
+    case 'file.edited.byUser':
+      view.messages.push({
+        key: event.id,
+        eventId: event.id,
+        at: event.createdAt,
+        actor: 'user',
+        kind: 'notice',
+        text: `edited ${str('path')}`,
+        status: 'complete',
+      })
+      return
+
+    /*
      * The line above which the agent no longer remembers verbatim.
      *
      * Everything before this stays on screen and still reads as shared history,
@@ -745,7 +970,12 @@ function apply(view: Mutable, event: TranscriptEvent): void {
       const level = raw === 'warn' || raw === 'error' ? raw : 'info'
       const source = str('source')
       const detail = str('detail')
-      const line = { text: str('text'), ...(detail === '' ? {} : { detail }) }
+      const omitted = num('detailOmittedBytes')
+      const line = {
+        text: str('text'),
+        ...(detail === '' ? {} : { detail }),
+        ...(omitted === 0 ? {} : { detailOmittedBytes: omitted }),
+      }
 
       /*
        * A run of talkative hooks becomes one row.
@@ -772,6 +1002,9 @@ function apply(view: Mutable, event: TranscriptEvent): void {
               {
                 text: previous.text,
                 ...(previous.detail === undefined ? {} : { detail: previous.detail }),
+                ...(previous.detailOmittedBytes === undefined
+                  ? {}
+                  : { detailOmittedBytes: previous.detailOmittedBytes }),
               },
             ]),
             line,
@@ -791,6 +1024,7 @@ function apply(view: Mutable, event: TranscriptEvent): void {
         noticeSource: source,
         level,
         ...(detail === '' ? {} : { detail }),
+        ...(omitted === 0 ? {} : { detailOmittedBytes: omitted }),
       })
       return
     }

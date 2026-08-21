@@ -252,6 +252,60 @@ function Accounts(): React.JSX.Element | null {
  * answers a locale list cannot express, and the person reading is the one who
  * knows which they want.
  */
+/**
+ * Appearance, which until now had no switch at all.
+ *
+ * Light mode existed as a `prefers-color-scheme` media query and nothing else,
+ * so the only way to change it was to change the whole machine. Every VS Code
+ * user expects to pick a theme independently of the OS.
+ *
+ * **Nothing here touches CSS, Monaco, xterm or the icons.** Main sets
+ * `nativeTheme.themeSource`, which is what `prefers-color-scheme` answers from,
+ * and all four already listen to that query. This control writes a preference;
+ * the repaint is a consequence.
+ *
+ * `system` first because it is the default and the honest option: it means "the
+ * machine decides", which is what everyone had before this shipped.
+ */
+function Appearance(): React.JSX.Element {
+  const { t } = useTranslation()
+  const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system')
+
+  useEffect(() => {
+    let live = true
+    window.chorus
+      .readSettings()
+      .then((settings) => {
+        if (live) setTheme(settings.theme)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [])
+
+  return (
+    <fieldset className="settings-appearance">
+      <legend>{t('settings.appearanceHeading')}</legend>
+      <label>
+        <span>{t('settings.appearance')}</span>
+        <select
+          value={theme}
+          onChange={(e) => {
+            const next = e.target.value as 'system' | 'light' | 'dark'
+            setTheme(next)
+            void window.chorus.writeSettings({ theme: next })
+          }}
+        >
+          <option value="system">{t('settings.appearanceSystem')}</option>
+          <option value="light">{t('settings.appearanceLight')}</option>
+          <option value="dark">{t('settings.appearanceDark')}</option>
+        </select>
+      </label>
+    </fieldset>
+  )
+}
+
 function ExplainLanguage(): React.JSX.Element {
   const { t } = useTranslation()
   const [language, setLanguage] = useState('')
@@ -695,6 +749,7 @@ export function Settings(props: {
 
           <DefaultModel />
 
+          <Appearance />
           <ExplainLanguage />
 
           <p className="footnote">{t('settings.paneNote')}</p>

@@ -56,6 +56,8 @@ interface WorkspaceProps {
   /** A card dropped at a new place in the rail's order. */
   readonly onReorderSessions: (conversationId: string, slot: number) => void
   readonly onOpenSettings: () => void
+  /** Opens the list of every conversation the log holds, not only the open ones. */
+  readonly onOpenHistory: () => void
   readonly profiles: readonly {
     readonly id: string
     readonly name: string
@@ -247,6 +249,22 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       }
 
       /*
+       * ⌘⇧G — this session's Changes panel.
+       *
+       * Session-scoped only, because a change belongs to a repository and the
+       * global terminal belongs to no conversation. With no active tab there is
+       * nothing to compare, so the chord is left alone rather than swallowed —
+       * `preventDefault` on a key that did nothing is how a shortcut becomes
+       * untestable (C-027).
+       */
+      if (primaryShift(event) && !event.altKey && event.key.toLowerCase() === 'g') {
+        if (activeId === null) return
+        event.preventDefault()
+        state.toggleSessionChanges(activeId)
+        return
+      }
+
+      /*
        * ⌃⇧` — another terminal in whichever panel you are in. VS Code's binding.
        *
        * **`event.code`, not `event.key`**, and it is the one place in this
@@ -420,6 +438,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
           preview={preview}
           onNewSession={props.onNewSession}
           onOpenSettings={props.onOpenSettings}
+          onOpenHistory={props.onOpenHistory}
           terminalOpen={globalTerminal.open}
           onToggleTerminal={toggleGlobalTerminal}
           onSessionPointerDown={onSessionPointerDown}

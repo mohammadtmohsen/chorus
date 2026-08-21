@@ -35,6 +35,16 @@ export interface QuickRailProps {
   readonly preview: PreviewController
   readonly onNewSession: () => void
   readonly onOpenSettings: () => void
+  /**
+   * Opens the list of every conversation the log holds, not only the open ones.
+   *
+   * Restored after the control-rail redesign (`debaae0`) dropped it. The panel
+   * itself was never removed — `App.tsx` still rendered `HistoryPanel` — but
+   * nothing set `showingHistory` to true any more, so an ended conversation
+   * could be found by nothing in the UI at all. The log keeps it forever and
+   * there was no door.
+   */
+  readonly onOpenHistory: () => void
   readonly terminalOpen: boolean
   readonly onToggleTerminal: () => void
   /** A card moved by keyboard, in the same terms the drop uses. */
@@ -194,6 +204,18 @@ export function QuickRail(props: QuickRailProps): React.JSX.Element {
             onClick={props.onToggleTerminal}
           >
             <TerminalIcon />
+          </button>
+        </li>
+        <li>
+          <button
+            type="button"
+            className="rail-item"
+            data-rail-history
+            aria-label={t('history.open')}
+            title={t('history.open')}
+            onClick={props.onOpenHistory}
+          >
+            <HistoryIcon />
           </button>
         </li>
         <li>
@@ -746,6 +768,40 @@ function TerminalIcon(): React.JSX.Element {
     <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden="true">
       {/* A prompt: the chevron and the line you type on. */}
       <path d="M5 7l4 4-4 4M12 15h7" />
+    </svg>
+  )
+}
+
+/**
+ * A clock turned back — the same glyph the drawer's button used before the
+ * redesign, drawn rather than typeset so it sits with the rail's other icons.
+ */
+function HistoryIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M8 3.2a4.8 4.8 0 1 1-4.53 6.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <path
+        d="M3.2 5.9V3.4m0 2.5h2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 5.6V8l1.8 1.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }

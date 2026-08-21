@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, session } from 'electron'
@@ -12,10 +13,14 @@ import {
   forwardDiagnosticsToRenderer,
   forwardTerminalToRenderer,
   forwardLimitsToRenderer,
+  forwardWorkspaceChangesToRenderer,
+  stopWorkspaceWatches,
   registerIpcHandlers,
 } from './ipc.js'
 import { createLogger } from './logging.js'
 import { installMenu } from './menu.js'
+import { readSettings } from './settings.js'
+import { applyTheme } from './theme.js'
 import { applyScale, currentScale } from './scale.js'
 import { reapOrphanedAgents } from './reap.js'
 import { ChorusRuntime } from './runtime.js'
@@ -126,6 +131,9 @@ void app.whenReady().then(async () => {
   forwardTasksToRenderer(runtime)
   forwardActivityToRenderer(runtime)
   forwardTerminalToRenderer(runtime)
+  // Takes no runtime: the watches are keyed by the conversations that ask for
+  // one, not by what the runtime happens to have open.
+  forwardWorkspaceChangesToRenderer(log)
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.
   installMenu()
   forwardEventsToRenderer(runtime)
@@ -160,6 +168,13 @@ void app.whenReady().then(async () => {
     log.error('ide bridge failed to start', error)
   }
 
+  /*
+   * Before the window, not after — otherwise the app paints in the OS
+   * appearance and snaps to the chosen one, a flash on every launch for anyone
+   * whose choice differs from their system.
+   */
+  applyTheme(readSettings(app.getPath('userData')).theme)
+
   createWindow()
 
   app.on('activate', () => {
@@ -168,7 +183,7 @@ void app.whenReady().then(async () => {
 })
 
 /*
- * A different data directory, when asked for.
+ * A different data directory, when asked for — and for a dev build, always.
  *
  * The end-to-end tests drive the real app, and a real app writes real files —
  * the log, the database, what was open last time. Without this they would read
@@ -177,8 +192,41 @@ void app.whenReady().then(async () => {
  * caches them.
  */
 const overrideUserData = process.env['CHORUS_USER_DATA']
-if (overrideUserData !== undefined && overrideUserData !== '') {
-  app.setPath('userData', overrideUserData)
+
+/*
+ * And a dev build never shares a directory with an installed one.
+ *
+ * Until this line, `pnpm dev` and `/Applications/Chorus.app` both resolved
+ * `userData` from the package name and so opened the *same* `chorus.db`. That
+ * is fine exactly as long as the two builds agree on the schema, and the whole
+ * point of a dev build is that it does not: a branch adding `repo.changed.byUser`
+ * to `ChorusEventPayload` wrote twelve of them into the shared log, and the
+ * installed 0.19.7 — which has never heard of that type — then failed to
+ * discriminate the union on read and put a raw Zod issue array in the
+ * transcript where the conversation should be.
+ *
+ * Read-back is fail-hard by design (`toStoredEvent` parses every row against
+ * the current union), so this is not a cosmetic collision: one unrecognised
+ * event takes down the read that contains it. And the log is append-only, so
+ * the damage is permanent for the older build — there is no cleanup, only
+ * prevention, which is why the fix is a separate directory rather than a
+ * tolerant parser.
+ *
+ * `isPackaged` rather than a flag in the dev script, so it cannot be forgotten
+ * by anyone running electron-vite directly. An explicit `CHORUS_USER_DATA`
+ * still wins, because e2e is unpackaged too and already passes its own path.
+ */
+const devUserData = app.isPackaged ? null : `${app.getPath('userData')}-dev`
+
+const dataDir =
+  overrideUserData !== undefined && overrideUserData !== '' ? overrideUserData : devUserData
+
+if (dataDir !== null) {
+  // Electron creates `userData` lazily, but the logger and the store both write
+  // into it before anything else does; e2e only ever passed an existing mkdtemp
+  // path, so the create-it case was never exercised.
+  mkdirSync(dataDir, { recursive: true })
+  app.setPath('userData', dataDir)
   /*
    * And the session directory with it, which is a separate path and was not.
    *
@@ -205,7 +253,7 @@ if (overrideUserData !== undefined && overrideUserData !== '') {
    * safe. The suite is red either way, for reasons belonging to the control-rail
    * redesign; the matrix and the per-failure triage are in that plan's STATUS §10.
    */
-  app.setPath('sessionData', overrideUserData)
+  app.setPath('sessionData', dataDir)
 }
 
 app.on('window-all-closed', () => {
@@ -222,6 +270,9 @@ app.on('before-quit', (event) => {
   const bridge = ideBridge
   runtime = null
   ideBridge = null
+  // Synchronous and first: a watch holds no resource worth draining, and one
+  // still firing during shutdown would push at windows that are going away.
+  stopWorkspaceWatches()
   event.preventDefault()
   // The bridge closes first: it unlinks its socket and descriptor, and anything
   // waiting on a snapshot is settled rather than left hanging behind the

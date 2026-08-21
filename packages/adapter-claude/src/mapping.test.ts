@@ -315,6 +315,154 @@ describe('system notices', () => {
     expect(sys({ type: 'system', subtype: 'init', uuid: 'u1' })).toEqual([])
   })
 
+  /*
+   * The cap, and the reason it exists.
+   *
+   * One `SessionStart` hook on the author's machine wrote 259 notices averaging
+   * 191,907 bytes — 47.4 MiB, 29% of that database's whole payload — because a
+   * hook printed a task board on every session start and nothing bounded it.
+   * Every byte was parsed, validated twice, cloned across IPC and mounted,
+   * forever, on every open of that conversation.
+   */
+  it('caps a hook that prints a document, and says how much it dropped', () => {
+    const huge = 'x'.repeat(200_000)
+    const [event] = sys({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_name: 'SessionStart',
+      hook_event: 'SessionStart',
+      outcome: 'success',
+      output: huge,
+      stdout: '',
+      stderr: '',
+    })
+    const detail = (event as { detail?: string }).detail ?? ''
+    const omitted = (event as { detailOmittedBytes?: number }).detailOmittedBytes
+    expect(new TextEncoder().encode(detail).length).toBe(8 * 1024)
+    expect(omitted).toBe(200_000 - 8 * 1024)
+  })
+
+  it('leaves an ordinary hook byte-identical, with no omission count', () => {
+    const [event] = sys({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_name: 'lint',
+      hook_event: 'PreToolUse',
+      outcome: 'success',
+      output: 'all good',
+      stdout: '',
+      stderr: '',
+    })
+    expect(event).toMatchObject({ detail: 'all good' })
+    expect(event).not.toHaveProperty('detailOmittedBytes')
+  })
+
+  /*
+   * Every offset the cut can land at inside a 4-byte sequence, because one of
+   * them is not a test.
+   *
+   * The first version of this used a bare run of emoji, and 8192 is exactly
+   * 2048 of them — so the budget fell on a character boundary and a naive
+   * `subarray(0, 8192)` passed it. An ASCII prefix walks the boundary into the
+   * middle of a sequence: with `pad` leading bytes the cut lands `pad` bytes
+   * into an emoji, so 1, 2 and 3 cover every partial case and 0 keeps the
+   * boundary-exact one as a control.
+   */
+  /*
+   * The order of redaction and truncation, which a review caught as a security
+   * bug rather than a tidiness one.
+   *
+   * `detail` is hook output — arbitrary shell output, so `env`, an echoed token,
+   * a file a script read. If the 8 KiB cap ran first, the cut could fall through
+   * the middle of a credential, and the surviving leading half would no longer
+   * match the pattern that recognises it: a secret that would have been caught
+   * whole becomes an unrecognisable partial secret, in the log, forever.
+   *
+   * The token below is positioned so the boundary falls inside it.
+   */
+  it('redacts a secret that straddles the byte cap, rather than cutting it in half', () => {
+    const token = `ghp_${'A'.repeat(40)}`
+    /*
+     * A newline before the token, and not for looks: the rule is anchored with
+     * `\b`, and running filler letters straight into `ghp_` leaves no word
+     * boundary, so the pattern does not match at all. The first version of this
+     * test did exactly that and failed for that reason rather than the one it
+     * was written for. Real hook output is lines.
+     */
+    const filler = `${'x'.repeat(8 * 1024 - 11)}\n`
+    const [event] = sys({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_name: 'leaky',
+      hook_event: 'SessionStart',
+      outcome: 'success',
+      output: `${filler}${token}${'y'.repeat(500)}`,
+      stdout: '',
+      stderr: '',
+    })
+    const detail = (event as { detail?: string }).detail ?? ''
+
+    // Neither the whole token nor any leading fragment of it survives.
+    expect(detail).not.toContain(token)
+    expect(detail).not.toContain('ghp_A')
+    expect(detail).not.toContain('ghp_')
+    /*
+     * The marker is NOT asserted here, and that is not an oversight. Redaction
+     * runs first, so the marker occupies the token's position — which straddles
+     * the cap — and the cap clips the marker instead. That is the correct
+     * outcome: a truncated `[redacted:github-t` is not a credential, whereas a
+     * truncated `ghp_AAAA…` would be. The test below covers the marker.
+     */
+  })
+
+  it('leaves the redaction marker behind when the secret sits inside the cap', () => {
+    const token = `ghp_${'A'.repeat(40)}`
+    const [event] = sys({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_name: 'leaky',
+      hook_event: 'SessionStart',
+      outcome: 'success',
+      output: `checking auth\n${token}\ndone`,
+      stdout: '',
+      stderr: '',
+    })
+    const detail = (event as { detail?: string }).detail ?? ''
+
+    // Proves the secret was *redacted* rather than merely truncated away — the
+    // straddle test alone cannot tell those two apart.
+    expect(detail).toContain('[redacted:github-token]')
+    expect(detail).not.toContain('ghp_')
+    expect(detail).toContain('checking auth')
+    expect(detail).toContain('done')
+  })
+
+  it.each([0, 1, 2, 3])('never cuts a character in half (%i-byte prefix)', (pad) => {
+    const prefix = 'a'.repeat(pad)
+    const [event] = sys({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_name: 'emoji',
+      hook_event: 'SessionStart',
+      outcome: 'success',
+      output: `${prefix}${'😀'.repeat(4_000)}`,
+      stdout: '',
+      stderr: '',
+    })
+    const detail = (event as { detail?: string }).detail ?? ''
+    const omitted = (event as { detailOmittedBytes?: number }).detailOmittedBytes ?? 0
+
+    expect(detail).not.toContain('\uFFFD')
+    expect(new TextEncoder().encode(detail).length).toBeLessThanOrEqual(8 * 1024)
+    // Every kept character is whole, so removing the prefix and the emoji leaves
+    // nothing — a partial code point would survive as U+FFFD and fail this.
+    expect(detail.startsWith(prefix)).toBe(true)
+    expect(detail.slice(pad).replace(/😀/gu, '')).toBe('')
+    // And the walk-back is accounted for rather than silently swallowed: what
+    // was kept plus what was reported dropped is the whole input.
+    expect(new TextEncoder().encode(detail).length + omitted).toBe(pad + 4_000 * 4)
+  })
+
   it('reports a hook that failed', () => {
     expect(
       sys({

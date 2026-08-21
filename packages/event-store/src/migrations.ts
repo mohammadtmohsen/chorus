@@ -137,6 +137,103 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'aside-conversations',
     up: ASIDE_COLUMNS,
   },
+  {
+    version: 3,
+    name: 'pending-questions',
+    /*
+     * The one piece of transcript state a paged read cannot get from anywhere
+     * else.
+     *
+     * A page is a suffix of the log, so anything derived by *accumulation*
+     * cannot be rebuilt from it — an agent can ask a question thousands of
+     * events before the page the reader opens on. Approvals already had this
+     * problem and already had a table; questions had neither, and folding the
+     * whole conversation to find them is the cost this phase exists to remove.
+     *
+     * Shaped like `approvals` deliberately: requested, then answered or expired,
+     * with the answer's absence being what "pending" means. `answered_at IS
+     * NULL` is the query.
+     */
+    up: `
+      CREATE TABLE questions (
+        id              TEXT PRIMARY KEY,
+        conversation_id TEXT    NOT NULL,
+        agent_id        TEXT,
+        event_id        TEXT    NOT NULL,
+        request         TEXT    NOT NULL,
+        answered_at     INTEGER,
+        expires_at      INTEGER NOT NULL,
+        created_at      INTEGER NOT NULL
+      );
+      CREATE INDEX questions_conv ON questions (conversation_id);
+
+      /*
+       * Backfilled from the log, and the table is wrong without this.
+       *
+       * A new projection starts empty, and nothing rebuilds projections on
+       * startup -- EventStore.open runs migrate() and returns. So an upgraded
+       * database would have had a questions table containing nothing, and since
+       * the paged transcript reads pending questions from HERE rather than by
+       * folding the log, every question an agent was already waiting on would
+       * have disappeared: no card, no error, and a fresh test database passing
+       * every test. Found in review, not by running it.
+       *
+       * Done in SQL inside the migration's own transaction rather than by
+       * calling rebuildProjections() afterwards. Rebuilding replays every event
+       * into every projection -- 247,800 of them on the author's database -- to
+       * populate one table, and it would run outside the transaction that
+       * created it, so a failure would leave the schema migrated and the table
+       * empty.
+       *
+       * The events_type index makes both scans indexed. COALESCE on request
+       * because the column is NOT NULL and json_extract yields NULL for a
+       * payload that recorded no request; 'null' is what the live projection
+       * writes for the same case.
+       *
+       * NB: no backticks anywhere in this comment. It lives inside a template
+       * literal, and one would end the string -- which is the trap CLAUDE.md
+       * records for exactly this file, and it still caught me.
+       */
+      INSERT INTO questions
+        (id, conversation_id, agent_id, event_id, request, answered_at, expires_at, created_at)
+      SELECT
+        json_extract(q.payload, '$.userInputId'),
+        q.conversation_id,
+        q.actor,
+        q.id,
+        COALESCE(json_extract(q.payload, '$.request'), 'null'),
+        (SELECT MAX(a.created_at) FROM events a
+          WHERE a.type = 'userinput.answered'
+            AND json_extract(a.payload, '$.userInputId')
+                = json_extract(q.payload, '$.userInputId')),
+        COALESCE(json_extract(q.payload, '$.expiresAt'), 0),
+        q.created_at
+      FROM events q
+      WHERE q.type = 'userinput.requested'
+        AND json_extract(q.payload, '$.userInputId') IS NOT NULL
+      ON CONFLICT (id) DO NOTHING;
+
+      /*
+       * The high-water mark for the projection this migration just created.
+       *
+       * projectionDrift() compares every name in PROJECTION_NAMES against the
+       * log's last seq and reports the ones behind. A backfilled table with no
+       * projection_state row reads as sequence 0 -- so the drift check would
+       * have reported questions as 249,099 events behind on a database where it
+       * was in fact completely up to date, until the next append happened to
+       * bump every projection at once and the symptom vanished on its own.
+       *
+       * COALESCE because MAX over an empty events table is NULL, and a fresh
+       * database installs this migration with nothing in it.
+       *
+       * The backfill above reads the whole log, so the whole log is exactly what
+       * this projection has seen.
+       */
+      INSERT INTO projection_state (name, last_seq)
+      SELECT 'questions', COALESCE((SELECT MAX(seq) FROM events), 0)
+      ON CONFLICT (name) DO UPDATE SET last_seq = excluded.last_seq;
+    `,
+  },
 ]
 
 export interface MigrationResult {

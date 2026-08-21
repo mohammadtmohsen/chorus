@@ -18,6 +18,30 @@ export interface ReadOptions {
   readonly types?: readonly string[]
 }
 
+/** What is still waiting, and what has been spent, without folding the log. */
+export interface TranscriptState {
+  readonly approvals: readonly {
+    readonly approvalId: string
+    readonly agentId: string
+    readonly kind: string
+    readonly request: unknown
+    readonly expiresAt: number
+  }[]
+  readonly questions: readonly {
+    readonly userInputId: string
+    readonly eventId: string
+    readonly agentId: string
+    readonly request: unknown
+    readonly expiresAt: number
+  }[]
+  /** Agents whose last `turn.started` has no matching `turn.completed`. */
+  readonly working: readonly string[]
+  /** The latest total each agent reported. Totals, not deltas, so latest wins. */
+  readonly usageByActor: Readonly<
+    Record<string, { inputTokens: number; outputTokens: number; costUsd: number | null }>
+  >
+}
+
 /**
  * Enough to name a past conversation in a list and decide whether to reopen it.
  *
@@ -198,6 +222,170 @@ export class EventStore {
       .all(params)
 
     return rows.map((r) => toStoredEvent(r))
+  }
+
+  /**
+   * The last `limit` events before `beforeSeq`, oldest first.
+   *
+   * **A suffix, because that is what opening a conversation wants.** `read` with
+   * `afterSeq` answers "what has happened since", which is the live path; this
+   * answers "what was said most recently", which is the first paint. Scrolling
+   * back is the same call again with `beforeSeq` set to the oldest `seq` already
+   * held.
+   *
+   * `DESC` in SQL and reversed here rather than `ORDER BY seq` with an offset:
+   * an offset into a *filtered* set shifts meaning the moment the filter
+   * changes, and `LIMIT` on a descending scan is the query SQLite can answer
+   * from the index without walking the conversation.
+   */
+  readPage(
+    conversationId: string,
+    options: { beforeSeq?: number; limit: number; types?: readonly string[] }
+  ): StoredEvent[] {
+    const clauses = ['conversation_id = @conversationId']
+    const params: Record<string, unknown> = { conversationId, limit: options.limit }
+
+    if (options.beforeSeq !== undefined) {
+      clauses.push('seq < @beforeSeq')
+      params['beforeSeq'] = options.beforeSeq
+    }
+    if (options.types !== undefined && options.types.length > 0) {
+      // Inlined because SQLite has no array binding; values come from our own
+      // event-type union, never from user input.
+      const list = options.types.map((t) => `'${t.replace(/'/g, "''")}'`).join(', ')
+      clauses.push(`type IN (${list})`)
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT seq, id, conversation_id, actor, type, payload, created_at, schema_ver
+           FROM events WHERE ${clauses.join(' AND ')} ORDER BY seq DESC LIMIT @limit`
+      )
+      .all(params)
+
+    return rows.map((r) => toStoredEvent(r)).reverse()
+  }
+
+  /**
+   * Transcript state that a page cannot contain, queried rather than folded.
+   *
+   * **This is the answer to the plan's oldest open question.** A page is a
+   * suffix, so anything derived by accumulation — an approval requested long
+   * before the page, a question still waiting, what has been spent — cannot be
+   * rebuilt from it. The alternative was a *checkpoint* shipped with the page,
+   * and that is a snapshot of derived state: a second source of truth for
+   * something the log already determines. Projections are how this codebase
+   * reconciles that instead, because they commit in the same transaction as the
+   * append and can always be rebuilt from the log.
+   *
+   * `working` and `usageByActor` are queried straight from `events` rather than
+   * from a projection, because both are "the latest one of these per agent" —
+   * an indexed lookup, not accumulated state, and a projection for them would be
+   * a table maintaining what a query already answers.
+   */
+  transcriptState(conversationId: string): TranscriptState {
+    const approvals = this.db
+      .prepare(
+        `SELECT id, agent_id, kind, request, expires_at
+           FROM approvals WHERE conversation_id = @conversationId AND outcome IS NULL
+          ORDER BY created_at`
+      )
+      .all({ conversationId }) as {
+      id: string
+      agent_id: string | null
+      kind: string
+      request: string
+      expires_at: number
+    }[]
+
+    const questions = this.db
+      .prepare(
+        `SELECT id, agent_id, event_id, request, expires_at
+           FROM questions WHERE conversation_id = @conversationId AND answered_at IS NULL
+          ORDER BY created_at`
+      )
+      .all({ conversationId }) as {
+      id: string
+      agent_id: string | null
+      event_id: string
+      request: string
+      expires_at: number
+    }[]
+
+    /*
+     * The last turn boundary per agent. A turn that started after the last one
+     * completed is a turn still running — which is what `working` means, and
+     * what drives the live indicator on each voice.
+     */
+    const turns = this.db
+      .prepare(
+        `SELECT actor, type, MAX(seq) AS seq
+           FROM events
+          WHERE conversation_id = @conversationId AND type IN ('turn.started', 'turn.completed')
+          GROUP BY actor, type`
+      )
+      .all({ conversationId }) as { actor: string; type: string; seq: number }[]
+
+    const started = new Map<string, number>()
+    const completed = new Map<string, number>()
+    for (const row of turns) {
+      ;(row.type === 'turn.started' ? started : completed).set(row.actor, row.seq)
+    }
+    const working = [...started.entries()]
+      .filter(([actor, seq]) => seq > (completed.get(actor) ?? 0))
+      .map(([actor]) => actor)
+
+    const usageRows = this.db
+      .prepare(
+        `SELECT actor, payload FROM events
+          WHERE conversation_id = @conversationId AND type = 'usage.updated'
+            AND seq IN (
+              SELECT MAX(seq) FROM events
+               WHERE conversation_id = @conversationId AND type = 'usage.updated'
+               GROUP BY actor
+            )`
+      )
+      .all({ conversationId }) as { actor: string; payload: string }[]
+
+    const usageByActor: Record<
+      string,
+      { inputTokens: number; outputTokens: number; costUsd: number | null }
+    > = {}
+    for (const row of usageRows) {
+      const parsed = JSON.parse(row.payload) as Record<string, unknown>
+      usageByActor[row.actor] = {
+        inputTokens: typeof parsed['inputTokens'] === 'number' ? parsed['inputTokens'] : 0,
+        outputTokens: typeof parsed['outputTokens'] === 'number' ? parsed['outputTokens'] : 0,
+        costUsd: typeof parsed['costUsd'] === 'number' ? parsed['costUsd'] : null,
+      }
+    }
+
+    const safeParse = (raw: string): unknown => {
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return null
+      }
+    }
+
+    return {
+      approvals: approvals.map((a) => ({
+        approvalId: a.id,
+        agentId: a.agent_id ?? '',
+        kind: a.kind,
+        request: safeParse(a.request),
+        expiresAt: a.expires_at,
+      })),
+      questions: questions.map((q) => ({
+        userInputId: q.id,
+        eventId: q.event_id,
+        agentId: q.agent_id ?? '',
+        request: safeParse(q.request),
+        expiresAt: q.expires_at,
+      })),
+      working,
+      usageByActor,
+    }
   }
 
   lastSeq(): number {

@@ -122,8 +122,21 @@ function isCodeReference(value: string): boolean {
   return false
 }
 
-/** Fields that can carry text an agent produced or a command printed. */
-const TEXT_FIELDS = ['text', 'chunk', 'brief', 'message', 'unifiedDiff', 'patch'] as const
+/**
+ * Fields that can carry text an agent produced or a command printed.
+ *
+ * `detail` was missing until a review found it, and it was the worst omission on
+ * the list: it is the field that carries **hook output** — whatever a
+ * `SessionStart` hook printed, which is arbitrary shell output and routinely
+ * includes `env`, a token a script echoed, or the contents of a file it read. A
+ * notice is durable, so an unredacted `detail` is a credential written to the
+ * log forever.
+ *
+ * The walk below is structural but this list is not, which is the standing
+ * weakness: a new text-bearing field is unredacted until somebody adds it here.
+ * Prefer reusing a name already on this list when adding a payload.
+ */
+const TEXT_FIELDS = ['text', 'chunk', 'brief', 'message', 'unifiedDiff', 'patch', 'detail'] as const
 
 /**
  * Walks an event payload and redacts every text-bearing field.

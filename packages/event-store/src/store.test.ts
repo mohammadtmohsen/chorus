@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { redactPayload } from '@chorus/shared'
 import { ChorusEventPayload } from './events.js'
-import { currentVersion } from './migrations.js'
+import { currentVersion, MIGRATIONS } from './migrations.js'
 import { openSqlite, type SqliteHandle } from './sqlite.js'
 import { EventStore } from './store.js'
 
@@ -31,7 +31,7 @@ beforeEach(() => {
 
 describe('migrations', () => {
   it('brings a fresh database to the current version', () => {
-    expect(currentVersion(db)).toBe(2)
+    expect(currentVersion(db)).toBe(MIGRATIONS.at(-1)?.version)
   })
 
   it('is idempotent — reopening applies nothing', () => {

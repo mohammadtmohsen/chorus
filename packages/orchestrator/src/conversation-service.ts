@@ -837,6 +837,13 @@ export class ConversationService {
           source: event.source,
           text: event.text,
           detail: event.detail ?? null,
+          // Carried through rather than recomputed — the adapter did the cutting
+          // and is the only thing that saw the original length. Spread rather
+          // than defaulted to 0, so a notice that lost nothing is written
+          // exactly as it always was.
+          ...(event.detailOmittedBytes === undefined
+            ? {}
+            : { detailOmittedBytes: event.detailOmittedBytes }),
         })
         return
     }

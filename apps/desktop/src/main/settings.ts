@@ -75,6 +75,24 @@ export const Settings = z
      * producing a control that looks empty while holding content.
      */
     explainLanguage: z.string().default('').transform(normaliseExplainLanguage),
+    /**
+     * Which appearance to draw, rather than always deferring to the OS.
+     *
+     * `system` is the default and preserves what every version before this did:
+     * follow `prefers-color-scheme`. The other two override it, which VS Code
+     * users expect to be able to do — until now light mode here was a media
+     * query with no switch attached.
+     *
+     * **Global, not per conversation.** It lived in `ChangesPanelState` in the
+     * first draft of the plan, which is per-conversation state — one session in
+     * dark and the next in light is not a feature.
+     *
+     * `.default(...)` is load-bearing: a required field here would fail the
+     * parse for every settings file written before this shipped, and
+     * `readSettings` falls back to defaults on a parse failure — so every
+     * existing preference on the machine would silently reset.
+     */
+    theme: z.enum(['system', 'light', 'dark']).default('system'),
   })
   /**
    * Folds the old single model and effort onto **Claude**.
@@ -128,6 +146,8 @@ export const DEFAULT_SETTINGS: Settings = {
   explainLanguage: '',
   models: { codex: '', claude: '' },
   efforts: { codex: '', claude: '' },
+  // Follow the OS, which is what every version before the setting existed did.
+  theme: 'system',
 }
 
 function settingsPath(userDataPath: string): string {

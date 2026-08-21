@@ -1,6 +1,7 @@
+import type { TranscriptState } from '@chorus/event-store'
 import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { buildDiagnostics } from '@chorus/shared'
+import { buildDiagnostics, type Logger } from '@chorus/shared'
 import { homedir } from 'node:os'
 import {
   app,
@@ -21,6 +22,7 @@ import {
   TERMINAL_PUSH_CHANNEL,
   LIMITS_PUSH_CHANNEL,
   SETTINGS_PUSH_CHANNEL,
+  WORKSPACE_PUSH_CHANNEL,
   IPC_CONTRACT,
   type IdeContextPush,
   type IpcChannel,
@@ -29,7 +31,7 @@ import {
   type TranscriptEvent,
 } from '../shared/ipc.js'
 import { isInside, toDisplayRange, type EditorMetadata } from '@chorus/ide-protocol'
-import { projectRelativePath, type CanonicalRoot } from '@chorus/workspace'
+import { projectRelativePath, readDirectory, type CanonicalRoot } from '@chorus/workspace'
 import type { IdeBridge } from './ide-bridge.js'
 import {
   defaultDeps,
@@ -47,7 +49,10 @@ import { listPlugins } from './plugins.js'
 import type { ChorusRuntime } from './runtime.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
+import { applyTheme } from './theme.js'
 import { previewFile, stashFile } from './stash.js'
+import { readFileVersions } from './file-versions.js'
+import { WorkspaceWatchers } from './workspace-watch.js'
 
 type Handlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>> }
 
@@ -59,6 +64,30 @@ const OK = { ok: true } as const
  * work identically whether or not VS Code is involved.
  */
 let ideBridge: IdeBridge | null = null
+
+/**
+ * Repository watches, one per conversation anyone has reviewed.
+ *
+ * Module-level for the same reason `ideBridge` is: `buildHandlers` runs long
+ * before any conversation exists, and the first `workspace:read` is what decides
+ * a repository is worth watching. Null until `forwardWorkspaceChangesToRenderer`
+ * runs, so a `workspace:read` in a test or a headless run watches nothing rather
+ * than throwing.
+ */
+let workspaceWatchers: WorkspaceWatchers | null = null
+
+/**
+ * Run a read-only git command without the repository watcher hearing about it.
+ *
+ * Every one of them takes `.git/index.lock` and most rewrite `.git/index`, so
+ * without this the panel's own read is indistinguishable from someone staging a
+ * file — which is the loop `workspace-watch.ts` documents. Falls through to a
+ * plain call when nothing is watching yet, because `ensure` is lazy and the
+ * very first read happens before there is a watch to quieten.
+ */
+function quietly<T>(conversationId: string, fn: () => Promise<T>): Promise<T> {
+  return workspaceWatchers?.suppress(conversationId, fn) ?? fn()
+}
 
 export function attachIdeBridge(bridge: IdeBridge | null): void {
   ideBridge = bridge
@@ -395,12 +424,69 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       Promise.resolve(runtime.setProjectDirectory(request.conversationId, request.cwd)),
 
     'conversation:close': async (request: { conversationId: string }) => {
+      // Before the close, while the conversation still resolves: a watcher held
+      // past the session's end keeps a recursive FSEvents subscription alive for
+      // a repository nothing is looking at.
+      workspaceWatchers?.release(request.conversationId)
       await runtime.closeConversation(request.conversationId)
       return OK
     },
 
     'conversation:history': (request: { conversationId: string; afterSeq?: number }) =>
       Promise.resolve(runtime.history(request.conversationId, request.afterSeq).map(toTranscript)),
+
+    /*
+     * The transcript's read, narrowed to what it draws.
+     *
+     * `throughSeq` is taken **before** the query, deliberately. Taken after, an
+     * event appended between the read and the mark would be claimed as seen and
+     * never fetched again — a silently missing entry, which is the worst
+     * failure this channel could have. Taken before, the worst case is that a
+     * few rows are read twice, and the reducer's own `seq <= lastSeq` guard
+     * discards them for free.
+     */
+    'conversation:transcript': (request: {
+      conversationId: string
+      afterSeq?: number
+      beforeSeq?: number
+      limit?: number
+    }) => {
+      /*
+       * Taken before the read, and that ordering is the correctness story.
+       *
+       * It is what the renderer advances `lastSeq` to, and it is what stops a
+       * conversation whose newest events are all filtered types from re-querying
+       * the same range on every push. Taking it *after* would claim to have
+       * covered an event appended during the read that the read did not return,
+       * and that event would then never be fetched. Before can only ever
+       * under-claim, which costs one redundant query rather than a lost message.
+       */
+      const throughSeq = runtime.logPosition()
+
+      /*
+       * Three questions, one channel, and they never combine. `afterSeq` is the
+       * live catch-up — everything since. `limit` is a page — the newest rows,
+       * or the ones before `beforeSeq`. No `limit` is the whole conversation,
+       * which is what everything did before paging existed and what the aside
+       * path still wants.
+       */
+      const events =
+        request.limit === undefined
+          ? runtime.transcriptHistory(request.conversationId, request.afterSeq)
+          : runtime.transcriptPage(request.conversationId, request.limit, request.beforeSeq)
+
+      /*
+       * State only when this is not a catch-up. An incremental read is folded
+       * into a view that already holds it, and re-sending it would overwrite a
+       * live approval card with a snapshot taken a moment earlier.
+       */
+      const state =
+        request.afterSeq === undefined
+          ? { state: toTranscriptState(runtime.transcriptState(request.conversationId)) }
+          : {}
+
+      return Promise.resolve({ events: events.map(toTranscript), throughSeq, ...state })
+    },
 
     'approval:decide': async (request: {
       conversationId: string
@@ -466,6 +552,16 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         models: { ...current.models, ...request.models },
         efforts: { ...current.efforts, ...request.efforts },
       })
+      /*
+       * Appearance is the one setting that is not just data to hand back.
+       *
+       * `nativeTheme.themeSource` is what `prefers-color-scheme` answers from,
+       * and CSS, Monaco, xterm and the file icons all read that query — so this
+       * single line repaints every one of them. Applied from `written` rather
+       * than `request`, so a write that did not mention the theme re-asserts
+       * the stored one instead of clearing it.
+       */
+      applyTheme(written.theme)
       /*
        * Broadcast, including back to the window that asked.
        *
@@ -611,11 +707,39 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
       } as const
     },
 
-    'workspace:read': async (request: { conversationId: string }) => {
-      const { status, diff, problem } = await runtime.readWorkspace(request.conversationId)
+    'workspace:read': async (request: {
+      conversationId: string
+      base?: string | undefined
+      committedOnly?: boolean | undefined
+      hunks?: boolean | undefined
+    }) => {
+      /*
+       * Watching starts here rather than when the conversation opens: this is
+       * the first evidence that anyone wants to know when the tree moves, and
+       * most sessions never ask.
+       */
+      workspaceWatchers?.ensure(
+        request.conversationId,
+        runtime.projectDirectory(request.conversationId)
+      )
+      /*
+       * Read under suppression, because this read is what the watcher reacts
+       * to. `git status` rewrites `.git/index`, the watcher called that news,
+       * and the panel read again — see `workspace-watch.ts`. Every read-only
+       * git handler below is wrapped for the same reason; a new one that is
+       * not will quietly restore the loop.
+       */
+      const { status, diff, problem, comparison } = await quietly(request.conversationId, () =>
+        runtime.readWorkspace(request.conversationId, {
+          base: request.base,
+          committedOnly: request.committedOnly,
+          hunks: request.hunks,
+        })
+      )
       // Copied out of the readonly domain types; the IPC boundary is plain JSON.
       return {
         problem,
+        comparison,
         status: {
           branch: status.branch,
           upstream: status.upstream,
@@ -636,6 +760,7 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
           added: f.added,
           removed: f.removed,
           binary: f.binary,
+          status: f.status,
           hunks: f.hunks.map((h) => ({
             header: h.header,
             lines: h.lines.map((l) => ({
@@ -648,6 +773,63 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
         })),
       }
     },
+
+    'workspace:branches': async (request: { conversationId: string }) =>
+      quietly(request.conversationId, () => runtime.readBranches(request.conversationId)),
+
+    'workspace:tree': async (request: { conversationId: string; path: string }) => {
+      // `git check-ignore` per expansion, so this takes the index lock too.
+      const result = await quietly(request.conversationId, () =>
+        readDirectory({
+          cwd: runtime.projectDirectory(request.conversationId),
+          path: request.path,
+        })
+      )
+      return result.ok
+        ? { entries: [...result.value], problem: null }
+        : { entries: [], problem: result.error.message }
+    },
+
+    'workspace:fileVersions': async (request: {
+      conversationId: string
+      path: string
+      base?: string | undefined
+      committedOnly?: boolean | undefined
+    }) =>
+      quietly(request.conversationId, () =>
+        readFileVersions({
+          cwd: runtime.projectDirectory(request.conversationId),
+          path: request.path,
+          base: request.base,
+          committedOnly: request.committedOnly,
+        })
+      ),
+
+    'workspace:write': async (request: {
+      conversationId: string
+      path: string
+      content: string
+      expectedSha: string | null
+      force?: boolean | undefined
+    }) =>
+      runtime.writeUserFile(
+        request.conversationId,
+        request.path,
+        request.content,
+        request.expectedSha,
+        request.force
+      ),
+
+    'workspace:git': async (request: {
+      conversationId: string
+      action: 'stage' | 'unstage' | 'discard' | 'commit' | 'push'
+      paths: string[]
+      message?: string | undefined
+      setUpstream?: boolean | undefined
+    }) => runtime.runGitAction(request),
+
+    'workspace:fetch': async (request: { conversationId: string; remote?: string | undefined }) =>
+      runtime.fetchRemote(request.conversationId, request.remote),
 
     'handoff:prepare': (request: {
       conversationId: string
@@ -735,6 +917,31 @@ export function buildHandlers(runtime: ChorusRuntime): Handlers {
   }
 }
 
+/**
+ * The store's readonly arrays flatten to the mutable ones the wire schema infers.
+ *
+ * Not a formality: `z.array` infers `T[]`, the store returns `readonly T[]`, and
+ * the two are genuinely different types. Copying here rather than widening the
+ * store's type keeps the immutability where it is useful — inside main, where
+ * the same object is handed to more than one caller.
+ */
+function toTranscriptState(state: TranscriptState): {
+  approvals: TranscriptState['approvals'][number][]
+  questions: TranscriptState['questions'][number][]
+  working: string[]
+  usageByActor: Record<
+    string,
+    { inputTokens: number; outputTokens: number; costUsd: number | null }
+  >
+} {
+  return {
+    approvals: [...state.approvals],
+    questions: [...state.questions],
+    working: [...state.working],
+    usageByActor: { ...state.usageByActor },
+  }
+}
+
 /** Branded ids and zod-parsed payloads flatten to plain JSON for the renderer. */
 function toTranscript(event: {
   seq: number
@@ -793,6 +1000,28 @@ export function registerIpcHandlers(runtime: ChorusRuntime): void {
  * always fall back to `conversation:history` — the log is authoritative, so a
  * dropped push is a recoverable gap rather than lost data.
  */
+/**
+ * Tells every window that a conversation's repository moved.
+ *
+ * Set up once, beside the other push forwarders, and holds the watchers for the
+ * life of the process. The registry is module-level for the same reason
+ * `ideBridge` is: `buildHandlers` runs before any conversation exists, and the
+ * first `workspace:read` is what decides a repository is worth watching.
+ */
+export function forwardWorkspaceChangesToRenderer(log?: Logger): void {
+  workspaceWatchers = new WorkspaceWatchers((conversationId) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(WORKSPACE_PUSH_CHANNEL, { conversationId })
+    }
+  }, log)
+}
+
+/** Drops every repository watch. For shutdown; the app is going anyway. */
+export function stopWorkspaceWatches(): void {
+  workspaceWatchers?.closeAll()
+  workspaceWatchers = null
+}
+
 /** Sends account usage windows to every window as providers report them. */
 export function forwardLimitsToRenderer(runtime: ChorusRuntime): void {
   runtime.onLimitsReported((push) => {

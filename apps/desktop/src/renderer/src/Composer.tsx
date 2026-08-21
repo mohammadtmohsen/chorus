@@ -105,6 +105,10 @@ export interface ComposerProps {
    * only it knows whether anyone has actually started a session yet.
    */
   readonly onSpinOff?: ((brief: string) => void) | undefined
+  /** Show or hide this session's Changes panel. Absent outside a git repository. */
+  readonly onToggleChanges?: (() => void) | undefined
+  /** Whether the panel is showing, so the button can say which way it goes. */
+  readonly changesOpen?: boolean | undefined
   readonly onRestart?: (() => void) | undefined
   readonly onEnd?: (() => void) | undefined
   readonly initial?: {
@@ -1616,6 +1620,33 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M6 3v8a4 4 0 0 0 4 4h8M14 11l4 4-4 4M6 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4" />
+                </svg>
+              </button>
+            )}
+            {/*
+             * The change itself, beside the actions that act on it.
+             *
+             * The panel already has `⌘⇧G` and nothing on screen said so. A
+             * chord is not a discoverable surface — it is the thing you use
+             * once you know the feature exists — and reviewing a diff is the
+             * step this row was missing between asking for work and ending the
+             * session.
+             *
+             * A toggle rather than an open, and `aria-pressed` rather than two
+             * labels, because the panel is a place the session can be in and
+             * the same key already closes it.
+             */}
+            {props.onToggleChanges !== undefined && (
+              <button
+                type="button"
+                className="composer-trigger"
+                aria-pressed={props.changesOpen === true}
+                aria-label={t('conversation.changesLabel')}
+                title={t('conversation.changesHint')}
+                onClick={props.onToggleChanges}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 4h7v16H4zM13 4h7v16h-7M6 10h3M6 13h3M15 10h3M15 13h3M16.5 8.5v3" />
                 </svg>
               </button>
             )}

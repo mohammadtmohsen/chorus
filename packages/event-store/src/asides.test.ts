@@ -61,8 +61,16 @@ describe('the upgrade path', () => {
     const { migration, store: upgraded } = EventStore.open(old)
 
     expect(migration.from).toBe(1)
-    expect(migration.to).toBe(2)
-    expect(migration.applied).toEqual(['aside-conversations'])
+    // The latest migration rather than a literal: a number here has to be
+    // edited by every future migration, and the one that forgets fails a test
+    // about asides for a reason that has nothing to do with asides.
+    expect(migration.to).toBe(MIGRATIONS.at(-1)?.version)
+    // Every migration above version 1, not only this one — the point of the
+    // assertion is that upgrading from 1 runs the whole pending set and stops at
+    // the head, and naming one migration made it a test that a later migration
+    // breaks without being wrong.
+    expect(migration.applied).toEqual(MIGRATIONS.filter((m) => m.version > 1).map((m) => m.name))
+    expect(migration.applied[0]).toBe('aside-conversations')
 
     // The row that was already there is untouched and still listed.
     const listed = upgraded.listConversations().find((c) => c.conversationId === 'old-conv')
@@ -80,7 +88,7 @@ describe('the upgrade path', () => {
   it('is idempotent — reopening applies nothing', () => {
     const { migration } = EventStore.open(db)
     expect(migration.applied).toEqual([])
-    expect(currentVersion(db)).toBe(2)
+    expect(currentVersion(db)).toBe(MIGRATIONS.at(-1)?.version)
   })
 })
 

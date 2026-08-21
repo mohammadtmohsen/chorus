@@ -84,4 +84,33 @@ describe('parseStatus', () => {
       state: 'conflicted',
     })
   })
+
+  it('tells a copy from a rename', () => {
+    // Kind `2` is "renamed OR copied" and the XY code says which. Every kind-2
+    // line was read as a rename until 2026-08-20, so a copy claimed the
+    // original had moved — a false statement about the tree, not just a
+    // missing letter.
+    const copied = '2 C. N... 100644 100644 100644 a b C75 src/copy.ts\tsrc/orig.ts'
+    expect(parseStatus(copied).files[0]).toMatchObject({
+      path: 'src/copy.ts',
+      from: 'src/orig.ts',
+      state: 'copied',
+    })
+    const renamed = '2 R. N... 100644 100644 100644 a b R100 src/new.ts\tsrc/old.ts'
+    expect(parseStatus(renamed).files[0]).toMatchObject({ state: 'renamed' })
+  })
+
+  it('reports a type change rather than calling it a modification', () => {
+    // A file becoming a symlink. It used to fall through to `modified`, which
+    // is what a diff shows and not what happened.
+    const line = '1 .T N... 100644 120000 120000 a b src/link'
+    expect(parseStatus(line).files[0]).toMatchObject({ path: 'src/link', state: 'typechanged' })
+  })
+
+  it('still ignores ignored entries', () => {
+    // Only reachable with --ignored, which readStatus does not pass and VS
+    // Code's own status command does not either. Enumerating node_modules to
+    // populate a letter no upstream UI shows is not parity.
+    expect(parseStatus('! node_modules/left-pad/index.js\n').files).toEqual([])
+  })
 })

@@ -7,6 +7,7 @@ import { Composer, type ComposerHandle, type ComposerState } from './Composer.js
 import { Entry } from './Entry.js'
 import { ErrorNotice } from './ErrorNotice.js'
 import { focusedNow, mayTakeCaret } from './focus.js'
+import { profileHas, profileMark, profileMarkAfterPaint } from './profile-marks.js'
 import { thinkingWord, offsetForActor, THINKING_WORD_MS, AWAITING_MAX_MS } from './thinking-word.js'
 import { HandoffComposer, type HandoffDraft } from './HandoffComposer.js'
 import { QuickQuestion } from './QuickQuestion.js'
@@ -18,17 +19,32 @@ import {
   type PaneAnchor,
   type SourceEntry,
 } from './quote.js'
-import type { ActivityPush, IdeContextPush, TerminalRefShape } from '../../shared/ipc.js'
+import type {
+  ActivityPush,
+  IdeContextPush,
+  TerminalRefShape,
+  TranscriptEvent,
+} from '../../shared/ipc.js'
 import { askableQuestion, questionText } from '../../shared/question-text.js'
+import { PANE_SIDE_BY_SIDE_MIN } from '../../shared/workspace-layout.js'
+import { ChangesPanel } from './ChangesPanel.js'
 import { TerminalPanel } from './TerminalPanel.js'
-import { useSessionActivity, useSessionTerminal, useWorkspaceActions } from './workspace/hooks.js'
+import {
+  useSessionActivity,
+  useSessionChanges,
+  useSessionTerminal,
+  useWorkspaceActions,
+} from './workspace/hooks.js'
 import { ReviewPanel } from './ReviewPanel.js'
 import { SummaryPanel } from './SummaryPanel.js'
 import {
   answersThinking,
   groupedWith,
   EMPTY_VIEW,
+  applyTranscriptState,
+  prependEvents,
   reduceEvents,
+  reduceTranscriptRead,
   type PendingApproval,
   type PendingQuestion,
   type QuestionField,
@@ -50,9 +66,17 @@ import {
  * tags above and the composer took the caret. Typing into the shell then went
  * into the message box — observed, with the characters landing under the
  * transcript.
+ *
+ * **`.monaco-editor` is the same shape and was missed.** Monaco renders text as
+ * `div.view-line`s and keeps its own hidden `textarea.inputarea` elsewhere in
+ * the tree, so a click on a line of code matched nothing here either and the
+ * caret went to the composer — which made a file impossible to edit. That the
+ * xterm sentence above did not already cover it is the point worth keeping:
+ * this list is about *where the click landed*, and any component that renders
+ * its text separately from its input needs naming, not inferring.
  */
 const FOCUS_KEEPS_ITS_OWN =
-  'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question, .terminal-panel'
+  'button, a, input, textarea, select, summary, [role="button"], [contenteditable], .approval, .question, .terminal-panel, .monaco-editor'
 
 /**
  * The transcript entry a DOM node sits inside, in the shape `askableSource`
@@ -93,12 +117,50 @@ export interface SessionInfo {
   readonly title: string
 }
 
+/**
+ * How many *events* a page holds.
+ *
+ * Events rather than rows: the transcript filter already drops what the reducer
+ * has no case for, so a page of events is a page of rows to within that filter —
+ * and counting rows would mean running the reducer before the query could decide
+ * where to stop, which is the work paging exists to avoid.
+ *
+ * 400 is a few dozen exchanges: comfortably more than a screen at any row height
+ * the app produces, and far short of the 15,528 the measured conversation holds.
+ * It is also what makes a fully-mounted transcript affordable again — 400 events
+ * is a few hundred rows, not four thousand.
+ */
+const PAGE_EVENTS = 400
+
 /** Renderer state that survives closing or backgrounding a tab. */
 export interface SessionCarry {
   readonly view: TranscriptView
   readonly draft: string
   readonly attached: readonly Attachment[]
   readonly following: boolean
+  /**
+   * Where the reader was, as a row and an offset into it — not a pixel offset.
+   *
+   * This was `scrollTop: number`, and the restore effect spent up to two seconds
+   * polling for the content to grow tall enough to hold it. That was an
+   * approximation of an anchor, written because there was no anchor. With the
+   * transcript windowed it stops even approximating: rows above the viewport are
+   * estimates until something measures them, so a pixel offset names a position
+   * in a coordinate system that moves.
+   *
+   * `null` when there is nothing to restore — a transcript at the top, or a
+   * carry written by a build that stored a number. An old numeric carry is
+   * treated as "no anchor" rather than misread as one.
+   */
+  /**
+   * Where the reader was, in pixels.
+   *
+   * A row anchor was tried and is deferred with the virtualisation it belonged
+   * to: an anchor only means anything alongside the measured heights that
+   * convert it, and carrying those across a remount stopped a pane mounting at
+   * all. With the transcript fully mounted a pixel offset is exact again,
+   * because the content it describes is the content that will be there.
+   */
   readonly scrollTop: number
   readonly ideIncluded: boolean
   /**
@@ -206,6 +268,13 @@ export function Session(props: {
    */
   const terminal = useSessionTerminal(conversationId)
   /*
+   * This session's Changes panel, in the store for the same two reasons the
+   * terminal is: `⌘⇧G` is handled by a document-level listener in `Workspace`
+   * and may fire while this is unmounted, and the store is what persists — so
+   * the base you chose is still chosen after a relaunch.
+   */
+  const changes = useSessionChanges(conversationId)
+  /*
    * What each agent says it is doing, as a comma-joined `agent:activity` string.
    *
    * A string rather than the record so a pane re-renders only when a provider
@@ -219,6 +288,16 @@ export function Session(props: {
     addSessionTerminal,
     activateSessionTerminal,
     removeSessionTerminalTab,
+    toggleSessionChanges,
+    setSessionChangesHeight,
+    setSessionChangesWidth,
+    setSessionChangesListWidth,
+    setSessionChangesBase,
+    setSessionChangesCommittedOnly,
+    setSessionChangesSelection,
+    setSessionChangesView,
+    setSessionChangesColumn,
+    toggleSessionChangesExpanded,
   } = useWorkspaceActions()
   /*
    * How this session names one of its shells.
@@ -297,11 +376,80 @@ export function Session(props: {
   /** Read once: whether this pane was the active one at the moment it mounted. */
   const activeOnMount = useRef(props.active)
 
+  /*
+   * Whether this pane is wide enough to put the Changes panel beside the
+   * transcript rather than under it.
+   *
+   * Measured on the **pane**, never the window. `.pane` is already an
+   * inline-size container for exactly this reason — three panes tiled on a
+   * wide screen are each as cramped as one pane on a narrow one — and a
+   * `matchMedia` test would put a 300px pane into a side-by-side layout the
+   * moment someone maximised the window.
+   *
+   * A boolean rather than the width, and written only when it *crosses*, so
+   * dragging a splitter re-renders the transcript once instead of on every
+   * frame. The ref is what makes that cheap: reading `wide` in the callback
+   * would need it in the dependency array, and the observer would then be torn
+   * down and rebuilt on the one render that matters.
+   */
+  const [paneWide, setPaneWide] = useState(false)
+  const paneWideNow = useRef(false)
+  useEffect(() => {
+    const node = pane.current
+    if (node === null) return
+    const measure = (): void => {
+      const wide = node.clientWidth >= PANE_SIDE_BY_SIDE_MIN
+      if (wide === paneWideNow.current) return
+      paneWideNow.current = wide
+      setPaneWide(wide)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(node)
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+  /*
+   * `under` whenever the panel is shut, so nothing reads a side-by-side
+   * orientation for a panel that is not on screen.
+   */
+  const changesOrientation: 'side' | 'under' = paneWide && changes.open ? 'side' : 'under'
+
+  /*
+   * Live events, held back until the transcript they belong on has arrived.
+   *
+   * **A push that overtakes the initial read used to erase it.** `reduceEvents`
+   * skips anything at or below `lastSeq`, which is right for a duplicate and
+   * catastrophic for a backfill: if push 101 lands before the read of 1–100
+   * resolves, the view's `lastSeq` is already 101 and *every one of those
+   * hundred events is discarded*. The transcript then shows the single pushed
+   * row and nothing before it — no history, no pending approvals, no spend —
+   * until something forces another read. `max(lastSeq, throughSeq)` prevented
+   * `lastSeq` going backwards but could not bring back rows already dropped,
+   * and the test for that case used an empty response, so it never saw this.
+   *
+   * `QuickQuestion` already solved it this way: buffer while the read is in
+   * flight, then apply in order once it lands. Ordering is the fix, not
+   * merging — the reducer is a fold over increasing `seq` and should stay one.
+   */
+  const readDone = useRef(false)
+  const pending = useRef<TranscriptEvent[]>([])
+
+  useEffect(() => {
+    readDone.current = false
+    pending.current = []
+  }, [conversationId])
+
   useEffect(
     () =>
       window.chorus.onEvents((events) => {
         const mine = events.filter((e) => e.conversationId === conversationId)
         if (mine.length === 0) return
+        if (!readDone.current) {
+          pending.current.push(...mine)
+          return
+        }
         setView((current) => reduceEvents(current, mine))
       }),
     [conversationId]
@@ -325,15 +473,65 @@ export function Session(props: {
 
   useEffect(() => {
     window.chorus
-      .history({
-        conversationId,
-        ...(view.lastSeq > 0 ? { afterSeq: view.lastSeq } : {}),
+      .transcript(
+        view.lastSeq > 0
+          ? // Coming back to a pane that still holds its transcript: catch up on
+            // what was missed rather than re-reading a page it already has.
+            { conversationId, afterSeq: view.lastSeq }
+          : // A cold open reads the newest page, not the conversation.
+            { conversationId, limit: PAGE_EVENTS }
+      )
+      .then(({ events, throughSeq, state }) => {
+        profileMark('transcriptReceived')
+        /*
+         * The buffered pushes are applied in the same update as the read, and
+         * after it. Draining them separately would let React commit the read
+         * alone first, which is a visible flash of a transcript that is missing
+         * the newest rows.
+         */
+        const held = pending.current
+        pending.current = []
+        readDone.current = true
+        // The rule lives in `reduceTranscriptRead`, which is pure and tested;
+        // this is the plumbing.
+        setView((current) => {
+          const read = reduceTranscriptRead(current, events, throughSeq)
+          /*
+           * State before the buffered pushes, never after. The queried state is
+           * a snapshot from the moment of the read; a push that arrived since
+           * may have decided an approval or answered a question, and applying
+           * the snapshot last would put the card back.
+           */
+          const withState = state === undefined ? read : applyTranscriptState(read, state)
+          const next = held.length === 0 ? withState : reduceEvents(withState, held)
+          // Inside the updater, which React runs during the render pass — so
+          // this is genuinely when the fold finished, not when it was queued.
+          profileMark('reduced')
+          return next
+        })
       })
-      .then((history) => {
-        setView((current) => reduceEvents(current, history))
+      .catch((error: unknown) => {
+        // Open the gate even on failure: leaving it shut would silently drop
+        // every live event for the rest of the session, which is worse than the
+        // failed read the user is already being told about.
+        readDone.current = true
+        fail(setError)(error)
       })
-      .catch(fail(setError))
   }, [conversationId])
+
+  /*
+   * The commit that carried the transcript, and an approximation of its paint.
+   *
+   * Runs after every commit and takes each mark once, so it lands on the first
+   * commit following the reduction rather than on whichever one happens to be
+   * last. `profileMark` is inert unless the profiling harness armed it, so this
+   * costs one property read per commit in a normal run.
+   */
+  useLayoutEffect(() => {
+    if (!profileHas('reduced') || profileHas('committed')) return
+    profileMark('committed')
+    profileMarkAfterPaint('paintedApprox')
+  })
 
   /**
    * Whether the transcript is following what is being written.
@@ -506,6 +704,78 @@ export function Session(props: {
 
   const turnAt = view.messages.findLastIndex((m) => m.actor === 'user' && m.kind === 'message')
   const currentTurn = turnAt === -1 ? undefined : view.messages[turnAt]
+
+  /*
+   * Whether an earlier page is in flight, and whether there is one to fetch.
+   *
+   * A ref rather than state for the in-flight flag: it guards a fetch, and a
+   * re-render is not what the guard is for. `atBeginning` is state because it
+   * changes what is drawn — there is nothing above the first row once it is true.
+   */
+  const loadingEarlier = useRef(false)
+  const [atBeginning, setAtBeginning] = useState(false)
+
+  /**
+   * Fetches the page before what is held, when the reader nears the top.
+   *
+   * **Prepending, not reducing.** `reduceEvents` skips anything at or below
+   * `lastSeq`, which is the guard that keeps the live stream safe and also what
+   * makes it unable to accept an earlier range. `prependEvents` is a second
+   * entry point that folds rows in ahead and touches no accumulated state — that
+   * state came from the query and an earlier page would only contradict it.
+   *
+   * No state is requested with a page of history, for the same reason.
+   */
+  const loadEarlier = useCallback((): void => {
+    if (loadingEarlier.current || atBeginning) return
+    const oldest = latest.current.view.firstSeq
+    if (oldest <= 1) {
+      setAtBeginning(true)
+      return
+    }
+    loadingEarlier.current = true
+    window.chorus
+      .transcript({ conversationId, beforeSeq: oldest, limit: PAGE_EVENTS })
+      .then(({ events }) => {
+        if (events.length === 0) {
+          setAtBeginning(true)
+          return
+        }
+        setView((current) => prependEvents(current, events))
+      })
+      .catch(fail(setError))
+      .finally(() => {
+        loadingEarlier.current = false
+      })
+  }, [conversationId, atBeginning])
+
+  /*
+   * Rows arriving *above* the viewport push everything down, and the reader must
+   * not see it.
+   *
+   * A prepended page adds real height at the top of a fully-mounted transcript,
+   * so the paragraph someone is reading slides down the screen by exactly that
+   * much. Compensating for it is a subtraction that has to land in the same
+   * commit as the growth — split across two, the intermediate state is painted
+   * and the jump is real.
+   *
+   * Guarded on the row count rather than run unconditionally: `scrollHeight`
+   * also changes when a diff card expands or markdown reflows, and correcting
+   * for *those* would fight the reader instead of helping them. Only a page
+   * landing changes how many messages the view holds.
+   */
+  const lastHeight = useRef(0)
+  const lastCount = useRef(view.messages.length)
+  useLayoutEffect(() => {
+    const el = score.current
+    if (el === null) return
+    const grew = el.scrollHeight - lastHeight.current
+    const prepended = view.messages.length > lastCount.current && !following.current
+    lastHeight.current = el.scrollHeight
+    lastCount.current = view.messages.length
+    if (prepended && grew > 0) el.scrollTop += grew
+  }, [view.messages.length])
+
   const turnKey = currentTurn?.key ?? null
 
   useEffect(() => {
@@ -1201,15 +1471,22 @@ export function Session(props: {
     /*
      * Waits for the range, and writes exactly once.
      *
-     * The previous version parked at `scrollHeight - clientHeight` each frame
-     * while the content was too short — "as close as we can get for now" — which
-     * put the view at the *transient* bottom. `onScroll` resumes following
-     * within 32px of the end, so every one of those writes said "the reader is
-     * at the bottom" and the next resize duly dragged them there. Driven: parked
-     * at 40 of 209, came back at 141 of 141.
+     * In a layout effect the transcript has not measured: markdown, diff cards
+     * and terminals all expand after mount, so assigning 4800 to a scroller
+     * whose `scrollHeight` is still 600 silently clamps to ~0 — no error, and
+     * nothing afterwards puts it right, because the `ResizeObserver`'s
+     * correction is guarded on `following` and this branch is the one that is
+     * not following.
+     *
+     * Parking at "as close as we can get for now" was the other wrong answer: it
+     * puts the view at the *transient* bottom, and `onScroll` resumes following
+     * within 32px of the end, so every such write said "the reader is at the
+     * bottom" and the next resize duly dragged them there.
      *
      * So: read two numbers a frame, write nothing until the position is
-     * reachable, then set it and stop.
+     * reachable, then set it and stop. Bounded by wall clock, so a conversation
+     * that never grows that tall gives up rather than spinning for the life of
+     * the pane.
      */
     let frame = 0
     const until = Date.now() + 2_000
@@ -1219,8 +1496,7 @@ export function Session(props: {
         /*
          * Stated rather than inferred. `onScroll` decides following from where
          * the view ends up, and this write is a restoration rather than the
-         * reader arriving anywhere — if `wanted` happens to sit within 32px of
-         * the end, inference would resume following for someone who never asked.
+         * reader arriving anywhere.
          */
         following.current = false
         return
@@ -1558,186 +1834,271 @@ export function Session(props: {
         />
       )}
 
-      <div
-        className="score"
-        ref={score}
-        aria-label={t('conversation.transcript')}
-        onMouseUp={readSelection}
-        onKeyUp={readSelection}
-        /*
-         * Following stops on a *gesture*, not on a position.
-         *
-         * This used to read `scrollTop` moving backwards as "the reader scrolled
-         * up", and several things move it backwards that are not a reader:
-         * `makeRoom` shrinking the spare room clamped it while it existed, and
-         * Chromium's scroll anchoring used to drag it back to hold the view
-         * still while cards landed above the foot. Either turned following off
-         * for good, and a
-         * transcript that stops following mid-reply never starts again on its
-         * own — which is exactly the report.
-         *
-         * A wheel, a trackpad swipe, a touch drag and the scrolling keys are the
-         * only things the app cannot manufacture, so they are the only things
-         * that count as deciding to read something else. Position is still what
-         * *resumes* following, in `onScroll` below: coming back to the bottom is
-         * unambiguous however you got there.
-         */
-        onWheel={(e) => {
-          if (e.deltaY < 0) following.current = false
-        }}
-        onTouchMove={() => {
-          const el = score.current
-          if (el === null) return
-          if (el.scrollHeight - el.scrollTop - el.clientHeight > 32) following.current = false
-        }}
-        onKeyDown={(e) => {
-          if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) following.current = false
-        }}
-        onScroll={(e) => {
-          const el = e.currentTarget
+      {/*
+       * The transcript, and the Changes panel when there is room beside it.
+       *
+       * A wrapper rather than a row on `.pane` itself. `.pane` is a flex column
+       * on purpose — the comment above it records a real incident where a grid
+       * handed `1fr` to the wrong row the moment a conditional error notice
+       * appeared as the first child, and pinned the composer up the middle. A
+       * second flex container nested inside keeps that fix intact and confines
+       * the axis switch to the two children it is about.
+       *
+       * Under the transcript below `PANE_SIDE_BY_SIDE_MIN`, beside it above.
+       * The panel keeps a fixed size on the cross axis in both, so the
+       * transcript is still the only child that takes the slack — the property
+       * `.score` has always relied on.
+       */}
+      <div className="pane-split" data-orientation={changesOrientation}>
+        <div
+          className="score"
+          ref={score}
+          aria-label={t('conversation.transcript')}
+          onMouseUp={readSelection}
+          onKeyUp={readSelection}
           /*
-           * Only ever turns following back *on*.
+           * Following stops on a *gesture*, not on a position.
            *
-           * "At the bottom" with room to spare: a couple of pixels of rounding,
-           * or a scroll that lands just short, still counts as following. The
-           * `else` that used to sit here — turning it off when the bottom got
-           * further away — is what the gesture handlers above replaced.
+           * This used to read `scrollTop` moving backwards as "the reader scrolled
+           * up", and several things move it backwards that are not a reader:
+           * `makeRoom` shrinking the spare room clamped it while it existed, and
+           * Chromium's scroll anchoring used to drag it back to hold the view
+           * still while cards landed above the foot. Either turned following off
+           * for good, and a
+           * transcript that stops following mid-reply never starts again on its
+           * own — which is exactly the report.
+           *
+           * A wheel, a trackpad swipe, a touch drag and the scrolling keys are the
+           * only things the app cannot manufacture, so they are the only things
+           * that count as deciding to read something else. Position is still what
+           * *resumes* following, in `onScroll` below: coming back to the bottom is
+           * unambiguous however you got there.
            */
-          if (el.scrollHeight - el.scrollTop - el.clientHeight <= 32) following.current = true
-        }}
-      >
-        <div className="score-content" ref={transcript}>
-          {/* History: everything said before the question now being answered. */}
-          {(currentTurn === undefined ? view.messages : view.messages.slice(0, turnAt)).map(entry)}
-
-          {currentTurn === undefined ? (
-            // Nothing has been asked yet, so there is no turn to pin — an agent
-            // can still be working, and says so at the foot as it always did.
-            <>
-              {thinking}
-              {waitingRow}
-            </>
-          ) : (
+          onWheel={(e) => {
+            if (e.deltaY < 0) following.current = false
+          }}
+          onTouchMove={() => {
+            const el = score.current
+            if (el === null) return
+            if (el.scrollHeight - el.scrollTop - el.clientHeight > 32) following.current = false
+          }}
+          onKeyDown={(e) => {
+            if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) following.current = false
+          }}
+          onScroll={(e) => {
+            const el = e.currentTarget
             /*
-              The current turn, with its question held at the top.
+             * Only ever turns following back *on*.
+             *
+             * "At the bottom" with room to spare: a couple of pixels of rounding,
+             * or a scroll that lands just short, still counts as following. The
+             * `else` that used to sit here — turning it off when the bottom got
+             * further away — is what the gesture handlers above replaced.
+             */
+            /*
+             * A scroll this component wrote is not a reader arriving anywhere.
+             *
+             * The windower and the restore both move `scrollTop` deliberately,
+             * and either would otherwise be read as a gesture — resuming
+             * following for someone who never asked, or leaving it off for
+             * someone who did. One expected event per programmatic write.
+             */
+            /*
+             * A screenful from the top, not at it. Waiting for zero means the
+             * reader arrives at a hard stop and then waits for a fetch; a
+             * screenful of warning is usually enough for the page to land before
+             * they get there.
+             */
+            if (el.scrollTop < el.clientHeight) loadEarlier()
+            /*
+             * Position is what *resumes* following: coming back to the bottom is
+             * unambiguous however you got there. Stopping it is a gesture, which
+             * the handlers above own.
+             */
+            if (el.scrollHeight - el.scrollTop - el.clientHeight <= 32) following.current = true
+          }}
+        >
+          <div className="score-content" ref={transcript}>
+            {/* History: everything said before the question now being answered. */}
+            {(currentTurn === undefined ? view.messages : view.messages.slice(0, turnAt)).map(
+              entry
+            )}
 
-              What you asked is the thing the whole reply is measured against, and
-              a long answer used to push it out of the window within a paragraph —
-              leaving a screen of prose with no visible sign of what it was for.
-              Pinned, it stays the heading of its own answer until you ask the next
-              thing, which is when the heading should change.
-            */
-            <div className="turn" ref={turn}>
-              <div className="turn-head" data-turn={currentTurn.key}>
-                {entry(currentTurn, turnAt)}
+            {currentTurn === undefined ? (
+              // Nothing has been asked yet, so there is no turn to pin — an agent
+              // can still be working, and says so at the foot as it always did.
+              <>
+                {thinking}
+                {waitingRow}
+              </>
+            ) : (
+              /*
+                The current turn, with its question held at the top.
+
+                What you asked is the thing the whole reply is measured against, and
+                a long answer used to push it out of the window within a paragraph —
+                leaving a screen of prose with no visible sign of what it was for.
+                Pinned, it stays the heading of its own answer until you ask the next
+                thing, which is when the heading should change.
+              */
+              <div className="turn" ref={turn}>
+                <div className="turn-head" data-turn={currentTurn.key}>
+                  {entry(currentTurn, turnAt)}
+                </div>
+                {view.messages.slice(turnAt + 1).map((m, i) => entry(m, turnAt + 1 + i))}
+                {/*
+                  Under the newest row, not under the question.
+
+                  It used to live inside `.turn-head`, which is pinned to the top
+                  of the scroller — so during a long turn the one line saying an
+                  agent is working sat at the top of the window while the reader
+                  watched commands arrive at the bottom. Reported as silence: rows
+                  appearing with nothing anywhere saying anyone was busy.
+
+                  Here it travels with the output, which is the only place it can
+                  be seen without scrolling back to the question. It is still
+                  below the question — what `specs.mjs` asserts — and there is
+                  still exactly one of it per working agent.
+                */}
+                {thinking}
+                {waitingRow}
               </div>
-              {view.messages.slice(turnAt + 1).map((m, i) => entry(m, turnAt + 1 + i))}
-              {/*
-                Under the newest row, not under the question.
+            )}
+            {/*
+              Offered where the passage is, not in a toolbar.
 
-                It used to live inside `.turn-head`, which is pinned to the top
-                of the scroller — so during a long turn the one line saying an
-                agent is working sat at the top of the window while the reader
-                watched commands arrive at the bottom. Reported as silence: rows
-                appearing with nothing anywhere saying anyone was busy.
+              `onMouseDown` with `preventDefault` rather than `onClick` alone: a
+              mousedown on a button clears the selection before the click lands, so by
+              the time the handler ran there would be nothing left to quote.
+            */}
+            {selected !== null && askingAbout === null && (
+              <div
+                className="quote-offer"
 
-                Here it travels with the output, which is the only place it can
-                be seen without scrolling back to the question. It is still
-                below the question — what `specs.mjs` asserts — and there is
-                still exactly one of it per working agent.
-              */}
-              {thinking}
-              {waitingRow}
-            </div>
-          )}
-          {/*
-            Offered where the passage is, not in a toolbar.
-
-            `onMouseDown` with `preventDefault` rather than `onClick` alone: a
-            mousedown on a button clears the selection before the click lands, so by
-            the time the handler ran there would be nothing left to quote.
-          */}
-          {selected !== null && askingAbout === null && (
-            <div
-              className="quote-offer"
-
-              /*
-               * The classifier's answer, visible in the DOM as well as in the
-               * buttons, so a wrong one is assertable rather than only lookable-at.
-               */
-              data-askable={selected.source === null ? undefined : 'true'}
-              ref={offer}
-              /*
-               * Hidden for the frame before it has been measured, so the first paint
-               * is not the offer in the wrong place followed by a jump.
-               */
-              style={
-                offerAt === null
-                  ? { visibility: 'hidden' }
-                  : { left: `${String(offerAt.left)}px`, top: `${String(offerAt.top)}px` }
-              }
-              onMouseDown={(e) => {
-                e.preventDefault()
-              }}
-            >
-              <button type="button" className="quote-offer-action" onClick={quoteSelection}>
-                {t('conversation.quoteInMessage')}
-              </button>
-              {/*
-                Offered only where an aside can actually be answered. A passage that
-                crosses two replies has no single author, and one still streaming
-                cannot be seen by a fork at all — so the button is absent rather than
-                present-and-failing.
-              */}
-              {selected.source !== null && (
-                <button
-                  type="button"
-                  className="quote-offer-action"
-                  onClick={() => {
-                    openCard('question')
-                  }}
-                >
-                  {t('conversation.askAboutThis')}
+                /*
+                 * The classifier's answer, visible in the DOM as well as in the
+                 * buttons, so a wrong one is assertable rather than only lookable-at.
+                 */
+                data-askable={selected.source === null ? undefined : 'true'}
+                ref={offer}
+                /*
+                 * Hidden for the frame before it has been measured, so the first paint
+                 * is not the offer in the wrong place followed by a jump.
+                 */
+                style={
+                  offerAt === null
+                    ? { visibility: 'hidden' }
+                    : { left: `${String(offerAt.left)}px`, top: `${String(offerAt.top)}px` }
+                }
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                }}
+              >
+                <button type="button" className="quote-offer-action" onClick={quoteSelection}>
+                  {t('conversation.quoteInMessage')}
                 </button>
-              )}
-              {/*
-                Explain used to sit here, between the two, and it left because a
-                selection was the wrong input for it. Explaining an answer in your
-                own language is a question about the *reply*, not about a passage
-                — the drag was only how it got there, and it was also what made
-                the feature fail: `openAside` re-checks the text against the log,
-                and every piece of chrome inside `.entry` that the projection
-                cannot produce refused a perfectly real selection. It is a button
-                under the reply now (`Entry.tsx`, `data-entry-action="explain"`).
+                {/*
+                  Offered only where an aside can actually be answered. A passage that
+                  crosses two replies has no single author, and one still streaming
+                  cannot be seen by a fork at all — so the button is absent rather than
+                  present-and-failing.
+                */}
+                {selected.source !== null && (
+                  <button
+                    type="button"
+                    className="quote-offer-action"
+                    onClick={() => {
+                      openCard('question')
+                    }}
+                  >
+                    {t('conversation.askAboutThis')}
+                  </button>
+                )}
+                {/*
+                  Explain used to sit here, between the two, and it left because a
+                  selection was the wrong input for it. Explaining an answer in your
+                  own language is a question about the *reply*, not about a passage
+                  — the drag was only how it got there, and it was also what made
+                  the feature fail: `openAside` re-checks the text against the log,
+                  and every piece of chrome inside `.entry` that the projection
+                  cannot produce refused a perfectly real selection. It is a button
+                  under the reply now (`Entry.tsx`, `data-entry-action="explain"`).
 
-                Translate stayed, and the difference is not arbitrary: a passage
-                genuinely is its subject. You translate a sentence, not an answer.
+                  Translate stayed, and the difference is not arbitrary: a passage
+                  genuinely is its subject. You translate a sentence, not an answer.
 
-                Gated on a language having been set. There is no honest guess at
-                someone's own language, and an action that cannot say which one it
-                would produce is worse than an absent one.
+                  Gated on a language having been set. There is no honest guess at
+                  someone's own language, and an action that cannot say which one it
+                  would produce is worse than an absent one.
 
-                A word, not an icon, though the request said "translate icon". The
-                others are labelled, and one icon among labels reads as an accident
-                rather than a decision — while an unlabelled icon is the least
-                legible thing on a bar people meet rarely. Icons for all of them is
-                defensible and is a different change; mixing is the only option
-                that is not.
-              */}
-              {selected.source !== null && explainLanguage !== '' && (
-                <button
-                  type="button"
-                  className="quote-offer-action"
-                  onClick={() => {
-                    openCard('translation')
-                  }}
-                >
-                  {t('conversation.translateThis')}
-                </button>
-              )}
-            </div>
-          )}
+                  A word, not an icon, though the request said "translate icon". The
+                  others are labelled, and one icon among labels reads as an accident
+                  rather than a decision — while an unlabelled icon is the least
+                  legible thing on a bar people meet rarely. Icons for all of them is
+                  defensible and is a different change; mixing is the only option
+                  that is not.
+                */}
+                {selected.source !== null && explainLanguage !== '' && (
+                  <button
+                    type="button"
+                    className="quote-offer-action"
+                    onClick={() => {
+                      openCard('translation')
+                    }}
+                  >
+                    {t('conversation.translateThis')}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
+
+        {/*
+         * Mounted only while open — it holds no resource in main, so unmounting
+         * it costs a re-read and nothing else. The terminal stays a full-width
+         * strip below this wrapper either way: it is a tool you reach for, not
+         * the work under discussion, and giving it the same axis switch would
+         * mean two grips changing meaning together for no gain.
+         */}
+        {changes.open && (
+          <ChangesPanel
+            conversationId={conversationId}
+            panel={changes}
+            orientation={changesOrientation}
+            onHeightChange={(height) => {
+              setSessionChangesHeight(conversationId, height)
+            }}
+            onWidthChange={(width) => {
+              setSessionChangesWidth(conversationId, width)
+            }}
+            onListWidthChange={(listWidth) => {
+              setSessionChangesListWidth(conversationId, listWidth)
+            }}
+            onClose={() => {
+              toggleSessionChanges(conversationId)
+            }}
+            onBaseChange={(base) => {
+              setSessionChangesBase(conversationId, base)
+            }}
+            onCommittedOnlyChange={(committedOnly) => {
+              setSessionChangesCommittedOnly(conversationId, committedOnly)
+            }}
+            onSelect={(path) => {
+              setSessionChangesSelection(conversationId, path)
+            }}
+            onViewChange={(view) => {
+              setSessionChangesView(conversationId, view)
+            }}
+            onColumnChange={(column) => {
+              setSessionChangesColumn(conversationId, column)
+            }}
+            onToggleExpanded={(path) => {
+              toggleSessionChangesExpanded(conversationId, path)
+            }}
+            onError={setError}
+          />
+        )}
       </div>
 
       {askingAbout !== null && (
@@ -2005,6 +2366,10 @@ export function Session(props: {
           onOpenPanel={(panel) => {
             if (panel === 'review') setReviewing(true)
             else setSummarising(true)
+          }}
+          changesOpen={changes.open}
+          onToggleChanges={() => {
+            toggleSessionChanges(conversationId)
           }}
           {...(props.onRestart === undefined ? {} : { onRestart: props.onRestart })}
           {...(props.onEnd === undefined ? {} : { onEnd: props.onEnd })}

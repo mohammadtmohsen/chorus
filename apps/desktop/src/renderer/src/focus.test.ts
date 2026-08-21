@@ -14,6 +14,7 @@ const focused = (over: Partial<Focused>): Focused => ({
   editable: false,
   inModal: false,
   inTerminal: false,
+  inEditor: false,
   ...over,
 })
 
@@ -135,5 +136,35 @@ describe('a terminal keeps its caret', () => {
   it('however the caret got there — a click, a shortcut, or a tab', () => {
     // Not keyed on the tag: xterm has moved its input proxy before now.
     expect(mayTakeCaret(focused({ tag: 'DIV', inTerminal: true }))).toBe(false)
+  })
+})
+
+/**
+ * A code editor keeps its caret, for the terminal's reason exactly.
+ *
+ * Monaco holds the document in its own model and types into a hidden textarea
+ * it clears after every keystroke. So the box is empty by design, the emptiness
+ * rule reads it as idle, and the composer pulled the caret away mid-word —
+ * which made a file impossible to edit at all.
+ *
+ * The lesson is not "terminals are special". It is that a box which empties
+ * itself cannot be judged by whether it is empty.
+ */
+describe('a code editor keeps the caret', () => {
+  it('even though its box is empty, which normally means idle', () => {
+    expect(mayTakeCaret(focused({ tag: 'TEXTAREA', value: '', inEditor: true }))).toBe(false)
+  })
+
+  it('and the same empty box outside an editor is still fair game', () => {
+    expect(mayTakeCaret(focused({ tag: 'TEXTAREA', value: '' }))).toBe(true)
+  })
+
+  it('however the caret got there', () => {
+    // Not keyed on the tag: Monaco moves focus between its own elements.
+    expect(mayTakeCaret(focused({ tag: 'DIV', inEditor: true }))).toBe(false)
+  })
+
+  it('and an editor inside a modal is still refused, not double-counted', () => {
+    expect(mayTakeCaret(focused({ inEditor: true, inModal: true }))).toBe(false)
   })
 })

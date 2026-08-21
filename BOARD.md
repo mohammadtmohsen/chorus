@@ -30,6 +30,98 @@ Nothing here can be finished by me alone.
 
 ## Open
 
+### C-049 · ~~Scroll position is lost when you switch away and back~~ · **closed by reverting**
+
+Reading at row 185 of a long transcript, switching away and back, and landing at
+row 0 — every run, both fixtures.
+
+**Closed because the cause was removed, not because it was fixed.** The row
+anchor that replaced `SessionCarry`'s pixel offset only means something alongside
+the measured heights that convert it, and those live in a `useRef` that a remount
+starts empty. Carrying them too stopped one pane mounting at all, so Phase 6
+transcript virtualisation was deferred out of 0.20.0 and the pixel carry came
+back with the fully-mounted transcript.
+
+Verified after the revert: byte-heavy leaves at 16,777 px and returns at
+16,777 px. Entry-heavy returns at the bottom, because `trimCarry` drops a view
+over the character budget and the replayed transcript is shorter than the saved
+offset — the pre-0.19.7 behaviour of that carry, and its own separate question.
+
+**If virtualisation is revisited**, this comes back with it, and the open
+question is why seeding `heights` from the carry stops a pane mounting. The
+suspect is a carry object holding thousands of entries crossing `onCarry` into
+`App`'s ref map on a path that runs during a commit. `transcript-window.ts` is
+parked in the tree with its tests for whoever picks it up.
+
+### C-048 · A setState-in-render warning at boot, unlocalised
+
+`Cannot update a component (EditorPane) while rendering a different component
+(App)` — once, on the first render, in `pnpm dev`.
+
+**What is established.** It fires exactly once at boot, not in a loop, so
+whatever it is happens during the initial mount rather than on every update.
+`EditorPane` has no state of its own; it subscribes to the workspace store via
+`usePane`, so something writes to that store while `App` is rendering. The
+obvious candidates were checked and are all inside callbacks or promises rather
+than render: `openSession` in `openFromHistory` and the start path, `focusPane`
+in `renderSession`'s `onActivate`, `hydrate` in the restore `.then`. `usePane`
+itself is a plain selector and writes nothing.
+
+**Why it is not localised.** Vite forwards the message and not the stack, so the
+component trace React points at is only visible in the renderer's own console.
+Someone has to open DevTools on a cold start and read it there.
+
+**Why it is not urgent.** React recovers — it schedules the update rather than
+dropping it — so the symptom is a warning, not a wrong screen. But it is the
+class of bug that produces an extra render pass at exactly the moment the
+transcript is being mounted, which is the path two phases of work just spent
+effort making cheap.
+
+**Not from the transcript phases.** It names `App` and `EditorPane`, both from
+the control-rail and editor work; the paging and virtualisation changes are in
+`Session` and below. Recorded here rather than fixed because finding it needs a
+DevTools session, and guessing at it would mean editing render paths on a hunch.
+
+**What would make it done.** The stack, then either the write moved into an
+effect or a note saying why it has to happen during render.
+
+### C-047 · The control-rail redesign orphaned a drawer's worth of UI
+
+`debaae0` replaced the drawer sidebar with `QuickRail` and left the old half
+standing. Nothing renders it and nothing fails.
+
+**What is dead.** `SessionRow.tsx` still exports the row component that draws
+`data-sidebar-conversation`, `data-session-more` and `.session-row-main`, and no
+file imports it — only `StateMark` and `useSessionRowState` survive.
+`data-arrange-toggle` appears in no source file at all. `.session-drawer` and
+`.session-drawer-toolbar` exist only in `styles.css`. `data-rail-drawer`, which
+`e2e/specs.mjs` clicks to open the drawer, was never in this design.
+
+**Why it matters rather than being untidy.** One feature went with it silently:
+`onOpenHistory` was dropped in the same edit, so `HistoryPanel` rendered for
+nobody and no conversation in the log could be reached from the UI. That is
+repaired — a rail button, guarded by `workspace/quick-rail-history.test.tsx` —
+but it was found by accident, weeks later, while trying to profile something
+else. Whatever else that edit dropped is still dropped, and the same silence
+applies.
+
+**The six e2e cases are the reason nobody was told.** `openDrawer` in
+`specs.mjs` waits on `.session-drawer` and clicks `[data-rail-drawer]`; neither
+exists, so every case behind it fails on the helper rather than on its
+assertion — including "an ended conversation can be found again and reopened",
+which is exactly the case that would have caught the missing history button.
+The suite is not part of `pnpm check`, so nothing reported it.
+
+**What would make it done.** A decision, per orphan, about whether it was meant
+to survive the rail: the session context menu (`data-session-more` — rename,
+restart, End), the Arrange toggle, and the sidebar rows themselves. Then either
+a rail equivalent plus repaired specs, or deletion of the component, the CSS and
+the specs together. Deleting the specs without deciding would remove the only
+record that the features existed.
+
+**Not a cleanup task.** It reads like one and is not: it is a list of features
+that were removed without anyone saying they were being removed.
+
 ### C-045 · An outward symlink inside a project still opens
 
 `ide:openFile` decides containment two ways since 0.19.6: the lexical
@@ -943,6 +1035,54 @@ line of each is **what would reopen it** — a parked ticket with no such condit
 is not parked, it is forgotten.
 
 Full reasoning, including the probes, is in the plan's `STATUS.md` and `DONE.md`.
+
+### C-046 · Chorus is not a VS Code fork
+
+Asked directly on 2026-08-21, after a run of work that made the Changes panel
+much more VS Code-like — file icons, its diff palette, its status letters, an
+activity rail — and the fair question that followed: having gone this far, would
+a VSCodium fork be less work than continuing?
+
+**Decided: no. Keep this architecture and strengthen the bridge instead.**
+
+**The reason is architectural ownership, not effort already spent.** How much has
+been rebuilt is sunk cost and does not argue for anything. What argues is that
+the two projects own different core abstractions. Chorus's is the
+conversation/session/event model — an append-only log that is the source of
+truth, projections written in the same transaction, a permission engine, a
+supervisor. VS Code's is the workbench/editor/extension model. A fork puts
+Chorus's _defining_ surface against the grain of its host: the shared transcript
+becomes a sandboxed webview talking over message passing, the pane and tab layout
+becomes negotiation with someone else's workbench, and main-process ownership of
+the log and the policy engine moves into an extension host with different
+lifecycle guarantees. It also takes on a permanent upstream-merge and
+security-patch obligation that nothing here needs today.
+
+**And the bridge already exists.** `apps/desktop/src/main/ide-bridge.ts` and the
+`chorus-vscode` extension shipped as a `.vsix` in `extraResources` are what the
+selection pills and "follows the editor for its own project" specs exercise. The
+want behind the question — reach VS Code's power — is already partly answered
+without becoming VS Code.
+
+**Reopens if two or more of these become roadmap requirements**, rather than
+individually:
+
+- Native debugging, or orchestrating language servers
+- Broad third-party extension compatibility
+- Multi-root workspaces and IDE-grade navigation
+- People spending more time editing here than coordinating agents
+- The bridge itself becoming visibly restrictive or unreliable
+
+Two, not one, on purpose: any single item has a cheaper answer than a fork, and
+the trap this entry exists to prevent is re-litigating the question every time
+Chorus adopts another familiar editor feature.
+
+**One fact deliberately left unverified:** whether a fork may use Microsoft's
+extension marketplace. That research was started and killed mid-session, and it
+is the fact that most changes the "extensions come free" argument — so it needs
+checking before any serious move. It does not change this decision on its own:
+perfect marketplace access would remove none of the lifecycle, layout,
+state-ownership or maintenance costs above.
 
 ### C-002 · Whether to notarize
 

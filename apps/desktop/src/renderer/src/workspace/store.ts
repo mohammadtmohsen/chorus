@@ -7,10 +7,14 @@ import type {
   TranscriptEvent,
 } from '../../../shared/ipc.js'
 import { countsAsUnread } from '../../../shared/unread.js'
-import type { TerminalPanelState } from '../../../shared/workspace-layout.js'
+import type { ChangesPanelState, TerminalPanelState } from '../../../shared/workspace-layout.js'
 // `WorkspaceSnapshot` is imported as a value, not a type: `SNAPSHOT_KEYS` below
 // reads its keys off the schema so the list cannot drift from the shape.
-import { CLOSED_TERMINAL_PANEL, WorkspaceSnapshot } from '../../../shared/workspace-layout.js'
+import {
+  CLOSED_CHANGES_PANEL,
+  CLOSED_TERMINAL_PANEL,
+  WorkspaceSnapshot,
+} from '../../../shared/workspace-layout.js'
 import {
   activateTab,
   clampSidebarWidth,
@@ -24,6 +28,7 @@ import {
   placeSession,
   reconcileWorkspace,
   newTerminalId,
+  normalizeChangesPanel,
   normalizeTerminalPanel,
   reorderTab,
   replaceSession,
@@ -207,6 +212,23 @@ export interface WorkspaceActions {
   removeSessionTerminalTab: (conversationId: string, id: string) => void
   activateGlobalTerminal: (id: string) => void
   activateSessionTerminal: (conversationId: string, id: string) => void
+  /** Toggles one conversation's Changes panel, leaving every other one alone. */
+  toggleSessionChanges: (conversationId: string) => void
+  setSessionChangesHeight: (conversationId: string, height: number) => void
+  /** Only meaningful while the panel sits beside the transcript. */
+  setSessionChangesWidth: (conversationId: string, width: number) => void
+  /** How wide the file list is inside the panel, dragged from the divider. */
+  setSessionChangesListWidth: (conversationId: string, listWidth: number) => void
+  /** Which branch to compare against; null means the working tree. */
+  setSessionChangesBase: (conversationId: string, base: string | null) => void
+  setSessionChangesCommittedOnly: (conversationId: string, committedOnly: boolean) => void
+  setSessionChangesSelection: (conversationId: string, path: string | null) => void
+  /** Whole files in an editor, or the hunks git printed. */
+  setSessionChangesView: (conversationId: string, view: ChangesPanelState['view']) => void
+  /** Which list the left column shows: what changed, or the whole project. */
+  setSessionChangesColumn: (conversationId: string, column: ChangesPanelState['column']) => void
+  /** Expand or collapse one directory in the tree. */
+  toggleSessionChangesExpanded: (conversationId: string, path: string) => void
   /** Committed on drop, not on every pointer move; see `useSidebarResize`. */
   setSidebarWidth: (width: number) => void
   ingestEvents: (events: readonly TranscriptEvent[]) => void
@@ -251,6 +273,21 @@ function editSession(
     terminals: {
       ...state.terminals,
       [conversationId]: normalizeTerminalPanel(change(current)),
+    },
+  }
+}
+
+/** The Changes panel's `editSession`, through its own normalizer. */
+function editChanges(
+  state: WorkspaceStore,
+  conversationId: string,
+  change: (panel: ChangesPanelState) => ChangesPanelState
+): Pick<WorkspaceSnapshot, 'changes'> {
+  const current = state.changes[conversationId] ?? CLOSED_CHANGES_PANEL
+  return {
+    changes: {
+      ...state.changes,
+      [conversationId]: normalizeChangesPanel(change(current)),
     },
   }
 }
@@ -304,6 +341,13 @@ function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
     sidebarWidth: state.sidebarWidth,
     terminals: state.terminals,
     globalTerminal: state.globalTerminal,
+    /*
+     * Hand-written, unlike `SNAPSHOT_KEYS` below which reads the schema. A field
+     * added to `WorkspaceSnapshot` and forgotten *here* is dropped on every
+     * persist — which is the same class of bug the comment on `SNAPSHOT_KEYS`
+     * records, from the other end.
+     */
+    changes: state.changes,
   }
 }
 
@@ -531,6 +575,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             pulses: without(state.pulses, conversationId),
             planning: without(state.planning, conversationId),
             terminals: without(state.terminals, conversationId),
+            changes: without(state.changes, conversationId),
           }
         })
       },
@@ -569,6 +614,60 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       activateSessionTerminal: (conversationId, id) => {
         set((state) =>
           editSession(state, conversationId, (panel) => activateTerminalTab(panel, id))
+        )
+      },
+      toggleSessionChanges: (conversationId) => {
+        set((state) =>
+          editChanges(state, conversationId, (panel) => ({ ...panel, open: !panel.open }))
+        )
+      },
+      setSessionChangesHeight: (conversationId, height) => {
+        set((state) => editChanges(state, conversationId, (panel) => ({ ...panel, height })))
+      },
+      setSessionChangesWidth: (conversationId, width) => {
+        set((state) => editChanges(state, conversationId, (panel) => ({ ...panel, width })))
+      },
+      setSessionChangesListWidth: (conversationId, listWidth) => {
+        set((state) => editChanges(state, conversationId, (panel) => ({ ...panel, listWidth })))
+      },
+      setSessionChangesBase: (conversationId, base) => {
+        set((state) =>
+          editChanges(state, conversationId, (panel) => ({
+            ...panel,
+            base,
+            // The selection belongs to the old comparison. Keeping it would show
+            // a file the new base does not list, or none at all — the panel
+            // re-picks the first file of whatever comes back.
+            selectedPath: null,
+          }))
+        )
+      },
+      setSessionChangesCommittedOnly: (conversationId, committedOnly) => {
+        set((state) =>
+          editChanges(state, conversationId, (panel) => ({
+            ...panel,
+            committedOnly,
+            selectedPath: null,
+          }))
+        )
+      },
+      setSessionChangesSelection: (conversationId, selectedPath) => {
+        set((state) => editChanges(state, conversationId, (panel) => ({ ...panel, selectedPath })))
+      },
+      setSessionChangesView: (conversationId, view) => {
+        set((state) => editChanges(state, conversationId, (panel) => ({ ...panel, view })))
+      },
+      setSessionChangesColumn: (conversationId, column) => {
+        set((state) => editChanges(state, conversationId, (panel) => ({ ...panel, column })))
+      },
+      toggleSessionChangesExpanded: (conversationId, path) => {
+        set((state) =>
+          editChanges(state, conversationId, (panel) => ({
+            ...panel,
+            expanded: panel.expanded.includes(path)
+              ? panel.expanded.filter((entry) => entry !== path)
+              : [...panel.expanded, path],
+          }))
         )
       },
       setSidebarHidden: (sidebarHidden) => {

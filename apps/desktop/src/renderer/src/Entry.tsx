@@ -450,6 +450,19 @@ function Clamped(props: { children: React.ReactNode }): React.JSX.Element {
  */
 const LIMIT = 0.2
 
+/**
+ * How much was dropped across a folded run of notices.
+ *
+ * Summed rather than shown per line: the fold exists because a run of hooks is
+ * one event to the reader, and four separate "omitted N bytes" lines inside one
+ * disclosure would undo that.
+ */
+function foldedOmitted(
+  folded: readonly { readonly detailOmittedBytes?: number }[] | undefined
+): number {
+  return (folded ?? []).reduce((total, line) => total + (line.detailOmittedBytes ?? 0), 0)
+}
+
 export const Entry = memo(function Entry({
   message,
   cwd = '',
@@ -820,6 +833,20 @@ export const Entry = memo(function Entry({
                     )
                     .join('\n')}
                 </pre>
+                {/*
+                  Say what was dropped, in words, here rather than in the
+                  adapter. The event carries a number because `mapping.ts` has
+                  no translator; this is the only place that does.
+
+                  With the count, because "truncated" invites a shrug and
+                  "omitted 187,431 bytes" invites a look at the hook that wrote
+                  them.
+                */}
+                {foldedOmitted(message.folded) > 0 && (
+                  <p className="notice-omitted">
+                    {t('notice.omitted', { bytes: foldedOmitted(message.folded) })}
+                  </p>
+                )}
               </details>
             )}
             {message.folded === undefined && message.detail !== undefined && (
@@ -831,6 +858,11 @@ export const Entry = memo(function Entry({
               <details className="notice-detail">
                 <summary>{t('notice.detail')}</summary>
                 <pre>{message.detail}</pre>
+                {message.detailOmittedBytes !== undefined && (
+                  <p className="notice-omitted">
+                    {t('notice.omitted', { bytes: message.detailOmittedBytes })}
+                  </p>
+                )}
               </details>
             )}
           </div>

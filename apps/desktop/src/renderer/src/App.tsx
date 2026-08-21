@@ -67,6 +67,15 @@ export function App(): React.JSX.Element {
     profileId: 'read-only',
   })
   /**
+   * Whether `readSettings` has answered yet.
+   *
+   * Not "did it succeed" — only that the question has been asked and returned,
+   * so the auto-start effect below knows `defaults` is as good as it is going
+   * to get. Without this the first session of a launch could be created from
+   * the placeholder above, which is the home-directory bug.
+   */
+  const [settingsRead, setSettingsRead] = useState(false)
+  /**
    * The language explanations come back in, or empty when none is set.
    *
    * Held here rather than in each pane because it decides whether a button
@@ -293,15 +302,22 @@ export function App(): React.JSX.Element {
           window.chorus
             .writeConversationLayout({
               order: sessionsRef.current.map((session) => session.conversationId),
-              workspace: {
-                layout: next.layout,
-                panes: next.panes,
-                focusedPaneId: next.focusedPaneId,
-                sidebarHidden: next.sidebarHidden,
-                sidebarWidth: next.sidebarWidth,
-                terminals: next.terminals,
-                globalTerminal: next.globalTerminal,
-              },
+              /*
+               * Taken from the snapshot function, not typed out field by field.
+               *
+               * It *was* typed out, and that is the same defect the equality
+               * comment below records from the other side: a field added to
+               * `WorkspaceSnapshot` and forgotten here is silently never
+               * persisted. Reading it through `workspaceSnapshot` means adding a
+               * field cannot be forgotten, because there is nothing to remember.
+               *
+               * Current state rather than the `next` that triggered this: the
+               * write is 180ms debounced, so `next` is by then one of several
+               * changes that have happened, and the last one is the one worth
+               * saving. The other two write paths — `reorder` and `commitLayout`
+               * — already send the whole current snapshot for the same reason.
+               */
+              workspace: workspaceSnapshot(useWorkspaceStore.getState()),
             })
             .catch(fail(setError))
         }, 180)
@@ -351,6 +367,16 @@ export function App(): React.JSX.Element {
         setExplainLanguage(language)
       })
       .catch(fail(setError))
+      /*
+       * Answered, whether or not it answered well.
+       *
+       * The auto-start effect waits on this, so it has to be set on the failure
+       * path too — a settings file that cannot be read must still leave the app
+       * able to open a session, just with the built-in defaults.
+       */
+      .finally(() => {
+        setSettingsRead(true)
+      })
 
     /*
      * The visual grace may expire, but a new session still waits for the real
@@ -501,10 +527,28 @@ export function App(): React.JSX.Element {
       })
   }, [defaults, updateSessions])
 
+  /*
+   * The first session waits for the settings, not just for the restore.
+   *
+   * `restored` and `readSettings` are two independent round trips, and this
+   * effect used to fire on the first of them. When restore won — which it
+   * usually does, being a database read against a small JSON read — `start()`
+   * ran with `defaults.cwd` still at its placeholder `''`, and the runtime
+   * reads an empty directory as "start at home". So the opening session of a
+   * launch opened on the **home directory** instead of the configured folder,
+   * and the Changes panel dutifully listed every dotfile in it.
+   *
+   * It looked like a path-resolution bug and was a race. Nothing resolved
+   * wrongly: `''` really does mean home, and the session really was started
+   * before anyone had said otherwise.
+   *
+   * Confirmed rather than assumed: the settings on this machine name a real
+   * folder, and the session still opened at home.
+   */
   useEffect(() => {
-    if (!restored || starting || sessions.length > 0 || error !== null) return
+    if (!restored || !settingsRead || starting || sessions.length > 0 || error !== null) return
     start()
-  }, [restored, starting, sessions.length, error, start])
+  }, [restored, settingsRead, starting, sessions.length, error, start])
 
   const applyRestart = useCallback(
     (previousId: string, restarted: SessionInfo) => {
@@ -977,6 +1021,9 @@ export function App(): React.JSX.Element {
         onReorderSessions={moveSession}
         onOpenSettings={() => {
           setShowingSettings(true)
+        }}
+        onOpenHistory={() => {
+          setShowingHistory(true)
         }}
         profiles={profiles}
         installed={installed}

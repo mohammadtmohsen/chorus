@@ -78,6 +78,21 @@ function catchup(
   )
 }
 
+/** The person editing a file themselves, in Chorus. */
+function edited(path: string, added: number, removed: number): StoredEvent {
+  seq += 1
+  return {
+    seq,
+    id: `e${String(seq)}`,
+    conversationId: 'c1',
+    actor: 'user',
+    type: 'file.edited.byUser',
+    payload: { type: 'file.edited.byUser', path, added, removed },
+    createdAt: seq,
+    schemaVersion: 1,
+  }
+}
+
 describe('composeCatchup', () => {
   it('replays what the other agent and the user said', () => {
     const text = catchup([
@@ -90,6 +105,30 @@ describe('composeCatchup', () => {
     // The agent has to be able to tell this from the user talking to it.
     expect(text).toContain('[Chorus]')
     expect(text).toContain('shared conversation')
+  })
+
+  /**
+   * The reason `file.edited.byUser` is a log event at all.
+   *
+   * Without these lines an agent that read the file at the start of a turn
+   * composes its patch against a version that no longer exists, overwrites the
+   * person's fix, and nothing in the transcript explains why.
+   */
+  it('tells the agent when the user edited a file', () => {
+    const text = catchup([edited('src/auth.ts', 3, 1)])
+    expect(text).toContain('src/auth.ts')
+    expect(text).toMatch(/re-?read/i)
+  })
+
+  it('keeps a hand edit even when the budget drops activity', () => {
+    // Activity is dropped before speech when the budget binds. "The file you
+    // are editing is not the file you read" is not supporting detail — it
+    // changes what the agent should do next — so it is carried as speech.
+    const noise = Array.from({ length: 40 }, (_, i) =>
+      ran(`r${String(i)}`, ['echo', 'x'.repeat(60)])
+    )
+    const text = catchup([...noise, edited('src/auth.ts', 3, 1)], { maxTotalChars: 600 })
+    expect(text).toContain('src/auth.ts')
   })
 
   it('names who else is in the room', () => {

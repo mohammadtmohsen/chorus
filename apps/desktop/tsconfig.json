@@ -10,5 +10,14 @@
     "declarationMap": false,
     "incremental": false
   },
-  "include": ["src/**/*", "electron.vite.config.ts", "vitest.config.mts"]
+  "include": [
+    "src/**/*",
+    "electron.vite.config.ts",
+    "vitest.config.mts",
+    // `profile/` is outside the fast suite's include glob on purpose — it opens
+    // a 272 MB fixture — but it is still code, and typecheck and lint have to
+    // see it or a measurement rots silently while `pnpm check` stays green.
+    "profile/**/*",
+    "vitest.profile.mts"
+  ]
 }

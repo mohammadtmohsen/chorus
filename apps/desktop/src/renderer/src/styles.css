@@ -125,6 +125,41 @@
   --tok-removed: #ef7f92;
 
   /*
+   * The diff palette, from VS Code's Dark 2026 — its current default theme.
+   *
+   * **Two tiers that stack, and that is the mechanism rather than the values.**
+   * A whole-line wash, and a second wash over the changed words painted on top;
+   * both semi-transparent, so the word area composites to
+   * `1 - (1 - .15)(1 - .30) = 40.5%` against the line's 15%. Flattening them
+   * into one colour, or sampling the composited result, gets it subtly wrong
+   * everywhere. VS Code's own registry says why: "The color must not be opaque
+   * so as not to hide underlying decorations."
+   *
+   * Both viewers read these. The hunks view is whole-line only so it uses the
+   * line tier alone; Monaco takes all four through `defineThemes`.
+   *
+   * Gutter colours are `editorGutter.*`, which is a separate scale from the
+   * washes — solid, because they mark a line rather than tint it.
+   */
+  --diff-line-added: #347d3926;
+  --diff-word-added: #57ab5a4d;
+  --diff-line-removed: #c93c3726;
+  --diff-word-removed: #f470674d;
+  --diff-gutter-added: #72c892;
+  --diff-gutter-removed: #f28772;
+
+  /*
+   * `gitDecoration.*` from Dark 2026 — the SCM list's letters, a separate scale
+   * from the diff washes above. Solid, because they name a file's state rather
+   * than tint its lines.
+   */
+  --git-added: #73c991;
+  --git-modified: #e5ba7d;
+  --git-deleted: #f48771;
+  /* Not overridden by the 2026 themes; this is the git extension's default. */
+  --git-renamed: #73c991;
+
+  /*
    * The terminal's sixteen.
    *
    * Tokens rather than a palette handed to xterm, because a hardcoded ANSI set
@@ -227,6 +262,42 @@
     --tok-property: #2a5fa8;
     --tok-added: #1f7a3a;
     --tok-removed: #b32740;
+
+    /*
+     * Light 2026, faithfully — including the parts it does not set.
+     *
+     * **The line tiers here are not Light 2026's; they are the registry's.**
+     * `2026-light.json` overrides only the *word* backgrounds, and nothing in
+     * its include chain (`light_modern -> light_plus -> light_vs`) sets the line
+     * ones, so they fall through to `editorColors.ts`:
+     * `defaultInsertColor = rgba(155,185,85,.2)` and
+     * `defaultRemoveColor = rgba(255,0,0,.2)`, registered for light as well as
+     * dark.
+     *
+     * That leaves light's two tiers in different hues — yellow-green under
+     * olive, pure red under crimson — where dark's are one family. It was once
+     * written up here as an upstream bug on the grounds that the line tier is
+     * "heavier" at 20% than the word tier at 15%. **That was wrong**: the washes
+     * stack, so words reach `1 - (1 - .20)(1 - .15) = 32%` and are still the
+     * stronger of the two. Nothing is inverted; light is merely flatter than
+     * dark, and whether the hue mismatch reads as muddy is a question about
+     * pixels that no amount of arithmetic settles.
+     *
+     * Shipped faithful by decision. Revisit with eyes on it, not with a
+     * calculator.
+     */
+    --diff-line-added: #9bb95533;
+    --diff-word-added: #587c0c26;
+    --diff-line-removed: #ff000033;
+    --diff-word-removed: #ad070726;
+    --diff-gutter-added: #587c0c;
+    --diff-gutter-removed: #ad0707;
+
+    /* `gitDecoration.*` from Light 2026, except `renamed` — see the dark block. */
+    --git-added: #587c0c;
+    --git-modified: #667309;
+    --git-deleted: #ad0707;
+    --git-renamed: #007100;
 
     /*
      * The same sixteen, re-decided for a light ground.
@@ -1607,8 +1678,12 @@ body {
 .score {
   position: relative;
   /* The one child that takes the slack; `min-height: 0` so it scrolls rather
-     than pushing the composer off the bottom of the pane. */
+     than pushing the composer off the bottom of the pane. `min-width: 0` is the
+     same guard on the other axis, for when `.pane-split` is a row and the
+     Changes panel is beside it: without it the transcript refuses to go below
+     its widest unbreakable line and pushes the panel off the edge. */
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   /*
@@ -4891,20 +4966,33 @@ input::placeholder {
   word-break: break-word;
 }
 
+/*
+ * The diff palette, not the agent palette.
+ *
+ * These were `--codex` at 12% for added and `--alert` for removed, which
+ * resolve to `--voice-codex` and `--danger`. So an added line was tinted with
+ * **one agent's identity colour** — in a panel where agent identity carries
+ * meaning — and a removed line with the colour reserved for danger. It read
+ * plausibly and was wrong in a way nothing would have surfaced: a Codex-green
+ * addition looks exactly like a considered choice.
+ *
+ * Whole-line only here, so only the line tier applies. Monaco layers the word
+ * tier on top of the same values; see `defineThemes`.
+ */
 .line--added {
-  background: color-mix(in srgb, var(--codex) 12%, transparent);
+  background: var(--diff-line-added);
 }
 
 .line--added .sign {
-  color: var(--codex);
+  color: var(--diff-gutter-added);
 }
 
 .line--removed {
-  background: color-mix(in srgb, var(--alert) 12%, transparent);
+  background: var(--diff-line-removed);
 }
 
 .line--removed .sign {
-  color: var(--alert);
+  color: var(--diff-gutter-removed);
 }
 
 .line--meta .code {
@@ -9221,4 +9309,731 @@ input::placeholder {
   .workspace-tab-curve-line {
   stroke-dasharray: 3 3;
   stroke: color-mix(in srgb, var(--accent-text) 55%, transparent);
+}
+
+/*
+ * The transcript and the Changes panel, on whichever axis the pane has room for.
+ *
+ * This wrapper is what took over `.score`'s old job of being `.pane`'s one
+ * stretching child, so the composer is still pinned to the bottom by the flex
+ * column above and not by a row position. `Session` decides the orientation
+ * from the pane's measured width and stamps it here; nothing in CSS re-derives
+ * it, because the pointer handler needs the same answer and a media query is
+ * not something it can read.
+ */
+.pane-split {
+  /* Matches `TRANSCRIPT_MIN_WIDTH`; the panel's `max-width` reads it. */
+  /* Mirrors TRANSCRIPT_MIN_WIDTH in `shared/workspace-layout.ts`; they must move
+     together, or the stored-width clamp and the drag clamp disagree. */
+  --transcript-min: 320px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-split[data-orientation='side'] {
+  flex-direction: row;
+}
+
+/*
+ * The Changes panel — a docked strip, the terminal's twin.
+ *
+ * Deliberately the same geometry as `.terminal-panel`: both are fixed-size
+ * children of a flex container whose other child stretches, so neither needs a
+ * change to an existing rule. The two columns inside repeat `.review-body`'s
+ * grid, because a file list beside a diff is the same shape wherever it appears.
+ *
+ * **Not a container**, deliberately. The body's stacking rule below was a
+ * `@container` query for one commit, and `container-type: inline-size` carries
+ * `contain: layout style inline-size` with it — which left Monaco mounted, in a
+ * correctly-sized box, rendering a single empty line. Four driver assertions
+ * failed together and none of them named containment. The width test moved to
+ * `data-narrow`, which the component already knows.
+ */
+.changes-panel {
+  --changes-height: 320px;
+  --changes-width: 420px;
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  height: var(--changes-height);
+  min-height: 0;
+  margin: 0 calc(var(--step) * 3) calc(var(--step) * 2);
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+  background: var(--bg-chrome);
+  overflow: hidden;
+}
+
+/*
+ * Beside the transcript: the fixed measurement is the width, and the height is
+ * whatever the row gives it.
+ *
+ * `height: auto` matters more than it looks — the stacked rule above sets a
+ * real height, and leaving it would stop the panel stretching and leave Monaco
+ * in a box shorter than the transcript for no visible reason. The left margin
+ * goes because `.score`'s own right padding is already the gap between them.
+ */
+.changes-panel[data-orientation='side'] {
+  flex: 0 1 var(--changes-width);
+  width: var(--changes-width);
+  /*
+   * The transcript's floor, enforced where the grip cannot reach.
+   *
+   * A width stored while the pane was wide is applied unchanged when the pane
+   * is merely wide *enough*, and nothing dragged anything, so the pointer
+   * handler's clamp never runs. `flex-shrink: 1` above is what lets this bite.
+   */
+  max-width: calc(100% - var(--transcript-min));
+  height: auto;
+  margin: 0 calc(var(--step) * 3) calc(var(--step) * 2) 0;
+}
+
+/* The grip is the top edge, so dragging up grows the panel downward-anchored. */
+.changes-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+/* Beside the transcript it is the left edge, for the same reason: the grip sits
+   on the side the panel grows away from. */
+.changes-panel[data-orientation='side'] .changes-grip {
+  top: 0;
+  right: auto;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  height: auto;
+  cursor: ew-resize;
+}
+
+.changes-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.changes-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-bottom: 1px solid var(--line);
+}
+
+.changes-title {
+  font-size: 12px;
+}
+
+/* Pushes everything after it to the right edge. */
+.changes-branch {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.changes-totals {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.changes-base select,
+.changes-committed {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.changes-committed {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 1);
+}
+
+.changes-body {
+  display: grid;
+  /*
+   * The list column is dragged, not fixed. `--changes-list` is written by the
+   * panel from its persisted width, and again on each pointer move while the
+   * divider is held — see `startListResize`.
+   */
+  grid-template-columns: var(--changes-list, 260px) auto 1fr;
+  gap: calc(var(--step) * 2);
+  flex: 1;
+  min-height: 0;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+}
+
+/*
+ * A narrow panel keeps both columns and gives the list less room.
+ *
+ * The first version of this stacked them — list above, diff below — and that
+ * is the wrong trade: the two halves are read *against* each other, so putting
+ * the code under the file it belongs to is not a smaller version of the panel,
+ * it is a different one. The list is the half that survives being squeezed,
+ * because a path can be truncated and a line of code cannot.
+ *
+ * An attribute, not a container query. `container-type` on `.changes-panel`
+ * left Monaco mounted, correctly sized and rendering a single empty line —
+ * see the note on `.changes-panel` above. The component already knows its own
+ * width, so this reads the fact from the place that has it.
+ */
+.changes-panel[data-narrow='true'] .changes-body {
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: calc(var(--step) * 2);
+}
+
+/* The head's controls wrap rather than being clipped by the panel's
+   `overflow: hidden`, which is what a narrow panel did to the base picker. */
+.changes-panel[data-narrow='true'] .changes-head {
+  flex-wrap: wrap;
+  row-gap: calc(var(--step) * 1);
+}
+
+.changes-panel[data-narrow='true'] .changes-branch {
+  margin-left: 0;
+}
+
+.changes-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding-right: calc(var(--step) * 2);
+  border-right: 1px solid var(--line);
+}
+
+.changes-file {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-file:hover {
+  color: var(--bone);
+}
+
+.changes-file[data-on='true'] {
+  background: var(--sunken);
+  color: var(--bone);
+}
+
+/* Fixed width, so the paths beside them line up rather than stepping. */
+.changes-file-mark {
+  flex: 0 0 auto;
+  width: 1.1em;
+  text-align: center;
+  font-weight: 600;
+}
+
+/*
+ * VS Code's status colours, and its two deliberate mismatches.
+ *
+ * The letter set and the colour set are **not** one-to-one upstream, and the two
+ * places they diverge are copied on purpose rather than tidied:
+ *
+ *   - `T` (type changed) is coloured as **modified**
+ *   - `C` (copied) is coloured as **renamed**
+ *
+ * Also upstream: untracked and renamed share the same green, and in the 2026
+ * themes conflicted and deleted share the same red. Making either pair distinct
+ * would look more informative and be less familiar.
+ *
+ * Values are `gitDecoration.*` from Dark 2026; the light block re-states them.
+ * `renamed` is the exception — the 2026 themes do not override it, so it keeps
+ * the git extension's registry default.
+ */
+.changes-file-mark--added,
+.changes-file-mark--untracked {
+  color: var(--git-added, #73c991);
+}
+
+.changes-file-mark--removed,
+.changes-file-mark--conflicted {
+  color: var(--git-deleted, #f48771);
+}
+
+.changes-file-mark--modified,
+.changes-file-mark--typechanged {
+  color: var(--git-modified, #e5ba7d);
+}
+
+.changes-file-mark--renamed,
+.changes-file-mark--copied {
+  color: var(--git-renamed, #73c991);
+}
+
+/*
+ * A deleted file is struck through, as it is in VS Code's own list. The mark
+ * keeps its shape — striking the letter as well would make `D` unreadable at
+ * this size.
+ */
+.changes-file[data-status='removed'] .changes-file-path {
+  text-decoration: line-through;
+}
+
+.changes-file-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-file-counts {
+  flex: 0 0 auto;
+  display: flex;
+  gap: calc(var(--step) * 1);
+}
+
+.changes-diff {
+  overflow: auto;
+  min-height: 0;
+}
+
+.changes-empty {
+  padding: calc(var(--step) * 4) calc(var(--step) * 3);
+}
+
+.changes-foot {
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  border-top: 1px solid var(--line);
+}
+
+/*
+ * Monaco measures its container and draws nothing into a zero-height box.
+ *
+ * The first build of this panel had no rule here at all: the editor mounted,
+ * reported `monaco-diff-editor` in the DOM, themed itself correctly — and was
+ * 0px tall, so it rendered no lines and its own diff computation rejected with
+ * "no diff result available". Every check short of measuring the box passed.
+ */
+.monaco-diff {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.monaco-diff-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.monaco-diff-host[data-hidden='true'] {
+  display: none;
+}
+
+/*
+ * The editor scrolls itself, so the pane around it must not also scroll —
+ * two scrollbars on one surface, and the outer one wins the wheel.
+ */
+.changes-diff:has(.monaco-diff) {
+  overflow: hidden;
+}
+
+/* The left column now holds a switch above whichever list is showing. */
+.changes-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* The border moved to `.changes-split`, which is the thing you now grab. */
+  min-width: 0;
+}
+
+/*
+ * The activity rail, VS Code's way of switching a side bar.
+ *
+ * Horizontal rather than vertical, because this panel is a wide strip and not a
+ * tall column — the rail sits above the list where the text tabs used to. The
+ * arrangement is the local answer; what is borrowed is that a *view* is chosen
+ * by an icon and marked with an edge, rather than by a word in a tab.
+ */
+.changes-activity {
+  display: flex;
+  gap: calc(var(--step) * 1);
+  padding-bottom: calc(var(--step) * 1.5);
+}
+
+.changes-activity-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--step) * 1);
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  /* Dimmed until chosen, which is how the rail says which view you are in. */
+  color: var(--muted);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.changes-activity-btn:hover {
+  opacity: 1;
+}
+
+.changes-activity-btn[aria-selected='true'] {
+  background: var(--sunken);
+  color: var(--bone);
+  opacity: 1;
+}
+
+/*
+ * The selected view keeps an edge, as an editor marks its active one.
+ *
+ * On the leading edge rather than underneath: an underline reads as a tab, and
+ * the point of the rail is that these are views rather than tabs.
+ */
+.changes-activity-btn[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block: calc(var(--step) * 0.75);
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent-text, currentcolor);
+}
+
+/*
+ * The changed count, as a badge on Source Control rather than a word in a tab.
+ *
+ * `pointer-events: none` so it cannot swallow the click meant for the button
+ * it sits on — it overlaps the icon's corner by design.
+ */
+.changes-badge {
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 2px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent-text, var(--bone));
+  color: var(--bg-chrome);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* The lists scroll; the rail above them does not. */
+.changes-files,
+.changes-tree {
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * The files list keeps its own border in the modal Review sheet, but inside the
+ * column that border now belongs to the column.
+ */
+.changes-column .changes-files {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.changes-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+}
+
+/*
+ * One flat list with an indent per depth, rather than nested lists.
+ *
+ * Keeps the DOM shallow for a deep path, and is what lets a single roving
+ * tabindex work — arrow movement over an index rather than a walk of a tree.
+ */
+.changes-tree-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 1);
+  padding: 2px calc(var(--step) * 1.5);
+  padding-left: calc(var(--step) * 1.5 + var(--depth, 0) * 12px);
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-tree-row:hover {
+  color: var(--bone);
+}
+
+.changes-tree-row[data-on='true'] {
+  background: var(--sunken);
+  color: var(--bone);
+}
+
+.changes-tree-row[data-directory='true'] .changes-tree-name {
+  color: inherit;
+}
+
+/*
+ * Fixed width so names line up whether or not a row has a twisty.
+ *
+ * 9px at 0.6 opacity was the first try and it was nearly invisible — a
+ * disclosure arrow has to be findable before it can be clicked, and this one
+ * carries the whole of "there is more underneath". Sized to sit under the file
+ * icons beside it rather than to be discreet.
+ */
+.changes-tree-twist {
+  flex: 0 0 auto;
+  width: 1.1em;
+  opacity: 0.9;
+  font-size: 13px;
+  line-height: 1;
+  text-align: center;
+}
+
+/*
+ * VS Code's own default file icons, as a font.
+ *
+ * A font rather than SVGs because an icon is then a codepoint — set as
+ * `textContent`, never markup — which satisfies the no-innerHTML rule by
+ * construction. See `file-icon.ts` for why Seti and not the alternatives.
+ *
+ * Seti ships no folder icons, and neither does VS Code's default look, so
+ * directories keep `.changes-tree-twist` and only files get one of these. The
+ * two sit in adjacent slots rather than competing for one.
+ */
+@font-face {
+  font-family: 'seti';
+  src: url('./assets/seti.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  /* The tree paints immediately with no glyph rather than blocking on 37 KB. */
+  font-display: block;
+}
+
+.file-icon {
+  flex: 0 0 auto;
+  width: 1.2em;
+  font-family: 'seti', monospace;
+  /* Seti's own metrics assume 150%; the theme file states it. */
+  font-size: 1.1em;
+  line-height: 1;
+  text-align: center;
+  /* Colour comes from the theme file per file type, so nothing inherits here. */
+  font-style: normal;
+  font-weight: normal;
+}
+
+.changes-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Drift from the upstream, beside the branch name. Hidden at zero — see the panel. */
+.changes-ahead,
+.changes-behind {
+  margin-left: calc(var(--step) * 1);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.changes-ahead {
+  color: var(--added, #4ea36a);
+}
+
+.changes-behind {
+  color: var(--removed, #c25b5b);
+}
+
+/* A changed file inside a folder row is indented like the project tree's. */
+.changes-file {
+  padding-left: calc(var(--step) * 2 + var(--depth, 0) * 12px);
+}
+
+/* Folder headings in the changed list: a label, not a control. */
+.changes-tree-row--dir {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.85;
+}
+
+/*
+ * The right-hand column: diff above, commit box below.
+ *
+ * Added when the commit box arrived, and it broke Monaco immediately — the
+ * height rules used to reach .changes-diff as a direct grid child of
+ * .changes-body, and inserting a wrapper left the editor in a zero-height box
+ * again. Third time for that failure in this panel, and the first time it was
+ * reported as itself rather than as "no decorations".
+ */
+.changes-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.changes-right .changes-diff {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The commit box neither scrolls nor shrinks; the diff above absorbs the space. */
+.changes-commit {
+  display: flex;
+  flex: 0 0 auto;
+  gap: calc(var(--step) * 2);
+  align-items: center;
+  padding-top: calc(var(--step) * 2);
+}
+
+.changes-commit input {
+  flex: 1;
+  min-width: 0;
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--bone);
+  font-size: 12px;
+}
+
+/* Staged / Changes headings, with their bulk action on the right. */
+.changes-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 1) calc(var(--step) * 0.5);
+}
+
+.changes-group-name {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* A file row is a row of controls now, not one button. */
+.changes-file {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 1);
+}
+
+.changes-file-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-stage,
+.changes-discard {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.changes-stage:hover:not(:disabled),
+.changes-discard:hover:not(:disabled) {
+  background: var(--sunken);
+  color: var(--bone);
+}
+
+.changes-stage:disabled,
+.changes-discard:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* `+` reads as adding to the index; `−` as taking back out of it. */
+.changes-stage[data-staged='true'] {
+  color: var(--git-added, var(--muted));
+}
+
+/*
+ * Discard is dimmed, not hidden.
+ *
+ * It was `opacity: 0` until hover, on the reasoning that a destructive control
+ * should not be a permanent invitation. But hiding it does not make it safer —
+ * the confirmation does that, and it names the file — while a control nobody
+ * can find is a feature nobody has. Dimmed keeps it out of the way and still
+ * on the page.
+ */
+.changes-discard {
+  opacity: 0.45;
+}
+
+.changes-file:hover .changes-discard,
+.changes-discard:focus-visible {
+  opacity: 1;
+  color: var(--git-deleted, var(--muted));
+}
+
+/*
+ * The draggable divider between the file list and the diff.
+ *
+ * Four pixels wide with a one-pixel line drawn inside it: a one-pixel target is
+ * a target nobody hits, and a four-pixel *line* is a bar. The hit area and the
+ * thing you see are deliberately different sizes.
+ */
+.changes-split {
+  position: relative;
+  width: 5px;
+  cursor: col-resize;
+  background: none;
+  border: 0;
+}
+
+.changes-split::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 2px;
+  width: 1px;
+  background: var(--line);
+}
+
+.changes-split:hover::before,
+.changes-split:focus-visible::before {
+  background: var(--accent-text, var(--bone));
+  width: 2px;
+}
+
+.changes-split:focus-visible {
+  outline: none;
 }

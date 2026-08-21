@@ -38,13 +38,15 @@ describe('open session persistence', () => {
     expect(parseOpenSessions({ version: 2, sessions: [session], workspace })).toEqual({
       sessions: [{ ...session, lastSeenSeq: 0, draft: '' }],
       // Everything added since is defaulted in, not required: this envelope was
-      // written before the sidebar could be resized and before terminals
-      // existed, and it must still open — at the width it always had rather
-      // than at zero, with no panels rather than none at all.
+      // written before the sidebar could be resized, before terminals existed
+      // and before the Changes panel did, and it must still open — at the width
+      // it always had rather than at zero, with no panels rather than none at
+      // all.
       workspace: {
         ...workspace,
         sidebarWidth: SIDEBAR_WIDTH.default,
         terminals: {},
+        changes: {},
         globalTerminal: {
           open: false,
           height: TERMINAL_HEIGHT.default,

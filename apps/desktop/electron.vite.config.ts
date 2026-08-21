@@ -66,5 +66,35 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react()],
+    /*
+     * A renderer built against React's **development** runtime.
+     *
+     * `pnpm dev` and a production build are different React builds, and only
+     * the development one double-invokes effects under `StrictMode`. That is
+     * not a detail: a whole class of bug lives in the second invocation — a ref
+     * that survives a disposal, a subscription attached twice, a guard that
+     * reads state the first pass left behind — and none of it exists in the
+     * bundle the e2e harness drives.
+     *
+     * It cost a real one. `MonacoDiff` rendered an empty editor in `pnpm dev`
+     * and a correct one in every automated run, four probes deep, because the
+     * harness only ever launched the production build. The user could see it
+     * and the tests could not.
+     *
+     * `--mode development` alone does not do this: vite pins
+     * `process.env.NODE_ENV` to `production` for any build, so React resolves
+     * to its production runtime whatever the mode says. The define is the part
+     * that actually switches it, and `minify: false` keeps the stack traces
+     * worth reading when it does catch something.
+     *
+     * Off unless asked for, so nothing ships a development React by accident —
+     * `pnpm --filter @chorus/desktop run build:dev` is the only way in.
+     */
+    ...(process.env['CHORUS_DEV_RENDERER'] === '1'
+      ? {
+          define: { 'process.env.NODE_ENV': JSON.stringify('development') },
+          build: { minify: false as const },
+        }
+      : {}),
   },
 })

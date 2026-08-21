@@ -10,7 +10,29 @@
  * repository whose state has to be constructed first.
  */
 
-export type FileState = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted'
+/**
+ * The states porcelain v2 can report, minus the one deliberately not asked for.
+ *
+ * `copied` and `typechanged` were folded into `renamed` and `modified` until
+ * 2026-08-20 — not because git does not report them, but because nothing read
+ * them. VS Code distinguishes both (`C` and `T`), so matching its vocabulary
+ * meant widening this first; the letters cannot be added at the end of a pipe
+ * that already threw the distinction away.
+ *
+ * **`ignored` is absent on purpose.** git only reports it with `--ignored`,
+ * which `readStatus` does not pass and VS Code's own status command does not
+ * either — it runs `-uall`/`-uno`. Asking for it would mean enumerating
+ * `node_modules` to populate a letter no upstream UI shows.
+ */
+export type FileState =
+  | 'added'
+  | 'modified'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'typechanged'
+  | 'untracked'
+  | 'conflicted'
 
 export interface ChangedFile {
   readonly path: string
@@ -98,10 +120,18 @@ function parseEntry(line: string): ChangedFile | null {
     const unstaged = y !== '.'
 
     if (kind === '2') {
-      // A rename packs both paths into the tail, tab-separated.
+      /*
+       * A rename packs both paths into the tail, tab-separated.
+       *
+       * Kind `2` is "renamed **or copied**", and which one is in the XY code:
+       * `R` for a rename, `C` for a copy. Every kind-`2` line was read as a
+       * rename until 2026-08-20, so a copied file reported its source as if the
+       * original had moved — the one place where the old collapse was not just
+       * a missing letter but a false statement about the tree.
+       */
       const tail = fields.slice(9).join(' ')
       const [path = '', from = ''] = tail.split('\t')
-      return { path, from, state: 'renamed', staged, unstaged }
+      return { path, from, state: xy.includes('C') ? 'copied' : 'renamed', staged, unstaged }
     }
 
     return {
@@ -122,5 +152,9 @@ function stateFromXy(xy: string): FileState {
   if (codes.includes('A')) return 'added'
   if (codes.includes('D')) return 'deleted'
   if (codes.includes('R')) return 'renamed'
+  // A regular file becoming a symlink, or the reverse. Rare, and it used to
+  // fall through to `modified` — which is what it looks like in a diff and not
+  // what happened to the file.
+  if (codes.includes('T')) return 'typechanged'
   return 'modified'
 }

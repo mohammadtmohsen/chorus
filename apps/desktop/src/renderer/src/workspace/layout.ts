@@ -1,6 +1,10 @@
 import {
+  CHANGES_HEIGHT,
+  CHANGES_LIST,
+  CHANGES_WIDTH,
   SIDEBAR_WIDTH,
   TERMINAL_HEIGHT,
+  type ChangesPanelState,
   type TerminalPanelState,
   type WorkspaceLayoutNode,
   type WorkspacePane,
@@ -72,6 +76,59 @@ export function normalizeTerminalPanel(panel: TerminalPanelState): TerminalPanel
   }
 }
 
+/**
+ * The Changes panel's equivalent of `normalizeTerminalPanel`, and deliberately
+ * much smaller.
+ *
+ * There is no roster to repair — a Changes panel holds one view of one
+ * repository, not a list of live shells — so the only invariant that can be
+ * broken by a hand-edited file is the height. `base` is *not* validated against
+ * the repository here: this function is pure and synchronous, git is neither,
+ * and a base that has since been deleted is a `problem` string the panel
+ * displays rather than a state to repair silently.
+ */
+export function normalizeChangesPanel(panel: ChangesPanelState): ChangesPanelState {
+  return {
+    open: panel.open,
+    height: clampChangesHeight(panel.height),
+    width: clampChangesWidth(panel.width),
+    base: panel.base === '' ? null : panel.base,
+    committedOnly: panel.committedOnly,
+    selectedPath: panel.selectedPath === '' ? null : panel.selectedPath,
+    view: panel.view,
+    listWidth: clampChangesList(panel.listWidth),
+    column: panel.column,
+    /*
+     * Bounded and de-duplicated.
+     *
+     * Expanding directories is unbounded user action and this rides in the
+     * persisted snapshot, so without a cap a long-lived session writes an
+     * ever-growing array to disk on every layout change. 200 is far past any
+     * tree anyone is actually reading.
+     */
+    expanded: [...new Set(panel.expanded.filter((path) => path !== ''))].slice(0, MAX_EXPANDED),
+  }
+}
+
+/** Enough for a deep tree, few enough that the snapshot stays small. */
+export const MAX_EXPANDED = 200
+
+export function clampChangesHeight(height: number): number {
+  if (!Number.isFinite(height)) return CHANGES_HEIGHT.default
+  return Math.min(Math.max(height, CHANGES_HEIGHT.min), CHANGES_HEIGHT.max)
+}
+
+/** Same shape as the panel's own clamp — a dragged value is never trusted raw. */
+export function clampChangesList(width: number): number {
+  if (!Number.isFinite(width)) return CHANGES_LIST.default
+  return Math.min(Math.max(Math.round(width), CHANGES_LIST.min), CHANGES_LIST.max)
+}
+
+export function clampChangesWidth(width: number): number {
+  if (!Number.isFinite(width)) return CHANGES_WIDTH.default
+  return Math.min(Math.max(width, CHANGES_WIDTH.min), CHANGES_WIDTH.max)
+}
+
 export type SplitDirection = 'left' | 'right' | 'up' | 'down'
 
 /** Four readable editor groups; conversations beyond this remain available as tabs. */
@@ -93,6 +150,7 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   sidebarWidth: SIDEBAR_WIDTH.default,
   terminals: {},
   globalTerminal: { open: false, height: TERMINAL_HEIGHT.default, tabs: [], activeId: null },
+  changes: {},
 }
 
 interface NormalizedNode {
@@ -232,6 +290,14 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
       ])
     ),
     globalTerminal: normalizeTerminalPanel(workspace.globalTerminal),
+    // Repaired here for the same reason, and pruned by conversation in
+    // `reconcileWorkspace` for the same reason too.
+    changes: Object.fromEntries(
+      Object.entries(workspace.changes).map(([conversationId, panel]) => [
+        conversationId,
+        normalizeChangesPanel(panel),
+      ])
+    ),
   }
 }
 
@@ -630,6 +696,13 @@ export function reconcileWorkspace(
     ...workspace,
     terminals: Object.fromEntries(
       Object.entries(workspace.terminals).filter(([conversationId]) => allowed.has(conversationId))
+    ),
+    // Changes panels are pruned on the same rule and for the same reason: the
+    // map would otherwise keep an entry for every conversation ever ended.
+    changes: Object.fromEntries(
+      Object.entries(workspace.changes)
+        .filter(([conversationId]) => allowed.has(conversationId))
+        .map(([conversationId, panel]) => [conversationId, normalizeChangesPanel(panel)])
     ),
   }
   // A legacy file has no opinion about tabs, so preserve the old app's visible

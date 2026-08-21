@@ -264,6 +264,19 @@ export interface Notice extends AgentEventBase {
   readonly source: NoticeSource
   readonly text: string
   readonly detail?: string
+  /**
+   * How much of `detail` was dropped, when it was too big to keep whole.
+   *
+   * A number rather than a sentence appended to `detail`, because this package
+   * has no translator and the renderer does. That is the same reason `source`
+   * is a key rather than a phrase: an adapter that writes English is an adapter
+   * that cannot be read in another language, and a truncation the reader cannot
+   * see is worse than the truncation itself.
+   *
+   * Absent when nothing was dropped, so the common notice is byte-identical to
+   * what it was before this existed.
+   */
+  readonly detailOmittedBytes?: number
 }
 
 /**

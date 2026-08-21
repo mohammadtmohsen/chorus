@@ -184,6 +184,55 @@ function collect(events: readonly StoredEvent[], recipient: AgentId, maxMessage:
         break
 
       /*
+       * The whole reason `file.edited.byUser` is a log event rather than a
+       * push.
+       *
+       * An agent that read this file at the start of a turn is composing a
+       * patch against a version that no longer exists. Without this line it
+       * overwrites the person's fix and neither party learns why — and the
+       * agent cannot discover it, because nothing else in the transcript says
+       * a file moved under it.
+       *
+       * **Speech, not activity.** Activity is dropped first when the budget
+       * binds, and "the file you are editing is not the file you read" is not
+       * supporting detail — it changes what the agent should do next. This is
+       * the only non-agent activity promoted to speech, and that is the
+       * argument for it.
+       */
+      case 'file.edited.byUser':
+        lines.push({
+          seq: event.seq,
+          kind: 'speech',
+          text: `user: I edited ${payload.path} myself (+${String(payload.added)} −${String(payload.removed)}). Re-read it before changing it.`,
+        })
+        break
+
+      /*
+       * Source control the person drove themselves.
+       *
+       * **`discarded` is the one that matters**, and it is why this is speech
+       * rather than activity: an agent that just wrote those files is holding a
+       * picture of a tree that no longer exists, and would otherwise go looking
+       * for its own work and find the file as it was before it started.
+       *
+       * `staged` and `unstaged` are dropped. They move nothing on disk, an
+       * agent has no use for the index, and replaying every click of a
+       * checkbox would spend the catch-up budget on bookkeeping — which is
+       * exactly what the budget rule exists to prevent.
+       */
+      case 'repo.changed.byUser': {
+        if (payload.action === 'staged' || payload.action === 'unstaged') break
+        const what =
+          payload.action === 'discarded'
+            ? `discarded my changes to ${describeFiles(payload.paths)} — anything you wrote there is gone, re-read before continuing`
+            : payload.action === 'committed'
+              ? `committed${payload.detail === null ? '' : `: ${trim(payload.detail, 120)}`}`
+              : `pushed${payload.detail === null ? '' : ` ${payload.detail}`}`
+        lines.push({ seq: event.seq, kind: 'speech', text: `user: I ${what}` })
+        break
+      }
+
+      /*
        * Worth replaying: an agent asked to do something now works under rules
        * that changed while it was not being addressed, and "you may run
        * commands without asking" is a fact about the room, not about one turn.

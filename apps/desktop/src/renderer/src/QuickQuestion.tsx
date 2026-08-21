@@ -340,8 +340,14 @@ export function QuickQuestion(props: {
     })
 
     window.chorus
-      .history({ conversationId: asideId })
-      .then((past) => {
+      /*
+       * An aside is a conversation, so it draws through the same reducer and
+       * wants the same narrowed read. No `throughSeq` bookkeeping here: this
+       * reads once from the beginning and then follows the live push, so there
+       * is no `afterSeq` to leave stale.
+       */
+      .transcript({ conversationId: asideId })
+      .then(({ events: past }) => {
         apply(past)
         live = true
         apply(pending)

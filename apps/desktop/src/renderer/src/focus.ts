@@ -79,6 +79,23 @@ export interface Focused {
    * so the question is not asked: a terminal keeps its caret.
    */
   readonly inTerminal: boolean
+  /**
+   * Inside a code editor, where the emptiness rule is wrong for the same reason.
+   *
+   * Monaco keeps the document in its own model and types into a hidden
+   * `<textarea class="inputarea">` that it clears after every keystroke — the
+   * identical trick xterm plays, and it defeats the identical test. Every check
+   * here read the editor as an empty box, therefore idle, therefore free to
+   * take the caret from; so the composer pulled focus away mid-word and the
+   * file could not be edited at all.
+   *
+   * The terminal case above was found and fixed first. This is the same bug in
+   * the component that arrived later, which is worth saying plainly: the rule
+   * is not "terminals are special", it is **"a box that empties itself cannot
+   * be judged by whether it is empty"**. Anything else that hides its real
+   * buffer belongs here too.
+   */
+  readonly inEditor: boolean
 }
 
 /**
@@ -92,7 +109,7 @@ const TYPED = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'num
 
 export function mayTakeCaret(focused: Focused | null): boolean {
   if (focused === null) return true
-  return !focused.inModal && !focused.inTerminal && !isWriting(focused)
+  return !focused.inModal && !focused.inTerminal && !focused.inEditor && !isWriting(focused)
 }
 
 function isWriting(focused: Focused): boolean {
@@ -120,6 +137,13 @@ export function focusedNow(): Focused | null {
     editable: el.isContentEditable,
     inModal: el.closest('.sheet-backdrop') !== null,
     inTerminal: el.closest('.terminal-panel') !== null,
+    /*
+     * `.monaco-editor` rather than our own `.monaco-diff-host` wrapper: the
+     * class Monaco puts on its own root travels with it wherever it is mounted,
+     * so this keeps holding if the editor is ever used outside the Changes
+     * panel. A wrapper we own would silently stop matching.
+     */
+    inEditor: el.closest('.monaco-editor') !== null,
   }
 }
 

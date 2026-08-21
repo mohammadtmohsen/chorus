@@ -1,4 +1,5 @@
 import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
+import { TRANSCRIPT_TYPES } from '../shared/transcript-events.js'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { ClaudeAdapter, type ResolvedExecutable } from '@chorus/adapter-claude'
@@ -22,6 +23,7 @@ import {
   type ConversationSummary,
   type SqliteHandle,
   type StoredEvent,
+  type TranscriptState,
 } from '@chorus/event-store'
 import {
   composeBrief,
@@ -41,10 +43,18 @@ import {
 } from '@chorus/orchestrator'
 import { newConversationId, newHandoffId, type AgentId, type Logger } from '@chorus/shared'
 import {
+  fetchRef,
+  readBranches,
   readWorkspace,
   relativeWithin,
-  type DiffFile,
-  type WorkspaceStatus,
+  readStatus,
+  stage,
+  unstage,
+  discard,
+  commit,
+  push,
+  type BranchRef,
+  type WorkspaceRead,
 } from '@chorus/workspace'
 import type { ActivityPush, ContextUsagePush, TasksPush } from '../shared/ipc.js'
 import { UNREAD_EVENT_TYPES } from '../shared/unread.js'
@@ -52,6 +62,16 @@ import { readOpenSessions, writeOpenSessions, type OpenSession } from './open-se
 import { containsPassage } from '../shared/plain-text.js'
 import { questionSetText } from '../shared/question-text.js'
 import { readRemembered, writeRemembered } from './remembered.js'
+import { writeProjectFile, type WriteResult } from './file-write.js'
+
+/** What each source-control action is called once it has happened, for the log. */
+const PAST_TENSE = {
+  stage: 'staged',
+  unstage: 'unstaged',
+  discard: 'discarded',
+  commit: 'committed',
+  push: 'pushed',
+} as const
 import { readSettings } from './settings.js'
 import {
   TerminalService,
@@ -720,6 +740,38 @@ export function recapLedger(events: readonly StoredEvent[], cwd = ''): RecapLedg
         }
         break
 
+      case 'repo.changed.byUser':
+        /*
+         * Not counted, and the distinction from the case below is the point.
+         *
+         * The ledger carries *what changed in the project*. Staging, committing
+         * and pushing move a change through git without altering a single file
+         * — a brief that listed them as work done would be counting the same
+         * edit two or three times under different verbs.
+         *
+         * `discarded` is the one that genuinely changes the tree, and it
+         * *removes* work. Listing it here would add the file to "Done", which
+         * is the exact inversion of what happened; un-listing it properly
+         * means matching it against what the ledger already claims, which is
+         * `untouchRemoved`'s job and is not wired for it. Left out rather than
+         * counted wrongly.
+         */
+        break
+
+      case 'file.edited.byUser':
+        /*
+         * Counted, though the hand was the user's rather than an agent's.
+         *
+         * The ledger's rule is "what the log can prove was done", and a file the
+         * person edited themselves is exactly that — it is on disk, and the next
+         * agent reading this brief will find it changed. Leaving it out would
+         * produce the one failure this ledger exists to avoid from the other
+         * direction: a brief that says a file was not touched when it was, so
+         * the agent re-derives a fix that is already there.
+         */
+        touch(payload.path)
+        break
+
       /*
        * Listed rather than defaulted, the way `projections.ts` and `catchup.ts`
        * list theirs, so a new event type has to be considered here instead of
@@ -1167,7 +1219,15 @@ export class ChorusRuntime {
      * the app boots claiming agents are alive that died with the process — and
      * the UI would show them as live.
      */
-    const { closed } = store.reconcileOrphanedSessions()
+    /*
+     * Skipped under the profiling flag, because it *writes*: it appends a
+     * `session.ended` for every session the log still believes is running. A
+     * copy of a live database has plenty of those, so the first profiling open
+     * would change the fixture and the second run would measure a different
+     * conversation from the first — which is the exact failure the pristine copy
+     * exists to prevent.
+     */
+    const { closed } = readOnlyProfiling() ? { closed: 0 } : store.reconcileOrphanedSessions()
     if (closed > 0) log.warn('closed sessions orphaned by a crash', { closed })
     log.info('runtime ready', { events: store.lastSeq() })
 
@@ -1284,6 +1344,21 @@ export class ChorusRuntime {
     const cwd = options.cwd.trim() === '' ? homedir() : options.cwd
     const problem = describeDirectory(cwd)
     if (problem !== null) throw new Error(problem)
+
+    /*
+     * Refused here rather than at `startParticipant`, and the difference is a
+     * write.
+     *
+     * `conversation.created` is appended a few lines below, before any agent is
+     * started — so relying on the guard further down left a **ghost
+     * conversation** in the log every time one was attempted: the start failed,
+     * the row stayed. A profiling run against a copy of a real database would
+     * therefore change it, and the second run would measure a different fixture
+     * from the first. Found by a test asserting the log position does not move.
+     */
+    if (readOnlyProfiling()) {
+      throw new Error('A conversation cannot be started: CHORUS_PROFILE_READONLY is set')
+    }
 
     const conversationId = newConversationId()
     this.store.append({
@@ -2508,6 +2583,15 @@ export class ChorusRuntime {
   }
 
   private async runRestore(): Promise<RestoredConversations> {
+    /*
+     * Restore still runs under the profiling flag, and an earlier version of
+     * this returning `{ sessions: [] }` was wrong in a way that made the whole
+     * mode useless: `App.tsx` renders `<div className="empty" aria-busy>` while
+     * there are no sessions, so the window stayed permanently blank and there
+     * was no route to a transcript at all — the one thing the mode exists to
+     * show. Reopening is not what starts an agent; `startParticipant` is, and
+     * that is where the guard belongs.
+     */
     const savedState = readOpenSessions(this.userDataPath)
     const saved = savedState.sessions
     this.workspaceSnapshot = savedState.workspace
@@ -2655,13 +2739,24 @@ export class ChorusRuntime {
       }
     }
 
-    if (conversation.participants.size === 0) return null
+    /*
+     * No participants normally means the reopen failed and there is nothing to
+     * show. Under the profiling flag it is the expected outcome — the
+     * conversation is being opened to be *read* — so the transcript is still
+     * worth mounting.
+     */
+    if (conversation.participants.size === 0 && !readOnlyProfiling()) return null
     this.active.set(entry.conversationId, conversation)
     return conversation
   }
 
   /** Written after anything that changes what is open, or what it is. */
   private rememberOpen(): void {
+    // Under the flag every conversation reopens with no participants, so writing
+    // this back would erase the agent list from the fixture and make the next
+    // launch restore something different.
+    if (readOnlyProfiling()) return
+
     writeOpenSessions(this.userDataPath, {
       sessions: [...this.active.values()].map((c) => ({
         conversationId: c.conversationId,
@@ -3343,14 +3438,221 @@ export class ChorusRuntime {
    * reviewing is the disk.
    */
   async readWorkspace(
+    conversationId: string,
+    options: {
+      base?: string | undefined
+      committedOnly?: boolean | undefined
+      hunks?: boolean | undefined
+    } = {}
+  ): Promise<WorkspaceRead> {
+    const cwd = this.require(conversationId).cwd
+    return readWorkspace({
+      cwd,
+      ...(options.base === undefined ? {} : { base: options.base }),
+      ...(options.committedOnly === undefined ? {} : { committedOnly: options.committedOnly }),
+      ...(options.hunks === undefined ? {} : { hunks: options.hunks }),
+    })
+  }
+
+  /**
+   * Saves a file the person edited, and tells the room.
+   *
+   * The two halves are here together on purpose. A write that landed without
+   * the event is the failure the event exists to prevent — an agent mid-turn
+   * composing a patch against a version that no longer exists — so nothing may
+   * write the tree without appending, and this is the only method that writes.
+   *
+   * The append is **after** the write and only on success: an event saying a
+   * file changed when it did not would send the other agent to re-read a file
+   * that never moved, which is a smaller harm than the reverse but still a lie
+   * in the log.
+   */
+  async writeUserFile(
+    conversationId: string,
+    path: string,
+    content: string,
+    expectedSha: string | null,
+    force: boolean | undefined
+  ): Promise<WriteResult> {
+    const result = await writeProjectFile({
+      cwd: this.require(conversationId).cwd,
+      path,
+      content,
+      expectedSha,
+      ...(force === undefined ? {} : { force }),
+    })
+    // Only a write that landed is worth telling the room about. A refused one
+    // changed nothing, and an event for it would send the other agent to
+    // re-read a file that never moved.
+    if (result.outcome !== 'written') return result
+
+    this.store.append({
+      conversationId,
+      actor: 'user',
+      payload: {
+        type: 'file.edited.byUser',
+        path,
+        added: result.added,
+        removed: result.removed,
+      },
+    })
+    return result
+  }
+
+  /**
+   * Source control, driven by the person, with the room told afterwards.
+   *
+   * The append sits beside the command for the reason `writeUserFile` gives:
+   * an operation that landed without the event is the failure the event exists
+   * to prevent, and `discard` is the sharpest case — an agent whose work was
+   * just thrown away has no other way to learn it.
+   *
+   * Nothing is appended when the command fails. An event saying files were
+   * discarded when they were not would send the other agent to re-read work
+   * that is still exactly where it left it.
+   */
+  async runGitAction(request: {
     conversationId: string
-  ): Promise<{ status: WorkspaceStatus; diff: DiffFile[]; problem: string | null }> {
-    return readWorkspace({ cwd: this.require(conversationId).cwd })
+    action: 'stage' | 'unstage' | 'discard' | 'commit' | 'push'
+    paths: readonly string[]
+    message?: string | undefined
+    setUpstream?: boolean | undefined
+  }): Promise<{ problem: string | null; detail: string | null }> {
+    const cwd = this.require(request.conversationId).cwd
+    let detail: string | null = null
+
+    const failure = async (): Promise<string | null> => {
+      switch (request.action) {
+        case 'stage': {
+          const r = await stage({ cwd, paths: request.paths })
+          return r.ok ? null : r.error.message
+        }
+        case 'unstage': {
+          const r = await unstage({ cwd, paths: request.paths })
+          return r.ok ? null : r.error.message
+        }
+        case 'discard': {
+          const r = await discard({ cwd, paths: request.paths })
+          return r.ok ? null : r.error.message
+        }
+        case 'commit': {
+          const r = await commit({ cwd, message: request.message ?? '' })
+          if (!r.ok) return r.error.message
+          // The subject, not the sha: it is what a person and an agent both
+          // recognise, and the sha is in the log's own ordering anyway.
+          detail = (request.message ?? '').trim().split('\n')[0] ?? null
+          return null
+        }
+        case 'push': {
+          const status = await readStatus({ cwd })
+          if (!status.ok) return status.error.message
+          const branch = status.value.branch
+          if (branch === null) return 'cannot push a detached HEAD'
+          const r = await push({
+            cwd,
+            remote: 'origin',
+            branch,
+            ...(request.setUpstream === undefined ? {} : { setUpstream: request.setUpstream }),
+          })
+          if (!r.ok) return r.error.message
+          detail = branch
+          return null
+        }
+      }
+    }
+
+    const problem = await failure()
+    if (problem !== null) return { problem, detail: null }
+
+    this.store.append({
+      conversationId: request.conversationId,
+      actor: 'user',
+      payload: {
+        type: 'repo.changed.byUser',
+        // Spelled out. Deriving the past tense by concatenation is how
+        // `discard` becomes `discardd` — and the enum would have accepted it
+        // only because the cast said so.
+        action: PAST_TENSE[request.action],
+        paths: [...request.paths],
+        detail,
+      },
+    })
+    return { problem: null, detail }
+  }
+
+  /** The branches a base picker can offer. */
+  async readBranches(
+    conversationId: string
+  ): Promise<{ branches: BranchRef[]; problem: string | null }> {
+    const result = await readBranches({ cwd: this.require(conversationId).cwd })
+    return result.ok
+      ? { branches: [...result.value], problem: null }
+      : { branches: [], problem: result.error.message }
+  }
+
+  /** Moves remote-tracking refs. Never called on a timer — see `fetchRef`. */
+  async fetchRemote(
+    conversationId: string,
+    remote: string | undefined
+  ): Promise<{ problem: string | null }> {
+    const result = await fetchRef({
+      cwd: this.require(conversationId).cwd,
+      remote: remote ?? 'origin',
+    })
+    return { problem: result.ok ? null : result.error.message }
   }
 
   /** Replays a conversation from the log — the only complete record (S3). */
   history(conversationId: string, afterSeq?: number): StoredEvent[] {
     return this.store.read(conversationId, afterSeq === undefined ? {} : { afterSeq })
+  }
+
+  /**
+   * The same read, narrowed to the events the transcript draws.
+   *
+   * Kept beside `history` rather than replacing it: three surfaces read raw
+   * history and two of them need types this filter excludes. See
+   * `TRANSCRIPT_DISPOSITION` for what is excluded and why.
+   */
+  transcriptHistory(conversationId: string, afterSeq?: number): StoredEvent[] {
+    return this.store.read(conversationId, {
+      ...(afterSeq === undefined ? {} : { afterSeq }),
+      types: TRANSCRIPT_TYPES,
+    })
+  }
+
+  /**
+   * One page of transcript: the newest `limit` rows, or the ones before
+   * `beforeSeq`.
+   *
+   * Counted in **events, not rows**. The type filter already drops what the
+   * reducer has no case for, so a page of events is a page of rows to within
+   * that filter — and counting rows would mean running the reducer before the
+   * query could decide where to stop, which is the work being avoided.
+   */
+  transcriptPage(conversationId: string, limit: number, beforeSeq?: number): StoredEvent[] {
+    return this.store.readPage(conversationId, {
+      limit,
+      ...(beforeSeq === undefined ? {} : { beforeSeq }),
+      types: TRANSCRIPT_TYPES,
+    })
+  }
+
+  /** Approvals, questions, who is mid-turn and what has been spent — queried. */
+  transcriptState(conversationId: string): TranscriptState {
+    return this.store.transcriptState(conversationId)
+  }
+
+  /**
+   * How far the log has got, across every conversation.
+   *
+   * Global rather than per-conversation, and that is what makes it safe as a
+   * high-water mark: `seq` is monotonic over the whole log, so having read
+   * everything for one conversation up to a global position means nothing below
+   * it can still be unseen.
+   */
+  logPosition(): number {
+    return this.store.lastSeq()
   }
 
   /**
@@ -3517,6 +3819,22 @@ export class ChorusRuntime {
   ): Promise<Participant> {
     const adapter = this.adapters.get(agentId)
     if (adapter === undefined) throw new Error(`No adapter registered for "${agentId}"`)
+
+    /*
+     * The real door, and the one a review found standing open.
+     *
+     * Guarding only the command *resolvers* was not enough: `adapter.health()`
+     * below runs its own `claude --version` / `codex --version` before anything
+     * consults a resolver, so every path that starts an agent — reopen, start,
+     * restart, addAgent, promotion, side tasks — still launched two child
+     * processes under a flag whose entire purpose is that it launches none.
+     *
+     * Refusing here covers all of them at once, because none of them reaches a
+     * provider without passing through this function.
+     */
+    if (readOnlyProfiling()) {
+      throw new Error(`${agentId} cannot start: CHORUS_PROFILE_READONLY is set`)
+    }
 
     const health = await adapter.health()
     if (health.state !== 'ready') {
@@ -3774,20 +4092,39 @@ function describeDirectory(cwd: string): string | null {
   return null
 }
 
+/**
+ * A window onto the log with no agents behind it.
+ *
+ * Set `CHORUS_PROFILE_READONLY=1` and the app opens, reads the event store and
+ * renders transcripts exactly as it always does, but **starts no session and
+ * launches no CLI**. It exists because the transcript's remaining cost — commit,
+ * paint and retention — can only be measured in a real renderer with a real
+ * conversation in it, and the only route to that was opening one for real:
+ * restoring sessions and spawning the user's `claude` and `codex` against their
+ * actual repositories. That is a side effect nobody should trigger to take a
+ * measurement.
+ *
+ * **Two chokepoints, because one is not enough.** Suppressing restore stops the
+ * conversations saved at quit from coming back, but the profiler has to *open*
+ * one, and `conversation:reopen` starts agents by its own route. So command
+ * resolution returns null as well, which is the app's existing "the CLI is not
+ * installed" path — already handled everywhere, already tested, and it fails
+ * closed. Belt and braces on purpose: a spawn that escapes this flag is a real
+ * process against a real repository.
+ *
+ * Read from the environment at the call rather than cached, so a test can set
+ * and clear it without reloading the module.
+ */
+function readOnlyProfiling(): boolean {
+  return process.env['CHORUS_PROFILE_READONLY'] === '1'
+}
+
 function defaultAdapters(): Map<AgentId, AgentAdapter> {
   return new Map<AgentId, AgentAdapter>([
     // The command is resolved lazily, on first use: asking a login shell at
     // module load would delay the window for something not needed until a
     // session starts.
-    [
-      'codex',
-      new CodexAdapter({
-        resolveCommand: async () => {
-          const resolved = await resolveCommand('codex')
-          return resolved === null ? null : spawnSpec(resolved)
-        },
-      }),
-    ],
+    ['codex', new CodexAdapter(codexOptions())],
     ['claude', new ClaudeAdapter(claudeOptions())],
   ])
 }
@@ -3809,9 +4146,30 @@ function defaultAdapters(): Map<AgentId, AgentAdapter> {
  * pair instead, because `execFile` cannot run a `.js` on Windows and handing it
  * the SDK's answer reported every npm install as unavailable.
  */
+/**
+ * Codex's lazy command lookup, lifted out of `defaultAdapters` so it can be
+ * exercised rather than re-described.
+ *
+ * It used to be an inline closure, and the read-only-profiling test could only
+ * reach it by copying its body — which asserts a duplicate and passes even if
+ * the real one loses its guard. Naming it is what makes the test real.
+ */
+function codexOptions(): {
+  resolveCommand: () => Promise<{ readonly file: string; readonly args: string[] } | null>
+} {
+  return {
+    resolveCommand: async () => {
+      if (readOnlyProfiling()) return null
+      const resolved = await resolveCommand('codex')
+      return resolved === null ? null : spawnSpec(resolved)
+    },
+  }
+}
+
 function claudeOptions(): { resolveExecutable: () => Promise<ResolvedExecutable | null> } {
   return {
     resolveExecutable: async () => {
+      if (readOnlyProfiling()) return null
       const resolved = await resolveCommand('claude')
       if (resolved === null) return null
       return { sdkPath: sdkExecutablePath(resolved), launch: spawnSpec(resolved) }

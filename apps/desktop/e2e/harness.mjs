@@ -1,6 +1,14 @@
 import { fileURLToPath } from 'node:url'
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -123,6 +131,20 @@ export async function launch({ userData, keepData = false, executable } = {}) {
     )
   }
   const session = makeSession(socket)
+  /*
+   * Off unless asked for, and that is not caution — it breaks the app.
+   *
+   * `Runtime.enable` on this target makes Electron's sandboxed renderer bundle
+   * fail to initialise in renderers created afterwards: `Cannot destructure
+   * property 'preloadScripts' of 'binding.startupData' as it is null`, and the
+   * window never mounts. The first pane survives and the second does not, which
+   * reads exactly like a bug in whatever that second pane was rendering.
+   *
+   * So it is a debugging tool rather than a default: set CHORUS_E2E_CONSOLE=1
+   * when a failure needs the renderer's own words, and accept that the run is
+   * then only good for reading, not for measuring.
+   */
+  if (process.env.CHORUS_E2E_CONSOLE === '1') await session.send('Runtime.enable')
 
   return {
     dataPath,
@@ -184,6 +206,37 @@ async function connect(port) {
 function makeSession(socket) {
   let id = 0
 
+  /*
+   * Everything the renderer said, kept.
+   *
+   * Vite forwards a console message to the terminal without its stack, and an
+   * exception thrown during render reaches neither — so a component that stops
+   * committing looks, from out here, exactly like one that is merely slow. Two
+   * debugging rounds were spent guessing at that difference. `Runtime.enable`
+   * turns both into events on this socket, and `app.console()` hands them back.
+   */
+  const said = []
+  socket.addEventListener('message', (message) => {
+    const reply = JSON.parse(message.data)
+    if (reply.method === 'Runtime.consoleAPICalled') {
+      const text = (reply.params.args ?? [])
+        .map((a) => a.value ?? a.description ?? a.unserializableValue ?? '')
+        .join(' ')
+      said.push(`[${reply.params.type}] ${text}`)
+      return
+    }
+    if (reply.method === 'Runtime.exceptionThrown') {
+      const d = reply.params.exceptionDetails ?? {}
+      const frames = (d.stackTrace?.callFrames ?? [])
+        .slice(0, 6)
+        .map((f) => `    at ${f.functionName || '<anon>'} (${f.url}:${f.lineNumber})`)
+        .join('\n')
+      said.push(
+        `[exception] ${d.exception?.description ?? d.text ?? 'unknown'}${frames === '' ? '' : `\n${frames}`}`
+      )
+    }
+  })
+
   /**
    * One command down the debugger protocol, whatever it is.
    *
@@ -227,6 +280,8 @@ function makeSession(socket) {
   return {
     evaluate,
     send,
+    /** Everything the renderer logged or threw, newest last. */
+    console: () => [...said],
     /**
      * Pretends the window is another size, and puts it back with no arguments.
      *
@@ -357,7 +412,35 @@ export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  */
 const ENVIRONMENTS = ['main', 'preload', 'renderer']
 
-export function ensureBuilt() {
+/**
+ * Which React runtime `out/` was last built against.
+ *
+ * Recorded in a file rather than inferred, because the staleness check below
+ * compares timestamps and a development build is *newer* than the source — so
+ * without this a `build:dev` run would leave every later spec driving a
+ * development bundle while believing it was production. The mode is not
+ * something a timestamp can answer.
+ */
+const MODE_STAMP = join(APP, 'out', '.renderer-mode')
+
+function builtMode() {
+  try {
+    return readFileSync(MODE_STAMP, 'utf8').trim()
+  } catch {
+    // No stamp means it predates this file, which means production.
+    return 'production'
+  }
+}
+
+/**
+ * Build, and say which React the renderer should be built against.
+ *
+ * `development` is the one that double-invokes effects under `StrictMode`, and
+ * it is the only way an automated run can see the second invocation at all —
+ * see the note in `electron.vite.config.ts` for the bug that made this
+ * necessary.
+ */
+export function ensureBuilt(mode = 'production') {
   /*
    * The oldest environment decides, not the newest file anywhere under `out/`.
    * One stale output is a stale app however fresh the other two are.
@@ -366,12 +449,33 @@ export function ensureBuilt() {
   const built = stamps.includes(undefined) ? undefined : Math.min(...stamps)
   const source = newest([join(APP, 'src'), join(APP, '../../packages')], BUILT)
 
-  if (built !== undefined && source !== undefined && built >= source) return
+  // A fresh build in the *wrong* React is still the wrong app to test.
+  const switching = builtMode() !== mode
+  if (built !== undefined && source !== undefined && built >= source && !switching) return
 
-  execFileSync('pnpm', ['--filter', '@chorus/desktop', 'run', 'build'], {
-    cwd: APP,
-    stdio: 'inherit',
-  })
+  /*
+   * Switching React runtimes wipes `out/` first, and this is not tidiness.
+   *
+   * Neither build cleans up after the other, so the two leave their chunks side
+   * by side — and Monaco's worker is exactly the asset that goes wrong when they
+   * mix. Measured: after a development build followed by a production one,
+   * `changes-panel.mjs` failed four assertions three runs running — "the worker
+   * computed a diff — +0 −0", a 5,000-line file laying out one line — and every
+   * one came back green once `out/` was removed and rebuilt. It reads exactly
+   * like a code regression, which is what makes it worth a line of code rather
+   * than a line of documentation.
+   */
+  if (switching) rmSync(join(APP, 'out'), { recursive: true, force: true })
+
+  execFileSync(
+    'pnpm',
+    ['--filter', '@chorus/desktop', 'run', mode === 'development' ? 'build:dev' : 'build'],
+    {
+      cwd: APP,
+      stdio: 'inherit',
+    }
+  )
+  writeFileSync(MODE_STAMP, mode)
 
   /*
    * Trust the build no further than its own output. `execFileSync` throwing is

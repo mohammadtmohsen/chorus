@@ -17,6 +17,8 @@ import {
   LimitsPush,
   SCALE_PUSH_CHANNEL,
   SETTINGS_PUSH_CHANNEL,
+  WORKSPACE_PUSH_CHANNEL,
+  WorkspaceChangedPush,
   EventsPush,
   IPC_CONTRACT,
   type ChorusApi,
@@ -57,6 +59,7 @@ const api: ChorusApi = {
   setPlanMode: invoke('conversation:planMode'),
   completeFiles: invoke('files:complete'),
   listCommands: invoke('conversation:commands'),
+  transcript: invoke('conversation:transcript'),
   listConversations: () => invoke('conversation:list')({}),
   knownModels: () => invoke('agents:models')({}),
   mcpServers: () => invoke('agents:mcp')({}),
@@ -97,6 +100,12 @@ const api: ChorusApi = {
   readDiagnostics: invoke('diagnostics:read'),
   exportDiagnostics: invoke('diagnostics:export'),
   readWorkspace: invoke('workspace:read'),
+  readBranches: invoke('workspace:branches'),
+  fetchRemote: invoke('workspace:fetch'),
+  runGitAction: invoke('workspace:git'),
+  readTree: invoke('workspace:tree'),
+  readFileVersions: invoke('workspace:fileVersions'),
+  writeProjectFile: invoke('workspace:write'),
   ideSnapshot: invoke('ide:snapshot'),
   ideExtensionStatus: () => invoke('ide:extensionStatus')({}),
   ideInstallExtension: () => invoke('ide:installExtension')({}),
@@ -123,6 +132,16 @@ const api: ChorusApi = {
     ipcRenderer.on(EVENTS_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(EVENTS_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onWorkspaceChanged: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = WorkspaceChangedPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(WORKSPACE_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(WORKSPACE_PUSH_CHANNEL, wrapped)
     }
   },
   onIdeContext: (listener) => {

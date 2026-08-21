@@ -9,6 +9,7 @@ import {
   type UserInputRequest,
   type UserInputResponse,
 } from '@chorus/agent-protocol'
+import { redactText } from '@chorus/shared'
 import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 
 /**
@@ -275,17 +276,83 @@ function activityOf(
   return undefined
 }
 
+/**
+ * The most `detail` any one notice may carry.
+ *
+ * 8 KiB holds a stack trace or a short report and refuses a document. Measured
+ * rather than guessed at: one `SessionStart` hook on the author's machine wrote
+ * **259 notices averaging 191,907 bytes** — 47.4 MiB, 29% of that database's
+ * entire payload, from a single hook printing a task board on every session
+ * start. Every byte of it was read, parsed, validated twice, cloned across IPC
+ * and mounted in the DOM, forever, on every open of that conversation.
+ *
+ * Bytes rather than characters, because the cost being bounded is storage and
+ * transport, and one emoji is four of those and one of these.
+ */
+const MAX_DETAIL_BYTES = 8 * 1024
+
+/**
+ * Cut to a byte budget without splitting a character.
+ *
+ * `TextEncoder`/`TextDecoder` rather than `slice`, and the `fatal: false`
+ * decoder is doing real work: cutting a UTF-8 array mid-sequence leaves a
+ * partial code point, and decoding that yields `U+FFFD` rather than throwing.
+ * Walking back to the last boundary is what keeps the stored string valid for
+ * everything downstream that is not this app.
+ */
+function clampDetail(detail: string): { detail: string; omitted: number } {
+  const bytes = new TextEncoder().encode(detail)
+  if (bytes.length <= MAX_DETAIL_BYTES) return { detail, omitted: 0 }
+
+  let end = MAX_DETAIL_BYTES
+  // A continuation byte is 10xxxxxx; step back off any of them to land on the
+  // start of a code point rather than inside one.
+  while (end > 0 && (bytes[end] ?? 0) >= 0x80 && (bytes[end] ?? 0) < 0xc0) end--
+  return {
+    detail: new TextDecoder().decode(bytes.subarray(0, end)),
+    omitted: bytes.length - end,
+  }
+}
+
+/**
+ * Every notice, with its detail redacted and then bounded — in that order.
+ *
+ * **The order is the point, and getting it backwards is a security bug.**
+ * `detail` carries hook output, which is arbitrary shell output: `env`, a token
+ * a script echoed, the contents of a file it read. Clamping first and redacting
+ * after would cut the 8 KiB boundary through the middle of a credential, and
+ * the leading half that survived would no longer match the pattern that
+ * recognises it — so a secret that would have been caught whole becomes an
+ * unrecognisable partial secret, stored forever. Redacting the complete string
+ * first means the marker is already in place before anything is cut.
+ *
+ * `redactPayload` in the store still runs over this, and that is deliberate
+ * defence in depth rather than a duplicate: this pass is what makes the
+ * *boundary* safe, and the store's pass is what covers every other producer.
+ *
+ * **The cap is on every notice, not only on hook output, and that is wider than
+ * the plan said.** Approved deliberately: an unbounded `detail` is the bug, and
+ * a denial reason or an error body can be exactly as large as a hook's. The
+ * measured case was hooks — 259 notices averaging 191,907 B — but nothing about
+ * the failure is specific to them.
+ */
 function notice(
   base: Omit<AgentEvent, 'type'> & { seq: number },
   fields: { level: 'info' | 'warn' | 'error'; source: NoticeSource; text: string; detail?: string }
 ): AgentEvent {
+  const redacted =
+    fields.detail === undefined || fields.detail === '' ? undefined : redactText(fields.detail).text
+  const clamped = redacted === undefined ? undefined : clampDetail(redacted)
   return {
     ...base,
     type: 'notice',
     level: fields.level,
     source: fields.source,
     text: fields.text,
-    ...(fields.detail === undefined || fields.detail === '' ? {} : { detail: fields.detail }),
+    ...(clamped === undefined ? {} : { detail: clamped.detail }),
+    ...(clamped === undefined || clamped.omitted === 0
+      ? {}
+      : { detailOmittedBytes: clamped.omitted }),
   }
 }
 

@@ -106,6 +106,52 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
 
   z.object({ type: z.literal('user.message'), text: z.string() }),
 
+  /**
+   * The person edited a file themselves, in Chorus.
+   *
+   * A log event rather than pushed state, and the test CLAUDE.md sets is not
+   * "is it interesting" but "does a consumer act on it". `catchup.ts` does: an
+   * agent that read this file at the start of a turn is composing a patch
+   * against a version that no longer exists, and without this it overwrites the
+   * fix and neither party learns why. That is the whole reason the event
+   * exists.
+   *
+   * **The content is deliberately not here.** C-021's unsolved half is that
+   * storing what was read means storing whatever it was, including files the
+   * permission engine treats as secret — and a file body in the log is that
+   * problem with the volume turned up. The path, the time and how much moved is
+   * everything a consumer needs to say "this changed under you, read it again".
+   */
+  z.object({
+    type: z.literal('file.edited.byUser'),
+    path: z.string(),
+    added: z.number().int(),
+    removed: z.number().int(),
+  }),
+
+  /**
+   * The person drove source control themselves, from the Changes panel.
+   *
+   * Same test as `file.edited.byUser`, and it passes for the same reason: a
+   * consumer acts on it. An agent that just wrote three files and had them
+   * **discarded** is holding a picture of the tree that no longer exists, and
+   * nothing else in the transcript would say so — it would go looking for its
+   * own work and find the file as it was before it started.
+   *
+   * Staging and unstaging are in the union but deliberately not replayed to
+   * agents; see `catchup.ts`. They move nothing on disk and an agent has no use
+   * for the index.
+   *
+   * `detail` carries a commit subject or a branch name — never a diff, and
+   * never file contents, for the reason on `file.edited.byUser`.
+   */
+  z.object({
+    type: z.literal('repo.changed.byUser'),
+    action: z.enum(['staged', 'unstaged', 'discarded', 'committed', 'pushed']),
+    paths: z.array(z.string()).default([]),
+    detail: z.string().nullable().default(null),
+  }),
+
   z.object({ type: z.literal('turn.started'), turnRef: z.string() }),
   z.object({
     type: z.literal('turn.completed'),
@@ -373,6 +419,23 @@ export const ChorusEventPayload = z.discriminatedUnion('type', [
     source: z.enum(['hook', 'command', 'retry', 'denial', 'system']),
     text: z.string(),
     detail: z.string().nullable(),
+    /**
+     * Bytes dropped because `detail` was too large to keep whole. 0 when it
+     * was kept entire, which is almost always.
+     *
+     * Optional rather than defaulted, and the difference matters twice. On
+     * *read*, every notice already in the log predates this field, and a
+     * required one would fail `ChorusEventPayload.parse` — which is fail-hard,
+     * so one old notice would take down the read containing it. That is not
+     * hypothetical: it is exactly the failure that put a raw Zod issue array in
+     * the transcript when two builds shared one database.
+     *
+     * On *write*, `.default(0)` would still make the inferred type require it,
+     * so every caller constructing a notice would have to say `0` — and a
+     * notice that omitted nothing would stop being byte-identical to the ones
+     * already stored.
+     */
+    detailOmittedBytes: z.number().int().nonnegative().optional(),
   }),
 ])
 

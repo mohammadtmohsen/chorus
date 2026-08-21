@@ -16,6 +16,7 @@ export const PROJECTION_NAMES = [
   'messages',
   'agent_sessions',
   'approvals',
+  'questions',
   'handoffs',
 ] as const
 
@@ -183,14 +184,46 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
     /*
      * Deliberately not projected into a table of their own.
      *
-     * Approvals get one because policy queries them — "what has this profile
+     * Approvals got one because policy queries them — "what has this profile
      * auto-allowed" is a question asked of the projection, not of the log.
-     * Nothing asks that of a question set: the only reader is the UI, which
-     * rebuilds what is still pending by replaying the log. A table here would be
-     * a schema migration maintaining state nobody reads.
+     *
+     * **Questions used to have no table, and the reason recorded here was that
+     * "the only reader is the UI, which rebuilds what is still pending by
+     * replaying the log". That reason expired when the transcript stopped
+     * replaying the log.** A paged read returns a *suffix*, and an agent can ask
+     * a question thousands of events before the page a reader opens on — so
+     * "still pending" is exactly the kind of accumulated state a suffix cannot
+     * answer. `approvals` had the same problem and had already solved it this
+     * way.
+     *
+     * Answers are deliberately not stored here. The log already holds them, with
+     * every secret question's values nulled before it ever reaches the store,
+     * and this table only has to answer "is anyone still waiting".
      */
     case 'userinput.requested':
+      db.prepare(
+        `INSERT INTO questions
+           (id, conversation_id, agent_id, event_id, request, answered_at, expires_at, created_at)
+         VALUES (@id, @conversationId, @agentId, @eventId, @request, NULL, @expiresAt, @at)
+         ON CONFLICT (id) DO NOTHING`
+      ).run({
+        id: payload.userInputId,
+        conversationId: base.conversationId,
+        agentId: event.actor,
+        eventId: event.id,
+        request: JSON.stringify(payload.request ?? null),
+        expiresAt: payload.expiresAt,
+        at: base.at,
+      })
+      break
+
     case 'userinput.answered':
+      // Answered, cancelled and timed out are all "no longer waiting". The log
+      // keeps which of the three it was; nothing queries this table for that.
+      db.prepare('UPDATE questions SET answered_at = @at WHERE id = @id').run({
+        id: payload.userInputId,
+        at: base.at,
+      })
       break
 
     case 'handoff.created':
@@ -262,6 +295,21 @@ export function applyToProjections(db: Database, event: StoredEvent): void {
       // this file" answerable — but nothing asks it. The review panel answers
       // the file-level question from git, which stays right when an agent's edit
       // is later reverted by hand. If that changes, this is where it changes.
+      break
+
+    case 'file.edited.byUser':
+    case 'repo.changed.byUser':
+      /*
+       * A no-op, with its own reason rather than one inherited from the group
+       * above.
+       *
+       * A projection would make "which files has the person edited" answerable,
+       * and nothing asks. The Changes panel answers every file-level question
+       * from git, which stays right when a hand edit is later reverted — a
+       * table built from the log would not.
+       *
+       * Its consumer is `catchup.ts`, which reads the log directly.
+       */
       break
   }
 

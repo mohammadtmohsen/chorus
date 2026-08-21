@@ -8,6 +8,10 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog },
   ipcMain: { handle: vi.fn() },
   shell: { openPath: vi.fn(), showItemInFolder: vi.fn() },
+  // `settings:write` applies the appearance as it writes, because
+  // `themeSource` is what `prefers-color-scheme` answers from. A plain object
+  // is enough: the assignment is the whole behaviour.
+  nativeTheme: { themeSource: 'system' },
 }))
 
 const { buildHandlers } = await import('./ipc.js')
@@ -181,5 +185,152 @@ describe('settings:write and the per-agent maps', () => {
     await write({ efforts: { claude: 'high' } })
     const after = await write({ efforts: { codex: 'ultra' } })
     expect(after).toMatchObject({ efforts: { claude: 'high', codex: 'ultra' } })
+  })
+})
+
+/**
+ * The transcript read, and the one ordering that makes it correct.
+ *
+ * `throughSeq` is taken **before** the rows are read. That is not incidental: it
+ * is the value the renderer advances `lastSeq` to, and it is what stops a
+ * conversation whose newest events are all ignored types from re-querying the
+ * same range on every push, forever.
+ *
+ * Taking it *after* the read would be the tempting simplification and is wrong
+ * in the other direction — it would claim to have covered an event appended
+ * during the read that the read did not return, and that event would then never
+ * be fetched. Before-the-read can only ever under-claim, and under-claiming
+ * costs one redundant query rather than a missing message.
+ */
+describe('conversation:transcript', () => {
+  const EVENTS = [
+    {
+      seq: 1,
+      id: 'e1',
+      conversationId: 'c1',
+      actor: 'claude',
+      type: 'user.message',
+      payload: {},
+      createdAt: 1,
+    },
+    {
+      seq: 2,
+      id: 'e2',
+      conversationId: 'c1',
+      actor: 'claude',
+      type: 'agent.message.completed',
+      payload: {},
+      createdAt: 2,
+    },
+  ]
+
+  const EMPTY_STATE = { approvals: [], questions: [], working: [], usageByActor: {} }
+
+  function runtimeFor(lastSeq: number) {
+    const calls: {
+      kind: 'history' | 'page'
+      conversationId: string
+      afterSeq?: number
+      beforeSeq?: number
+      limit?: number
+      at: number
+    }[] = []
+    let position = lastSeq
+    const runtime = {
+      // Reading moves the log on, so a handler that asked for the position
+      // afterwards would get a different — and wrong — answer.
+      transcriptHistory: (conversationId: string, afterSeq?: number) => {
+        calls.push({
+          kind: 'history',
+          conversationId,
+          ...(afterSeq === undefined ? {} : { afterSeq }),
+          at: position,
+        })
+        position += 5
+        return EVENTS
+      },
+      transcriptPage: (conversationId: string, limit: number, beforeSeq?: number) => {
+        calls.push({
+          kind: 'page',
+          conversationId,
+          limit,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          at: position,
+        })
+        position += 5
+        return EVENTS
+      },
+      transcriptState: () => EMPTY_STATE,
+      logPosition: () => position,
+    } as unknown as ChorusRuntime
+    return { runtime, calls }
+  }
+
+  const read = async (runtime: ChorusRuntime, request: unknown) =>
+    (await (buildHandlers(runtime)['conversation:transcript'] as (r: unknown) => Promise<unknown>)(
+      request
+    )) as { events: { seq: number }[]; throughSeq: number }
+
+  it('reports the log position from before the read, not after', async () => {
+    const { runtime } = runtimeFor(42)
+    const result = await read(runtime, { conversationId: 'c1' })
+    // 42, not 47: the read moved the log on and the mark predates it.
+    expect(result.throughSeq).toBe(42)
+  })
+
+  it('returns the conversation the caller asked for', async () => {
+    const { runtime, calls } = runtimeFor(10)
+    await read(runtime, { conversationId: 'c9', afterSeq: 3 })
+    expect(calls).toEqual([{ kind: 'history', conversationId: 'c9', afterSeq: 3, at: 10 }])
+  })
+
+  it('omits afterSeq entirely on a first read rather than sending zero', async () => {
+    const { runtime, calls } = runtimeFor(10)
+    await read(runtime, { conversationId: 'c1' })
+    expect(calls[0]).not.toHaveProperty('afterSeq')
+  })
+
+  /*
+   * Three questions on one channel, and they must not blur into each other.
+   * `afterSeq` is "what has happened since"; `limit` is "the newest page";
+   * neither is "the whole conversation", which is what no `limit` still means.
+   */
+  it('reads a page when asked for one, not the whole conversation', async () => {
+    const { runtime, calls } = runtimeFor(10)
+    await read(runtime, { conversationId: 'c1', limit: 400 })
+    expect(calls).toEqual([{ kind: 'page', conversationId: 'c1', limit: 400, at: 10 }])
+  })
+
+  it('walks backwards with beforeSeq', async () => {
+    const { runtime, calls } = runtimeFor(10)
+    await read(runtime, { conversationId: 'c1', beforeSeq: 900, limit: 400 })
+    expect(calls[0]).toMatchObject({ kind: 'page', beforeSeq: 900, limit: 400 })
+  })
+
+  it('sends state on a cold read, because a page cannot contain it', async () => {
+    const { runtime } = runtimeFor(10)
+    const result = (await read(runtime, { conversationId: 'c1', limit: 400 })) as unknown as {
+      state?: unknown
+    }
+    expect(result.state).toEqual(EMPTY_STATE)
+  })
+
+  it('withholds state from a catch-up, which would overwrite live cards', async () => {
+    /*
+     * An incremental read is folded into a view that already holds the state,
+     * and the queried snapshot is from a moment ago — re-applying it would put
+     * back an approval the user has just decided.
+     */
+    const { runtime } = runtimeFor(10)
+    const result = (await read(runtime, { conversationId: 'c1', afterSeq: 3 })) as unknown as {
+      state?: unknown
+    }
+    expect(result.state).toBeUndefined()
+  })
+
+  it('flattens the rows the renderer draws', async () => {
+    const { runtime } = runtimeFor(10)
+    const result = await read(runtime, { conversationId: 'c1' })
+    expect(result.events.map((e) => e.seq)).toEqual([1, 2])
   })
 })

@@ -225,3 +225,33 @@ rename to new.ts
     expect(parseDiff(rewritten)[0]).toMatchObject({ status: 'modified' })
   })
 })
+
+describe('parseDiff with hunks: false', () => {
+  /*
+   * The summary has to survive, and that is the whole risk of the option.
+   *
+   * Counting happens inside the same branches that build the line objects, so
+   * the obvious implementation — bail out when there is no hunk to push into —
+   * returns every file with `+0 −0` and a file list of zeroes. A cheaper read
+   * that silently lies about the numbers is worse than the cost it saves.
+   */
+  it('keeps the counts, the status and the paths, and drops only the lines', () => {
+    const withHunks = parseDiff(SAMPLE)
+    const without = parseDiff(SAMPLE, { hunks: false })
+
+    expect(without.map((f) => f.path)).toEqual(withHunks.map((f) => f.path))
+    expect(without.map((f) => f.added)).toEqual(withHunks.map((f) => f.added))
+    expect(without.map((f) => f.removed)).toEqual(withHunks.map((f) => f.removed))
+    expect(without.map((f) => f.status)).toEqual(withHunks.map((f) => f.status))
+    expect(without.map((f) => f.oldPath)).toEqual(withHunks.map((f) => f.oldPath))
+    expect(without.map((f) => f.binary)).toEqual(withHunks.map((f) => f.binary))
+
+    // The counts are real, not incidentally-equal zeroes.
+    expect(withHunks.some((f) => f.added > 0 || f.removed > 0)).toBe(true)
+    expect(without.every((f) => f.hunks.length === 0)).toBe(true)
+  })
+
+  it('defaults to building them, so every existing caller is unchanged', () => {
+    expect(parseDiff(SAMPLE)).toEqual(parseDiff(SAMPLE, {}))
+  })
+})

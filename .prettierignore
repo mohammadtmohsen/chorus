@@ -10,3 +10,9 @@ pnpm-lock.yaml
 # Generated from the Codex protocol (plan §6.1) — reformatting it would create
 # spurious diffs in the drift check.
 packages/adapter-codex/src/generated/
+
+# Vendored verbatim from microsoft/vscode's theme-seti extension (MIT; see
+# seti-NOTICE.txt). Reformatting it would make it undiffable against upstream,
+# and diffing against upstream is the only way to tell whether it is still what
+# we vendored.
+apps/desktop/src/renderer/src/assets/seti-icons.json
