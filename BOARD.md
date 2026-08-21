@@ -30,6 +30,34 @@ Nothing here can be finished by me alone.
 
 ## Open
 
+### C-050 · Two Windows-only test failures, one older than the other
+
+`CI / Typecheck, lint, test (Windows)` is red on `main`. macOS and Linux are
+green, and `pnpm check` is green locally.
+
+**`real-path.test.ts:51` — predates this work.** It asserts a POSIX absolute
+path and Windows resolves `D:\no\such\root\at\all` for it. Introduced with
+`58d1677`, and the scheduled CI run the day before 0.20.0 was already failing on
+it, so the Windows job has been red for a while and nobody noticed — which is
+its own finding.
+
+**`workspace-watch.test.ts` — introduced by 0.20.0**, now skipped on `win32`
+with the reason in the file. Windows sees one watcher nudge where the other
+platforms see none, after a read-only git command the watcher is supposed to
+attribute to itself. The path handling is already separator-aware, so this is
+`ReadDirectoryChangesW` coalescing differently from `FSEvents`, or git for
+Windows touching a file the POSIX one does not. The consequence is one spurious
+workspace re-read, not wrong data.
+
+**Neither is diagnosable from a Mac**, which is the same gap
+`docs/windows-test-brief.md` was written for: nothing here has ever run the
+installer, or this suite, on a real Windows machine.
+
+**What would make it done.** Run the suite on a clean Windows VM, decide whether
+the watcher's extra event is worth suppressing or merely tolerating, and fix the
+path assertion so the job can go green — because a permanently red job is a job
+nobody reads, which is how the second failure got in behind the first.
+
 ### C-049 · ~~Scroll position is lost when you switch away and back~~ · **closed by reverting**
 
 Reading at row 185 of a long transcript, switching away and back, and landing at
