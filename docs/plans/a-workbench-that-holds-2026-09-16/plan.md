@@ -1040,6 +1040,33 @@ minors would predict — `terminal` moved its telemetry file into
 `terminalContrib/` and gained a sandbox runtime, `extensions` gained three
 `mainThread*` files — but nothing there is reachable through an API we call.
 
+**Parked 2026-09-17 on `phase-6-vscode-36`, blocked outside this repository.** The
+client is only half of a pair. `@codingame` and VSCodium publish against different
+subsets of VS Code, and above `1.121` the two sets do not intersect at all:
+
+| `@codingame` | VS Code  | VSCodium release for it |
+| ------------ | -------- | ----------------------- |
+| `33.0.9`     | `1.121.0`| `1.121.03429` — ours    |
+| `34.x`       | `1.124.2`| none                    |
+| `35.x`       | `1.128.0`/`1.128.1` | none         |
+| `36.x`       | `1.128.1`| none                    |
+| `37.0.0`     | `1.138.0`| none                    |
+
+VSCodium's releases either side are `1.126.04524` and `1.135.06055`; all 272 were
+checked and no `1.128` exists. `assertMatchedPair` refuses to patch a server whose
+`upstreamCommit` is not the client's commit, and that check is not pedantry: the
+commit patch exists to fix VSCodium's sha-of-its-own-version quirk, not to bridge
+a version gap. So 6-3 cannot be written — not because the manifest is hard to
+regenerate, but because there is no release to point it at.
+
+The branch keeps `15fec11` and `20e90ac`, and `main` stays at `33.0.9`, which is
+the one version where client and server actually agree. What would unblock it is
+a VSCodium release whose upstream is `1.128.1`, or a `@codingame` release built on
+`1.126` or `1.135`. Neither is ours to cause, so this waits rather than being
+worked around — the alternative on the table was loosening the matched-pair check
+and running a `1.128.1` client against a `1.126` server, which is the exact thing
+that check was written to forbid.
+
 ## What we are deliberately not doing
 
 - **Not rewriting canonical URIs.** Tried and reverted on 2026-08-30; it fixed

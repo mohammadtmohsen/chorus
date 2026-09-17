@@ -18,13 +18,16 @@ import { onDidChangeWindowFocus, windowHasFocus } from './window-focus.js'
  * from static metadata a subclass inherits. Declaring one here would shadow that
  * and the injection would arrive empty.
  *
- * **No instance field either, and that is the patch's own hard-won note.**
+ * **No instance field either, and the reason is an ordering the patch hit first.**
  * `BrowserHostService`'s constructor calls `registerListeners()`, which subscribes
- * to `this.onDidChangeFocus` — so the getter below runs while `super()` is still
- * executing and before any field of this class has been assigned. The patch needed
- * a readiness flag to survive that; a module-level `WeakMap` keyed on the instance
- * has no such window, because it is populated by the getter itself rather than by
- * field initialisation.
+ * to `this.onDidChangeFocus`, so the getter below runs while `super()` is still
+ * executing. A field would not merely be unset at that moment: with
+ * `target: ES2023`, class fields are *defined* after `super()` returns, so the
+ * declaration would overwrite whatever the getter had cached and hand the base's
+ * subscription one event while every later reader got another. `Event.map` and
+ * `Event.latch` build a new event per call, so identity is the thing being kept.
+ * The patch survived this with a readiness flag; a module-level `WeakMap` keyed on
+ * the instance has no such window, because nothing declares it on the class.
  *
  * **Both sources, each firing the recomputed value.** The window event carries the
  * trigger points a document cannot observe — Chorus's composer taking focus while
