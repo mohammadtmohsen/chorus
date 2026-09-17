@@ -990,6 +990,56 @@ package together, rebuild against Monaco `0.56.0`, and repatch the VSCodium REH
 to the matching client commit. Bundled with a behaviour change, a regression
 would have two candidate causes.
 
+**The finding above compares the wrong surface — corrected 2026-09-17.** It reads
+VS Code's own sources across `v33.0.9...v36.2.7` and concludes the upgrade changes
+nothing we depend on. The packages we actually call are the **overrides**, whose
+APIs are written by CodinGame and are not in VS Code's tree at all, and diffing
+those found two breaking changes the source comparison could not see. There is a
+third surface the first pass missed as well — **our own patch of a dependency**,
+which no comparison of published versions can show, because the thing it changes
+exists only in this repository's `patches/` directory.
+
+**What the enumeration found, 6-1, by reading the registry and the tarballs.** All
+86 `@codingame/*` packages publish `36.2.7` — nothing renamed, merged or dropped —
+and `36.2.7` is the highest version the whole set shares, since 43 of them are
+already at `37.0.0` and 43 are not. The `./vscode/*` export map is identical at both
+versions, all 23 deep import paths still resolve, and every named import survives.
+`monaco-editor` needs no change: nothing in the API packages pins it, and the bump
+in fact removes today's skew, because `33.0.9` embeds Monaco `0.55.1` against the
+`0.56.0` the shell already ships.
+
+The two that break:
+
+- **`BrowserStorageService` gains `forcedValues` as its second positional
+  parameter.** `services.ts` constructs `ChorusStorageService` positionally through
+  a `SyncDescriptor`, whose argument array is untyped, so after the bump
+  `STORAGE_DATABASES` lands in `forcedValues`, `databaseFactories` is `undefined`,
+  and every scope silently falls back to the IndexedDB that dies with the app —
+  the exact bug `storage.ts` was written to prevent, and typecheck cannot see it.
+- **Phase 3's focus fix was a patched dependency, and the patch is pinned to
+  `33.0.9`.** This was read wrong at first — as `36.2.7` deleting `hasFocus` and
+  `onDidChangeFocus` from `BrowserHostServiceOverrideParams`. The published package
+  never had them: `patches/@codingame__monaco-vscode-host-service-override@33.0.9.patch`
+  added both, and `pnpm install` refuses the bump with `ERR_PNPM_UNUSED_PATCH`
+  rather than carrying it forward, which is the loud failure that corrected the
+  reading. So the upgrade had two routes — reproduce the patch against `36.2.7`, or
+  retire it — and the second is taken: a `ChorusHostService` subclass on the
+  `IHostService` key, the shape `clipboard.ts` already uses, with its "no
+  constructor, DI metadata is inherited" note applying unchanged. The behaviour is
+  the patch's own: both the window event and the base's event fire the value
+  `hasFocus` computes at that moment, latched, because `hasFocus` is the single
+  source and the two arms only differ in when they notice. The patch's hardest-won
+  line survives too — `BrowserHostService`'s constructor calls `registerListeners()`,
+  which reads `this.onDidChangeFocus` while `super()` is still running, so the
+  composition cannot live in an instance field; the patch used a readiness flag and
+  the subclass uses a module-level `WeakMap` keyed on the instance.
+
+The other 31 overrides we import are called without arguments and their public
+types are **identical** at `36.2.7`. Their runtime files moved, as seven VS Code
+minors would predict — `terminal` moved its telemetry file into
+`terminalContrib/` and gained a sandbox runtime, `extensions` gained three
+`mainThread*` files — but nothing there is reachable through an API we call.
+
 ## What we are deliberately not doing
 
 - **Not rewriting canonical URIs.** Tried and reverted on 2026-08-30; it fixed
