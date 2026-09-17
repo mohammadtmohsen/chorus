@@ -58,7 +58,8 @@ import { ChorusStorageDatabase, ChorusStorageService } from './storage.js'
 import { IClipboardService } from '@codingame/monaco-vscode-api/vscode/vs/platform/clipboard/common/clipboardService.service'
 import { ChorusClipboardService } from './clipboard.js'
 import { workspaceIdFor } from './remote-authority.js'
-import { onDidChangeWindowFocus, windowHasFocus } from './window-focus.js'
+import { IHostService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/host/browser/host.service'
+import { ChorusHostService } from './host.js'
 import getHostServiceOverride from '@codingame/monaco-vscode-host-service-override'
 import getLifecycleServiceOverride from '@codingame/monaco-vscode-lifecycle-service-override'
 import getEnvironmentServiceOverride from '@codingame/monaco-vscode-environment-service-override'
@@ -495,9 +496,17 @@ export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetu
      * `APPLICATION_SHARED` scope, which `DatabaseFactories` has no slot for.
      */
     ...getStorageServiceOverride({ databaseFactories: STORAGE_DATABASES }),
+    /*
+     * Three arguments, and the middle one is why this line is written out rather
+     * than left as it was. `36.2.7` inserted `forcedValues` as the second
+     * constructor parameter of `BrowserStorageService`, and a `SyncDescriptor`'s
+     * argument array is untyped — so the two-element form kept compiling and
+     * handed `STORAGE_DATABASES` to `forcedValues`, leaving `databaseFactories`
+     * undefined and every scope back on the IndexedDB this file exists to replace.
+     */
     [IStorageService.toString()]: new SyncDescriptor(
       ChorusStorageService,
-      [undefined, STORAGE_DATABASES],
+      [undefined, undefined, STORAGE_DATABASES],
       true
     ),
     ...getSecretStorageServiceOverride(),
@@ -515,16 +524,13 @@ export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetu
      * way `IClipboardService`'s at the bottom of this map is. It sits with the
      * other ambient services because that is what it is.
      *
-     * `hasFocus` is a getter over module state rather than a closure over
-     * anything in this function: `seedWindowFocus` has already run by the time
-     * this is called, and main keeps it current afterwards. `onDidChangeFocus` is
-     * `Event<void>` and carries nothing — the host service recomputes the value
-     * from `hasFocus`, and a payload would be a second source for one fact.
+     * Focus used to be two parameters to this helper and is now a subclass:
+     * `36.2.7` removed `hasFocus` and `onDidChangeFocus` from its params, with
+     * nothing offered in their place, so `ChorusHostService` overrides the two
+     * getters instead. `host.ts` carries the rest of the reasoning.
      */
-    ...getHostServiceOverride({
-      hasFocus: windowHasFocus,
-      onDidChangeFocus: onDidChangeWindowFocus,
-    }),
+    ...getHostServiceOverride(),
+    [IHostService.toString()]: new SyncDescriptor(ChorusHostService, [], true),
     ...getEnvironmentServiceOverride(),
     ...getWorkspaceTrustOverride(),
     ...getWorkingCopyServiceOverride(),

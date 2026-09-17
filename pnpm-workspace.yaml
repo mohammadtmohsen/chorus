@@ -31,6 +31,3 @@ ignoredOptionalDependencies:
   - '@anthropic-ai/claude-agent-sdk-linux-x64-musl'
   - '@anthropic-ai/claude-agent-sdk-win32-arm64'
   - '@anthropic-ai/claude-agent-sdk-win32-x64'
-
-patchedDependencies:
-  '@codingame/monaco-vscode-host-service-override@33.0.9': patches/@codingame__monaco-vscode-host-service-override@33.0.9.patch
