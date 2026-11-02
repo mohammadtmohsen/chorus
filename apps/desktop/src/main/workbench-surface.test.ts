@@ -1236,6 +1236,18 @@ describe('the shared server lease', () => {
    * forward slash after the drive letter, so a native `C:\...` path failed the
    * test even on a remote host, where the branch was meant to be working.
    */
+  it('closes a project whose view Electron has already torn down', async () => {
+    const place = { host: LOCAL_HOST, root: root(`torn-down-${randomUUID()}`) }
+    const viewId = await openAt(shell, place.root)
+    const view = lastView()
+    await surface.closeSurface(shell as never, viewId)
+    Object.defineProperty(view, 'webContents', { value: undefined })
+
+    await surface.closeWorkbenchProject(place)
+    surface.reopenWorkbenchProject(place)
+    expect(releaseWorkbenchRuntime).toHaveBeenCalledWith(place.root)
+  })
+
   it('fails a project close whose release failed, and releases again on retry', async () => {
     const place = { host: 'officepc', root: 'C:/retry' }
     surface.registerWorkbenchHandlers(undefined, () => place)

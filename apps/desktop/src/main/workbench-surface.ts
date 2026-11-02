@@ -1361,6 +1361,11 @@ function flushSurfaceStorage(contents: WebContents): Promise<void> {
  * The unchecked half, used by the owner's own lifecycle and by shutdown. Every
  * path a *renderer* can reach goes through `ownedSurface` first.
  */
+function liveContents(surface: Surface): WebContents | null {
+  const contents = surface.view.webContents as WebContents | undefined
+  return contents === undefined || contents.isDestroyed() ? null : contents
+}
+
 function destroySurface(viewId: string, prepared = false): Promise<void> {
   const current = closingSurfaces.get(viewId)
   if (current !== undefined) return current.promise
@@ -1389,14 +1394,16 @@ function destroySurface(viewId: string, prepared = false): Promise<void> {
   )
   parent?.contentView.removeChildView(surface.view)
 
-  const closing = (prepared ? Promise.resolve() : flushSurfaceStorage(surface.view.webContents))
+  const flushable = prepared ? null : liveContents(surface)
+  const closing = (flushable === null ? Promise.resolve() : flushSurfaceStorage(flushable))
     .catch((error: unknown) => {
       warnFailure('Workbench storage could not be flushed before closing', error)
     })
     .then(() => {
-      byContents.delete(surface.view.webContents)
+      const contents = surface.view.webContents as WebContents | undefined
+      if (contents !== undefined) byContents.delete(contents)
 
-      if (!surface.view.webContents.isDestroyed()) surface.view.webContents.close()
+      liveContents(surface)?.close()
     })
     .finally(() => {
       closingSurfaces.delete(viewId)
@@ -1435,8 +1442,8 @@ function requestProcessClose(
   surface: Surface,
   phase: 'prepare' | 'stop'
 ): Promise<readonly number[]> {
-  const contents = surface.view.webContents
-  if (contents.isDestroyed())
+  const contents = liveContents(surface)
+  if (contents === null)
     return Promise.reject(new Error('The editor closed before its processes could be verified.'))
   return new Promise((resolve, reject) => {
     const requestId = randomUUID()
@@ -1505,8 +1512,8 @@ function captureSurfaceProcesses(surface: Surface, terminalPids: readonly number
 }
 
 function awaitSurfaceDestroyed(surface: Surface): Promise<void> {
-  const contents = surface.view.webContents
-  if (contents.isDestroyed()) return Promise.resolve()
+  const contents = liveContents(surface)
+  if (contents === null) return Promise.resolve()
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       contents.removeListener('destroyed', destroyed)
@@ -1522,14 +1529,16 @@ function awaitSurfaceDestroyed(surface: Surface): Promise<void> {
 }
 
 async function closeProjectSurface(surface: Surface): Promise<void> {
-  const contents = surface.view.webContents
   const failures: unknown[] = []
-  try {
-    await flushSurfaceStorage(contents)
-  } catch (error) {
-    warnFailure('Workbench storage could not be flushed before closing', error)
+  const contents = liveContents(surface)
+  if (contents !== null) {
+    try {
+      await flushSurfaceStorage(contents)
+    } catch (error) {
+      warnFailure('Workbench storage could not be flushed before closing', error)
+    }
   }
-  if (!contents.isDestroyed()) {
+  if (liveContents(surface) !== null) {
     try {
       await requestProcessClose(surface, 'stop')
     } catch (error) {
@@ -1582,7 +1591,7 @@ export async function prepareWorkbenchProjectClose(place: WorkbenchPlace): Promi
   const outcomes = await Promise.allSettled(
     surfaces.map(async (surface) => {
       let pids: readonly number[] = []
-      if (!surface.view.webContents.isDestroyed()) {
+      if (liveContents(surface) !== null) {
         try {
           pids = await requestProcessClose(surface, 'prepare')
         } catch (error) {
