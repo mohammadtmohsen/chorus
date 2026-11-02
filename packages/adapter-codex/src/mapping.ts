@@ -1,13 +1,16 @@
+import { isDeepStrictEqual } from 'node:util'
 import {
   toEpochMs,
   type AgentEvent,
   type ApprovalRequest,
+  type McpToolCallApproval,
   type UsageWindow,
   type UserInputRequest,
   type UserInputResponse,
 } from '@chorus/agent-protocol'
 import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 import type { DynamicToolCallStatus } from './generated/v2/DynamicToolCallStatus.js'
+import type { McpServerElicitationRequestResponse } from './generated/v2/McpServerElicitationRequestResponse.js'
 import type { PatchApplyStatus } from './generated/v2/PatchApplyStatus.js'
 import type { PatchChangeKind } from './generated/v2/PatchChangeKind.js'
 
@@ -498,6 +501,98 @@ export function toCodexDecision(
       return 'decline'
     case 'cancel':
       return 'cancel'
+  }
+}
+
+export const ELICITATION_METHOD = 'mcpServer/elicitation/request'
+
+export const ELICITATION_CANCEL: McpServerElicitationRequestResponse = {
+  action: 'cancel',
+  content: null,
+  _meta: null,
+}
+
+export interface RememberedItem {
+  readonly threadId: string | null
+  readonly item: ThreadItem
+}
+
+export function mapElicitationApproval(
+  params: unknown,
+  ctx: MapContext,
+  remembered: Iterable<RememberedItem>,
+  id: ApprovalId
+): { readonly request: McpToolCallApproval; readonly offersSession: boolean } | null {
+  const p = record(params)
+  const meta = record(p['_meta'])
+  const serverName = str(p['serverName'])
+  if (
+    p['mode'] !== 'form' ||
+    meta['codex_approval_kind'] !== 'mcp_tool_call' ||
+    serverName === ''
+  ) {
+    return null
+  }
+
+  const toolParams = meta['tool_params']
+  const input =
+    typeof toolParams === 'object' && toolParams !== null && !Array.isArray(toolParams)
+      ? (toolParams as Record<string, unknown>)
+      : undefined
+  const tools = new Set<unknown>()
+  for (const { threadId, item } of remembered) {
+    const call = record(item)
+    if (
+      call['type'] === 'mcpToolCall' &&
+      call['status'] === 'inProgress' &&
+      call['server'] === serverName &&
+      threadId !== null &&
+      threadId === p['threadId'] &&
+      (input === undefined || isDeepStrictEqual(call['arguments'], input))
+    ) {
+      tools.add(call['tool'])
+    }
+  }
+  const [only] = tools
+  const toolName = str(meta['tool_name']) || (tools.size === 1 ? str(only) : '')
+  if (toolName === '') return null
+
+  const message = str(p['message'])
+  const description = meta['tool_description']
+  const persist = meta['persist']
+  return {
+    request: {
+      id,
+      agentId: AGENT,
+      kind: 'mcpToolCall',
+      expiresAt: ctx.now + ctx.approvalTtlMs,
+      ...(message === '' ? {} : { title: message }),
+      ...(typeof description === 'string' ? { description } : {}),
+      serverName,
+      toolName,
+      input: input ?? {},
+    },
+    offersSession: persist === 'session' || (Array.isArray(persist) && persist.includes('session')),
+  }
+}
+
+export function toElicitationResponse(
+  decision: string,
+  offersSession: boolean
+): McpServerElicitationRequestResponse {
+  switch (decision) {
+    case 'accept':
+      return { action: 'accept', content: null, _meta: null }
+    case 'acceptForSession':
+      return {
+        action: 'accept',
+        content: null,
+        _meta: offersSession ? { persist: 'session' } : null,
+      }
+    case 'cancel':
+      return ELICITATION_CANCEL
+    default:
+      return { action: 'decline', content: null, _meta: null }
   }
 }
 

@@ -1,5 +1,6 @@
 import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 import type { ApprovalDecision } from './approval.js'
+import type { BrowserConsoleAccess } from './browser-tools.js'
 import type { EditorPlace } from './editor-edit.js'
 import type { NoteAccess } from './note-tools.js'
 import type { ProgressReporter } from './progress-tools.js'
@@ -122,7 +123,7 @@ export interface SessionOpts {
   readonly cwd: string
   readonly model?: string
   readonly sandbox: SandboxPolicy
-  readonly toolPolicy?: 'readOnly'
+  readonly toolPolicy?: 'readOnly' | 'none'
   /**
    * A standing instruction, added to whatever system prompt the provider already
    * has — never replacing it.
@@ -149,6 +150,7 @@ export interface SessionOpts {
   readonly project?: ProjectReader
   readonly progress?: ProgressReporter
   readonly note?: NoteAccess
+  readonly browser?: BrowserConsoleAccess
 }
 
 export type TranscriptScope = 'snapshot' | 'updates' | 'forwarded'

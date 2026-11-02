@@ -752,6 +752,8 @@ export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetu
         'ms-vscode.vscode-js-profile-table': false,
       },
       'extensions.autoCheckUpdates': true,
+      'typescript.tsserver.watchOptions': {},
+      'js/ts.tsserver.watchOptions': {},
       'window.title': '${rootName}',
       'workbench.colorTheme': 'Default Dark Modern',
       /*

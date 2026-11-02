@@ -107,6 +107,7 @@ export function PaneTabStrip(
           )
           const session = projectSessions.at(-1)
           if (session === undefined) return []
+          const closing = props.closingProjects?.includes(projectId) === true
           const conversationId = session.conversationId
           /* Every conversation in the project, because the mark folds them —
              see `TabState`. The drag and the pane still follow the newest. */
@@ -121,6 +122,7 @@ export function PaneTabStrip(
               key={projectId}
               className="workspace-tab"
               data-active={active}
+              aria-busy={closing}
               data-dragging={props.drag?.conversationId === conversationId}
               /*
                * Held at the width it had, for as long as the field is open —
@@ -244,7 +246,7 @@ export function PaneTabStrip(
                       setRenaming({ id: projectId, width: tab === null ? 0 : tab.offsetWidth })
                     }}
                     onAuxClick={(event) => {
-                      if (event.button === 1) props.onClose(props.paneId, projectId)
+                      if (event.button === 1 && !closing) props.onClose(props.paneId, projectId)
                     }}
                     onKeyDown={(event) => {
                       onTabKeyDown(index, event)
@@ -278,16 +280,15 @@ export function PaneTabStrip(
                   <button
                     type="button"
                     className="workspace-tab-close"
+                    disabled={closing}
                     aria-label={t('workspace.closeTab', { title: label })}
                     title={t('workspace.closeTab', { title: label })}
                     onClick={(event) => {
                       event.stopPropagation()
-                      // The tab is the project, so this closes the project's tab —
-                      // the conversations inside it keep running in main.
                       props.onClose(props.paneId, projectId)
                     }}
                   >
-                    <span aria-hidden="true">×</span>
+                    <span aria-hidden="true">{closing ? '…' : '×'}</span>
                   </button>
                 </>
               )}

@@ -22,6 +22,7 @@ import { useDialog } from './useDialog.js'
  * as a clause somebody has to unpick.
  */
 export interface ConfirmEndSessionProps {
+  readonly project?: boolean
   /** Who is mid-turn, already joined for reading. Empty when nobody is. */
   readonly working: string
   /** Approvals and questions nobody has answered. */
@@ -35,7 +36,9 @@ export interface ConfirmEndSessionProps {
 export function ConfirmEndSession(props: ConfirmEndSessionProps): React.JSX.Element {
   const { t } = useTranslation()
   const dialog = useDialog<HTMLElement>(props.onCancel)
-  const title = t('conversation.confirmEndTitle')
+  const title = t(
+    props.project === true ? 'workspace.confirmCloseProjectTitle' : 'conversation.confirmEndTitle'
+  )
 
   return (
     <div className="sheet-backdrop" role="presentation">
@@ -47,6 +50,9 @@ export function ConfirmEndSession(props: ConfirmEndSessionProps): React.JSX.Elem
         aria-label={title}
       >
         <h2 className="confirm-title">{title}</h2>
+        {props.project === true && (
+          <p className="confirm-body">{t('workspace.confirmCloseProjectHint')}</p>
+        )}
         {props.working !== '' && (
           <p className="confirm-body">
             {t('conversation.confirmEndWorking', { agents: props.working })}
@@ -69,7 +75,9 @@ export function ConfirmEndSession(props: ConfirmEndSessionProps): React.JSX.Elem
             {t('conversation.confirmEndCancel')}
           </button>
           <button type="button" className="confirm-go confirm-go--danger" onClick={props.onConfirm}>
-            {t('conversation.confirmEnd')}
+            {t(
+              props.project === true ? 'workspace.confirmCloseProject' : 'conversation.confirmEnd'
+            )}
           </button>
         </div>
       </section>

@@ -20,6 +20,8 @@ export function DetachedStage(props: {
   readonly onStartInProject: (projectId: string) => void
   readonly onRename: (conversationId: string, title: string) => void
   readonly onEnd: (conversationId: string) => void
+  readonly onCloseProject: (projectId: string) => void
+  readonly closingProjects: readonly string[]
   readonly onCommitLayout: () => void
   readonly onReorderSessions: (conversationId: string, slot: number) => void
   readonly onRenameProject: (projectId: string, name: string) => void
@@ -61,9 +63,6 @@ export function DetachedStage(props: {
     onDropOutside: props.onRedockProject,
   })
   useShellOverlay(drag.drag !== null)
-  const closeWindow = useCallback(() => {
-    window.close()
-  }, [])
 
   return (
     <div className="workspace-shell">
@@ -81,7 +80,10 @@ export function DetachedStage(props: {
           onEndConversation={props.onEnd}
           onActivate={activateTab}
           onFocus={focusPane}
-          onClose={closeWindow}
+          onClose={(_paneId, projectId) => {
+            props.onCloseProject(projectId)
+          }}
+          closingProjects={props.closingProjects}
           onReorder={reorderTab}
           onRename={props.onRename}
           projects={props.projects}

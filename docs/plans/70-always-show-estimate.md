@@ -41,6 +41,7 @@ flowchart LR
 5. **Before the first finished step.** No pace exists, so "No estimate yet" stays. No past-task average is invented.
 
 Deliberately not done:
+
 - Pace never feeds calibration. `firstForecastMs`, `plannedMs` and the samples count agent estimates only.
 - Overrun stays agent-estimate only.
 - The schema stays optional.
@@ -52,13 +53,13 @@ Deliberately not done:
 
 ## Code Changes
 
-| File | Change |
-| --- | --- |
-| `packages/agent-protocol/src/progress-tools.ts` | `ESTIMATE_TEXT` and the estimate sentence in `PROGRESS_TOOL_DESCRIPTION` ask for a rough estimate on every lowest-level step |
-| `apps/desktop/src/shared/task-progress.ts` | `TaskForecast.paced`; an agent pace from `agentOf(agentId).workingMs` and finished leaves; the forecast includes lanes with paced steps; paced time adds to the point, low (×0.6) and high (×2); `partial` only when unestimated steps have no pace |
-| `apps/desktop/src/renderer/src/task-strip.ts` | `StripForecast` `remaining` carries `paced` |
-| `apps/desktop/src/renderer/src/TaskProgress.tsx` | The "based on pace" badge beside "rough" |
-| `apps/desktop/src/renderer/src/i18n/en.json` | `taskProgress.paced`, `taskProgress.pacedHint` |
+| File                                             | Change                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/agent-protocol/src/progress-tools.ts`  | `ESTIMATE_TEXT` and the estimate sentence in `PROGRESS_TOOL_DESCRIPTION` ask for a rough estimate on every lowest-level step                                                                                                                        |
+| `apps/desktop/src/shared/task-progress.ts`       | `TaskForecast.paced`; an agent pace from `agentOf(agentId).workingMs` and finished leaves; the forecast includes lanes with paced steps; paced time adds to the point, low (×0.6) and high (×2); `partial` only when unestimated steps have no pace |
+| `apps/desktop/src/renderer/src/task-strip.ts`    | `StripForecast` `remaining` carries `paced`                                                                                                                                                                                                         |
+| `apps/desktop/src/renderer/src/TaskProgress.tsx` | The "based on pace" badge beside "rough"                                                                                                                                                                                                            |
+| `apps/desktop/src/renderer/src/i18n/en.json`     | `taskProgress.paced`, `taskProgress.pacedHint`                                                                                                                                                                                                      |
 
 ## Acceptance (written, not run)
 

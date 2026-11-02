@@ -12,8 +12,8 @@ import {
   CONVERSATIONS_PUSH_CHANNEL,
   DETACHED_WINDOW_CHANNELS,
   DETACHED_WINDOW_CONTRACT,
-  FLUSH_REQUEST_PUSH_CHANNEL,
   HIT_TEST_REQUEST_PUSH_CHANNEL,
+  PROJECT_CLOSE_REQUEST_PUSH_CHANNEL,
   PROJECT_RETURNED_PUSH_CHANNEL,
   PROJECT_SLICE_PUSH_CHANNEL,
   PROJECT_VISIBILITY_PUSH_CHANNEL,
@@ -74,17 +74,12 @@ type Handlers = {
 }
 
 const PREPARE_TICKET_TTL_MS = 5_000
-const FLUSH_TIMEOUT_MS = 2_000
 const HIT_TEST_TIMEOUT_MS = 500
 const OK = { ok: true } as const
 const REFUSED = { refused: true } as const
 
 const entries = new Map<string, DetachedEntry>()
 const tickets = new Map<string, Ticket>()
-const pendingFlushes = new Map<
-  string,
-  { projectId: string; timer: ReturnType<typeof setTimeout> }
->()
 const pendingHitTests = new Map<
   string,
   { resolve: (answer: HitTestAnswer) => void; timer: ReturnType<typeof setTimeout> }
@@ -147,36 +142,10 @@ function entryForWindow(sender: WebContents, projectId?: string): [string, Detac
   return found
 }
 
-function returnProject(deps: DetachedWindowDeps, projectId: string): void {
+function requestProjectClose(projectId: string): void {
   const entry = entries.get(projectId)
   if (entry?.state !== 'detached') return
-  const main = deps.mainWindow()
-  if (main !== null && !main.isDestroyed()) {
-    const place = { host: entry.host, root: entry.projectRoot }
-    tryHandOff(entry.window.webContents, place, main.webContents, 'return')
-  }
-  sendToMain(deps, PROJECT_RETURNED_PUSH_CHANNEL, {
-    projectId,
-    returnSlot: entry.returnSlot,
-    slice: entry.slice,
-  })
-  entry.state = 'returning'
-  entry.window.close()
-}
-
-function requestFlushAndReturn(deps: DetachedWindowDeps, projectId: string): void {
-  const entry = entries.get(projectId)
-  if (entry === undefined) return
-  if ([...pendingFlushes.values()].some((pending) => pending.projectId === projectId)) return
-  const requestId = randomUUID()
-  pendingFlushes.set(requestId, {
-    projectId,
-    timer: setTimeout(() => {
-      pendingFlushes.delete(requestId)
-      returnProject(deps, projectId)
-    }, FLUSH_TIMEOUT_MS),
-  })
-  entry.window.webContents.send(FLUSH_REQUEST_PUSH_CHANNEL, { requestId })
+  entry.window.webContents.send(PROJECT_CLOSE_REQUEST_PUSH_CHANNEL, { projectId })
 }
 
 function askHitTest(main: BrowserWindow, x: number, y: number): Promise<HitTestAnswer> {
@@ -234,7 +203,7 @@ export function attachDetachedWindowListeners(
   window.on('close', (event) => {
     if (entries.get(projectId)?.state !== 'detached') return
     event.preventDefault()
-    requestFlushAndReturn(deps, projectId)
+    requestProjectClose(projectId)
   })
   window.on('closed', () => {
     const entry = entries.get(projectId)
@@ -372,7 +341,10 @@ export function registerDetachedWindowHandlers(deps: DetachedWindowDeps): void {
       return OK
     },
     'project:closeEmpty': (event, request) => {
+      const existing = entries.get(request.projectId)
+      if (existing === undefined) return OK
       const [, entry] = entryForWindow(event.sender, request.projectId)
+      if (entry.state === 'closing-empty') return OK
       entry.state = 'closing-empty'
       entry.window.close()
       return OK
@@ -405,16 +377,7 @@ export function registerDetachedWindowHandlers(deps: DetachedWindowDeps): void {
           .filter((session) => session.projectId === projectId),
       }
     },
-    'window:flushResult': (event, request) => {
-      const pending = pendingFlushes.get(request.requestId)
-      const entry = pending === undefined ? undefined : entries.get(pending.projectId)
-      if (pending === undefined || entry?.window.webContents !== event.sender) return OK
-      clearTimeout(pending.timer)
-      pendingFlushes.delete(request.requestId)
-      entry.slice = request.slice
-      returnProject(deps, pending.projectId)
-      return OK
-    },
+    'window:flushResult': () => OK,
     'window:hitTestResult': (event, request) => {
       const main = deps.mainWindow()
       const pending = pendingHitTests.get(request.requestId)

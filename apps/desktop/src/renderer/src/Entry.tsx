@@ -1130,7 +1130,7 @@ export const Entry = memo(function Entry({
                 answered.
               */}
             </span>
-            {forwardable && onForward !== undefined && (
+            {forwardable && (
               <span className="entry-actions-end">
                 <button
                   type="button"

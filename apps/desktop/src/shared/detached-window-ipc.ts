@@ -102,6 +102,11 @@ export const DETACHED_WINDOW_CHANNELS = Object.keys(
   DETACHED_WINDOW_CONTRACT
 ) as DetachedWindowChannel[]
 
+export const PROJECT_CLOSED_PUSH_CHANNEL = 'project:closed'
+export const PROJECT_CLOSE_REQUEST_PUSH_CHANNEL = 'project:closeRequested'
+export const ProjectClosedPush = z.object({ projectId: ProjectId })
+export type ProjectClosedPush = z.infer<typeof ProjectClosedPush>
+
 export const PROJECT_RETURNED_PUSH_CHANNEL = 'project:returned'
 export const PROJECT_SLICE_PUSH_CHANNEL = 'project:slice'
 export const PROJECT_VISIBILITY_PUSH_CHANNEL = 'project:visibilityChanged'
@@ -146,6 +151,8 @@ export interface DetachedWindowApi {
   readonly readDetachedBootstrap: () => Promise<DetachedWindowResponse<'window:detachedBootstrap'>>
   readonly sendFlushResult: DetachedCall<'window:flushResult'>
   readonly sendHitTestResult: DetachedCall<'window:hitTestResult'>
+  readonly onProjectClosed: (listener: (push: ProjectClosedPush) => void) => () => void
+  readonly onProjectCloseRequested: (listener: (push: ProjectClosedPush) => void) => () => void
   readonly onProjectReturned: (listener: (push: ProjectReturnedPush) => void) => () => void
   readonly onProjectSlice: (listener: (push: ProjectSlicePush) => void) => () => void
   readonly onProjectVisibility: (listener: (push: ProjectVisibilityPush) => void) => () => void

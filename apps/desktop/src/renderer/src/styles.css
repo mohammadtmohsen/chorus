@@ -6086,6 +6086,7 @@ input::placeholder {
 }
 
 .stage {
+  position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -6095,6 +6096,18 @@ input::placeholder {
   flex: none;
   margin: 0;
   border-radius: 0;
+}
+
+.notice--closing {
+  position: absolute;
+  z-index: 30;
+  inset: 0 0 auto;
+  background: var(--bg-surface);
+  pointer-events: none;
+}
+
+.stage:has(> .masthead) > .notice--closing {
+  top: var(--masthead);
 }
 
 .workspace-shell {
@@ -13062,6 +13075,244 @@ input::placeholder {
   font-weight: 600;
 }
 
+.conversation-body > .console-panel {
+  display: flex;
+  flex: 0 0 clamp(160px, 38%, 420px);
+  flex-direction: column;
+  min-height: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-default);
+}
+
+.console-toolbar,
+.console-status {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--step) * 1.5);
+  padding: var(--step) calc(var(--step) * 2);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.console-title {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.console-levels {
+  display: flex;
+  gap: var(--step);
+}
+
+.console-level-toggle {
+  height: 22px;
+  padding: 0 calc(var(--step) * 2);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.console-level-toggle[aria-pressed='true'] {
+  color: var(--text-primary);
+  background: var(--bg-control);
+}
+
+.console-filter {
+  flex: 1 1 120px;
+  min-width: 80px;
+  height: 22px;
+  padding: 0 calc(var(--step) * 2);
+  color: var(--text-primary);
+  font: inherit;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+}
+
+.console-entries {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.console-empty {
+  margin: 0;
+  padding: calc(var(--step) * 2);
+  color: var(--text-muted);
+}
+
+.console-entry {
+  display: grid;
+  grid-template-columns: 92px 14px 1fr;
+  gap: var(--step);
+  padding: 2px calc(var(--step) * 2);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 50%, transparent);
+}
+
+.console-entry--warning {
+  background: color-mix(in srgb, var(--claude) 10%, transparent);
+}
+
+.console-entry--error {
+  background: color-mix(in srgb, var(--alert) 12%, transparent);
+}
+
+.console-entry--debug .console-message {
+  color: var(--text-muted);
+}
+
+.console-entry--navigation .console-message,
+.console-entry--crash .console-message {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.console-time,
+.console-marker,
+.console-location,
+.console-source,
+.console-cut,
+.console-pending,
+.console-value-note {
+  color: var(--text-muted);
+}
+
+.console-body {
+  min-width: 0;
+}
+
+.console-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--step) * 2);
+}
+
+.console-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-code {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-actor {
+  color: var(--accent-text);
+}
+
+.console-location {
+  margin-left: auto;
+}
+
+.console-stack summary {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.console-frame {
+  display: flex;
+  gap: calc(var(--step) * 2);
+  padding-left: calc(var(--step) * 4);
+}
+
+.console-value-tree,
+.console-value-line,
+.console-value-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.console-value-children {
+  padding-left: calc(var(--step) * 4);
+}
+
+.console-value-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--step);
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.console-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-value-name {
+  color: var(--accent-text);
+}
+
+.console-value--string {
+  color: var(--tok-string);
+}
+
+.console-value--number,
+.console-value--bigint,
+.console-value--boolean {
+  color: var(--tok-number);
+}
+
+.console-value--function {
+  color: var(--tok-function);
+}
+
+.console-value--undefined,
+.console-value--accessor {
+  color: var(--text-muted);
+}
+
+.console-input-row {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: var(--step);
+  padding: var(--step) calc(var(--step) * 2);
+  border-top: 1px solid var(--border-default);
+}
+
+.console-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--step);
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  resize: none;
+}
+
+.console-level-toggle:focus-visible,
+.console-filter:focus-visible,
+.console-value-toggle:focus-visible,
+.console-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
 .project-terminal-state {
   color: var(--text-muted);
   font-size: 11px;
@@ -14165,6 +14416,9 @@ input::placeholder {
 }
 
 .toast-subject {
+  flex: 0 0 auto;
+  max-height: 3lh;
+  overflow-y: auto;
   color: var(--text-primary);
   font-family: var(--mono);
 }

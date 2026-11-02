@@ -267,6 +267,47 @@ export class ProjectRunner {
     return entry === undefined ? { process: IDLE, cleanupPending: false } : this.snapshotOf(entry)
   }
 
+  private readonly suspended = new Set<string>()
+
+  async suspend(projectId: string): Promise<void> {
+    this.suspended.add(projectId)
+    const entry = this.entries.get(projectId)
+    if (entry === undefined) return
+    if (entry.run !== null) entry.run.cancelled = true
+    if (entry.stopping !== null) entry.stopping.relaunch = null
+    const results = await Promise.allSettled([
+      entry.launching,
+      entry.stopping?.done,
+      entry.captures,
+    ])
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (errors.length > 0)
+      throw new AggregateError(
+        errors.map((result): unknown => result.reason),
+        'Project work could not finish stopping'
+      )
+  }
+
+  releaseStopped(projectId: string): void {
+    const entry = this.entries.get(projectId)
+    if (entry === undefined) return
+    this.cancelSettle(entry)
+    if (entry.run !== null) {
+      entry.run.gone = true
+      this.supersede(entry.run)
+    }
+    entry.run = null
+    this.publish(entry, IDLE)
+    entry.disposed = true
+    this.entries.delete(projectId)
+  }
+
+  allowProject(projectId: string): void {
+    this.suspended.delete(projectId)
+  }
+
   run(projectId: string, commandId?: string): Promise<RunSnapshot> {
     const entry = this.open(projectId)
     if (entry === null || this.blocked(entry)) return Promise.resolve(this.snapshot(projectId))
@@ -369,7 +410,7 @@ export class ProjectRunner {
   }
 
   private open(projectId: string): Entry | null {
-    if (this.closed || this.removed.has(projectId)) return null
+    if (this.closed || this.removed.has(projectId) || this.suspended.has(projectId)) return null
     const existing = this.entries.get(projectId)
     if (existing !== undefined) return existing.disposed ? null : existing
     const entry: Entry = {
@@ -388,7 +429,7 @@ export class ProjectRunner {
   }
 
   private live(projectId: string): Entry | null {
-    if (this.closed || this.removed.has(projectId)) return null
+    if (this.closed || this.removed.has(projectId) || this.suspended.has(projectId)) return null
     const entry = this.entries.get(projectId)
     return entry === undefined || entry.disposed ? null : entry
   }

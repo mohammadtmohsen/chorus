@@ -3,6 +3,7 @@ import { realpathSync, statSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { LOCAL_HOST } from '@chorus/event-store'
+import { ownProcessTree, type OwnedProcessTree } from '@chorus/shared/process-tree'
 import {
   BrowserWindow,
   WebContentsView,
@@ -18,6 +19,9 @@ import {
 } from 'electron'
 import {
   WORKBENCH_CONNECTION_CHANNEL,
+  WORKBENCH_PROCESS_REPORT_CHANNEL,
+  WORKBENCH_PROCESS_CLOSE_CHANNEL,
+  WORKBENCH_PROCESS_CLOSE_RESULT_CHANNEL,
   WORKBENCH_FOCUS_CHANNEL,
   WORKBENCH_TERMINAL_ENV_CHANNEL,
   WORKBENCH_SHELL_CHANNELS,
@@ -92,6 +96,9 @@ import {
   acquireWorkbenchRuntime,
   releaseWorkbenchRuntime,
   workbenchHostLog,
+  serverDataDir,
+  stopIdleWorkbenchHost,
+  workbenchServerPid,
   type WorkbenchRuntime,
 } from './workbench-host.js'
 import {
@@ -100,6 +107,10 @@ import {
   writeWorkbenchSecret,
 } from './workbench-secrets.js'
 import { applyWorkbenchStorageDelta, readWorkbenchStorage } from './workbench-storage.js'
+import {
+  readWorkbenchProcessOwner,
+  forgetWorkbenchProcessOwner,
+} from './workbench-process-owner.js'
 import { readWorkbenchUserSettings, writeWorkbenchUserSettings } from './workbench-user-settings.js'
 import {
   readWorkbenchBrowserExtensions,
@@ -176,10 +187,24 @@ interface Surface {
   state: 'active' | 'handing-off'
   layoutWidth: number | null
   activityBarWidth: number
+  readonly processNonce: string | null
+  readonly processes: Map<number, OwnedProcessTree>
+  processCapture: Promise<void>
+  closePrepared: boolean
 }
 
 const HANDOFF_EXPIRY_MS = 10_000
 const byId = new Map<string, Surface>()
+const processSurfaces = new Map<string, Surface>()
+const closingProjects = new Map<string, Promise<void>>()
+const closedProjectPlaces = new Set<string>()
+const placeKey = (place: WorkbenchPlace): string => `${place.host}\0${place.root}`
+
+export function reopenWorkbenchProject(place: WorkbenchPlace): void {
+  const key = placeKey(place)
+  if (closingProjects.has(key)) throw new Error('This project is still closing.')
+  closedProjectPlaces.delete(key)
+}
 
 /*
  * The view is a webContents of its own, so the shell's factor has to be given
@@ -835,6 +860,7 @@ function describe(surface: Surface): WorkbenchConnection {
      * branch was supposed to be doing its job.
      */
     projectRoot: remotePath(surface.projectRoot),
+    ...(surface.processNonce === null ? {} : { processNonce: surface.processNonce }),
     remoteAuthority: surface.runtime.remoteAuthority,
     connectionToken: surface.runtime.connectionToken,
     commit: surface.runtime.commit,
@@ -1049,6 +1075,9 @@ export async function openSurface(
   devServerUrl: string | undefined
 ): Promise<string> {
   const place = redeem(owner, target)
+  if ('projectId' in target) openRegisteredProject?.(target.projectId)
+  if (closedProjectPlaces.has(placeKey(place)))
+    throw new Error('This project is closed or still closing.')
   const projectRoot = place.root
   const claimed = claimHandoff(owner, place)
   if (claimed !== null) return claimed
@@ -1066,6 +1095,11 @@ export async function openSurface(
    * server that died.
    */
   const runtime = await acquireRuntime(place)
+  if (closedProjectPlaces.has(placeKey(place))) {
+    releaseRuntime(place)
+    if (place.host === LOCAL_HOST) await stopIdleWorkbenchHost()
+    throw new Error('This project closed while its editor was opening.')
+  }
 
   /*
    * The parent window is *derived from* the owner rather than passed beside it,
@@ -1127,8 +1161,13 @@ export async function openSurface(
     state: 'active',
     layoutWidth: null,
     activityBarWidth: 0,
+    processNonce: place.host === LOCAL_HOST ? randomUUID() : null,
+    processes: new Map(),
+    processCapture: Promise.resolve(),
+    closePrepared: false,
   }
   byId.set(id, surface)
+  processSurfaces.set(id, surface)
   byContents.set(view.webContents, surface)
   watchOwner(owner).add(id)
 
@@ -1320,7 +1359,7 @@ function flushSurfaceStorage(contents: WebContents): Promise<void> {
  * The unchecked half, used by the owner's own lifecycle and by shutdown. Every
  * path a *renderer* can reach goes through `ownedSurface` first.
  */
-function destroySurface(viewId: string): Promise<void> {
+function destroySurface(viewId: string, prepared = false): Promise<void> {
   const current = closingSurfaces.get(viewId)
   if (current !== undefined) return current.promise
   const surface = byId.get(viewId)
@@ -1348,42 +1387,248 @@ function destroySurface(viewId: string): Promise<void> {
   )
   parent?.contentView.removeChildView(surface.view)
 
-  const closing = flushSurfaceStorage(surface.view.webContents)
+  const closing = (prepared ? Promise.resolve() : flushSurfaceStorage(surface.view.webContents))
     .catch((error: unknown) => {
       warnFailure('Workbench storage could not be flushed before closing', error)
     })
     .then(() => {
       byContents.delete(surface.view.webContents)
 
-      // `close()` rather than `destroy()`: it runs the document's own unload path, so
-      // whatever the workbench wants to do on the way out still happens. Whether the
-      // process actually exits afterwards is R11's subject and is not asserted here.
       if (!surface.view.webContents.isDestroyed()) surface.view.webContents.close()
-
-      /*
-       * The lease goes only when the last surface on that root goes — and the
-       * distinction §5.4 draws, between closing a project and unmounting its view,
-       * **cannot be exercised yet and is not being claimed here.**
-       *
-       * The probe has one surface per project and its close button *is* a project
-       * close, so today the two coincide. What must not happen is a later tab strip
-       * unmounting a background pane and finding that it released a lease: the
-       * refcount is written over projects for exactly that reason, and this is where
-       * it will have to stop being called from. Releasing does not stop the server in
-       * any case — `stopWorkbenchHost` on quit is the only unconditional kill — so
-       * the shape is right before it is load-bearing rather than after.
-       */
     })
     .finally(() => {
       closingSurfaces.delete(viewId)
-      const sameProject = (other: Surface): boolean =>
-        other.host === surface.host && other.projectRoot === surface.projectRoot
-      const stillOpen = [...byId.values()].some(sameProject)
-      const stillClosing = [...closingSurfaces.values()].some((other) => sameProject(other.surface))
-      if (!stillOpen && !stillClosing)
-        releaseRuntime({ host: surface.host, root: surface.projectRoot })
     })
   closingSurfaces.set(viewId, { surface, promise: closing })
+  return closing
+}
+
+const processCloseRequests = new Map<
+  string,
+  {
+    contents: WebContents
+    phase: 'prepare' | 'stop'
+    finish: (pids?: readonly number[], error?: Error) => void
+  }
+>()
+
+class UnsavedWorkbenchFilesError extends Error {
+  constructor() {
+    super('Save unsaved editor files before closing this project.')
+  }
+}
+
+function terminalProcessIds(value: unknown): readonly number[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 1024 ||
+    value.some((pid: unknown) => typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 1)
+  ) {
+    throw new Error('Invalid editor terminal process report.')
+  }
+  return value as number[]
+}
+
+function requestProcessClose(
+  surface: Surface,
+  phase: 'prepare' | 'stop'
+): Promise<readonly number[]> {
+  const contents = surface.view.webContents
+  if (contents.isDestroyed())
+    return Promise.reject(new Error('The editor closed before its processes could be verified.'))
+  return new Promise((resolve, reject) => {
+    const requestId = randomUUID()
+    const destroyed = (): void => {
+      finish(undefined, new Error('The editor closed before confirming shutdown.'))
+    }
+    const timer = setTimeout(() => {
+      finish(
+        undefined,
+        new Error('The editor did not confirm shutdown; retry closing this project.')
+      )
+    }, 10_000)
+    const finish = (pids?: readonly number[], error?: Error): void => {
+      if (!processCloseRequests.delete(requestId)) return
+      clearTimeout(timer)
+      contents.removeListener('destroyed', destroyed)
+      if (error === undefined) resolve(pids ?? [])
+      else reject(error)
+    }
+    processCloseRequests.set(requestId, { contents, phase, finish })
+    contents.once('destroyed', destroyed)
+    try {
+      contents.send(WORKBENCH_PROCESS_CLOSE_CHANNEL, requestId, phase)
+    } catch (error) {
+      finish(undefined, error instanceof Error ? error : new Error(String(error)))
+    }
+  })
+}
+
+function captureSurfaceProcesses(surface: Surface, terminalPids: readonly number[]): Promise<void> {
+  if (surface.host !== LOCAL_HOST) return Promise.resolve()
+  const capture = surface.processCapture
+    .catch(() => undefined)
+    .then(async () => {
+      if (surface.processNonce === null) {
+        throw new Error('The editor process ownership nonce is unavailable.')
+      }
+      const ancestor = workbenchServerPid()
+      if (ancestor === null)
+        throw new Error('The editor server is unavailable; process ownership cannot be verified.')
+      const report = readWorkbenchProcessOwner(serverDataDir(), surface.processNonce)
+      if (report.nonce !== surface.processNonce || report.root !== surface.projectRoot) {
+        throw new Error('The editor process report does not belong to this project.')
+      }
+      const pids = new Set([report.pid, ...terminalPids])
+      for (const pid of pids) {
+        if (pid === ancestor) throw new Error('A project cannot own the shared editor server.')
+        let owned = surface.processes.get(pid)
+        if (owned === undefined) {
+          owned = ownProcessTree(pid, { expectedAncestorPid: ancestor })
+          surface.processes.set(pid, owned)
+        }
+        await owned.capture()
+      }
+    })
+  surface.processCapture = capture
+  return capture
+}
+
+function awaitSurfaceDestroyed(surface: Surface): Promise<void> {
+  const contents = surface.view.webContents
+  if (contents.isDestroyed()) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      contents.removeListener('destroyed', destroyed)
+      reject(new Error('The editor view did not finish closing.'))
+    }, 5_000)
+    const destroyed = (): void => {
+      clearTimeout(timer)
+      resolve()
+    }
+    contents.once('destroyed', destroyed)
+    contents.close()
+  })
+}
+
+async function closeProjectSurface(surface: Surface): Promise<void> {
+  const contents = surface.view.webContents
+  try {
+    await flushSurfaceStorage(contents)
+  } catch (error) {
+    warnFailure('Workbench storage could not be flushed before closing', error)
+  }
+  if (!contents.isDestroyed()) {
+    try {
+      await requestProcessClose(surface, 'stop')
+    } catch (error) {
+      warnFailure('Workbench could not disconnect gracefully', error)
+    }
+  }
+  try {
+    await surface.processCapture
+  } catch (error) {
+    warnFailure('Workbench process ownership could not be captured', error)
+  }
+  await Promise.all(
+    [...surface.processes.values()].map(async (tree) => {
+      try {
+        await tree.stop()
+      } catch (error) {
+        warnFailure('Workbench process tree could not be stopped', error)
+      }
+    })
+  )
+  const destroyed = awaitSurfaceDestroyed(surface).catch((error: unknown) => {
+    warnFailure('Workbench view did not finish closing', error)
+  })
+  try {
+    await destroySurface(surface.id, true)
+  } catch (error) {
+    warnFailure('Workbench surface could not close', error)
+  }
+  await destroyed
+  processSurfaces.delete(surface.id)
+  if (surface.processNonce !== null) {
+    try {
+      forgetWorkbenchProcessOwner(serverDataDir(), surface.processNonce)
+    } catch (error) {
+      warnFailure('Workbench process ownership report could not be removed', error)
+    }
+  }
+}
+
+export async function prepareWorkbenchProjectClose(place: WorkbenchPlace): Promise<void> {
+  const surfaces = [...processSurfaces.values()].filter(
+    (surface) => surface.host === place.host && surface.projectRoot === place.root
+  )
+  for (const surface of surfaces) surface.closePrepared = false
+  const outcomes = await Promise.allSettled(
+    surfaces.map(async (surface) => {
+      let pids: readonly number[] = []
+      if (!surface.view.webContents.isDestroyed()) {
+        try {
+          pids = await requestProcessClose(surface, 'prepare')
+        } catch (error) {
+          if (error instanceof UnsavedWorkbenchFilesError) throw error
+          warnFailure('Workbench could not prepare for closing', error)
+        }
+      }
+      try {
+        await captureSurfaceProcesses(surface, pids)
+      } catch (error) {
+        warnFailure('Workbench process ownership could not be captured', error)
+      }
+    })
+  )
+  for (const outcome of outcomes) {
+    if (outcome.status !== 'rejected') continue
+    if (outcome.reason instanceof UnsavedWorkbenchFilesError) throw outcome.reason
+    warnFailure('Workbench could not prepare for closing', outcome.reason)
+  }
+  for (const surface of surfaces) surface.closePrepared = true
+}
+
+export function closeWorkbenchProject(place: WorkbenchPlace): Promise<void> {
+  const key = placeKey(place)
+  const existing = closingProjects.get(key)
+  if (existing !== undefined) return existing
+  const closing = (async () => {
+    if (
+      [...processSurfaces.values()].some(
+        (surface) =>
+          surface.host === place.host &&
+          surface.projectRoot === place.root &&
+          !surface.closePrepared
+      )
+    ) {
+      await prepareWorkbenchProjectClose(place)
+    }
+    closedProjectPlaces.add(key)
+    const surfaces = [...processSurfaces.values()].filter(
+      (surface) => surface.host === place.host && surface.projectRoot === place.root
+    )
+    const outcomes = await Promise.allSettled(
+      surfaces.map((surface) => closeProjectSurface(surface))
+    )
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected')
+        warnFailure('Workbench surface could not close', outcome.reason)
+    }
+    try {
+      if (place.host === LOCAL_HOST) {
+        releaseWorkbenchRuntime(place.root)
+        await stopIdleWorkbenchHost()
+      } else {
+        await releaseRemoteWorkbenchRuntime(place.host, place.root)
+      }
+    } catch (error) {
+      warnFailure('Workbench runtime could not be released', error)
+    }
+  })().finally(() => {
+    closingProjects.delete(key)
+  })
+  closingProjects.set(key, closing)
   return closing
 }
 
@@ -1478,6 +1723,7 @@ export function closeAllSurfaces(): Promise<void> {
  * service would be taking a registry in order to call one method on it.
  */
 let resolveProjectPlace: ((projectId: string) => WorkbenchPlace) | null = null
+let openRegisteredProject: ((projectId: string) => void) | null = null
 
 let detachedAccess: ((caller: WebContents, projectRoot: string) => boolean) | null = null
 
@@ -1528,7 +1774,7 @@ export function refreshWorkbenchTerminalEnv(): void {
   }
 }
 
-function fromMainFrame(event: IpcMainInvokeEvent): boolean {
+function fromMainFrame(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>): boolean {
   const frame = event.senderFrame
   const main = event.sender.mainFrame
   return (
@@ -1538,9 +1784,11 @@ function fromMainFrame(event: IpcMainInvokeEvent): boolean {
 
 export function registerWorkbenchHandlers(
   devServerUrl: string | undefined,
-  resolvePlace?: (projectId: string) => WorkbenchPlace
+  resolvePlace?: (projectId: string) => WorkbenchPlace,
+  openProject?: (projectId: string) => void
 ): void {
   resolveProjectPlace = resolvePlace ?? null
+  openRegisteredProject = openProject ?? null
   ipcMain.on(
     WORKBENCH_STORAGE_FLUSH_RESULT_CHANNEL,
     (event, requestId: unknown, error: unknown) => {
@@ -1552,6 +1800,42 @@ export function registerWorkbenchHandlers(
           ? undefined
           : new Error(typeof error === 'string' ? error : 'Invalid workbench storage flush result')
       )
+    }
+  )
+  ipcMain.handle(WORKBENCH_PROCESS_REPORT_CHANNEL, async (event, rawPids: unknown) => {
+    const surface = byContents.get(event.sender)
+    if (surface === undefined || !fromMainFrame(event)) {
+      throw new Error('Editor process reports require an active workbench surface.')
+    }
+    await captureSurfaceProcesses(surface, terminalProcessIds(rawPids))
+  })
+  ipcMain.on(
+    WORKBENCH_PROCESS_CLOSE_RESULT_CHANNEL,
+    (event, requestId: unknown, rawPids: unknown, error: unknown, refusal: unknown) => {
+      if (typeof requestId !== 'string') return
+      const request = processCloseRequests.get(requestId)
+      if (request?.contents !== event.sender || !fromMainFrame(event)) return
+      if (refusal !== null && refusal !== undefined) {
+        request.finish(
+          undefined,
+          refusal === 'unsaved' && request.phase === 'prepare' && error === null
+            ? new UnsavedWorkbenchFilesError()
+            : new Error('Invalid editor shutdown response.')
+        )
+        return
+      }
+      if (error !== null) {
+        request.finish(
+          undefined,
+          new Error(typeof error === 'string' ? error : 'Invalid editor shutdown response.')
+        )
+        return
+      }
+      try {
+        request.finish(terminalProcessIds(rawPids))
+      } catch (failure) {
+        request.finish(undefined, failure instanceof Error ? failure : new Error(String(failure)))
+      }
     }
   )
   for (const channel of WORKBENCH_SHELL_CHANNELS) {
@@ -2086,7 +2370,6 @@ export async function requestWorkbenchAskDiff(
       settle({ requestId, ok: false, message: 'The editor did not answer.' })
     }, EDIT_TIMEOUT_MS)
     pendingAskDiffs.set(requestId, settle)
-    if (request.close !== true) revealRow(surface)
     surface.view.webContents.send(WORKBENCH_ASK_DIFF_CHANNEL, { ...request, requestId })
   })
 }
@@ -2133,7 +2416,6 @@ export async function requestWorkbenchReveal(
       settle({ requestId, ok: false, message: 'The editor did not answer.' })
     }, 5_000)
     pendingReveals.set(requestId, settle)
-    revealRow(surface)
     surface.view.webContents.send(WORKBENCH_REVEAL_CHANNEL, { ...target, requestId })
   })
 }

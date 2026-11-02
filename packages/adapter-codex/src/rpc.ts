@@ -66,6 +66,7 @@ export class JsonRpcClient {
   private nextId = 0
   private closed = false
   private closeReason: Error | null = null
+  private closing: Promise<void> | null = null
 
   constructor(options: JsonRpcClientOptions) {
     this.transport = options.transport
@@ -80,9 +81,10 @@ export class JsonRpcClient {
     })
     this.transport.onClose((info) => {
       this.failAll(
-        new Error(
-          `codex app-server exited (code=${String(info.code)} signal=${String(info.signal)})`
-        )
+        info.error ??
+          new Error(
+            `codex app-server exited (code=${String(info.code)} signal=${String(info.signal)})`
+          )
       )
     })
   }
@@ -130,9 +132,17 @@ export class JsonRpcClient {
     }
   }
 
-  close(reason = 'client closed'): void {
+  close(reason = 'client closed'): Promise<void> {
+    if (this.closing !== null) return this.closing
     this.failAll(new Error(reason))
-    this.transport.close()
+    const closing = Promise.resolve()
+      .then(() => this.transport.close())
+      .catch((error: unknown) => {
+        this.closing = null
+        throw error
+      })
+    this.closing = closing
+    return closing
   }
 
   private sendOnce(method: string, params?: unknown): Promise<unknown> {

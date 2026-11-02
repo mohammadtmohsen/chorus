@@ -1,5 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import readline from 'node:readline'
+import { ownProcessTree } from '@chorus/shared/process-tree'
+
+export interface TransportClose {
+  readonly code: number | null
+  readonly signal: string | null
+  readonly error?: Error
+}
 
 /**
  * A line-delimited duplex channel. Kept as an interface so the JSON-RPC client
@@ -8,9 +15,9 @@ import readline from 'node:readline'
 export interface Transport {
   send(line: string): void
   onLine(handler: (line: string) => void): void
-  onClose(handler: (info: { code: number | null; signal: string | null }) => void): void
+  onClose(handler: (info: TransportClose) => void): void
   onStderr(handler: (chunk: string) => void): void
-  close(): void
+  close(): void | Promise<void>
 }
 
 export interface StdioTransportOptions {
@@ -30,10 +37,55 @@ export function createStdioTransport(options: StdioTransportOptions = {}): Trans
     {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: options.env ?? process.env,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
     }
   )
-
+  const handlers = new Set<(info: TransportClose) => void>()
+  let exited: TransportClose | null = null
+  let closing = false
+  let reportExit: () => void = () => undefined
+  const rootExited = new Promise<void>((resolve) => {
+    reportExit = resolve
+  })
+  const tree =
+    child.pid === undefined
+      ? undefined
+      : ownProcessTree(child.pid, { processGroup: process.platform !== 'win32', rootExited })
   const lines = readline.createInterface({ input: child.stdout })
+  child.stderr.resume()
+  child.stderr.on('error', () => undefined)
+  child.stdin.on('error', () => undefined)
+
+  const end = (info: TransportClose): void => {
+    if (exited !== null) return
+    exited = info
+    for (const handler of handlers) handler(info)
+  }
+  const onExit = (info: TransportClose): void => {
+    reportExit()
+    if (closing || tree === undefined) {
+      end(info)
+      return
+    }
+    void tree.stop().then(
+      () => {
+        end(info)
+      },
+      (error: unknown) => {
+        end({
+          ...info,
+          error: new Error('Owned provider processes could not be stopped.', { cause: error }),
+        })
+      }
+    )
+  }
+  child.once('exit', (code, signal) => {
+    onExit({ code, signal })
+  })
+  child.once('error', (error) => {
+    onExit({ code: null, signal: null, error })
+  })
 
   return {
     send: (line) => {
@@ -43,17 +95,25 @@ export function createStdioTransport(options: StdioTransportOptions = {}): Trans
       lines.on('line', handler)
     },
     onClose: (handler) => {
-      child.on('exit', (code, signal) => {
-        handler({ code, signal })
-      })
+      handlers.add(handler)
+      if (exited !== null) handler(exited)
     },
     onStderr: (handler) => {
       child.stderr.on('data', (chunk: Buffer) => {
         handler(chunk.toString())
       })
     },
-    close: () => {
-      child.kill('SIGTERM')
+    close: async () => {
+      closing = true
+      const graceful = (): void => {
+        child.stdin.end()
+      }
+      if (tree === undefined) graceful()
+      else await tree.stop(graceful)
+      lines.close()
+      child.stdin.destroy()
+      child.stdout.destroy()
+      child.stderr.destroy()
     },
   }
 }

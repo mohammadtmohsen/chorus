@@ -1,6 +1,7 @@
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal, type IBufferLine } from '@xterm/headless'
 import { basename } from 'node:path'
+import { ownProcessTree, type OwnedProcessTree } from '@chorus/shared/process-tree'
 import type * as NodePty from 'node-pty'
 import { resolveShell, type ShellChoice } from './shell.js'
 
@@ -211,6 +212,7 @@ export interface TerminalServiceOptions {
   readonly cwdFor: (ref: TerminalRef) => string | null
   readonly envFor?: (ref: TerminalRef) => NodeJS.ProcessEnv
   readonly spawn?: PtySpawner
+  readonly ownProcess?: (pid: number, exited: Promise<void>) => OwnedProcessTree
   readonly env?: NodeJS.ProcessEnv
   readonly scrollback?: number
   readonly frame?: Frame
@@ -270,6 +272,8 @@ const timerFrame: Frame = (run) => {
 interface Session {
   readonly ref: TerminalRef
   readonly pty: Pty
+  readonly owned: OwnedProcessTree
+  stopping?: Promise<void>
   readonly mirror: Terminal
   readonly serializer: SerializeAddon
   readonly shellName: string
@@ -323,6 +327,10 @@ export class TerminalService {
   private readonly byProject = new Map<string, Session>()
   private readonly byShell = new Map<string, Map<string, Session>>()
   private readonly shellsRemoved = new Set<string>()
+  private readonly stoppingSessions = new Set<string>()
+  private readonly stoppingProjects = new Set<string>()
+  private readonly unconfirmed = new Set<Session>()
+  private readonly ownProcess: (pid: number, exited: Promise<void>) => OwnedProcessTree
   private shellsClosed = false
   private epochs = 0
   private readonly listeners = new Set<(push: TerminalPush) => void>()
@@ -338,6 +346,9 @@ export class TerminalService {
   private readonly shell: ShellChoice | undefined
 
   constructor(options: TerminalServiceOptions) {
+    this.ownProcess =
+      options.ownProcess ??
+      ((pid, rootExited) => ownProcessTree(pid, { processGroup: true, rootExited }))
     this.cwdFor = options.cwdFor
     this.envFor = options.envFor
     this.platform = options.platform ?? process.platform
@@ -509,6 +520,7 @@ export class TerminalService {
   dispose(ref: TerminalRef): void {
     const session = this.find(ref)
     if (session === null) return
+    this.unconfirmed.add(session)
     if (ref.scope === 'shell') {
       if (!session.exited) session.pty.kill()
       this.retire(session)
@@ -604,6 +616,66 @@ export class TerminalService {
     }
   }
 
+  async stopSession(conversationId: string): Promise<void> {
+    this.stoppingSessions.add(conversationId)
+    await this.stopOwned((ref) => ref.scope === 'session' && ref.conversationId === conversationId)
+  }
+
+  async stopProject(projectId: string): Promise<void> {
+    this.stoppingProjects.add(projectId)
+    await this.stopOwned(
+      (ref) => (ref.scope === 'project' || ref.scope === 'shell') && ref.projectId === projectId
+    )
+  }
+
+  allowSession(conversationId: string): void {
+    this.stoppingSessions.delete(conversationId)
+  }
+
+  allowProject(projectId: string): void {
+    this.stoppingProjects.delete(projectId)
+  }
+
+  private async stopOwned(matches: (ref: TerminalRef) => boolean): Promise<void> {
+    const sessions = new Set(
+      [
+        ...this.unconfirmed,
+        ...this.globals.values(),
+        ...[...this.bySession.values()].flatMap((inner) => [...inner.values()]),
+        ...this.byProject.values(),
+        ...[...this.byShell.values()].flatMap((inner) => [...inner.values()]),
+      ].filter((session) => matches(session.ref))
+    )
+    const results = await Promise.allSettled(
+      [...sessions].map((session) => this.stopOwnedSession(session))
+    )
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (errors.length > 0)
+      throw new AggregateError(
+        errors.map((result): unknown => result.reason),
+        'Some terminal processes could not be confirmed stopped'
+      )
+  }
+
+  private stopOwnedSession(session: Session): Promise<void> {
+    if (session.stopping !== undefined) return session.stopping
+    const stopping = session.owned
+      .stop(() => {
+        if (!session.exited) session.pty.kill()
+      })
+      .then(() => {
+        if (this.find(session.ref) === session) this.retire(session)
+        this.unconfirmed.delete(session)
+      })
+      .finally(() => {
+        delete session.stopping
+      })
+    session.stopping = stopping
+    return stopping
+  }
+
   refuseShells(projectId: string): void {
     this.shellsRemoved.add(projectId)
   }
@@ -629,7 +701,11 @@ export class TerminalService {
   }
 
   private shellOpens(projectId: string): boolean {
-    return !this.shellsClosed && !this.shellsRemoved.has(projectId)
+    return (
+      !this.shellsClosed &&
+      !this.shellsRemoved.has(projectId) &&
+      !this.stoppingProjects.has(projectId)
+    )
   }
 
   private killShells(projectIds: readonly string[]): void {
@@ -660,6 +736,7 @@ export class TerminalService {
   }
 
   private retire(session: Session): void {
+    this.unconfirmed.add(session)
     this.forget(session.ref)
     if (session.flush !== null) {
       session.flush()
@@ -742,6 +819,13 @@ export class TerminalService {
     generation: number
   ): Session {
     const { cols, rows } = size
+    if (ref.scope === 'session' && this.stoppingSessions.has(ref.conversationId))
+      throw new Error('This chat is closing')
+    if (
+      (ref.scope === 'project' || ref.scope === 'shell') &&
+      this.stoppingProjects.has(ref.projectId)
+    )
+      throw new Error('This project is closing')
 
     const pty = this.spawner({
       file: command.file,
@@ -761,9 +845,16 @@ export class TerminalService {
     const serializer = new SerializeAddon()
     mirror.loadAddon(serializer)
 
+    let reportExit: () => void = () => undefined
+    const exited = new Promise<void>((resolve) => {
+      reportExit = resolve
+    })
+    const owned = this.ownProcess(pty.pid, exited)
+    void owned.capture().catch(() => undefined)
     const session: Session = {
       ref,
       pty,
+      owned,
       mirror,
       serializer,
       shellName: basename(command.file),
@@ -789,6 +880,7 @@ export class TerminalService {
     })
     pty.onExit(({ exitCode }) => {
       session.exited = true
+      reportExit()
       /*
        * Kept, not just flagged. This push fires once, and only the active tab of
        * a panel is mounted — so a shell that dies in the background emits to

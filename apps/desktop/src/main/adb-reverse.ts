@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { ownProcessTree, type OwnedProcessTree } from '@chorus/shared/process-tree'
 
 export interface TrackedDevice {
   readonly serial: string
@@ -23,6 +24,7 @@ export type AppliedReverses = ReadonlyMap<string, ReadonlySet<number>>
 
 export interface AdbTracker {
   kill(): void
+  stop(): Promise<void>
   onData(listener: (chunk: string) => void): void
   onExit(listener: (missing: boolean) => void): void
 }
@@ -145,37 +147,76 @@ const runAdb = async (args: readonly string[]): Promise<void> => {
 }
 
 export const adbTracker = (): AdbTracker => {
-  const child = spawn('adb', ['track-devices'], { stdio: ['ignore', 'pipe', 'ignore'] })
   const datas = new Set<(chunk: string) => void>()
   const exits = new Set<(missing: boolean) => void>()
   let settled = false
+  let missing = false
+  let cancelled = false
+  let owned: OwnedProcessTree | null = null
+  let stopping: Promise<void> | null = null
 
-  const finish = (missing: boolean): void => {
+  const finish = (unavailable: boolean): void => {
     if (settled) return
     settled = true
-    for (const listener of exits) listener(missing)
+    missing = unavailable
+    for (const listener of exits) listener(unavailable)
   }
-
-  child.stdout.setEncoding('latin1')
-  child.stdout.on('data', (chunk: string) => {
-    for (const listener of datas) listener(chunk)
-  })
-  child.on('error', (error: NodeJS.ErrnoException) => {
-    finish(error.code === 'ENOENT')
-  })
-  child.on('close', () => {
-    finish(false)
-  })
+  const ready = runAdb(['start-server'])
+    .then(async () => {
+      if (cancelled) return
+      const child = spawn('adb', ['track-devices'], { stdio: ['ignore', 'pipe', 'ignore'] })
+      const exited = new Promise<void>((resolve) => {
+        child.once('close', () => {
+          resolve()
+        })
+        child.once('error', () => {
+          resolve()
+        })
+      })
+      if (child.pid !== undefined) {
+        owned = ownProcessTree(child.pid, { rootExited: exited, expectedAncestorPid: process.pid })
+      }
+      child.stdout.setEncoding('latin1')
+      child.stdout.on('data', (chunk: string) => {
+        for (const listener of datas) listener(chunk)
+      })
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        finish(error.code === 'ENOENT')
+      })
+      child.on('close', () => {
+        finish(false)
+      })
+      await owned?.capture()
+    })
+    .catch((error: unknown) => {
+      finish(error instanceof Error && 'code' in error && error.code === 'ENOENT')
+    })
+  const stop = (): Promise<void> => {
+    if (stopping !== null) return stopping
+    cancelled = true
+    const work = ready
+      .then(async () => {
+        await owned?.stop()
+      })
+      .catch((error: unknown) => {
+        stopping = null
+        throw error
+      })
+    stopping = work
+    return work
+  }
 
   return {
     kill: () => {
-      child.kill()
+      void stop().catch(() => undefined)
     },
+    stop,
     onData: (listener) => {
       datas.add(listener)
     },
     onExit: (listener) => {
       exits.add(listener)
+      if (settled) listener(missing)
     },
   }
 }
@@ -191,8 +232,10 @@ export class AdbReverse {
   private readonly reconnectMs: number
   private readonly changes = new Set<() => void>()
   private readonly applied = new Map<string, Set<number>>()
-  private readonly inFlight = new Set<string>()
-  private readonly connecting = new Set<string>()
+  private readonly inFlight = new Map<string, { command: ReverseCommand; work: Promise<void> }>()
+  private readonly ownedReverses = new Map<string, Set<number>>()
+  private readonly retiredTrackers = new Set<AdbTracker>()
+  private readonly connecting = new Map<string, Promise<void>>()
 
   private ports: ReadonlySet<number> = new Set()
   private serials: readonly string[] = []
@@ -243,6 +286,37 @@ export class AdbReverse {
     this.reconcile()
   }
 
+  async syncConfirmed(ports: ReadonlySet<number>): Promise<void> {
+    this.sync(ports)
+    const removals = async (): Promise<void> => {
+      for (;;) {
+        this.reconcile()
+        const pending = [...this.inFlight.values()].filter(
+          ({ command }) => !this.ports.has(command.port)
+        )
+        if (pending.length === 0) return
+        const outcomes = await Promise.allSettled(pending.map(({ work }) => work))
+        const failures = outcomes.flatMap((outcome, index): unknown[] =>
+          outcome.status === 'rejected' && pending[index]?.command.add === false
+            ? [outcome.reason]
+            : []
+        )
+        if (failures.length !== 0)
+          throw new AggregateError(failures, 'Android reverse removal could not be confirmed.')
+      }
+    }
+    const outcomes = await Promise.allSettled([
+      removals(),
+      ...[...this.retiredTrackers].map((tracker) => this.stopTracker(tracker)),
+      ...(this.ports.size === 0 ? this.connecting.values() : []),
+    ])
+    const failures = outcomes.flatMap((outcome): unknown[] =>
+      outcome.status === 'rejected' ? [outcome.reason] : []
+    )
+    if (failures.length !== 0)
+      throw new AggregateError(failures, 'Android forwarding shutdown could not be confirmed.')
+  }
+
   close(): void {
     this.sync(new Set())
   }
@@ -266,6 +340,7 @@ export class AdbReverse {
     tracker.onExit((missing) => {
       if (this.tracker !== tracker) return
       this.tracker = null
+      this.retireTracker(tracker)
       this.buffer = ''
       this.attached([])
       if (missing) {
@@ -292,10 +367,24 @@ export class AdbReverse {
     this.tracker = null
     this.buffer = ''
     this.serials = []
-    tracker?.kill()
+    if (tracker !== null) this.retireTracker(tracker)
     if (this.applied.size === 0) return
     this.applied.clear()
     this.emit()
+  }
+
+  private retireTracker(tracker: AdbTracker): void {
+    this.retiredTrackers.add(tracker)
+    void this.stopTracker(tracker).catch((error: unknown) => {
+      this.warn('adb tracker exit could not be confirmed', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+    })
+  }
+
+  private async stopTracker(tracker: AdbTracker): Promise<void> {
+    await tracker.stop()
+    this.retiredTrackers.delete(tracker)
   }
 
   private attached(devices: readonly TrackedDevice[]): void {
@@ -338,8 +427,7 @@ export class AdbReverse {
   private reconnect(): void {
     for (const address of this.remembered ?? []) {
       if (this.serials.includes(address) || this.connecting.has(address)) continue
-      this.connecting.add(address)
-      void this.connect(address).then(
+      const work = this.connect(address).then(
         () => {
           this.connecting.delete(address)
         },
@@ -347,40 +435,57 @@ export class AdbReverse {
           this.connecting.delete(address)
         }
       )
+      this.connecting.set(address, work)
     }
   }
 
   private reconcile(): void {
-    for (const command of reverseCommands(this.applied, this.serials, this.ports)) {
-      const key = `${command.serial}\t${String(command.port)}\t${command.add ? 'add' : 'remove'}`
+    const commands = reverseCommands(this.applied, this.serials, this.ports)
+    for (const [serial, ports] of this.ownedReverses) {
+      for (const port of ports) {
+        if (!this.ports.has(port)) commands.push({ serial, port, add: false })
+      }
+    }
+    for (const command of commands) {
+      const key = `${command.serial}\t${String(command.port)}`
       if (this.inFlight.has(key)) continue
-      this.inFlight.add(key)
-      void this.run(reverseArgs(command)).then(
-        () => {
-          this.inFlight.delete(key)
-          this.settled(command)
-        },
-        (error: unknown) => {
-          this.inFlight.delete(key)
-          this.warn('adb reverse failed', {
-            serial: command.serial,
-            port: command.port,
-            add: command.add,
-            message: error instanceof Error ? error.message : String(error),
-          })
-        }
-      )
+      const work = Promise.resolve()
+        .then(() => this.run(reverseArgs(command)))
+        .then(
+          () => {
+            this.inFlight.delete(key)
+            this.settled(command)
+          },
+          (error: unknown) => {
+            this.inFlight.delete(key)
+            this.warn('adb reverse failed', {
+              serial: command.serial,
+              port: command.port,
+              add: command.add,
+              message: error instanceof Error ? error.message : String(error),
+            })
+            throw error
+          }
+        )
+      this.inFlight.set(key, { command, work })
+      void work.catch(() => undefined)
     }
   }
 
   private settled(command: ReverseCommand): void {
-    if (!this.serials.includes(command.serial)) return
-    const ports = this.applied.get(command.serial) ?? new Set<number>()
-    if (command.add) ports.add(command.port)
-    else ports.delete(command.port)
-    if (ports.size === 0) this.applied.delete(command.serial)
-    else this.applied.set(command.serial, ports)
-    this.emit()
+    const owned = this.ownedReverses.get(command.serial) ?? new Set<number>()
+    if (command.add) owned.add(command.port)
+    else owned.delete(command.port)
+    if (owned.size === 0) this.ownedReverses.delete(command.serial)
+    else this.ownedReverses.set(command.serial, owned)
+    if (this.serials.includes(command.serial)) {
+      const ports = this.applied.get(command.serial) ?? new Set<number>()
+      if (command.add) ports.add(command.port)
+      else ports.delete(command.port)
+      if (ports.size === 0) this.applied.delete(command.serial)
+      else this.applied.set(command.serial, ports)
+      this.emit()
+    }
     this.reconcile()
   }
 

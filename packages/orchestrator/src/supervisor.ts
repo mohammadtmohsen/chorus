@@ -160,7 +160,13 @@ export class SupervisedSession implements AgentSession {
      * `verdictOf` gives the failure a bounded moment to arrive and turns it into
      * a rejection, which is the shape that `catch` was written for.
      */
-    const verdict = await verdictOf(first, policy.resumeVerdictMs, deps)
+    let verdict: Awaited<ReturnType<typeof verdictOf>>
+    try {
+      verdict = await verdictOf(first, policy.resumeVerdictMs, deps)
+    } catch (error) {
+      await first.close()
+      throw error
+    }
     if (verdict.failed !== null) {
       /* Close what was spawned before rejecting. The caller is about to start a
          fresh session, and a refused resume still left a live process behind. */
@@ -193,6 +199,7 @@ export class SupervisedSession implements AgentSession {
     if (adapter.fork === undefined) throw new Error(`${adapter.id} cannot be forked`)
     const first = await adapter.fork(sessionRef, opts)
     if (first.sessionRef === sessionRef) {
+      await first.close()
       throw new Error('A persistent fork must report its own id, not its parent’s')
     }
     return new SupervisedSession(adapter, opts, first, policy, deps)

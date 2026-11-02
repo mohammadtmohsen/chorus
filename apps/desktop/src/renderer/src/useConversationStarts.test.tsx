@@ -116,6 +116,9 @@ function harness(role: WindowRole = { kind: 'main' }, existing: SessionInfo[] = 
   const sessionsRef = { current: existing }
   const revision = { current: 0 }
   const closedIds = { current: new Set<string>() }
+  const retainedCloseIds = { current: new Set<string>() }
+  const closingProjectIds = { current: new Set<string>() }
+  const projectCloseVersions = { current: new Map<string, number>() }
   const updateSessions = (change: (current: SessionInfo[]) => SessionInfo[]): void => {
     sessionsRef.current = change(sessionsRef.current)
     revision.current += 1
@@ -140,6 +143,9 @@ function harness(role: WindowRole = { kind: 'main' }, existing: SessionInfo[] = 
       sessionsRef,
       revision,
       closedIds,
+      retainedCloseIds,
+      closingProjectIds,
+      projectCloseVersions,
       updateSessions,
       finishEnd,
       refreshProjects: () => Promise.resolve([]),
@@ -160,7 +166,19 @@ function harness(role: WindowRole = { kind: 'main' }, existing: SessionInfo[] = 
       updateSessions(change)
     })
   }
-  return { view, sessionsRef, closedIds, finishEnd, reportError, startIn, session, elsewhere }
+  return {
+    view,
+    sessionsRef,
+    closedIds,
+    retainedCloseIds,
+    closingProjectIds,
+    projectCloseVersions,
+    finishEnd,
+    reportError,
+    startIn,
+    session,
+    elsewhere,
+  }
 }
 
 const answerBegin = async (index: number, conversationId: string, projectId = 'p1') => {
@@ -916,5 +934,84 @@ describe('what other windows and late answers say', () => {
     expect(h.session('s1')).toBe(renamed)
     expect(renamed?.title).toBe('renamed')
     expect(reads).toHaveLength(2)
+  })
+})
+
+describe('awaiting confirmed closure', () => {
+  it('retains a closing chat until cleanup has been acknowledged', async () => {
+    const h = harness({ kind: 'main' }, [begun('closing'), begun('other', 'p2')])
+    h.retainedCloseIds.current.add('closing')
+    act(() => {
+      announce()
+    })
+    reads.at(-1)?.resolve({ sessions: [listed('other', 'p2')] })
+    await settle()
+    expect(h.session('closing')).toBeDefined()
+    expect(h.session('other')).toBeDefined()
+    expect(store.removeSession).not.toHaveBeenCalledWith('closing')
+    h.retainedCloseIds.current.delete('closing')
+    act(() => {
+      announce()
+    })
+    reads.at(-1)?.resolve({ sessions: [listed('other', 'p2')] })
+    await settle()
+    expect(h.session('closing')).toBeUndefined()
+    expect(h.session('other')).toBeDefined()
+  })
+
+  it('keeps failed cleanup visible across later active-session reads', async () => {
+    const h = harness({ kind: 'main' }, [begun('failed')])
+    h.retainedCloseIds.current.add('failed')
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      act(() => {
+        announce()
+      })
+      reads.at(-1)?.resolve({ sessions: [] })
+      await settle()
+    }
+    expect(h.session('failed')).toBeDefined()
+    expect(store.removeSession).not.toHaveBeenCalledWith('failed')
+  })
+
+  it('closes a begin response that arrives after its project starts closing', async () => {
+    const h = harness()
+    h.startIn('p1')
+    h.closingProjectIds.current.add('p1')
+    await answerBegin(0, 'late')
+    expect(h.session('late')).toBeUndefined()
+    expect(h.finishEnd).toHaveBeenCalledWith('late')
+    expect(store.openProject).not.toHaveBeenCalled()
+    closes.get('late')?.resolve()
+    await settle()
+  })
+
+  it('discards an old begin after project closure completes and allows a fresh request', async () => {
+    const h = harness()
+    h.startIn('p1')
+    h.closingProjectIds.current.add('p1')
+    h.projectCloseVersions.current.set('p1', 1)
+    h.closingProjectIds.current.delete('p1')
+    await answerBegin(0, 'late')
+    expect(h.session('late')).toBeUndefined()
+    expect(h.finishEnd).toHaveBeenCalledWith('late')
+    expect(store.openProject).not.toHaveBeenCalled()
+    closes.get('late')?.resolve()
+    await settle()
+    h.startIn('p1')
+    await answerBegin(1, 'fresh')
+    expect(h.session('fresh')).toBeDefined()
+    expect(store.openProject).toHaveBeenCalledWith('p1')
+  })
+
+  it('prevents new starts in a stopping project while allowing another project', () => {
+    const h = harness()
+    h.closingProjectIds.current.add('p1')
+    h.startIn('p1')
+    expect(chorus.beginConversation).not.toHaveBeenCalled()
+    h.startIn('p2')
+    expect(chorus.beginConversation).toHaveBeenCalledWith({
+      projectId: 'p2',
+      profileId: 'read-only',
+    })
   })
 })

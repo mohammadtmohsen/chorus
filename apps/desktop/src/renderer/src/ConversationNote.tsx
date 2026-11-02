@@ -41,6 +41,7 @@ export function ConversationNote(props: {
   const { t } = useTranslation()
   const { note } = props
   const root = useRef<HTMLDivElement | null>(null)
+  const body = useRef<HTMLTextAreaElement | null>(null)
   const gesture = useRef<Gesture | null>(null)
   const latestBounds = useRef<NoteBounds | null>(null)
   const [bounds, setBounds] = useState<NoteBounds | null>(null)
@@ -73,6 +74,17 @@ export function ConversationNote(props: {
       : bounds === null
         ? null
         : gestureRect(live.kind, live.origin, live.dx, live.dy, bounds)
+
+  const canFocus = rect !== null && note.state.load === 'ready'
+
+  useLayoutEffect(() => {
+    const textarea = body.current
+    if (!canFocus || textarea === null) return
+    textarea.focus({ preventScroll: true })
+    textarea.setSelectionRange(0, 0)
+    textarea.scrollTop = 0
+    textarea.scrollLeft = 0
+  }, [canFocus])
 
   const begin =
     (kind: NoteGestureKind) =>
@@ -225,6 +237,7 @@ export function ConversationNote(props: {
         ) : null}
         {note.state.load === 'failed' ? null : (
           <textarea
+            ref={body}
             className="conversation-note-body"
             aria-label={t('conversationNote.label')}
             placeholder={t('conversationNote.placeholder')}

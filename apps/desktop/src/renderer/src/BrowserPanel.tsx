@@ -14,6 +14,7 @@ import type {
   BrowserState,
 } from '../../shared/browser-ipc.js'
 import { BrowserPasswords as PasswordControls } from './BrowserPasswords.js'
+import { ConsolePanel } from './ConsolePanel.js'
 import { browserViewport } from './workspace/layout.js'
 import { useWorkbenchStill } from './workspace/overlay.js'
 import { horizontalRowWheel } from './workbench/viewport.js'
@@ -106,6 +107,7 @@ export function BrowserPanel(props: {
   const [prompt, setPrompt] = useState<BrowserPasswordPrompt | null>(null)
   const [passwords, setPasswords] = useState<BrowserPasswords | null>(null)
   const [passwordButtonHost, setPasswordButtonHost] = useState<HTMLSpanElement | null>(null)
+  const [consoleOpen, setConsoleOpen] = useState(false)
   const overlayStill = useWorkbenchStill(browserId)
 
   useLayoutEffect(() => {
@@ -592,6 +594,19 @@ export function BrowserPanel(props: {
           <button
             type="button"
             className="browser-button browser-button--text"
+            aria-label={t('console.toggleLabel')}
+            title={t('console.toggleLabel')}
+            aria-pressed={consoleOpen}
+            disabled={!ready}
+            onClick={() => {
+              setConsoleOpen((open) => !open)
+            }}
+          >
+            {t('console.toggle')}
+          </button>
+          <button
+            type="button"
+            className="browser-button browser-button--text"
             aria-label={t('browser.reveal')}
             title={t('browser.reveal')}
             onClick={showBrowser}
@@ -709,6 +724,9 @@ export function BrowserPanel(props: {
             <div className="browser-placeholder">{placeholder}</div>
           )}
         </div>
+        {consoleOpen && (
+          <ConsolePanel projectId={projectId} browserId={browserId} active={visible} />
+        )}
       </div>
     </div>
   )

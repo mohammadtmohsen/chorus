@@ -1356,6 +1356,10 @@ describe('naming a conversation', () => {
     for (let i = 0; i < 20; i += 1) await tick()
   }
 
+  const flushPromises = async (): Promise<void> => {
+    for (let i = 0; i < 100; i += 1) await Promise.resolve()
+  }
+
   beforeEach(async () => {
     await runtime.close()
     fakes = {
@@ -1381,12 +1385,19 @@ describe('naming a conversation', () => {
     await flush()
     const claude = namerOf(fakes.claude)[0]
     expect(claude?.sent.at(-1)?.text).toContain('fix the parser')
+    expect(claude?.startedWith?.toolPolicy).toBe('none')
+    expect(claude?.startedWith?.sandbox).toEqual({
+      mode: 'readOnly',
+      writableRoots: [],
+      networkAccess: false,
+    })
     claude?.emit({ type: 'message.completed', itemRef: 'n1', text: 'Parser fix' })
     await flush()
     expect(titles()).toEqual([])
     claude?.emit({ type: 'turn.completed', turnRef: 't1', status: 'completed' })
     await flush()
     expect(titles()).toEqual(['Parser fix'])
+    expect(claude?.closed).toBe(true)
     expect(namerOf(fakes.deepseek)).toHaveLength(0)
     expect(namerOf(fakes.codex)).toHaveLength(0)
   })
@@ -1431,7 +1442,7 @@ describe('naming a conversation', () => {
     expect(titles()).toEqual(['Parser fix'])
   })
 
-  it('skips a demoted agent and tells the kept one the current title', async () => {
+  it('skips a demoted agent and tells a fresh helper the current title', async () => {
     await runtime.send(conversationId, '@codex fix the parser')
     await flush()
     namerOf(fakes.claude)[0]?.emit({ type: 'turn.completed', turnRef: 't1', status: 'failed' })
@@ -1444,9 +1455,11 @@ describe('naming a conversation', () => {
     await runtime.send(conversationId, '@codex and the lexer too')
     await flush()
     expect(namerOf(fakes.claude)).toHaveLength(1)
-    expect(namerOf(fakes.deepseek)).toHaveLength(1)
-    expect(deepseek?.sent.at(-1)?.text).toMatch(/^Current title: Parser fix\n\n/)
-    expect(deepseek?.sent.at(-1)?.text).toContain('the lexer too')
+    expect(namerOf(fakes.deepseek)).toHaveLength(2)
+    expect(deepseek?.closed).toBe(true)
+    const next = namerOf(fakes.deepseek)[1]
+    expect(next?.sent.at(-1)?.text).toMatch(/^Current title: Parser fix\n\n/)
+    expect(next?.sent.at(-1)?.text).toContain('the lexer too')
   })
 
   it('discards quota messages and falls through to Codex when both other naming turns fail', async () => {
@@ -1527,6 +1540,188 @@ describe('naming a conversation', () => {
     }
 
     expect(runtime.conversationTitle(conversationId)).toBe('Existing title')
+  })
+
+  it('waits for helper cleanup before starting the next request', async () => {
+    await runtime.send(conversationId, '@codex fix the parser')
+    await flush()
+    const first = namerOf(fakes.claude)[0]
+    if (first === undefined) throw new Error('the first title helper did not start')
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const close = first.close.bind(first)
+    vi.spyOn(first, 'close').mockImplementation(async () => {
+      await held
+      await close()
+    })
+    try {
+      await runtime.send(conversationId, '@codex now fix the lexer')
+      first.emit({ type: 'message.completed', itemRef: 'n1', text: 'Parser fix' })
+      first.emit({ type: 'turn.completed', turnRef: 't1', status: 'completed' })
+      await flush()
+      expect(namerOf(fakes.claude)).toHaveLength(1)
+      release()
+      await flush()
+      expect(first.closed).toBe(true)
+      expect(namerOf(fakes.claude)).toHaveLength(2)
+      expect(namerOf(fakes.claude)[1]?.sent.at(-1)?.text).toContain('now fix the lexer')
+    } finally {
+      release()
+    }
+  })
+
+  it('starts no replacement helper after its previous process cleanup failed', async () => {
+    await runtime.send(conversationId, '@codex fix the parser')
+    await flush()
+    const first = namerOf(fakes.claude)[0]
+    if (first === undefined) throw new Error('the first title helper did not start')
+    const close = vi
+      .spyOn(first, 'close')
+      .mockRejectedValue(new Error('helper process still exists'))
+    try {
+      first.emit({ type: 'message.completed', itemRef: 'n1', text: 'Parser fix' })
+      first.emit({ type: 'turn.completed', turnRef: 't1', status: 'completed' })
+      await flush()
+      expect(first.closed).toBe(false)
+      await runtime.send(conversationId, '@codex now fix the lexer')
+      await flush()
+      expect(namerOf(fakes.claude)).toHaveLength(1)
+      expect(first.sent).toHaveLength(1)
+      expect(namerOf(fakes.deepseek)).toHaveLength(0)
+      expect(namerOf(fakes.codex)).toHaveLength(0)
+    } finally {
+      close.mockRestore()
+    }
+    await runtime.closeConversation(conversationId)
+    expect(first.closed).toBe(true)
+  })
+
+  it('closes a timed-out reply before trying the next provider', async () => {
+    vi.useFakeTimers()
+    try {
+      await runtime.send(conversationId, '@codex fix the parser')
+      await flushPromises()
+      const first = namerOf(fakes.claude)[0]
+      expect(first?.sent).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(20_000)
+      await flushPromises()
+      expect(first?.closed).toBe(true)
+      expect(namerOf(fakes.deepseek)[0]?.sent.at(-1)?.text).toContain('fix the parser')
+      expect(titles()).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retains one timed-out startup until its late helper is closed', async () => {
+    const start = fakes.claude.start.bind(fakes.claude)
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    fakes.claude.start = async (opts) => {
+      const session = await start(opts)
+      await held
+      return session
+    }
+    vi.useFakeTimers()
+    try {
+      await runtime.send(conversationId, '@codex fix the parser')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(20_000)
+      await flushPromises()
+      await runtime.send(conversationId, '@codex inspect the lexer')
+      await runtime.send(conversationId, '@codex inspect the scanner')
+      await flushPromises()
+      expect(namerOf(fakes.claude)).toHaveLength(1)
+      expect(namerOf(fakes.deepseek)).toHaveLength(0)
+      release()
+      await flushPromises()
+      expect(namerOf(fakes.claude)[0]?.closed).toBe(true)
+      expect(titles()).toEqual([])
+      await runtime.send(conversationId, '@codex now fix the scanner')
+      await flushPromises()
+      expect(namerOf(fakes.claude)).toHaveLength(2)
+      expect(namerOf(fakes.claude)[1]?.sent.at(-1)?.text).toContain('now fix the scanner')
+    } finally {
+      release()
+      vi.useRealTimers()
+    }
+  })
+
+  it('closes a late helper after its conversation has closed', async () => {
+    const start = fakes.claude.start.bind(fakes.claude)
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    fakes.claude.start = async (opts) => {
+      const session = await start(opts)
+      await held
+      return session
+    }
+    try {
+      await runtime.send(conversationId, '@codex fix the parser')
+      await flush()
+      const closing = runtime.closeConversation(conversationId)
+      release()
+      await closing
+      await flush()
+      expect(namerOf(fakes.claude)[0]?.closed).toBe(true)
+      expect(namerOf(fakes.claude)[0]?.sent).toEqual([])
+      expect(namerOf(fakes.deepseek)).toHaveLength(0)
+      expect(titles()).toEqual([])
+    } finally {
+      release()
+    }
+  })
+
+  it('cancels a pending reply and skips queued naming after chat closure', async () => {
+    await runtime.send(conversationId, '@codex fix the parser')
+    await flush()
+    await runtime.send(conversationId, '@codex now fix the lexer')
+    await runtime.closeConversation(conversationId)
+    await flush()
+    expect(namerOf(fakes.claude)).toHaveLength(1)
+    expect(namerOf(fakes.claude)[0]?.closed).toBe(true)
+    expect(namerOf(fakes.deepseek)).toHaveLength(0)
+    expect(titles()).toEqual([])
+  })
+
+  it('closes the title helper before disposing adapters during shutdown', async () => {
+    await runtime.send(conversationId, '@codex fix the parser')
+    await flush()
+    const helper = namerOf(fakes.claude)[0]
+    const dispose = fakes.claude.dispose.bind(fakes.claude)
+    vi.spyOn(fakes.claude, 'dispose').mockImplementation(async () => {
+      expect(helper?.closed).toBe(true)
+      await dispose()
+    })
+    try {
+      await runtime.close()
+    } finally {
+      runtime = ChorusRuntime.open(dataPath, silent, new Map())
+    }
+  })
+
+  it('keeps the current title when no provider supports an available tool-free helper', async () => {
+    runtime.renameConversation(conversationId, 'Existing title')
+    const start = fakes.codex.start.bind(fakes.codex)
+    fakes.claude.start = () => Promise.reject(new Error('Claude is unavailable'))
+    fakes.deepseek.start = () => Promise.reject(new Error('DeepSeek is unavailable'))
+    fakes.codex.start = (opts) =>
+      opts.toolPolicy === 'none'
+        ? Promise.reject(
+            new Error('Codex does not support tool-free sessions through this adapter.')
+          )
+        : start(opts)
+    await runtime.send(conversationId, '@codex fix the parser')
+    await flush()
+    expect(namerOf(fakes.codex)).toHaveLength(0)
+    expect(runtime.conversationTitle(conversationId)).toBe('Existing title')
+    expect(titles()).toEqual(['Existing title'])
   })
 })
 

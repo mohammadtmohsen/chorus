@@ -130,20 +130,26 @@ export default defineConfig({
      * the person who just edited the package.
      */
     resolve: {
-      alias: Object.fromEntries(
-        [
-          'adapter-claude',
-          'adapter-codex',
-          'agent-protocol',
-          'event-store',
-          'orchestrator',
-          'shared',
-          'workspace',
-        ].map((name) => [
-          `@chorus/${name}`,
-          resolve(__dirname, `../../packages/${name}/src/index.ts`),
-        ])
-      ),
+      alias: {
+        '@chorus/shared/process-tree': resolve(
+          __dirname,
+          '../../packages/shared/src/process-tree.ts'
+        ),
+        ...Object.fromEntries(
+          [
+            'adapter-claude',
+            'adapter-codex',
+            'agent-protocol',
+            'event-store',
+            'orchestrator',
+            'shared',
+            'workspace',
+          ].map((name) => [
+            `@chorus/${name}`,
+            resolve(__dirname, `../../packages/${name}/src/index.ts`),
+          ])
+        ),
+      },
     },
     build: {
       rollupOptions: {

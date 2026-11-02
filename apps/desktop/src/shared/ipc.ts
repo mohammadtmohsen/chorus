@@ -10,6 +10,7 @@ import { NOTE_SIZE, WorkspaceSnapshot } from './workspace-layout.js'
 import type { WorkbenchShellApi } from './workbench-ipc.js'
 import type { DetachedWindowApi } from './detached-window-ipc.js'
 import type { BrowserApi } from './browser-ipc.js'
+import type { ConsoleApi } from './console-ipc.js'
 import type { RunApi } from './run-ipc.js'
 import type { TrafficApi } from './traffic-ipc.js'
 
@@ -1662,6 +1663,10 @@ export const IPC_CONTRACT = {
    * where the *next* conversation opens, which is the only question a folder
    * picker is still allowed to answer.
    */
+  'project:close': {
+    request: z.object({ projectId: z.string().min(1) }).strict(),
+    response: z.object({ ok: z.literal(true) }),
+  },
   'conversation:close': {
     request: z.object({ conversationId: z.string() }),
     response: z.object({ ok: z.literal(true) }),
@@ -2486,7 +2491,7 @@ export function isIpcChannel(value: string): value is IpcChannel {
  * validates `event.sender`. The shape belongs beside the channels it names.
  */
 export interface ChorusApi
-  extends WorkbenchShellApi, DetachedWindowApi, TrafficApi, RunApi, BrowserApi {
+  extends WorkbenchShellApi, DetachedWindowApi, TrafficApi, RunApi, BrowserApi, ConsoleApi {
   readonly getAppInfo: () => Promise<AppInfo>
   /** Asks; the answer arrives on `onLimits`. */
   readonly refreshLimits: () => Promise<{ ok: true }>
@@ -2512,6 +2517,7 @@ export interface ChorusApi
     request: IpcRequest<'conversation:send'>
   ) => Promise<IpcResponse<'conversation:send'>>
   readonly interrupt: (request: IpcRequest<'conversation:interrupt'>) => Promise<{ ok: true }>
+  readonly closeProject: (request: IpcRequest<'project:close'>) => Promise<{ ok: true }>
   readonly closeConversation: (request: IpcRequest<'conversation:close'>) => Promise<{ ok: true }>
   readonly restoreConversations: () => Promise<IpcResponse<'conversation:restore'>>
   readonly readActiveSessions: () => Promise<IpcResponse<'conversation:active'>>

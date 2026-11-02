@@ -187,7 +187,7 @@ describe('closing a chat', () => {
     )
   })
 
-  it('reports a failed deletion only after the close has finished its cleanup', async () => {
+  it('retains a chat for retry after its note cleanup fails', async () => {
     runtime.setConversationNoteText(conversationId, PINNED, 0)
     const parent = await working('claude')
     const pushes: ConversationNotePush[] = []
@@ -207,14 +207,19 @@ describe('closing a chat', () => {
     expect(pushes).toEqual([{ conversationId, note: null }])
     expect(parent.closed).toBe(true)
     expect(runtime.activeSessions().some((room) => room.conversationId === conversationId)).toBe(
-      false
+      true
     )
     expect(() => runtime.setConversationNoteText(conversationId, 'late text', 1)).toThrow()
+    expect(runtime.getConversationNote(conversationId).body).toBe(PINNED)
+    await runtime.closeConversation(conversationId)
+    expect(runtime.activeSessions().some((room) => room.conversationId === conversationId)).toBe(
+      false
+    )
     expect(() => runtime.setConversationNoteView(conversationId, { visible: true })).toThrow()
     expect(() =>
       runtime.compareConversationNoteJournal(conversationId, null, 'late draft')
     ).toThrow()
-    expect(runtime.getConversationNote(conversationId).body).toBe(PINNED)
+    expect(runtime.getConversationNote(conversationId).body).toBe('')
   })
 
   it('keeps the note of a chat left open across a shutdown and relaunch', async () => {

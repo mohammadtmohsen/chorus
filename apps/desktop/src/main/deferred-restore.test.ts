@@ -209,7 +209,7 @@ describe('deferred restore', () => {
     said('an earlier question')
     claude.failResume = true
     await restoreWith(saved())
-    await runtime.send('conv-1', 'hello again')
+    await runtime.send('conv-1', '@claude hello again')
     const [fresh] = own(claude)
     expect(own(claude)).toHaveLength(1)
     expect(fresh?.sessionRef).not.toBe('thread-1')
@@ -414,7 +414,7 @@ describe('deferred restore', () => {
       },
     })
     await restoreWith(saved())
-    await runtime.send('conv-1', 'pick it up')
+    await runtime.send('conv-1', '@claude pick it up')
     expect(firstText(claude)).toContain('the launch is on Friday')
     expect(firstText(claude)).toContain('We agreed to finish the release notes first.')
   })
@@ -437,7 +437,7 @@ describe('deferred restore', () => {
   it('applies plan mode chosen before first use to the agent that starts', async () => {
     await restoreWith(saved())
     await runtime.setPlanMode('conv-1', true)
-    await runtime.send('conv-1', 'plan it first')
+    await runtime.send('conv-1', '@claude plan it first')
     expect(own(claude)[0]?.permissionModes.at(-1)).toBe('plan')
     expect(own(claude)[0]?.sent).toHaveLength(1)
   })
@@ -505,8 +505,9 @@ describe('deferred restore', () => {
     const release = claude.gate()
     const seating = settled(runtime.addParticipant('conv-1', 'claude'))
     await until(() => own(claude).length === 1)
-    await runtime.closeConversation('conv-1')
+    const closing = runtime.closeConversation('conv-1')
     release()
+    await closing
     expect(await seating).toBe('cancelled')
     await until(() => own(claude)[0]?.closed === true)
   })
@@ -554,10 +555,87 @@ describe('deferred restore', () => {
     claude.refuseGated = true
     const seating = settled(runtime.addParticipant('conv-1', 'claude'))
     await until(() => claude.resumes === 1)
-    await runtime.closeConversation('conv-1')
+    const closing = runtime.closeConversation('conv-1')
     claude.releaseAll()
+    await closing
     expect(await seating).toBe('cancelled')
     expect(claude.starts).toBe(0)
+  })
+})
+
+describe('confirmed closure during provider replacement', () => {
+  it('waits for a style respawn to release its old provider and starts no replacement', async () => {
+    await restoreWith(saved())
+    await runtime.addParticipant('conv-1', 'claude')
+    const first = own(claude)[0]
+    if (first === undefined) throw new Error('the first provider did not start')
+    const gate = held()
+    const close = first.close.bind(first)
+    let closingOld = false
+    first.close = async () => {
+      closingOld = true
+      await gate.wait
+      await close()
+    }
+    try {
+      const changing = settled(runtime.setAnswerStyle('conv-1', !runtime.answerStyle('conv-1')))
+      await until(() => closingOld)
+      let acknowledged = false
+      const closing = runtime.closeProject(projectId).then(() => {
+        acknowledged = true
+      })
+      await flush()
+      expect(acknowledged).toBe(false)
+      expect(first.closed).toBe(false)
+      gate.release()
+      await closing
+      expect(await changing).toBe('cancelled')
+      expect(first.closed).toBe(true)
+      expect(own(claude)).toHaveLength(1)
+      expect(runtime.activeSessions()).toEqual([])
+    } finally {
+      gate.release()
+    }
+  })
+
+  it('closes ready and late providers when a history reopen races project closure', async () => {
+    const room = await runtime.startConversation({ projectId, agents: ['claude', 'codex'] })
+    await runtime.closeConversation(room.conversationId)
+    const gate = held()
+    const start = codex.start.bind(codex)
+    codex.start = async (opts) => {
+      const session = await start(opts)
+      await gate.wait
+      return session
+    }
+    try {
+      const opening = settled(runtime.reopenConversation(room.conversationId))
+      await until(() => own(claude).length === 2 && own(codex).length === 2)
+      await until(
+        () =>
+          runtime.store
+            .read(room.conversationId)
+            .filter(
+              (event) =>
+                event.payload.type === 'session.started' && event.payload.agentId === 'claude'
+            ).length === 2
+      )
+      let acknowledged = false
+      const closing = runtime.closeProject(projectId).then(() => {
+        acknowledged = true
+      })
+      await until(() => own(claude)[1]?.closed === true)
+      expect(acknowledged).toBe(false)
+      gate.release()
+      await closing
+      expect(await opening).toBe('cancelled')
+      expect(own(claude)[1]?.closed).toBe(true)
+      expect(own(codex)[1]?.closed).toBe(true)
+      expect(runtime.activeSessions()).toEqual([])
+    } finally {
+      gate.release()
+      codex.start = start
+    }
   })
 })
 

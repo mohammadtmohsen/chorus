@@ -224,7 +224,7 @@ describe('process exit', () => {
   it('rejects new requests after close', async () => {
     const t = fakeTransport()
     const rpc = client(t)
-    rpc.close('done')
+    await rpc.close('done')
     expect(t.isClosed()).toBe(true)
     await expect(rpc.request('anything')).rejects.toThrow(/done/)
   })

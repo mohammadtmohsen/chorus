@@ -7,6 +7,7 @@ import {
   attachDetachedWindowListeners,
   closeEveryDetachedWindow,
   detachedAccess,
+  detachedWindowOf,
   handOffExpired,
   registerDetachedWindowHandlers,
   type DetachedWindowDeps,
@@ -30,6 +31,8 @@ import {
 import { TrafficIpc } from './traffic-ipc.js'
 import { RunIpc } from './run-ipc.js'
 import { BrowserIpc } from './browser-ipc.js'
+import { BrowserConsoles } from './browser-console.js'
+import { ConsoleIpc } from './console-ipc.js'
 import { BrowserDownloads } from './browser-downloads.js'
 import { BrowserSettingsStore } from './browser-settings.js'
 import { BROWSER_PARTITION, BrowserSurfaces, isBrowserPage } from './browser-surface.js'
@@ -75,6 +78,8 @@ const devServerUrl = process.env['ELECTRON_RENDERER_URL']
 let trafficIpc: TrafficIpc | null = null
 let runIpc: RunIpc | null = null
 let browserIpc: BrowserIpc | null = null
+let browserConsoles: BrowserConsoles | null = null
+let consoleIpc: ConsoleIpc | null = null
 let browserDownloads: BrowserDownloads | null = null
 let stopConversationNotes: (() => void) | null = null
 
@@ -154,10 +159,12 @@ function createWindow(role: ShellWindowRole): BrowserWindow {
   trafficIpc?.registerShell(window.webContents, shellRole)
   runIpc?.registerShell(window.webContents, shellRole)
   browserIpc?.registerShell(window.webContents, shellRole)
+  consoleIpc?.registerShell(window.webContents, shellRole)
   window.webContents.on('destroyed', () => {
     trafficIpc?.releaseShell(window.webContents)
     runIpc?.releaseShell(window.webContents)
     browserIpc?.releaseShell(window.webContents)
+    consoleIpc?.releaseShell(window.webContents)
   })
 
   // Avoids a white flash before the renderer has painted.
@@ -367,7 +374,7 @@ void app.whenReady().then(async () => {
   // closure, and the module `runtime` is nullable for the whole life of the app,
   // so narrowing it here would not survive into the callback.
   const opened = ChorusRuntime.open(app.getPath('userData'), log, undefined, {
-    deferRestoredAgents: devServerUrl !== undefined,
+    deferRestoredAgents: true,
   })
   runtime = opened
   registerIpcHandlers(runtime, () => mainWindow)
@@ -378,7 +385,13 @@ void app.whenReady().then(async () => {
    * request, and a channel that is not registered fails at `invoke` with a
    * message about the channel rather than about the workbench.
    */
-  registerWorkbenchHandlers(devServerUrl, (projectId) => opened.projects.workbenchTarget(projectId))
+  registerWorkbenchHandlers(
+    devServerUrl,
+    (projectId) => opened.projects.workbenchTarget(projectId),
+    (projectId) => {
+      opened.openProject(projectId)
+    }
+  )
   setWorkbenchTerminalEnvSource({
     current: (place) => opened.terminalEnvFor(place),
     ensure: (place) => opened.ensureTerminalEnv(place),
@@ -469,6 +482,14 @@ void app.whenReady().then(async () => {
     })
   const mainOwner = (): WebContents | null =>
     mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow.webContents
+  const consoles = new BrowserConsoles({
+    preferredOwner: (projectId) => {
+      const detached = detachedWindowOf(projectId)
+      return detached !== null && !detached.isDestroyed() ? detached.webContents : mainOwner()
+    },
+  })
+  browserConsoles = consoles
+  opened.attachBrowserConsoles(consoles)
   const browserSurfaces = new BrowserSurfaces({
     settings: browserSettings,
     vault: new BrowserVault(userData),
@@ -481,6 +502,14 @@ void app.whenReady().then(async () => {
     },
     deliver: (owner, push) => {
       browserIpc?.deliver(owner, push)
+    },
+    console: {
+      mounted: (source) => {
+        consoles.mount(source)
+      },
+      released: (contents) => {
+        consoles.release(contents)
+      },
     },
   })
   const downloads = new BrowserDownloads({
@@ -496,6 +525,10 @@ void app.whenReady().then(async () => {
   browserIpc = new BrowserIpc({
     surfaces: browserSurfaces,
     downloads,
+    isAdopted: (projectId) => opened.projects.get(projectId) !== null,
+  })
+  consoleIpc = new ConsoleIpc({
+    consoles,
     isAdopted: (projectId) => opened.projects.get(projectId) !== null,
   })
   // Takes no runtime: the watches are keyed by the conversations that ask for
@@ -700,6 +733,10 @@ async function shutDownEverything(): Promise<void> {
   stopConversationNotes = null
   browserDownloads?.dispose()
   browserDownloads = null
+  consoleIpc?.close()
+  consoleIpc = null
+  browserConsoles?.close()
+  browserConsoles = null
   const browserClosed = browserIpc?.close()
   browserIpc = null
   const surfacesClosed = closeAllSurfaces()

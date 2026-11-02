@@ -481,10 +481,7 @@ export function QuickQuestion(props: {
        * its full height, so the answer arrives into a box that has already
        * finished moving. The `ResizeObserver` above re-fits it on that one step.
        */
-      className={[
-        'quick-question',
-        ...(started ? ['quick-question--answering'] : []),
-      ].join(' ')}
+      className={['quick-question', ...(started ? ['quick-question--answering'] : [])].join(' ')}
       tabIndex={-1}
       /*
        * Hidden until it has been measured, so the first paint is not the card

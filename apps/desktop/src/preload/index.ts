@@ -47,6 +47,13 @@ import {
   type BrowserResponse,
 } from '../shared/browser-ipc.js'
 import {
+  CONSOLE_CONTRACT,
+  CONSOLE_PUSH_CHANNEL,
+  ConsolePush,
+  type ConsoleChannel,
+  type ConsoleResponse,
+} from '../shared/console-ipc.js'
+import {
   RUN_CONTRACT,
   RUN_PUSH_CHANNEL,
   RunPush,
@@ -80,6 +87,9 @@ import {
   FlushRequestPush,
   HIT_TEST_REQUEST_PUSH_CHANNEL,
   HitTestRequestPush,
+  PROJECT_CLOSED_PUSH_CHANNEL,
+  PROJECT_CLOSE_REQUEST_PUSH_CHANNEL,
+  ProjectClosedPush,
   PROJECT_RETURNED_PUSH_CHANNEL,
   PROJECT_SLICE_PUSH_CHANNEL,
   PROJECT_VISIBILITY_PUSH_CHANNEL,
@@ -147,6 +157,17 @@ function invokeBrowser<C extends BrowserChannel>(channel: C) {
       throw new Error(`Malformed response on "${channel}": ${parsed.error.message}`)
     }
     return parsed.data as BrowserResponse<C>
+  }
+}
+
+function invokeConsole<C extends ConsoleChannel>(channel: C) {
+  return async (request: unknown): Promise<ConsoleResponse<C>> => {
+    const raw: unknown = await ipcRenderer.invoke(channel, request)
+    const parsed = CONSOLE_CONTRACT[channel].response.safeParse(raw)
+    if (!parsed.success) {
+      throw new Error(`Malformed response on "${channel}": ${parsed.error.message}`)
+    }
+    return parsed.data as ConsoleResponse<C>
   }
 }
 
@@ -237,6 +258,7 @@ const api: ChorusApi = {
   awaitStart: invoke('conversation:awaitStart'),
   sendMessage: invoke('conversation:send'),
   interrupt: invoke('conversation:interrupt'),
+  closeProject: invoke('project:close'),
   closeConversation: invoke('conversation:close'),
   restoreConversations: () => invoke('conversation:restore')({}),
   readActiveSessions: () => invoke('conversation:active')({}),
@@ -309,6 +331,13 @@ const api: ChorusApi = {
   fillBrowserPassword: invokeBrowser('browser:passwordFill'),
   removeBrowserPassword: invokeBrowser('browser:passwordRemove'),
   allowBrowserPasswordSaving: invokeBrowser('browser:passwordAllow'),
+  subscribeConsole: invokeConsole('console:subscribe'),
+  unsubscribeConsole: invokeConsole('console:unsubscribe'),
+  ackConsole: invokeConsole('console:ack'),
+  snapshotConsole: invokeConsole('console:snapshot'),
+  evaluateConsole: invokeConsole('console:evaluate'),
+  expandConsole: invokeConsole('console:expand'),
+  clearConsole: invokeConsole('console:clear'),
   readRunState: invokeRun('run:state'),
   detectRunScripts: invokeRun('run:detect'),
   configureRun: invokeRun('run:configure'),
@@ -527,6 +556,16 @@ const api: ChorusApi = {
       ipcRenderer.removeListener(BROWSER_PUSH_CHANNEL, wrapped)
     }
   },
+  onConsole: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = ConsolePush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(CONSOLE_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(CONSOLE_PUSH_CHANNEL, wrapped)
+    }
+  },
   onDiagnostic: (listener) => {
     const wrapped = (_event: unknown, payload: unknown): void => {
       const parsed = DiagnosticPush.safeParse(payload)
@@ -556,6 +595,26 @@ const api: ChorusApi = {
     ipcRenderer.on(SCALE_PUSH_CHANNEL, wrapped)
     return () => {
       ipcRenderer.removeListener(SCALE_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onProjectClosed: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = ProjectClosedPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(PROJECT_CLOSED_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(PROJECT_CLOSED_PUSH_CHANNEL, wrapped)
+    }
+  },
+  onProjectCloseRequested: (listener) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const parsed = ProjectClosedPush.safeParse(payload)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on(PROJECT_CLOSE_REQUEST_PUSH_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(PROJECT_CLOSE_REQUEST_PUSH_CHANNEL, wrapped)
     }
   },
   onProjectReturned: (listener) => {

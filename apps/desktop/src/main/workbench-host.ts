@@ -17,6 +17,9 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { app, dialog } from 'electron'
 import { z } from 'zod'
+import { ownProcessTree, type OwnedProcessTree } from '@chorus/shared/process-tree'
+import { prepareWorkbenchProcessOwner } from './workbench-process-owner.js'
+import { mainT } from './i18n.js'
 import { stopAllTunnels } from './remote-tunnel.js'
 import { hashBytes, hashFile, publishServer, sweepQuarantine } from './workbench-extract.js'
 
@@ -194,7 +197,7 @@ function extractionRoot(): string {
 }
 
 /** Chorus's own server data, and the path `reap.ts` would match on: no other server has it. */
-function serverDataDir(): string {
+export function serverDataDir(): string {
   return join(app.getPath('userData'), 'workbench-server')
 }
 
@@ -422,6 +425,8 @@ const leases = new Set<string>()
  * three collapse into one case.
  */
 const spawned = new Set<ChildProcess>()
+const ownedTrees = new Map<ChildProcess, OwnedProcessTree>()
+let idleStopping: Promise<void> | null = null
 
 /**
  * Set once shutdown has begun, and never cleared: an app that is quitting does not
@@ -475,24 +480,31 @@ let hostFailure: string | null = null
 
 const CANNOT_FORK = /Error: spawn (?:EBADF|EMFILE|ENFILE)\b/
 
-let hostDegraded = false
+const degradedChildren = new WeakSet<ChildProcess>()
+const retiredChildren = new WeakSet<ChildProcess>()
 
-function noteDegradedServer(output: string): void {
-  if (hostDegraded) return
+function noteDegradedServer(child: ChildProcess, output: string): void {
+  if (retiredChildren.has(child) || degradedChildren.has(child)) return
   if (!CANNOT_FORK.test(output)) return
-  hostDegraded = true
+  degradedChildren.add(child)
   log.warn('workbench server can no longer start child processes', {
-    consequence: 'file watching and source control stop tracking changes on disk',
+    pid: child.pid ?? null,
+    consequence: 'extension hosts, file watching and source control can no longer start',
   })
   void dialog
     .showMessageBox({
       type: 'warning',
       buttons: ['OK'],
-      message: 'The workbench server has stopped watching files.',
-      detail:
-        'It can no longer start child processes, so the editor’s Source Control view and file explorer will not notice changes made on disk. Anything already open keeps working.\n\nRestart Chorus to clear this.',
+      message: mainT('workbench.serverDegradedTitle'),
+      detail: mainT('workbench.serverDegradedDetail'),
     })
     .catch(() => undefined)
+}
+
+function refuseDegradedHost(): void {
+  if (host !== null && degradedChildren.has(host.child)) {
+    throw new Error(mainT('workbench.serverDegradedRefusal'))
+  }
 }
 
 /**
@@ -738,6 +750,21 @@ async function waitForTreeToDie(child: ChildProcess, budgetMs: number): Promise<
  * asked.
  */
 async function reapTree(child: ChildProcess): Promise<boolean> {
+  const owned = ownedTrees.get(child)
+  if (owned !== undefined) {
+    try {
+      await owned.stop()
+      ownedTrees.delete(child)
+      spawned.delete(child)
+      return true
+    } catch (error) {
+      log.warn('workbench process exit could not be confirmed', {
+        pid: child.pid ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    }
+  }
   if (treeAlive(child)) {
     signalTree(child, 'SIGTERM')
     if (!(await waitForTreeToDie(child, TERM_GRACE_MS))) {
@@ -1112,6 +1139,12 @@ async function start(): Promise<WorkbenchRuntime> {
   mkdirSync(data, { recursive: true })
   // 0700, because §5.3's own advice for the token file is to put it in one.
   chmodSync(data, 0o700)
+  const processDirectory = prepareWorkbenchProcessOwner(data, (path, error) => {
+    log.warn('workbench extension registration file could not be read', {
+      path,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
 
   /*
    * Generated per launch, and by Chorus rather than by the server.
@@ -1266,7 +1299,11 @@ async function start(): Promise<WorkbenchRuntime> {
     }),
     {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: undefined,
+        CHORUS_WORKBENCH_PROCESS_DIRECTORY: processDirectory,
+      },
       /*
        * Its own process group, so shutdown can signal the tree rather than the
        * root of it — see `signalTree`. Never `unref`ed: detaching is about
@@ -1278,6 +1315,24 @@ async function start(): Promise<WorkbenchRuntime> {
     }
   )
   spawned.add(child)
+  if (child.pid !== undefined) {
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => {
+        resolve()
+      })
+      child.once('error', () => {
+        resolve()
+      })
+    })
+    ownedTrees.set(
+      child,
+      ownProcessTree(child.pid, {
+        processGroup: process.platform !== 'win32',
+        rootExited: exited,
+        expectedAncestorPid: process.pid,
+      })
+    )
+  }
 
   /*
    * The one listener that outlives startup, and it answers a defect the old code
@@ -1296,6 +1351,7 @@ async function start(): Promise<WorkbenchRuntime> {
    * a surface that connects to nothing.
    */
   child.on('exit', (code, signal) => {
+    retiredChildren.add(child)
     const wasHost = host?.child === child
     if (wasHost) {
       host = null
@@ -1312,8 +1368,8 @@ async function start(): Promise<WorkbenchRuntime> {
      * exit — expected or not, before startup finished or long after — a per-launch
      * credential for a server that no longer exists is one file too many.
      */
-    void reapTree(child).finally(() => {
-      rmSync(tokenFile, { force: true })
+    void reapTree(child).then((dead) => {
+      if (dead) rmSync(tokenFile, { force: true })
     })
   })
 
@@ -1366,7 +1422,7 @@ async function start(): Promise<WorkbenchRuntime> {
   }
   const record = (chunk: Buffer): void => {
     const output = chunk.toString()
-    noteDegradedServer(output)
+    noteDegradedServer(child, output)
     /*
      * Skipped rather than attempted-and-caught, because this runs per stdout chunk
      * and a server that has lost its log directory would otherwise pay a failing
@@ -1390,7 +1446,7 @@ async function start(): Promise<WorkbenchRuntime> {
    * load, and the old code let that rejection propagate with the child still
    * holding its port — an orphan created by the very path that reports failure.
    */
-  const port = await awaitPort(
+  const portWait = awaitPort(
     child,
     (chunk) => (output += chunk),
     abort.signal,
@@ -1400,6 +1456,12 @@ async function start(): Promise<WorkbenchRuntime> {
     rmSync(tokenFile, { force: true })
     throw error
   })
+  const [port] = await Promise.all([portWait, ownedTrees.get(child)?.capture()]).catch(
+    async (error: unknown) => {
+      await reapTree(child)
+      throw error
+    }
+  )
 
   /*
    * **A disagreement is a fact to record, never an assumption to act on.**
@@ -1585,8 +1647,10 @@ export async function acquireWorkbenchRuntime(projectRoot: string): Promise<Work
    * port behind a CSP built for the old one, so the surface would open and connect
    * to nothing — a legible refusal now beats an empty tree with no cause on screen.
    */
+  if (idleStopping !== null) await idleStopping
   if (shuttingDown) throw new Error('Chorus is shutting down; no workbench project can open.')
   if (hostFailure !== null) throw new Error(hostFailure)
+  refuseDegradedHost()
 
   leases.add(projectRoot)
   if (host !== null) return host.runtime
@@ -1595,7 +1659,9 @@ export async function acquireWorkbenchRuntime(projectRoot: string): Promise<Work
     starting = null
   })
   try {
-    return await starting
+    const runtime = await starting
+    refuseDegradedHost()
+    return runtime
   } catch (error) {
     leases.delete(projectRoot)
     throw error
@@ -1604,14 +1670,46 @@ export async function acquireWorkbenchRuntime(projectRoot: string): Promise<Work
 
 export function releaseWorkbenchRuntime(projectRoot: string): void {
   leases.delete(projectRoot)
-  /*
-   * Deliberately does **not** stop the server at zero.
-   *
-   * Closing the last project leaves the process running until quit, because the
-   * cost of keeping it is one idle Node process and the cost of getting this
-   * wrong is a killed build. `stopAll` on `will-quit` stays the only
-   * unconditional kill, exactly as §5.4 specifies.
-   */
+}
+
+export function workbenchServerPid(): number | null {
+  return host?.child.pid ?? null
+}
+
+function holdsLease(): boolean {
+  return leases.size !== 0
+}
+
+export function stopIdleWorkbenchHost(): Promise<void> {
+  if (idleStopping !== null) return idleStopping
+  const stopping = (async () => {
+    if (leases.size !== 0) return
+    startAbort?.abort()
+    const inFlight = starting
+    if (inFlight !== null) {
+      await Promise.race([
+        inFlight.catch(() => undefined),
+        new Promise((resolve) => setTimeout(resolve, START_ABORT_MS)),
+      ])
+      if (starting !== null)
+        throw new Error('The editor server is still starting; retry closing this project.')
+    }
+    if (holdsLease()) return
+    const running = host
+    host = null
+    for (const child of spawned) retiredChildren.add(child)
+    const outcomes = await Promise.all([...spawned].map((child) => reapTree(child)))
+    if (outcomes.some((dead) => !dead)) {
+      throw new Error(
+        'Editor server process exit could not be confirmed; retry closing this project.'
+      )
+    }
+    if (running !== null) rmSync(running.tokenFile, { force: true })
+  })()
+  idleStopping = stopping.finally(() => {
+    idleStopping = null
+  })
+  return idleStopping
 }
 
 /**
@@ -1670,6 +1768,7 @@ async function shutdown(): Promise<ShutdownResult> {
 
   const running = host
   host = null
+  for (const child of spawned) retiredChildren.add(child)
 
   /*
    * Everything spawned, not just the one that became `host` — the set is what

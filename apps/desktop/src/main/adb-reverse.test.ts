@@ -21,6 +21,10 @@ class FakeTracker implements AdbTracker {
   kill(): void {
     this.killed = true
   }
+  stop(): Promise<void> {
+    this.kill()
+    return Promise.resolve()
+  }
   onData(listener: (chunk: string) => void): void {
     this.data = listener
   }
@@ -239,6 +243,74 @@ describe('AdbReverse', () => {
     expect(ran[1]).toEqual(['-s', 'A', 'reverse', '--remove', 'tcp:30100'])
     expect(trackers[0]?.killed).toBe(true)
     expect(reverse.forwarded(30_100)).toBe(0)
+  })
+
+  it('waits for a late add, its removal, and tracker exit before confirming the last port closed', async () => {
+    const tracker = new FakeTracker()
+    let added: () => void = () => undefined
+    let removed: () => void = () => undefined
+    let exited: () => void = () => undefined
+    const exit = new Promise<void>((resolve) => {
+      exited = resolve
+    })
+    vi.spyOn(tracker, 'stop').mockImplementation(() => {
+      tracker.kill()
+      return exit
+    })
+    const ran: string[][] = []
+    const { reverse } = harness({
+      track: () => tracker,
+      run: (args) => {
+        ran.push([...args])
+        return new Promise<void>((resolve) => {
+          if (args.includes('--remove')) removed = resolve
+          else added = resolve
+        })
+      },
+    })
+    reverse.sync(new Set([30_100]))
+    tracker.devices('A\tdevice')
+    await settle()
+    let confirmed = false
+    const closing = reverse.syncConfirmed(new Set()).then(() => {
+      confirmed = true
+    })
+    added()
+    await settle()
+    expect(ran.at(-1)).toEqual(['-s', 'A', 'reverse', '--remove', 'tcp:30100'])
+    expect(confirmed).toBe(false)
+    removed()
+    await settle()
+    expect(confirmed).toBe(false)
+    exited()
+    await closing
+    expect(confirmed).toBe(true)
+    expect(tracker.killed).toBe(true)
+  })
+
+  it('retries a failed removed-port command while keeping another project forwarded', async () => {
+    let refuseRemoval = true
+    const removals: string[][] = []
+    const { reverse, trackers } = harness({
+      run: (args) => {
+        if (!args.includes('--remove')) return Promise.resolve()
+        removals.push([...args])
+        return refuseRemoval ? Promise.reject(new Error('device busy')) : Promise.resolve()
+      },
+    })
+    reverse.sync(new Set([30_100, 30_101]))
+    trackers[0]?.devices('A\tdevice')
+    await settle()
+    await expect(reverse.syncConfirmed(new Set([30_101]))).rejects.toThrow(
+      'Android forwarding shutdown could not be confirmed'
+    )
+    expect(trackers[0]?.killed).toBe(false)
+    expect(reverse.forwarded(30_101)).toBe(1)
+    refuseRemoval = false
+    await reverse.syncConfirmed(new Set([30_101]))
+    expect(removals).toHaveLength(2)
+    expect(reverse.forwarded(30_101)).toBe(1)
+    reverse.close()
   })
 
   it('tells its listener when the forwarded count changes', async () => {

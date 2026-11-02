@@ -119,6 +119,22 @@ class FakeChild extends EventEmitter {
 const groups = new Map<number, FakeGroup>()
 const children: FakeChild[] = []
 let nextPid = 4000
+const births = new Map<number, number>()
+let nextBirth = 100
+const OWNERSHIP_COLUMNS = 'pid=,ppid=,pgid=,lstart=,stat='
+
+function ownershipTable(): string {
+  const chorus = String(process.pid)
+  return [
+    `${chorus} 1 ${chorus} 1 S`,
+    ...children
+      .filter((child) => groups.get(child.pid)?.alive === true)
+      .map(
+        (child) =>
+          `${String(child.pid)} ${chorus} ${String(child.pid)} ${String(births.get(child.pid) ?? 0)} S`
+      ),
+  ].join('\n')
+}
 
 /*
  * Both named imports the module under test uses, written out rather than spread
@@ -145,16 +161,21 @@ vi.mock('node:child_process', async () => {
     throw new Error('execFile should be reached through promisify in this module')
   }
   Object.defineProperty(execFile, promisify.custom, {
-    value: () =>
-      psFails
+    value: (_file: string, args: readonly string[]) => {
+      if (args.includes(OWNERSHIP_COLUMNS)) {
+        return Promise.resolve({ stdout: ownershipTable(), stderr: '' })
+      }
+      return psFails
         ? Promise.reject(Object.assign(new Error('spawn ps ENOENT'), { code: 'ENOENT' }))
-        : Promise.resolve({ stdout: processTable, stderr: '' }),
+        : Promise.resolve({ stdout: processTable, stderr: '' })
+    },
   })
   return {
     execFile,
     spawn: () => {
       const child = new FakeChild((nextPid += 7))
       groups.set(child.pid, { alive: true, ignoresTerm: false })
+      births.set(child.pid, (nextBirth += 1))
       children.push(child)
       return child
     },
@@ -218,6 +239,7 @@ beforeEach(async () => {
   killed = installFakeKernel()
   groups.clear()
   children.length = 0
+  births.clear()
   rmSync(TOKEN_FILE, { force: true })
   /*
    * And the port, for the same reason and one more: it is the file this phase
@@ -818,5 +840,75 @@ describe('the port this profile keeps', () => {
     expect(await host.chooseTunnelPort(file, probe)).toBe(48_000)
     expect(probed).toEqual([48_000])
     expect(readFileSync(file, 'utf8')).toBe('48000')
+  })
+})
+
+describe('a server that can no longer start processes', () => {
+  const CANNOT_FORK_OUTPUT =
+    'ExtensionHostConnection errored\nError: spawn EBADF\n    at ChildProcess.spawn (node:internal/child_process:420:11)\n'
+  const LISTENING = 'Extension host agent listening on 51515\n'
+
+  async function spawnedAfter(count: number): Promise<FakeChild> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (children.length > count) return children[children.length - 1]!
+      await vi.advanceTimersByTimeAsync(1)
+    }
+    throw new Error('the workbench host never spawned a replacement server')
+  }
+
+  it('refuses new and reloaded editors on the affected server, warns once, and keeps it running', async () => {
+    const { dialog } = await import('electron')
+    const shown = vi.spyOn(dialog, 'showMessageBox')
+    const child = await startServer()
+
+    child.stderr.emit('data', Buffer.from(CANNOT_FORK_OUTPUT))
+    child.stderr.emit('data', Buffer.from(CANNOT_FORK_OUTPUT))
+
+    expect(shown).toHaveBeenCalledTimes(1)
+    await expect(host.acquireWorkbenchRuntime('/other')).rejects.toThrow(/Quit Chorus completely/)
+    await expect(host.acquireWorkbenchRuntime('/project')).rejects.toThrow(/Quit Chorus completely/)
+    expect(host.workbenchHostState()).toMatchObject({ running: true, leases: 1, failure: null })
+    expect(children).toHaveLength(1)
+    expect(groups.get(child.pid)?.alive).toBe(true)
+  })
+
+  it('refuses a server that reported it cannot fork before it reported its port', async () => {
+    const started = host.acquireWorkbenchRuntime('/project').catch((error: unknown) => error)
+    const child = await spawnedChild()
+
+    child.stderr.emit('data', Buffer.from(CANNOT_FORK_OUTPUT))
+    child.stdout.emit('data', Buffer.from(LISTENING))
+
+    expect(String(await started)).toMatch(/Quit Chorus completely/)
+    expect(host.workbenchHostState()).toMatchObject({ running: true, leases: 0 })
+  })
+
+  it('keeps a retired server’s late output from refusing or warning about its replacement', async () => {
+    const { dialog } = await import('electron')
+    const shown = vi.spyOn(dialog, 'showMessageBox')
+    const retired = await startServer()
+    host.releaseWorkbenchRuntime('/project')
+    const stopped = host.stopIdleWorkbenchHost()
+    await settle(100)
+    await stopped
+    expect(host.workbenchHostState().running).toBe(false)
+
+    retired.stderr.emit('data', Buffer.from(CANNOT_FORK_OUTPUT))
+
+    const started = host.acquireWorkbenchRuntime('/next')
+    const replacement = await spawnedAfter(1)
+    expect(replacement).not.toBe(retired)
+    replacement.stdout.emit('data', Buffer.from(LISTENING))
+    await expect(started).resolves.toMatchObject({ remoteAuthority: '127.0.0.1:51515' })
+
+    retired.stderr.emit('data', Buffer.from(CANNOT_FORK_OUTPUT))
+    expect(shown).not.toHaveBeenCalled()
+    await expect(host.acquireWorkbenchRuntime('/another')).resolves.toMatchObject({
+      remoteAuthority: '127.0.0.1:51515',
+    })
+
+    replacement.stderr.emit('data', Buffer.from(CANNOT_FORK_OUTPUT))
+    expect(shown).toHaveBeenCalledTimes(1)
+    await expect(host.acquireWorkbenchRuntime('/last')).rejects.toThrow(/Quit Chorus completely/)
   })
 })

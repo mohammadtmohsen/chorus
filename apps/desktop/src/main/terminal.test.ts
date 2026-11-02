@@ -102,6 +102,12 @@ function build(overrides: Partial<TerminalServiceOptions> = {}): Harness {
           return `/shells/${ref.projectId}`
       }
     },
+    ownProcess: () => ({
+      capture: () => Promise.resolve(),
+      stop: async (graceful) => {
+        await graceful?.()
+      },
+    }),
     env: { SHELL: '/bin/zsh' },
     frame,
     spawn: (options) => {
@@ -1459,4 +1465,73 @@ describe('describeForeground', () => {
       'powershell.exe'
     )
   })
+})
+
+describe('confirmed terminal cleanup', () => {
+  it('retains terminal ownership until process exit is confirmed', async () => {
+    let release: () => void = () => undefined
+    const exit = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { service, spawned } = build({
+      ownProcess: () => ({
+        capture: () => Promise.resolve(),
+        stop: async (graceful) => {
+          await graceful?.()
+          await exit
+        },
+      }),
+    })
+    await service.attach(SESSION)
+    const closing = service.stopSession('c1')
+    expect(spawned[0]?.killed).toBe(true)
+    expect(service.describe(SESSION)?.running).toBe(true)
+    release()
+    await closing
+    expect(service.describe(SESSION)).toBeNull()
+  })
+
+  it('retries failed cleanup and leaves another chat and global terminal alone', async () => {
+    let refuse = true
+    const { service, spawned } = build({
+      ownProcess: () => ({
+        capture: () => Promise.resolve(),
+        stop: async (graceful) => {
+          await graceful?.()
+          if (refuse) throw new Error('process still exists')
+        },
+      }),
+    })
+    await service.attach(SESSION)
+    await service.attach(GLOBAL)
+    await expect(service.stopSession('c1')).rejects.toThrow(/terminal processes/)
+    expect(service.describe(SESSION)).not.toBeNull()
+    expect(spawned[1]?.killed).toBe(false)
+    refuse = false
+    await service.stopSession('c1')
+    expect(service.describe(SESSION)).toBeNull()
+    expect(service.describe(GLOBAL)?.running).toBe(true)
+  })
+})
+
+it('confirms descendants of an exited terminal after its replacement was launched', async () => {
+  const stopped: number[] = []
+  let serial = 0
+  const { service, spawned } = build({
+    ownProcess: () => {
+      const owner = serial++
+      return {
+        capture: () => Promise.resolve(),
+        stop: async (graceful) => {
+          await graceful?.()
+          stopped.push(owner)
+        },
+      }
+    },
+  })
+  service.launch(PROJECT, launchSpec(1))
+  spawned[0]?.finish(0)
+  service.launch(PROJECT, launchSpec(2))
+  await service.stopProject('p1')
+  expect(stopped.sort()).toEqual([0, 1])
 })

@@ -683,3 +683,43 @@ describe('SupervisedSession', () => {
     expect(live.interruptRequested).toBe(true)
   })
 })
+
+it('closes a provider whose resume event stream fails before attachment', async () => {
+  const adapter = new FakeAdapter({ id: 'claude' })
+  const first = await adapter.start(OPTS)
+  const close = vi.fn(() => first.close())
+  vi.spyOn(adapter, 'resume').mockResolvedValue(
+    new Proxy(first, {
+      get(target, key) {
+        if (key === 'close') return close
+        if (key === 'events')
+          return {
+            [Symbol.asyncIterator]: () => ({
+              next: () => Promise.reject(new Error('resume stream failed')),
+            }),
+          }
+        const value = Reflect.get(target, key) as unknown
+        return typeof value === 'function' ? (value.bind(target) as unknown) : value
+      },
+    })
+  )
+  await expect(SupervisedSession.resume(adapter, 'previous', OPTS, POLICY)).rejects.toThrow(
+    'resume stream failed'
+  )
+  expect(close).toHaveBeenCalledTimes(1)
+})
+
+it('closes a rejected persistent fork before reporting the invalid session id', async () => {
+  const adapter = new FakeAdapter({ id: 'claude' })
+  const first = await adapter.start(OPTS)
+  vi.spyOn(adapter, 'fork').mockResolvedValue(first)
+  await expect(
+    SupervisedSession.fork(
+      adapter,
+      first.sessionRef,
+      { ...OPTS, inherits: 'config', persist: true },
+      POLICY
+    )
+  ).rejects.toThrow(/own id/)
+  expect(adapter.sessions[0]?.closed).toBe(true)
+})

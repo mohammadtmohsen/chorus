@@ -10,7 +10,7 @@ import type { ConversationNoteJournalResponse } from '../../shared/ipc.js'
 export const NOTE_MIN_WIDTH = 160
 export const NOTE_MIN_HEIGHT = 96
 export const NOTE_DEFAULT_WIDTH = 280
-export const NOTE_DEFAULT_HEIGHT = 180
+export const NOTE_DEFAULT_HEIGHT = 96
 export const NOTE_INSET = 12
 const TEXT_SAVE_DELAY_MS = 400
 

@@ -1,3 +1,4 @@
+import { ProcessCleanupError } from '@chorus/shared/process-tree'
 import { existsSync, renameSync, rmSync } from 'node:fs'
 import { TRANSCRIPT_TYPES } from '../shared/transcript-events.js'
 import { homedir } from 'node:os'
@@ -9,6 +10,9 @@ import type {
   AgentAdapter,
   AgentSession,
   ApprovalDecision,
+  BrowserConsoleAccess,
+  BrowserConsoleRead,
+  BrowserConsoleRun,
   HealthStatus,
   McpServerHealth,
   ModelChoice,
@@ -28,6 +32,7 @@ import {
   nativeProgressSteps,
   noteReminder,
   PROGRESS_INSTRUCTION,
+  readOnlyBrowser,
   readOnlyNote,
   validateProgressReport,
 } from '@chorus/agent-protocol'
@@ -54,6 +59,7 @@ import {
 import {
   hasWorkbenchSurface,
   refreshWorkbenchTerminalEnv,
+  reopenWorkbenchProject,
   requestWorkbenchAskDiff,
   requestWorkbenchEdit,
   requestWorkbenchSnapshot,
@@ -164,6 +170,7 @@ import {
 import { LineCarries } from './log-lines.js'
 import { ProjectRunner, runAvailable } from './project-run.js'
 import { projectReader } from './project-read.js'
+import type { BrowserConsoles } from './browser-console.js'
 import { resolveShell } from './shell.js'
 import { AdbReverse, readRememberedDevices, writeRememberedDevices } from './adb-reverse.js'
 import { LogcatService } from './logcat.js'
@@ -329,12 +336,13 @@ type TaskClosedReason = Extract<TaskPayload, { type: 'task.closed' }>['reason']
 type HandoffOutcome = Extract<StoredEvent['payload'], { type: 'handoff.outcome' }>
 
 function discussionOpts(opts: SessionOpts): SessionOpts {
-  const { progress: _progress, instructions, note, ...rest } = opts
+  const { progress: _progress, instructions, note, browser, ...rest } = opts
   const kept = (instructions ?? '')
     .split('\n\n')
     .filter((part) => part !== PROGRESS_INSTRUCTION)
     .join('\n\n')
-  const readable = note === undefined ? rest : { ...rest, note: readOnlyNote(note) }
+  const viewed = browser === undefined ? rest : { ...rest, browser: readOnlyBrowser(browser) }
+  const readable = note === undefined ? viewed : { ...viewed, note: readOnlyNote(note) }
   return kept === '' ? readable : { ...readable, instructions: kept }
 }
 
@@ -390,26 +398,16 @@ interface Namer {
   readonly sessions: Map<AgentId, AgentSession>
   readonly demoted: Set<AgentId>
   queue: Promise<void>
+  starting?: {
+    readonly session: Promise<AgentSession>
+    readonly cancel: () => void
+  }
   pending?: {
     readonly session: AgentSession
     readonly settle: (outcome: NamerOutcome) => void
   }
 }
 
-/**
- * What the namer is told once, when its session starts.
- *
- * Written as a standing instruction rather than repeated per message, because
- * repeating it is what the persistent session exists to avoid.
- *
- * **The last three sentences are doing real work.** A namer inherits the user's
- * configuration in full — `settingSources` is deliberately omitted in the
- * adapters — so a `CLAUDE.md` that mandates a house style for answers applies
- * here too, and a title that arrives as a paragraph, a translation or a bulleted
- * list is the predictable result. Saying plainly that this is not a reply is the
- * only lever available from this side; `cleanTitle` is the second line of
- * defence for when it is not enough.
- */
 export const NAMER_INSTRUCTIONS = [
   'You are naming a conversation for a tab label. You will be sent the user’s',
   'messages one at a time, in the order they are sent. After each one, reply',
@@ -1017,6 +1015,18 @@ export class ChorusRuntime {
   private readonly starting = new Map<string, StartingConversation>()
   private readonly failedStarts = new Map<string, string>()
   private readonly startupWork = new Set<Promise<unknown>>()
+  private readonly pendingParticipants = new Map<string, Set<Participant>>()
+  private readonly promotionParents = new Map<string, string>()
+  private readonly conversationProjects = new Map<string, string>()
+  private readonly startupOwners = new Map<string, Set<Promise<unknown>>>()
+  private readonly cleanupOwners = new Map<string, Map<object, () => Promise<void>>>()
+  private readonly cleanedOwners = new WeakSet<object>()
+  private readonly conversationClosures = new Map<string, Promise<void>>()
+  private readonly closingConversations = new Set<string>()
+  private readonly projectClosures = new Map<string, Promise<void>>()
+  private readonly closingProjects = new Set<string>()
+  private readonly closedProjects = new Set<string>()
+  private readonly namerOwners = new WeakMap<AgentSession, string>()
   private readonly seating = new WeakMap<ActiveConversation, Map<AgentId, Promise<Participant>>>()
   private closing = false
   /**
@@ -1063,22 +1073,8 @@ export class ChorusRuntime {
       language: string
     }
   >()
-  /**
-   * One small session per conversation whose whole job is to name the topic.
-   *
-   * **Its own session rather than the room's agents**, which is the rule asides
-   * already follow. Asking a participant would spend its context on bookkeeping,
-   * put a title request in the middle of the work it is doing, and — because
-   * every turn is logged — write the question into the transcript the title is
-   * describing.
-   *
-   * **Kept alive rather than started per message**, which is the whole reason a
-   * per-message check is affordable. It is fed one new message at a time and
-   * answers from what it has already read, so the cost of a check is the message
-   * rather than the conversation. Starting fresh each time would re-read
-   * everything and grow without bound.
-   */
   private readonly namers = new Map<string, Namer>()
+  private readonly namingCleanup = new Set<Promise<void>>()
   /**
    * The terminal panels' shells.
    *
@@ -1106,6 +1102,7 @@ export class ChorusRuntime {
   })
   private readonly traffic: ProjectTrafficRegistry
   private readonly runner: ProjectRunner
+  private browserConsoles: BrowserConsoles | null = null
   /**
    * Partial lines, one per terminal — see `LineCarries`.
    *
@@ -1538,7 +1535,7 @@ export class ChorusRuntime {
   }
 
   beginConversation(options: StartConversationOptions): StartedConversation {
-    if (this.closing) throw new Error('Chorus is shutting down')
+    this.openProject(options.projectId)
 
     /*
      * The whole cast unless a caller narrowed it, and a narrowed empty list is
@@ -1609,7 +1606,12 @@ export class ChorusRuntime {
                     .slice(-1)
                     .map((event) => event.id),
           }
-    const profile = profileById(source?.profile.id ?? options.profileId ?? '')
+    const profile = profileById(
+      source?.profile.id ??
+        this.projects.get(options.projectId)?.profileId ??
+        options.profileId ??
+        ''
+    )
 
     // One set of grants for the whole conversation: allowing something for
     // Codex should not mean being asked again the moment Claude does the same.
@@ -1670,6 +1672,7 @@ export class ChorusRuntime {
       draft: '',
       cancelled: false,
     }
+    this.conversationProjects.set(conversationId, options.projectId)
     this.starting.set(conversationId, starting)
     this.trackStartup(
       this.bootStarting(starting)
@@ -1679,7 +1682,8 @@ export class ChorusRuntime {
         .then(settle, (error: unknown) => {
           const message = error instanceof Error ? error.message : String(error)
           settle({ status: 'failed', message })
-        })
+        }),
+      conversationId
     )
     this.onConversations?.()
     return {
@@ -1829,7 +1833,7 @@ export class ChorusRuntime {
           stopped
         ).then((participant) => {
           if (stopped()) {
-            this.closeStarted(participant)
+            this.closeStarted(participant, conversationId)
             throw new Error(STARTUP_CANCELLED)
           }
           starting.started.push(participant)
@@ -1930,7 +1934,8 @@ export class ChorusRuntime {
     const message = failures.join('; ') || 'No agent could be started'
     const { conversationId } = starting
     this.starting.delete(conversationId)
-    for (const participant of starting.started.splice(0)) this.closeStarted(participant)
+    for (const participant of starting.started.splice(0))
+      this.closeStarted(participant, conversationId)
     if (this.active.delete(conversationId)) {
       try {
         this.rememberOpen()
@@ -1954,27 +1959,98 @@ export class ChorusRuntime {
     starting.cancelled = true
     this.starting.delete(starting.conversationId)
     starting.settle({ status: 'cancelled' })
-    for (const participant of starting.started.splice(0)) this.closeStarted(participant)
+    for (const participant of starting.started.splice(0))
+      this.closeStarted(participant, starting.conversationId)
     this.onConversations?.()
   }
 
-  private closeStarted(participant: Participant): void {
-    this.trackStartup(
-      participant.service.close(this.closing ? 'shutdown' : 'closed').catch((error: unknown) => {
-        this.log.warn('a starting agent could not be closed', {
-          agentId: participant.agentId,
-          message: error instanceof Error ? error.message : String(error),
-        })
+  private closeStarted(participant: Participant, conversationId: string): void {
+    const work = this.closeOwned(conversationId, participant.service, () =>
+      participant.service.close(this.closing ? 'shutdown' : 'closed')
+    )
+    this.trackStartup(work, conversationId)
+    void work.catch((error: unknown) => {
+      this.log.warn('a starting agent could not be closed', {
+        agentId: participant.agentId,
+        message: error instanceof Error ? error.message : String(error),
       })
+    })
+  }
+
+  private closeOwned(
+    conversationId: string,
+    key: object,
+    close: () => Promise<void>
+  ): Promise<void> {
+    if (this.cleanedOwners.has(key)) return Promise.resolve()
+    const owners = this.cleanupOwners.get(conversationId) ?? new Map<object, () => Promise<void>>()
+    this.cleanupOwners.set(conversationId, owners)
+    const existing = owners.get(key)
+    if (existing !== undefined) return existing()
+    let pending: Promise<void> | undefined
+    const retry = (): Promise<void> => {
+      pending ??= Promise.resolve()
+        .then(close)
+        .then(() => {
+          this.cleanedOwners.add(key)
+          owners.delete(key)
+          if (owners.size === 0) this.cleanupOwners.delete(conversationId)
+        })
+        .finally(() => {
+          pending = undefined
+        })
+      return pending
+    }
+    owners.set(key, retry)
+    return retry()
+  }
+
+  private trackStartup(work: Promise<unknown>, conversationId?: string): void {
+    this.startupWork.add(work)
+    const owned =
+      conversationId === undefined
+        ? undefined
+        : (this.startupOwners.get(conversationId) ?? new Set<Promise<unknown>>())
+    if (conversationId !== undefined && owned !== undefined)
+      this.startupOwners.set(conversationId, owned)
+    owned?.add(work)
+    const forget = (): void => {
+      this.startupWork.delete(work)
+      owned?.delete(work)
+      if (conversationId !== undefined && owned?.size === 0)
+        this.startupOwners.delete(conversationId)
+    }
+    void work.then(forget, (error: unknown) => {
+      if (conversationId !== undefined && error instanceof ProcessCleanupError) {
+        void this.closeOwned(conversationId, error, () => error.retry()).catch(() => undefined)
+      }
+      forget()
+    })
+  }
+
+  private async drainConversationStarts(conversationId: string): Promise<void> {
+    const drain = async (): Promise<void> => {
+      while ((this.startupOwners.get(conversationId)?.size ?? 0) > 0) {
+        await Promise.allSettled([...(this.startupOwners.get(conversationId) ?? [])])
+      }
+    }
+    await withTimeout(
+      drain(),
+      25_000,
+      'Agent startup has not finished stopping; close this chat again to retry'
     )
   }
 
-  private trackStartup(work: Promise<unknown>): void {
-    this.startupWork.add(work)
-    const forget = (): void => {
-      this.startupWork.delete(work)
-    }
-    void work.then(forget, forget)
+  private async settleClosures(work: readonly Promise<unknown>[], message: string): Promise<void> {
+    const results = await withTimeout(Promise.allSettled(work), 25_000, message)
+    const errors = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (errors.length > 0)
+      throw new AggregateError(
+        errors.map((result): unknown => result.reason),
+        `${message}: ${errors.map((result) => (result.reason instanceof Error ? result.reason.message : String(result.reason))).join('; ')}`
+      )
   }
 
   private async drainStartups(): Promise<void> {
@@ -2491,6 +2567,20 @@ export class ChorusRuntime {
     conversationId: string
     sourceEventId: string
     excerpt: string
+    purpose?: 'question' | 'explanation' | 'translation'
+    question?: string
+  }): Promise<{ asideId: string; language: string }> {
+    if (!this.active.has(request.conversationId)) throw new Error('That conversation is not open')
+    this.require(request.conversationId)
+    const work = this.openAsideOwned(request)
+    this.trackStartup(work, request.conversationId)
+    return work
+  }
+
+  private async openAsideOwned(request: {
+    conversationId: string
+    sourceEventId: string
+    excerpt: string
     /**
      * Why it is being opened, and therefore what the fork is first asked.
      *
@@ -2510,8 +2600,7 @@ export class ChorusRuntime {
      */
     question?: string
   }): Promise<{ asideId: string; language: string }> {
-    const parent = this.active.get(request.conversationId)
-    if (parent === undefined) throw new Error('That conversation is not open')
+    const parent = this.require(request.conversationId)
 
     const source = this.store
       .read(request.conversationId)
@@ -2681,6 +2770,7 @@ export class ChorusRuntime {
      * entry as well as a process.
      */
     try {
+      this.require(request.conversationId)
       this.store.append({
         conversationId: asideId,
         actor: 'user',
@@ -2729,6 +2819,7 @@ export class ChorusRuntime {
        * the conversation in it lasts; without this, question two came back in
        * English. Empty for a question or a recap, which name no language.
        */
+      this.require(request.conversationId)
       this.asides.set(asideId, {
         service,
         parentId: request.conversationId,
@@ -2755,15 +2846,15 @@ export class ChorusRuntime {
           await service.sendUserMessage(request.question, asideQuestion(excerpt, request.question))
         }
       } catch (error) {
+        await this.closeOwned(request.conversationId, service, () => service.close('closed'))
         this.asides.delete(asideId)
-        await service.close('closed')
         throw error
       }
 
       return { asideId, language }
     } catch (error) {
       // The fork is ours until an id is handed back. Nobody else can close it.
-      await forked.close()
+      await this.closeOwned(request.conversationId, forked, () => forked.close())
       throw error
     }
   }
@@ -2906,10 +2997,21 @@ export class ChorusRuntime {
     const inFlight = this.promoting.get(asideId)
     if (inFlight !== undefined) return inFlight
 
-    const run = this.runPromotion(asideId, profileId).finally(() => {
-      this.promoting.delete(asideId)
-    })
+    const aside = this.asides.get(asideId)
+    if (aside === undefined) throw new Error('That aside has ended')
+    const parent = this.require(aside.parentId)
+    this.conversationProjects.set(asideId, parent.projectId)
+    this.promotionParents.set(asideId, aside.parentId)
+    const run = this.runPromotion(asideId, profileId)
+      .then((result) => {
+        this.promotionParents.delete(asideId)
+        return result
+      })
+      .finally(() => {
+        this.promoting.delete(asideId)
+      })
     this.promoting.set(asideId, run)
+    this.trackStartup(run, asideId)
     return run
   }
 
@@ -2931,8 +3033,10 @@ export class ChorusRuntime {
 
     // Revalidated now, not trusted from when the aside was opened: the parent
     // may have been closed, the agent removed, or its session replaced since.
-    const parent = this.active.get(aside.parentId)
-    if (parent === undefined) throw new Error('The conversation this came from is no longer open')
+    if (!this.active.has(aside.parentId)) {
+      throw new Error('The conversation this came from is no longer open')
+    }
+    const parent = this.require(aside.parentId)
     const { agentId } = aside
     if (!this.roster(parent).includes(agentId)) {
       throw new Error(`${agentId} is no longer in that conversation`)
@@ -2962,8 +3066,8 @@ export class ChorusRuntime {
      * transcript is in the log, and losing the ability to continue a side
      * question is a smaller failure than two writers appending to one thread.
      */
+    await this.closeOwned(aside.parentId, aside.service, () => aside.service.close('closed'))
     this.asides.delete(asideId)
-    await aside.service.close('closed')
 
     const grants = this.newGrants()
     const where = { cwd: parent.cwd, profile, projectId: parent.projectId }
@@ -2977,7 +3081,10 @@ export class ChorusRuntime {
         grants,
         undefined,
         false,
-        source.session.sessionRef
+        source.session.sessionRef,
+        () =>
+          this.closingConversations.has(aside.parentId) ||
+          this.active.get(aside.parentId) !== parent
       )
     } catch (error) {
       throw new Error(
@@ -2995,6 +3102,7 @@ export class ChorusRuntime {
      * reasoning as `openAside`'s cleanup.
      */
     try {
+      this.require(aside.parentId)
       this.store.append({
         conversationId: asideId,
         actor: 'user',
@@ -3005,7 +3113,7 @@ export class ChorusRuntime {
         },
       })
     } catch (error) {
-      await participant.service.close('closed')
+      await this.closeOwned(asideId, participant.service, () => participant.service.close('closed'))
       throw error
     }
 
@@ -3120,8 +3228,8 @@ export class ChorusRuntime {
   async closeAside(asideId: string): Promise<void> {
     const aside = this.asides.get(asideId)
     if (aside === undefined) return
+    await this.closeOwned(aside.parentId, aside.service, () => aside.service.close('closed'))
     this.asides.delete(asideId)
-    await aside.service.close('closed')
   }
 
   /** The asides taken on a conversation, or on one reply within it. */
@@ -3321,66 +3429,138 @@ export class ChorusRuntime {
     })
   }
 
-  /**
-   * Ends one conversation, leaving every other one running.
-   *
-   * Removed from `active` before its agents are closed, so a message sent into
-   * the gap fails loudly rather than being handed to a session on its way out.
-   */
-  async closeConversation(conversationId: string): Promise<void> {
+  closeConversation(conversationId: string): Promise<void> {
+    const pending = this.conversationClosures.get(conversationId)
+    if (pending !== undefined) return pending
+    this.closingConversations.add(conversationId)
+    const work = this.finishCloseConversation(conversationId).finally(() => {
+      this.conversationClosures.delete(conversationId)
+    })
+    this.conversationClosures.set(conversationId, work)
+    return work
+  }
+
+  private async finishCloseConversation(conversationId: string): Promise<void> {
     const starting = this.starting.get(conversationId)
-    if (starting !== undefined) {
-      const noteFailure = this.forgetConversationNote(conversationId)
-      this.cancelStarting(starting)
-      if (noteFailure !== undefined) throw noteFailure
-      return
-    }
-    if (this.failedStarts.delete(conversationId)) {
-      const noteFailure = this.forgetConversationNote(conversationId)
-      if (noteFailure !== undefined) throw noteFailure
-      return
-    }
-    const conversation = this.require(conversationId)
-    this.active.delete(conversationId)
+    if (starting !== undefined) this.cancelStarting(starting)
+    const conversation = this.active.get(conversationId)
+    const orphans = [...this.asides].filter(([, aside]) => aside.parentId === conversationId)
+    const cleanup = [
+      ...[...this.promotionParents]
+        .filter(([, parentId]) => parentId === conversationId)
+        .map(([id]) => this.closeConversation(id)),
+      this.disposeNamer(conversationId),
+      this.liveReplies.cancel(conversationId),
+      this.terminals.stopSession(conversationId),
+      ...[...(this.pendingParticipants.get(conversationId) ?? [])].map((participant) =>
+        this.closeOwned(conversationId, participant.service, () => participant.service.close())
+      ),
+      ...[...(conversation?.participants.values() ?? [])].map((participant) =>
+        this.closeOwned(conversationId, participant.service, () => participant.service.close())
+      ),
+      ...orphans.map(([, aside]) =>
+        this.closeOwned(conversationId, aside.service, () => aside.service.close())
+      ),
+    ]
+    await this.settleClosures(
+      [
+        ...cleanup,
+        this.drainConversationStarts(conversationId).then(async () => {
+          await this.settleClosures(
+            [...(this.cleanupOwners.get(conversationId)?.values() ?? [])].map((close) => close()),
+            'Some agent processes could not be confirmed stopped'
+          )
+        }),
+      ],
+      'Chat shutdown could not be confirmed'
+    )
     const noteFailure = this.forgetConversationNote(conversationId)
+    if (noteFailure !== undefined) throw noteFailure
+    const projectId = conversation?.projectId ?? this.conversationProjects.get(conversationId)
+    if (projectId === undefined || !this.closingProjects.has(projectId))
+      this.finishConversationRemoval(conversationId)
+  }
+
+  private finishConversationRemoval(conversationId: string): void {
+    this.active.delete(conversationId)
+    this.failedStarts.delete(conversationId)
+    this.conversationProjects.delete(conversationId)
+    this.promotionParents.delete(conversationId)
+    for (const [id, aside] of this.asides) {
+      if (aside.parentId === conversationId) this.asides.delete(id)
+    }
     for (const key of this.contextWindows.keys()) {
       if (key.startsWith(`${conversationId}:`)) this.contextWindows.delete(key)
     }
+    this.closingConversations.delete(conversationId)
     this.rememberOpen()
     this.onConversations?.()
-
-    /*
-     * The conversation's asides go with it. They fork its agents and are only
-     * reachable from its transcript, so a closed conversation leaving live forks
-     * behind is a leak with nothing left on screen to close them from.
-     */
-    const orphans = [...this.asides].filter(([, a]) => a.parentId === conversationId)
-    for (const [id] of orphans) this.asides.delete(id)
-
-    // The naming session goes the same way and for the same reason: it is a
-    // live CLI reachable only through this conversation, so leaving it running
-    // is a process nothing on screen can close.
-    this.disposeNamer(conversationId)
-
-    /*
-     * The conversation's terminal goes with it, and only its own.
-     *
-     * Closing a *tab* must not reach this — that is a view operation and the
-     * shell has to survive it, or backgrounding a tab would kill a running
-     * build. This is the other thing: the conversation itself ending.
-     */
-    this.terminals.disposeSession(conversationId)
-
-    await Promise.all([
-      this.liveReplies.cancel(conversationId),
-      ...[...conversation.participants.values()].map((p) => p.service.close()),
-      ...orphans.map(([, a]) => a.service.close()),
-    ])
-    this.log.info('conversation closed', {
+    this.log.info('conversation closed; owned processes exited', {
       conversationId,
       remaining: this.active.size,
     })
-    if (noteFailure !== undefined) throw noteFailure
+  }
+
+  closeProject(projectId: string, editorCleanup?: () => Promise<void>): Promise<void> {
+    const pending = this.projectClosures.get(projectId)
+    if (pending !== undefined) return pending
+    if (this.closedProjects.has(projectId)) return Promise.resolve()
+    this.closingProjects.add(projectId)
+    const work = this.finishCloseProject(projectId, editorCleanup).finally(() => {
+      this.projectClosures.delete(projectId)
+    })
+    this.projectClosures.set(projectId, work)
+    return work
+  }
+
+  private async finishCloseProject(
+    projectId: string,
+    editorCleanup?: () => Promise<void>
+  ): Promise<void> {
+    this.traffic.suspend(projectId)
+    const conversations = new Set([
+      ...[...this.conversationProjects]
+        .filter(([, owner]) => owner === projectId)
+        .map(([id]) => id),
+      ...[...this.active.values()]
+        .filter((conversation) => conversation.projectId === projectId)
+        .map((conversation) => conversation.conversationId),
+      ...[...this.starting.values()]
+        .filter((conversation) => conversation.projectId === projectId)
+        .map((conversation) => conversation.conversationId),
+    ])
+    const logcat = this.logcat.stopConfirmed(projectId)
+    await this.settleClosures(
+      [
+        ...[...conversations].map((id) => this.closeConversation(id)),
+        logcat,
+        Promise.resolve().then(() => editorCleanup?.()),
+        this.runner.suspend(projectId).then(async () => {
+          await this.terminals.stopProject(projectId)
+          this.runner.releaseStopped(projectId)
+          await this.traffic.dispose(projectId)
+        }),
+      ],
+      'Project shutdown could not be confirmed'
+    )
+    await this.adbReverse.syncConfirmed(this.traffic.capturingPorts())
+    refreshWorkbenchTerminalEnv()
+    for (const id of conversations) this.finishConversationRemoval(id)
+    this.browserConsoles?.dispose(projectId)
+    this.closingProjects.delete(projectId)
+    this.closedProjects.add(projectId)
+    this.log.info('project work stopped; owned processes exited', { projectId })
+  }
+
+  openProject(projectId: string): void {
+    if (this.closing) throw new Error('Chorus is shutting down')
+    if (this.closingProjects.has(projectId))
+      throw new Error('This project is closing; retry its close action before reopening it')
+    reopenWorkbenchProject(this.projects.workbenchTarget(projectId))
+    this.closedProjects.delete(projectId)
+    this.runner.allowProject(projectId)
+    this.terminals.allowProject(projectId)
+    this.traffic.allowProject(projectId)
   }
 
   /**
@@ -3485,12 +3665,44 @@ export class ChorusRuntime {
     return { sessions: restored, workspace: this.workspaceSnapshot }
   }
 
-  private async reopen(
+  private reopen(
     projectId: string,
     entry: OpenConversation,
     deferAgents = false
   ): Promise<ActiveConversation | null> {
-    const profile = profileById(entry.profileId)
+    const work = this.reopenOwned(projectId, entry, deferAgents).finally(() => {
+      this.pendingParticipants.delete(entry.conversationId)
+    })
+    this.trackStartup(work, entry.conversationId)
+    return work
+  }
+
+  private async reopenOwned(
+    projectId: string,
+    entry: OpenConversation,
+    deferAgents = false
+  ): Promise<ActiveConversation | null> {
+    if (this.closing) return null
+    this.openProject(projectId)
+    if (this.closingConversations.has(entry.conversationId))
+      throw new Error('This chat is still closing')
+    this.terminals.allowSession(entry.conversationId)
+    this.conversationProjects.set(entry.conversationId, projectId)
+    const pending = new Set<Participant>()
+    this.pendingParticipants.set(entry.conversationId, pending)
+    const remembered = profileById(entry.profileId)
+    const profile = profileById(this.projects.get(projectId)?.profileId ?? remembered.id)
+    if (profile.id !== remembered.id && !readOnlyProfiling()) {
+      this.store.append({
+        conversationId: entry.conversationId,
+        actor: 'system',
+        payload: {
+          type: 'policy.changed',
+          profileId: profile.id,
+          previousProfileId: remembered.id,
+        },
+      })
+    }
     const grants = this.newGrants()
     /*
      * Resolved from the registry rather than read out of the file, which is the
@@ -3576,6 +3788,7 @@ export class ChorusRuntime {
          * blank waiting for it. One agent taking too long now costs that agent,
          * not the session and not the app.
          */
+        let expired = false
         const participant = await withTimeout(
           this.startParticipant(
             agentId,
@@ -3584,11 +3797,17 @@ export class ChorusRuntime {
             profile,
             grants,
             ref,
-            !arriving
+            !arriving,
+            undefined,
+            () => expired
           ),
           REOPEN_TIMEOUT_MS,
           `${agentId} did not come back within ${String(Math.round(REOPEN_TIMEOUT_MS / 1000))}s`
-        )
+        ).catch((error: unknown) => {
+          expired = true
+          throw error
+        })
+        pending.add(participant)
         /*
          * A resumed agent already holds its own side of the conversation, so it
          * starts at the end of the log. One that had to be restarted holds
@@ -3605,6 +3824,21 @@ export class ChorusRuntime {
       })
     )
 
+    if (
+      this.isClosing() ||
+      this.closingConversations.has(entry.conversationId) ||
+      this.closingProjects.has(projectId)
+    ) {
+      await this.settleClosures(
+        [...pending].map((participant) =>
+          this.closeOwned(entry.conversationId, participant.service, () =>
+            participant.service.close()
+          )
+        ),
+        'Reopening agents could not be confirmed stopped'
+      )
+      return null
+    }
     for (const outcome of started) {
       if (outcome.status === 'fulfilled') {
         conversation.participants.set(outcome.value.agentId, outcome.value)
@@ -4243,7 +4477,14 @@ export class ChorusRuntime {
    * while an agent is streaming, because closing a service mid-turn discards a
    * partial reply that the log cannot rebuild.
    */
-  async setAnswerStyle(conversationId: string, on: boolean): Promise<void> {
+  setAnswerStyle(conversationId: string, on: boolean): Promise<void> {
+    this.require(conversationId)
+    const work = this.setAnswerStyleOwned(conversationId, on)
+    this.trackStartup(work, conversationId)
+    return work
+  }
+
+  private async setAnswerStyleOwned(conversationId: string, on: boolean): Promise<void> {
     const conversation = this.require(conversationId)
     if (conversation.styleOn === on) return
     conversation.styleOn = on
@@ -4251,8 +4492,9 @@ export class ChorusRuntime {
     for (const previous of [...conversation.participants.values()]) {
       const agentId = previous.agentId
       const resumeFrom = previous.session.sessionRef.trim()
+      await this.closeOwned(conversationId, previous.service, () => previous.service.close())
+      this.require(conversationId)
       conversation.participants.delete(agentId)
-      await previous.service.close()
 
       const participant = await this.startParticipant(
         agentId,
@@ -4263,6 +4505,14 @@ export class ChorusRuntime {
         resumeFrom === '' ? undefined : resumeFrom,
         true
       )
+      try {
+        this.require(conversationId)
+      } catch (error) {
+        await this.closeOwned(conversationId, participant.service, () =>
+          participant.service.close()
+        )
+        throw error
+      }
       participant.seenSeq = previous.seenSeq
       /*
        * Guarded, not assigned through: both are optional under
@@ -4465,7 +4715,7 @@ export class ChorusRuntime {
       pending.delete(agentId)
     })
     pending.set(agentId, work)
-    this.trackStartup(work)
+    this.trackStartup(work, conversation.conversationId)
     return work
   }
 
@@ -4480,7 +4730,10 @@ export class ChorusRuntime {
     )
     let expired = false
     const stopped = (): boolean =>
-      expired || this.closing || this.active.get(conversationId) !== conversation
+      expired ||
+      this.closing ||
+      this.closingConversations.has(conversationId) ||
+      this.active.get(conversationId) !== conversation
     if (stopped()) throw new Error(STARTUP_CANCELLED)
     const starting = this.startParticipant(
       agentId,
@@ -4527,11 +4780,11 @@ export class ChorusRuntime {
         if (stopped()) throw new Error(STARTUP_CANCELLED)
       }
     } catch (error) {
-      this.closeStarted(participant)
+      this.closeStarted(participant, conversationId)
       throw error instanceof Error ? error : new Error(String(error))
     }
     if (stopped()) {
-      this.closeStarted(participant)
+      this.closeStarted(participant, conversationId)
       throw new Error(STARTUP_CANCELLED)
     }
     participant.service.setProfile(conversation.profile)
@@ -4675,6 +4928,10 @@ export class ChorusRuntime {
             write: (text, expectedRevision) =>
               this.writeAgentNote(conversationId, agentId, text, expectedRevision, null),
           }
+    const browser =
+      conversationId === undefined || where.projectId === undefined
+        ? undefined
+        : this.browserAccessFor(where.projectId, conversationId, agentId)
     return {
       cwd: where.cwd,
       ...(preferred === '' ? {} : { model: preferred }),
@@ -4684,11 +4941,88 @@ export class ChorusRuntime {
       ...(reader === undefined ? {} : { project: reader }),
       ...(progress === undefined ? {} : { progress }),
       ...(note === undefined ? {} : { note }),
+      ...(browser === undefined ? {} : { browser }),
       sandbox:
         where.profile.id === 'read-only'
           ? { mode: 'readOnly', writableRoots: [], networkAccess: false }
           : { mode: 'workspaceWrite', writableRoots: [where.cwd], networkAccess: false },
     }
+  }
+
+  attachBrowserConsoles(consoles: BrowserConsoles): void {
+    this.browserConsoles = consoles
+  }
+
+  private browserAccessFor(
+    projectId: string,
+    conversationId: string,
+    agentId: AgentId
+  ): BrowserConsoleAccess {
+    return {
+      read: (request) =>
+        new Promise<string>((resolve) => {
+          resolve(this.readBrowserConsole(projectId, conversationId, request))
+        }),
+      run: (request) => this.runBrowserConsole(projectId, conversationId, agentId, request),
+    }
+  }
+
+  private readBrowserConsole(
+    projectId: string,
+    conversationId: string,
+    request: BrowserConsoleRead
+  ): string {
+    const consoles = this.browserConsoles
+    if (consoles === null) throw new Error(mainT('browserConsole.unavailable'))
+    const refusal = this.consoleRefusal(projectId, conversationId)
+    if (refusal !== null) throw new Error(refusal)
+    return consoles.read(projectId, request)
+  }
+
+  private async runBrowserConsole(
+    projectId: string,
+    conversationId: string,
+    agentId: AgentId,
+    request: BrowserConsoleRun
+  ): Promise<string> {
+    const consoles = this.browserConsoles
+    if (consoles === null) throw new Error(mainT('browserConsole.unavailable'))
+    const refusal =
+      this.consoleRefusal(projectId, conversationId) ??
+      this.runRefusal(projectId, conversationId, agentId)
+    if (refusal !== null) throw new Error(refusal)
+    return consoles.run(projectId, { ...request, actor: agentId })
+  }
+
+  private consoleRefusal(projectId: string, conversationId: string): string | null {
+    const conversation = this.active.get(conversationId)
+    if (
+      this.closing ||
+      conversation?.projectId !== projectId ||
+      this.closingConversations.has(conversationId) ||
+      this.closingProjects.has(projectId) ||
+      this.closedProjects.has(projectId) ||
+      this.projects.get(projectId) === null
+    ) {
+      return mainT('browserConsole.closed')
+    }
+    return null
+  }
+
+  private runRefusal(projectId: string, conversationId: string, agentId: AgentId): string | null {
+    const conversation = this.active.get(conversationId)
+    const saved = this.projects.get(projectId)?.profileId ?? null
+    if (!conversation?.participants.has(agentId)) {
+      return mainT('browserConsole.closed')
+    }
+    if (
+      conversation.profile.id === 'read-only' ||
+      (saved !== null && profileById(saved).id === 'read-only')
+    ) {
+      return mainT('browserConsole.readOnly')
+    }
+    if (conversation.planning) return mainT('browserConsole.planning')
+    return null
   }
 
   private projectReaderFor(projectId: string | undefined): SessionOpts['project'] {
@@ -4725,7 +5059,8 @@ export class ChorusRuntime {
    * and read here, not a change to what the namer does.
    */
   private nameTopic(conversationId: string, message: string): void {
-    if (message.trim() === '') return
+    if (this.closing || this.closingConversations.has(conversationId) || message.trim() === '')
+      return
     const conversation = this.active.get(conversationId)
     if (conversation === undefined) return
 
@@ -4735,55 +5070,59 @@ export class ChorusRuntime {
       this.namers.set(conversationId, namer)
     }
     const held = namer
+    const stillStarting = (): boolean => held.starting !== undefined
 
     held.queue = held.queue
       .then(async () => {
+        if (this.closing || this.namers.get(conversationId) !== held) return
+        if (
+          this.active.get(conversationId) !== conversation ||
+          held.starting !== undefined ||
+          held.sessions.size > 0
+        )
+          return
         const text =
           conversation.title === folderName(conversation.cwd)
             ? message
             : `Current title: ${conversation.title}\n\n${message}`
 
         for (const agentId of NAMER_ORDER) {
-          if (this.namers.get(conversationId) !== held) return
+          if (this.isClosing() || this.namers.get(conversationId) !== held) return
           if (held.demoted.has(agentId) || !this.adapters.has(agentId)) continue
 
-          let session = held.sessions.get(agentId)
-          if (session === undefined) {
-            try {
-              session = await this.startNamer(conversation, held, agentId)
-            } catch (error: unknown) {
-              // No agent to ask. The next message tries again rather than marking
-              // the conversation permanently unnameable — an adapter can be absent
-              // for a moment and present later.
-              this.log.error('the topic namer failed', error instanceof Error ? error : undefined, {
-                conversationId,
-                agentId,
-              })
-              held.demoted.add(agentId)
-              continue
-            }
-          }
-
-          if (this.namers.get(conversationId) !== held) {
-            void session.close().catch(() => undefined)
-            return
-          }
-
-          const outcome = await this.askNamer(held, session, text)
-          const title = outcome.kind === 'title' ? cleanTitle(outcome.text) : null
-          if (title === null) {
-            held.sessions.delete(agentId)
-            void session.close().catch(() => undefined)
-            if (outcome.kind !== 'timeout') held.demoted.add(agentId)
+          let session: AgentSession
+          try {
+            session = await this.startNamer(conversation, held, agentId)
+          } catch (error: unknown) {
+            if (this.isClosing() || this.namers.get(conversationId) !== held) return
+            this.log.error('the topic namer failed', error instanceof Error ? error : undefined, {
+              conversationId,
+              agentId,
+            })
+            if (stillStarting()) return
+            held.demoted.add(agentId)
             continue
           }
 
-          // Closed while the namer was thinking. `renameConversation` would throw
-          // on a conversation `require` can no longer find.
-          if (!this.active.has(conversationId)) return
-          if (title === conversation.title) return
-          this.renameConversation(conversationId, title)
-          return
+          try {
+            if (this.isClosing() || this.namers.get(conversationId) !== held) return
+
+            const outcome = await this.askNamer(held, session, text)
+            if (this.isClosing() || this.namers.get(conversationId) !== held) return
+            const title = outcome.kind === 'title' ? cleanTitle(outcome.text) : null
+            if (title === null) {
+              if (outcome.kind !== 'timeout') held.demoted.add(agentId)
+              continue
+            }
+
+            if (this.active.get(conversationId) !== conversation) return
+            if (title === conversation.title) return
+            this.renameConversation(conversationId, title)
+            return
+          } finally {
+            await this.closeNamerSession(session)
+            if (held.sessions.get(agentId) === session) held.sessions.delete(agentId)
+          }
         }
       })
       .catch((error: unknown) => {
@@ -4814,12 +5153,56 @@ export class ChorusRuntime {
      * replies with a label — it has no business touching the working tree, and
      * a sandbox says so at the process rather than trusting a prompt.
      */
-    const session = await adapter.start({
-      cwd: conversation.cwd,
-      sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
-      instructions: NAMER_INSTRUCTIONS,
-      ...(model === '' ? {} : { model }),
+    let abandoned = false
+    let cancel = (): void => undefined
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      cancel = () => {
+        abandoned = true
+        reject(new Error(STARTUP_CANCELLED))
+      }
     })
+    const started = adapter
+      .start({
+        cwd: conversation.cwd,
+        sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
+        toolPolicy: 'none',
+        instructions: NAMER_INSTRUCTIONS,
+        ...(model === '' ? {} : { model }),
+      })
+      .then(async (session) => {
+        this.namerOwners.set(session, conversation.conversationId)
+        if (
+          abandoned ||
+          this.closing ||
+          this.namers.get(conversation.conversationId) !== namer ||
+          this.active.get(conversation.conversationId) !== conversation
+        ) {
+          await this.closeNamerSession(session)
+          throw new Error(STARTUP_CANCELLED)
+        }
+        this.readNamer(namer, agentId, session)
+        return session
+      })
+    this.trackStartup(started, conversation.conversationId)
+    const starting = { session: started, cancel }
+    namer.starting = starting
+    const release = (): void => {
+      if (namer.starting === starting) delete namer.starting
+    }
+    void started.then(release, release)
+    try {
+      return await withTimeout(
+        Promise.race([started, cancelled]),
+        NAMER_TIMEOUT_MS,
+        'The title helper did not start in time'
+      )
+    } catch (error) {
+      abandoned = true
+      throw error
+    }
+  }
+
+  private readNamer(namer: Namer, agentId: AgentId, session: AgentSession): void {
     namer.sessions.set(agentId, session)
 
     const settle = (outcome: NamerOutcome): void => {
@@ -4857,8 +5240,6 @@ export class ChorusRuntime {
       }
       settle({ kind: 'failed' })
     })()
-
-    return session
   }
 
   /**
@@ -4893,16 +5274,29 @@ export class ChorusRuntime {
     })
   }
 
-  /** The naming session goes when the conversation does. */
-  private disposeNamer(conversationId: string): void {
+  private closeNamerSession(session: AgentSession): Promise<void> {
+    const owner = this.namerOwners.get(session)
+    const closing =
+      owner === undefined ? session.close() : this.closeOwned(owner, session, () => session.close())
+    this.namingCleanup.add(closing)
+    const release = (): void => {
+      this.namingCleanup.delete(closing)
+    }
+    void closing.then(release, release)
+    return closing
+  }
+
+  private async disposeNamer(conversationId: string): Promise<void> {
     const namer = this.namers.get(conversationId)
     if (namer === undefined) return
     this.namers.delete(conversationId)
-    for (const session of namer.sessions.values()) {
-      void session.close().catch(() => {
-        // Closing something already gone is not a failure worth raising.
-      })
-    }
+    namer.starting?.cancel()
+    const pending = namer.pending
+    delete namer.pending
+    pending?.settle({ kind: 'failed' })
+    const sessions = [...namer.sessions.values()]
+    namer.sessions.clear()
+    await Promise.all(sessions.map((session) => this.closeNamerSession(session)))
   }
 
   renameConversation(conversationId: string, title: string): { title: string } {
@@ -5411,6 +5805,7 @@ export class ChorusRuntime {
     await this.runner.dispose(projectId)
     await this.traffic.dispose(projectId)
     this.disposeProjectShells(projectId)
+    this.browserConsoles?.dispose(projectId)
     this.adbReverse.sync(this.traffic.capturingPorts())
     refreshWorkbenchTerminalEnv()
     return { forgotten: this.projects.forget(projectId) }
@@ -6056,7 +6451,13 @@ export class ChorusRuntime {
     ref: TerminalRef,
     size?: { cols: number; rows: number }
   ): Promise<TerminalAttachment | null> {
-    if (ref.scope === 'shell' && this.closing) return null
+    if (this.closing) return null
+    if (ref.scope === 'session' && this.closingConversations.has(ref.conversationId)) return null
+    if (
+      (ref.scope === 'project' || ref.scope === 'shell') &&
+      (this.closingProjects.has(ref.projectId) || this.closedProjects.has(ref.projectId))
+    )
+      return null
     return await this.terminals.attach(ref, size)
   }
 
@@ -6132,17 +6533,20 @@ export class ChorusRuntime {
    * business and not a project's.
    */
   selectTrafficSource(projectId: string, source: TrafficSourceShape): ProjectTrafficState {
+    if (this.closingProjects.has(projectId) || this.closedProjects.has(projectId))
+      throw new Error('This project is closed')
+    const previousHolder = this.traffic.logcatHolder()
     const state = this.traffic.selectSource(projectId, source)
     if (state.failure !== null) return state
 
     const running = this.logcat.state()
     if (source.kind !== 'logcat') {
-      this.logcat.stop()
+      if (previousHolder === projectId) this.logcat.stop()
     } else if (!running.running) {
-      this.logcat.start(source.filters)
+      this.logcat.start(source.filters, projectId)
     } else if (running.filters !== source.filters) {
       this.logcat.stop()
-      this.logcat.start(source.filters)
+      this.logcat.start(source.filters, projectId)
     }
     /*
      * Every terminal's partial line goes, which is what this reset has always
@@ -6195,8 +6599,10 @@ export class ChorusRuntime {
 
   async close(): Promise<void> {
     this.closing = true
+    const naming = [...this.namers.keys()].map((id) => this.disposeNamer(id))
     for (const starting of [...this.starting.values()]) this.cancelStarting(starting)
     await this.drainStartups()
+    await Promise.all(naming)
     this.failedStarts.clear()
     /*
      * Refs are read here, not only when a session starts.
@@ -6245,6 +6651,7 @@ export class ChorusRuntime {
     this.asides.clear()
     this.active.clear()
     await Promise.all([...this.adapters.values()].map((a) => a.dispose()))
+    await Promise.all([...this.namingCleanup])
 
     /*
      * Drained after the adapters are gone, not before.
@@ -6261,7 +6668,37 @@ export class ChorusRuntime {
     this.store.close()
   }
 
-  private async startParticipant(
+  private startParticipant(
+    agentId: AgentId,
+    conversationId: string,
+    sessionOpts: (resuming: boolean) => SessionOpts,
+    profile: PermissionProfile,
+    grants: SessionGrants,
+    resumeFrom?: string,
+    reopening = false,
+    forkFrom?: string,
+    stopped: () => boolean = () => false
+  ): Promise<Participant> {
+    const work = this.startParticipantOwned(
+      agentId,
+      conversationId,
+      sessionOpts,
+      profile,
+      grants,
+      resumeFrom,
+      reopening,
+      forkFrom,
+      () =>
+        stopped() ||
+        this.closingConversations.has(conversationId) ||
+        this.closingProjects.has(this.conversationProjects.get(conversationId) ?? '') ||
+        this.closing
+    )
+    this.trackStartup(work, conversationId)
+    return work
+  }
+
+  private async startParticipantOwned(
     agentId: AgentId,
     conversationId: string,
     /*
@@ -6435,8 +6872,9 @@ export class ChorusRuntime {
                 ),
                 opts: resumeOpts,
               }
-            } catch {
-              if (stopped()) throw new Error(STARTUP_CANCELLED)
+            } catch (error) {
+              if (error instanceof ProcessCleanupError) throw error
+              if (stopped()) throw new Error(STARTUP_CANCELLED, { cause: error })
               // Fresh options on the fallback: this is now a new session, and it
               // should start with what the sheet says new sessions start with.
               const opts = owned(sessionOpts(false))
@@ -6465,7 +6903,9 @@ export class ChorusRuntime {
       })
     } catch (error) {
       const reason = this.closing ? 'shutdown' : 'closed'
-      const release = owner.service === undefined ? session.close() : owner.service.close(reason)
+      const release = this.closeOwned(conversationId, owner.service ?? session, () =>
+        owner.service === undefined ? session.close() : owner.service.close(reason)
+      )
       await release.catch(() => undefined)
       throw error
     }
@@ -6605,6 +7045,7 @@ export class ChorusRuntime {
        */
       onActivity: (activity) => {
         if (this.active.get(conversationId)?.participants.get(agentId)?.service !== service) return
+        if (this.cleanupOwners.get(conversationId)?.has(service) === true) return
         this.onActivity?.({ conversationId, agentId, activity })
       },
       // An approved plan ends the mode for the room, not just for the agent
@@ -6710,8 +7151,16 @@ export class ChorusRuntime {
     return { agentId, service, session, seenSeq: this.store.lastSeq() }
   }
 
+  private isClosing(): boolean {
+    return this.closing
+  }
+
   private require(conversationId: string): ActiveConversation {
+    if (this.closingConversations.has(conversationId))
+      throw new Error('This chat is closing; retry its close action if cleanup failed')
     const found = this.active.get(conversationId)
+    if (found !== undefined && this.closingProjects.has(found.projectId))
+      throw new Error('This project is closing')
     if (found === undefined) throw new Error(`Conversation "${conversationId}" is not active`)
     return found
   }

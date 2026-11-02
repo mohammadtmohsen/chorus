@@ -1,4 +1,4 @@
-import { isAgentId, type AgentId } from '@chorus/shared'
+import { CONVERSATION_NOTE_MAX_LENGTH, isAgentId, type AgentId } from '@chorus/shared'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
@@ -113,7 +113,7 @@ export type { AgentId }
  * order; this is reading order, and they differ. A new agent has to be placed
  * here by hand, which is the cost of the sentence reading well.
  */
-export const ALL_AGENTS: AgentId[] = ['codex', 'claude', 'deepseek']
+export const ALL_AGENTS: AgentId[] = ['claude', 'codex', 'deepseek']
 
 export interface ForwardSelection {
   readonly text: string
@@ -555,6 +555,7 @@ export function Session(props: {
   const settleFloor = useRef<(immediately: boolean) => void>(() => undefined)
   const lastTop = useRef(0)
   const pinnedTop = useRef<number | null>(null)
+  const atBottom = useRef(following.current)
   const lastHeight = useRef(0)
   const pointerHeld = useRef(false)
   const pointerRelease = useRef(0)
@@ -751,6 +752,9 @@ export function Session(props: {
       seen = height
       lastHeight.current = height
       if (!following.current) {
+        if (!restorePending.current && readDone.current && el.clientHeight > 0) {
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 1
+        }
         captureAnchor()
         return
       }
@@ -758,6 +762,7 @@ export function Session(props: {
       else if (change > 0 && slack > 0) holdSlack(slack - change)
       el.scrollTop = el.scrollHeight
       pinnedTop.current = el.scrollTop
+      atBottom.current = true
     })
     follow.observe(content)
     // The pane too: a window resize changes where the bottom is without
@@ -1498,6 +1503,17 @@ export function Session(props: {
     })
   }, [conversationId, selected])
 
+  const sendSelectionToNote = useCallback(() => {
+    const passage = selected
+    if (passage === null) return
+    setSelected(null)
+    window.getSelection()?.removeAllRanges()
+    const existing = note.text.trimEnd()
+    const joined = existing === '' ? passage.text : `${existing}\n\n${passage.text}`
+    note.edit(joined.slice(0, CONVERSATION_NOTE_MAX_LENGTH))
+    if (!note.view.visible) note.changeView({ visible: true })
+  }, [note, selected])
+
   /*
    * What VS Code is showing for *this* pane's project.
    *
@@ -1543,26 +1559,17 @@ export function Session(props: {
       const content = transcript.current
       const top = el?.scrollTop ?? latest.current.scrollTop
       const pending = restorePending.current
+      const followingNow = following.current || (!pending && atBottom.current)
       let held = readerAnchor.current
-      if (
-        !pending &&
-        !following.current &&
-        el !== null &&
-        content !== null &&
-        held?.scrollTop !== top
-      ) {
+      if (!pending && !followingNow && el !== null && content !== null && held?.scrollTop !== top) {
         const anchor = readerAnchorOf(el, content)
         held = anchor === null ? null : { anchor, scrollTop: top }
       }
       props.onCarry(conversationId, {
         ...latest.current,
-        following: following.current,
+        following: followingNow,
         scrollTop: pending ? restoreFrom.current.scrollTop : top,
-        anchor: following.current
-          ? null
-          : pending
-            ? restoreFrom.current.anchor
-            : (held?.anchor ?? null),
+        anchor: followingNow ? null : pending ? restoreFrom.current.anchor : (held?.anchor ?? null),
         ...box.current,
         ...(openCardRef.current === null ? {} : { card: openCardRef.current }),
       })
@@ -2295,6 +2302,7 @@ export function Session(props: {
             if (pointerHeld.current && !pinned && top < lastTop.current && gap > 1) stopFollowing()
             else if (top > lastTop.current && gap <= 1) resumeFollowing()
             lastTop.current = top
+            if (!restorePending.current && el.clientHeight > 0) atBottom.current = gap <= 1
             if (!following.current) captureAnchor()
           }}
         >
@@ -2387,6 +2395,14 @@ export function Session(props: {
                 */}
                 <button type="button" className="quote-offer-action" onClick={sendSelection}>
                   {t('conversation.sendSelection')}
+                </button>
+                <button
+                  type="button"
+                  className="quote-offer-action"
+                  disabled={note.state.load !== 'ready'}
+                  onClick={sendSelectionToNote}
+                >
+                  {t('conversation.sendSelectionToNote')}
                 </button>
                 <button type="button" className="quote-offer-action" onClick={quoteSelection}>
                   {t('conversation.quoteInMessage')}

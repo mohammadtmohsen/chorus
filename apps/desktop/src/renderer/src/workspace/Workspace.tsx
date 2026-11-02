@@ -55,6 +55,8 @@ interface WorkspaceProps {
   readonly onStartInProject: (projectId: string) => void
   readonly onRename: (conversationId: string, title: string) => void
   readonly onEnd: (conversationId: string) => void
+  readonly onCloseProject: (projectId: string) => void
+  readonly closingProjects: readonly string[]
   readonly onCommitLayout: () => void
   /** A card dropped at a new place in the rail's order. */
   readonly onReorderSessions: (conversationId: string, slot: number) => void
@@ -165,7 +167,6 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
   const {
     placeSession,
     splitWithSession,
-    closeTab,
     activateTab,
     focusPane,
     reorderTab,
@@ -266,6 +267,8 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
    */
   const sessionsRef = useRef(props.sessions)
   sessionsRef.current = props.sessions
+  const closeProjectRef = useRef(props.onCloseProject)
+  closeProjectRef.current = props.onCloseProject
   const reorderRef = useRef(props.onReorderSessions)
   reorderRef.current = props.onReorderSessions
   useEffect(() => {
@@ -454,8 +457,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       }
       if (primaryOnly(event) && event.key.toLowerCase() === 'w') {
         event.preventDefault()
-        if (paneId !== null && activeId !== null) state.closeTab(paneId, activeId)
-        commitRef.current()
+        if (activeId !== null) closeProjectRef.current(activeId)
         return
       }
       if (command === 'previous-tab' || command === 'next-tab') {
@@ -545,7 +547,10 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
               consumeSuppressedClick={drag.consumeSuppressedClick}
               onActivate={activateTab}
               onFocus={focusPane}
-              onClose={closeTab}
+              onClose={(_paneId, projectId) => {
+                props.onCloseProject(projectId)
+              }}
+              closingProjects={props.closingProjects}
               onReorder={reorderTab}
               onRename={props.onRename}
               projects={props.projects}

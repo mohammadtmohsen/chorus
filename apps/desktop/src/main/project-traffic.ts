@@ -127,6 +127,7 @@ export class ProjectTrafficRegistry {
   private readonly listeners = new Set<(push: ProjectTrafficPush) => void>()
   private readonly deps: ProjectTrafficDeps
   private readonly capture: number
+  private readonly suspended = new Set<string>()
   private logcatOwner: string | null = null
   /*
    * What each capture is holding, and what every project holds together.
@@ -151,6 +152,14 @@ export class ProjectTrafficRegistry {
     return () => {
       this.listeners.delete(listener)
     }
+  }
+
+  suspend(projectId: string): void {
+    this.suspended.add(projectId)
+  }
+
+  allowProject(projectId: string): void {
+    this.suspended.delete(projectId)
   }
 
   state(projectId: string): ProjectTrafficState | null {
@@ -246,6 +255,7 @@ export class ProjectTrafficRegistry {
   }
 
   prepare(projectId: string): Promise<ProjectTrafficState> {
+    if (this.suspended.has(projectId)) return Promise.reject(new Error('This project is closed'))
     const entry = this.entry(projectId)
     return this.serialize(entry, async () => {
       if (this.gone(entry) || entry.service !== null) return entry.state
@@ -257,6 +267,7 @@ export class ProjectTrafficRegistry {
   }
 
   start(projectId: string): Promise<ProjectTrafficState> {
+    if (this.suspended.has(projectId)) return Promise.reject(new Error('This project is closed'))
     const entry = this.entry(projectId)
     return this.serialize(entry, async () => {
       if (this.gone(entry)) return entry.state
@@ -507,16 +518,17 @@ export class ProjectTrafficRegistry {
   async dispose(projectId: string): Promise<void> {
     const entry = this.entries.get(projectId)
     if (entry === undefined) return
-    this.entries.delete(projectId)
-    this.watchAddresses()
-    entry.unsubscribe?.()
-    entry.unsubscribe = null
-    const service = entry.service
-    entry.service = null
-    const closing = service?.close()
-    this.dischargeProject(projectId)
-    if (this.logcatOwner === projectId) this.logcatOwner = null
-    await closing
+    await this.serialize(entry, async () => {
+      await entry.service?.close()
+      if (this.entries.get(projectId) !== entry) return
+      entry.service = null
+      entry.unsubscribe?.()
+      entry.unsubscribe = null
+      this.entries.delete(projectId)
+      this.watchAddresses()
+      this.dischargeProject(projectId)
+      if (this.logcatOwner === projectId) this.logcatOwner = null
+    })
   }
 
   async shutdown(): Promise<void> {
@@ -779,7 +791,7 @@ export class ProjectTrafficRegistry {
   }
 
   private wants(projectId: string): boolean {
-    return this.deps.wantsReady?.(projectId) ?? false
+    return !this.suspended.has(projectId) && (this.deps.wantsReady?.(projectId) ?? false)
   }
 
   private forwards(projectId: string, config: ProjectTrafficConfig | null): config is ReadyConfig {

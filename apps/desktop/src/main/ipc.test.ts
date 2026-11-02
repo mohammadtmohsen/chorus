@@ -848,3 +848,106 @@ describe('the note recovery journal', () => {
     if (!reply.ok) expect(reply.error.length).toBeLessThanOrEqual(512)
   })
 })
+
+describe('project:close', () => {
+  const held = () => {
+    let resolve = (): void => undefined
+    const promise = new Promise<void>((yes) => {
+      resolve = yes
+    })
+    return { promise, resolve }
+  }
+
+  it('prepares the editor before stopping agents and waits for cleanup before confirming closure', async () => {
+    const workbench = await import('./workbench-surface.js')
+    const windows = await import('./shell-windows.js')
+    const preparation = held()
+    const agents = held()
+    const editor = held()
+    const send = vi.fn()
+    const target = { host: 'local', root: '/tmp/repo' }
+    const prepareEditor = vi
+      .spyOn(workbench, 'prepareWorkbenchProjectClose')
+      .mockReturnValue(preparation.promise)
+    const closeEditor = vi.spyOn(workbench, 'closeWorkbenchProject').mockReturnValue(editor.promise)
+    const listed = vi
+      .spyOn(windows, 'shellWindows')
+      .mockReturnValue([
+        { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow,
+      ])
+    const closeProject = vi.fn((_id: string, cleanup: () => Promise<void>) =>
+      Promise.all([agents.promise, cleanup()]).then(() => undefined)
+    )
+    const runtime = {
+      projects: { get: () => ({ host: target.host, canonicalRoot: target.root }) },
+      closeProject,
+    } as unknown as ChorusRuntime
+    try {
+      const handler = buildHandlers(runtime, () => null)['project:close'] as (
+        request: unknown
+      ) => Promise<unknown>
+      const closing = handler({ projectId: 'p1' })
+      expect(prepareEditor).toHaveBeenCalledWith(target)
+      expect(closeProject).not.toHaveBeenCalled()
+      expect(closeEditor).not.toHaveBeenCalled()
+      preparation.resolve()
+      await Promise.resolve()
+      expect(closeProject).toHaveBeenCalledWith('p1', expect.any(Function))
+      expect(closeEditor).toHaveBeenCalledWith(target)
+      agents.resolve()
+      await Promise.resolve()
+      expect(send).not.toHaveBeenCalled()
+      editor.resolve()
+      await expect(closing).resolves.toEqual({ ok: true })
+      expect(send).toHaveBeenCalledWith('project:closed', { projectId: 'p1' })
+    } finally {
+      preparation.resolve()
+      agents.resolve()
+      editor.resolve()
+      prepareEditor.mockRestore()
+      closeEditor.mockRestore()
+      listed.mockRestore()
+    }
+  })
+
+  it('attempts both cleanup paths and keeps the project open if either fails', async () => {
+    const workbench = await import('./workbench-surface.js')
+    const windows = await import('./shell-windows.js')
+    const editor = held()
+    const send = vi.fn()
+    const prepareEditor = vi
+      .spyOn(workbench, 'prepareWorkbenchProjectClose')
+      .mockResolvedValue(undefined)
+    const closeEditor = vi.spyOn(workbench, 'closeWorkbenchProject').mockReturnValue(editor.promise)
+    const listed = vi
+      .spyOn(windows, 'shellWindows')
+      .mockReturnValue([
+        { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow,
+      ])
+    const runtime = {
+      projects: { get: () => ({ host: 'local', canonicalRoot: '/tmp/repo' }) },
+      closeProject: async (_id: string, cleanup: () => Promise<void>) => {
+        await cleanup()
+        throw new Error('An agent is still running')
+      },
+    } as unknown as ChorusRuntime
+    try {
+      const handler = buildHandlers(runtime, () => null)['project:close'] as (
+        request: unknown
+      ) => Promise<unknown>
+      const closing = handler({ projectId: 'p1' })
+      const failed = expect(closing).rejects.toThrow('An agent is still running')
+      await Promise.resolve()
+      expect(closeEditor).toHaveBeenCalledTimes(1)
+      expect(send).not.toHaveBeenCalled()
+      editor.resolve()
+      await failed
+      expect(send).not.toHaveBeenCalled()
+    } finally {
+      editor.resolve()
+      prepareEditor.mockRestore()
+      closeEditor.mockRestore()
+      listed.mockRestore()
+    }
+  })
+})

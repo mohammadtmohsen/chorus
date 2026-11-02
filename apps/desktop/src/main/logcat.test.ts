@@ -5,6 +5,15 @@ import { linesFrom, LogcatService, type LogcatChild } from './logcat.js'
 
 class FakeLogcat implements LogcatChild {
   killed = false
+  stopped = false
+  refuseStop = false
+
+  stop(): Promise<void> {
+    this.kill()
+    if (this.refuseStop) return Promise.reject(new Error('logcat child still running'))
+    this.stopped = true
+    return Promise.resolve()
+  }
   private line: (line: string) => void = () => undefined
   private exit: (code: number | null) => void = () => undefined
 
@@ -136,4 +145,28 @@ describe('linesFrom', () => {
 
     expect(seen).toEqual(['one', 'two'])
   })
+})
+
+it('confirms retired project logcat processes without stopping another project', async () => {
+  const { service, spawned } = build()
+  service.start('a', 'project-a')
+  service.stop()
+  service.start('b', 'project-b')
+  await service.stopConfirmed('project-a')
+  expect(spawned[0]?.stopped).toBe(true)
+  expect(spawned[1]?.killed).toBe(false)
+  expect(service.state().running).toBe(true)
+})
+
+it('retains failed logcat cleanup for retry', async () => {
+  const { service, spawned } = build()
+  service.start('a', 'project-a')
+  const child = spawned[0]
+  if (child === undefined) throw new Error('Missing logcat child')
+  child.refuseStop = true
+  await expect(service.stopConfirmed('project-a')).rejects.toThrow(/could not be confirmed/)
+  expect(service.state().running).toBe(true)
+  child.refuseStop = false
+  await service.stopConfirmed('project-a')
+  expect(service.state().running).toBe(false)
 })

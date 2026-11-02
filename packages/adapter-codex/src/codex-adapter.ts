@@ -1,3 +1,4 @@
+import { ProcessCleanupError } from '@chorus/shared/process-tree'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type {
@@ -7,6 +8,7 @@ import type {
   AgentInput,
   AgentSession,
   ApprovalDecision,
+  BrowserConsoleAccess,
   ForkOpts,
   HealthStatus,
   ModelChoice,
@@ -20,6 +22,13 @@ import type {
   UserInputResponse,
 } from '@chorus/agent-protocol'
 import {
+  BROWSER_NAMESPACE_DESCRIPTION,
+  BROWSER_TOOL_DESCRIPTIONS,
+  BROWSER_TOOL_INPUT_SCHEMAS,
+  BROWSER_TOOL_NAMESPACE,
+  browserToolNames,
+  readOnlyBrowser,
+  runBrowserTool,
   NOTE_NAMESPACE_DESCRIPTION,
   NOTE_TOOL_DESCRIPTIONS,
   NOTE_TOOL_INPUT_SCHEMAS,
@@ -46,19 +55,25 @@ import {
   runProjectTool,
   runTranscriptTool,
 } from '@chorus/agent-protocol'
+import { newApprovalId } from '@chorus/shared'
 import type { AgentId, ApprovalId, UserInputId } from '@chorus/shared'
 import type { DynamicToolCallResponse } from './generated/v2/DynamicToolCallResponse.js'
 import type { ConfigReadResponse } from './generated/v2/ConfigReadResponse.js'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
 import {
+  ELICITATION_CANCEL,
+  ELICITATION_METHOD,
   mapApprovalRequest,
+  mapElicitationApproval,
   mapNotification,
   mapUserInputRequest,
   mergeRateLimits,
   opensTurn,
   toCodexDecision,
   toCodexUserInputResponse,
+  toElicitationResponse,
   usageBlockOf,
+  type RememberedItem,
   type ThreadItem,
 } from './mapping.js'
 import { JsonRpcClient, RpcError } from './rpc.js'
@@ -214,6 +229,23 @@ const noteDynamicTools = (access: NoteAccess) => ({
   })),
 })
 
+const browserFor = (opts: SessionOpts, writable = true): BrowserConsoleAccess | undefined => {
+  if (opts.browser === undefined) return undefined
+  return opts.toolPolicy === 'readOnly' || !writable ? readOnlyBrowser(opts.browser) : opts.browser
+}
+
+const browserDynamicTools = (access: BrowserConsoleAccess) => ({
+  type: 'namespace' as const,
+  name: BROWSER_TOOL_NAMESPACE,
+  description: BROWSER_NAMESPACE_DESCRIPTION,
+  tools: browserToolNames(access).map((name) => ({
+    type: 'function' as const,
+    name,
+    description: BROWSER_TOOL_DESCRIPTIONS[name],
+    inputSchema: BROWSER_TOOL_INPUT_SCHEMAS[name],
+  })),
+})
+
 const dynamicToolsFor = (
   opts: SessionOpts
 ): (
@@ -221,13 +253,16 @@ const dynamicToolsFor = (
   | typeof TRANSCRIPT_DYNAMIC_TOOLS
   | typeof PROGRESS_DYNAMIC_TOOLS
   | ReturnType<typeof noteDynamicTools>
+  | ReturnType<typeof browserDynamicTools>
 )[] => {
   const note = noteFor(opts)
+  const browser = browserFor(opts)
   return [
     ...(opts.project === undefined ? [] : [PROJECT_DYNAMIC_TOOLS]),
     ...(opts.transcript === undefined ? [] : [TRANSCRIPT_DYNAMIC_TOOLS]),
     ...(progressFor(opts) === undefined ? [] : [PROGRESS_DYNAMIC_TOOLS]),
     ...(note === undefined ? [] : [noteDynamicTools(note)]),
+    ...(browser === undefined ? [] : [browserDynamicTools(browser)]),
   ]
 }
 
@@ -235,7 +270,8 @@ const wantsTools = (opts: SessionOpts): boolean =>
   opts.project !== undefined ||
   opts.transcript !== undefined ||
   progressFor(opts) !== undefined ||
-  opts.note !== undefined
+  opts.note !== undefined ||
+  opts.browser !== undefined
 
 function refusedCapability(error: unknown): boolean {
   if (!(error instanceof RpcError) || error.code !== INVALID_REQUEST) return false
@@ -316,12 +352,13 @@ export class CodexSession implements AgentSession {
    * `openApprovals` because what resolves them is a payload, not a verdict.
    */
   private readonly openUserInputs = new Map<string, (response: UserInputResponse) => void>()
+  private readonly openElicitations = new Set<string>()
   /**
    * Recently streamed items, so a `fileChange` approval — which carries only an
    * itemId — can be shown with the paths it will touch. Bounded, because a long
    * session would otherwise accumulate every item it ever saw.
    */
-  private readonly recentItems = new Map<string, ThreadItem>()
+  private readonly recentItems = new Map<string, RememberedItem>()
   /**
    * The reasoning effort in force, held because Codex has nowhere to put it.
    *
@@ -342,7 +379,8 @@ export class CodexSession implements AgentSession {
     private readonly readOnly = false,
     private readonly transcript?: TranscriptReader,
     private readonly progress?: ProgressReporter,
-    private readonly note?: NoteAccess
+    private readonly note?: NoteAccess,
+    private readonly browser?: BrowserConsoleAccess
   ) {
     this.rpc.onNotification((method, params) => {
       this.ingest(method, params)
@@ -350,7 +388,17 @@ export class CodexSession implements AgentSession {
     this.rpc.setServerRequestHandler((method, params) => this.handleServerRequest(method, params))
     // A dead app-server must end this stream, or the supervisor never learns the
     // session died and silently stops working.
-    this.rpc.onClose(() => {
+    this.rpc.onClose((reason) => {
+      if (reason.message === 'Owned provider processes could not be stopped.') {
+        this.emit({
+          agentId: 'codex',
+          seq: this.seq + 1,
+          at: this.now(),
+          type: 'error',
+          message: reason.message,
+          recoverable: false,
+        })
+      }
       this.end()
     })
   }
@@ -589,9 +637,15 @@ export class CodexSession implements AgentSession {
     // answered rather than dropped on a closing socket.
     for (const [, resolve] of this.openUserInputs) resolve({ outcome: 'cancel' })
     this.openUserInputs.clear()
-    this.rpc.close('session closed')
-    this.end()
-    return Promise.resolve()
+    for (const id of [...this.openElicitations]) {
+      const resolve = this.openApprovals.get(id)
+      this.openApprovals.delete(id)
+      resolve?.('cancel')
+    }
+    this.openElicitations.clear()
+    return this.rpc.close('session closed').finally(() => {
+      this.end()
+    })
   }
 
   private ingest(method: string, params: unknown): void {
@@ -683,6 +737,10 @@ export class CodexSession implements AgentSession {
       const result = runNoteTool(this.note, tool, call['arguments'])
       return toolReply(result.text, result.ok)
     }
+    if (call['namespace'] === BROWSER_TOOL_NAMESPACE && typeof tool === 'string') {
+      const result = await runBrowserTool(this.browser, tool, call['arguments'])
+      return toolReply(result.text, result.ok)
+    }
     if (call['namespace'] !== PROJECT_TOOL_NAMESPACE || typeof tool !== 'string') {
       return toolReply('Unknown tool.', false)
     }
@@ -723,11 +781,13 @@ export class CodexSession implements AgentSession {
       })
     }
 
+    if (method === ELICITATION_METHOD) return this.handleElicitation(params)
+
     const request = mapApprovalRequest(
       method,
       params,
       { seq: this.seq + 1, now: this.now(), approvalTtlMs: this.approvalTtlMs },
-      (itemId) => this.recentItems.get(itemId)
+      (itemId) => this.recentItems.get(itemId)?.item
     )
     if (request === null) return Promise.resolve({})
 
@@ -745,10 +805,38 @@ export class CodexSession implements AgentSession {
     })
   }
 
+  private handleElicitation(params: unknown): Promise<unknown> {
+    const mapped = mapElicitationApproval(
+      params,
+      { seq: this.seq + 1, now: this.now(), approvalTtlMs: this.approvalTtlMs },
+      this.recentItems.values(),
+      newApprovalId()
+    )
+    if (mapped === null) return Promise.resolve(ELICITATION_CANCEL)
+
+    const { request, offersSession } = mapped
+    return new Promise<unknown>((resolve) => {
+      this.openElicitations.add(request.id)
+      this.openApprovals.set(request.id, (decision) => {
+        this.openElicitations.delete(request.id)
+        resolve(toElicitationResponse(decision, offersSession))
+      })
+      this.emit({
+        agentId: 'codex' satisfies AgentId,
+        seq: ++this.seq,
+        at: this.now(),
+        type: 'approval.requested',
+        request,
+      })
+    })
+  }
+
   private rememberItem(params: unknown): void {
-    const item = (params as { item?: ThreadItem } | undefined)?.item
+    const p = params as { item?: ThreadItem; threadId?: unknown } | undefined
+    const item = p?.item
     if (item === undefined || typeof item.id !== 'string') return
-    this.recentItems.set(item.id, item)
+    const threadId = typeof p?.threadId === 'string' ? p.threadId : null
+    this.recentItems.set(item.id, { threadId, item })
     if (this.recentItems.size > MAX_REMEMBERED_ITEMS) {
       const oldest = this.recentItems.keys().next()
       if (!oldest.done) this.recentItems.delete(oldest.value)
@@ -836,6 +924,7 @@ export class CodexAdapter implements AgentAdapter {
   private readonly createTransport: () => Transport
   private readonly now: () => number
   private readonly sessions: CodexSession[] = []
+  private readonly openingClients = new Set<JsonRpcClient>()
 
   constructor(options: CodexAdapterOptions = {}) {
     this.command = options.command ?? 'codex'
@@ -875,6 +964,7 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async start(opts: SessionOpts): Promise<AgentSession> {
+    this.assertToolPolicySupported(opts)
     const { rpc, experimental } = await this.connect(opts)
     const restricted = await this.owned(opts, rpc, () => this.readOnlyConfig(opts, rpc))
     const params = {
@@ -911,19 +1001,23 @@ export class CodexAdapter implements AgentAdapter {
       opts.toolPolicy === 'readOnly',
       opts.transcript,
       progressFor(opts),
-      noteFor(opts)
+      noteFor(opts),
+      browserFor(opts)
     )
     if (opts.transcript !== undefined) {
       session.transcriptTool = registered ? 'registered' : 'unavailable'
     }
-    if (opts.project !== undefined && !registered) session.announce('projectToolsUnavailable')
+    if ((opts.project !== undefined || opts.browser !== undefined) && !registered) {
+      session.announce('projectToolsUnavailable')
+    }
     // Not awaited: the header can fill a moment late, but a session must not
     // wait on an account lookup to open.
     void session.readLimits()
-    return this.track(session)
+    return this.track(session, rpc)
   }
 
   async resume(sessionRef: string, opts: SessionOpts): Promise<AgentSession> {
+    this.assertToolPolicySupported(opts)
     const { rpc, experimental } = await this.connect(opts)
     const restricted = await this.owned(opts, rpc, () => this.readOnlyConfig(opts, rpc))
     await this.owned(opts, rpc, () =>
@@ -945,16 +1039,17 @@ export class CodexAdapter implements AgentAdapter {
       opts.toolPolicy === 'readOnly',
       opts.transcript,
       progressFor(opts),
-      noteFor(opts)
+      noteFor(opts),
+      browserFor(opts)
     )
     if (opts.transcript !== undefined) {
       session.transcriptTool = experimental ? 'unconfirmed' : 'unavailable'
     }
-    if (opts.project !== undefined) {
+    if (opts.project !== undefined || opts.browser !== undefined) {
       session.announce(experimental ? 'projectToolsUnconfirmed' : 'projectToolsUnavailable')
     }
     void session.readLimits()
-    return this.track(session)
+    return this.track(session, rpc)
   }
 
   /**
@@ -978,6 +1073,7 @@ export class CodexAdapter implements AgentAdapter {
    * option mean two different things per provider, which is worse than refusing.
    */
   async fork(sessionRef: string, opts: ForkOpts): Promise<AgentSession> {
+    this.assertToolPolicySupported(opts)
     if (sessionRef === '') throw new Error('Cannot fork a thread that has no id yet')
     if (opts.inherits === 'nothing') {
       throw new Error('codex cannot fork without the user configuration')
@@ -1012,19 +1108,23 @@ export class CodexAdapter implements AgentAdapter {
       opts.toolPolicy === 'readOnly',
       opts.transcript,
       opts.persist === true ? progressFor(opts) : undefined,
-      noteFor(opts, opts.persist === true)
+      noteFor(opts, opts.persist === true),
+      browserFor(opts, opts.persist === true)
     )
     if (opts.transcript !== undefined) {
       session.transcriptTool = experimental ? 'unconfirmed' : 'unavailable'
     }
-    if (opts.project !== undefined) {
+    if (opts.project !== undefined || opts.browser !== undefined) {
       session.announce(experimental ? 'projectToolsUnconfirmed' : 'projectToolsUnavailable')
     }
-    return this.track(session)
+    return this.track(session, rpc)
   }
 
   async dispose(): Promise<void> {
-    await Promise.all(this.sessions.map((s) => s.close()))
+    await Promise.all([
+      ...this.sessions.map((session) => session.close()),
+      ...[...this.openingClients].map((rpc) => this.closeClient(rpc, 'adapter disposed')),
+    ])
     this.sessions.length = 0
   }
 
@@ -1081,6 +1181,12 @@ export class CodexAdapter implements AgentAdapter {
       else this.latestProbe = undefined
     })
     return result
+  }
+
+  private assertToolPolicySupported(opts: SessionOpts): void {
+    if (opts.toolPolicy === 'none') {
+      throw new Error('Codex does not support tool-free sessions through this adapter.')
+    }
   }
 
   private async readOnlyConfig(
@@ -1158,7 +1264,7 @@ export class CodexAdapter implements AgentAdapter {
       await this.initialize(rpc, EXPERIMENTAL_CAPABILITIES)
       return { rpc, experimental: true }
     } catch (error) {
-      rpc.close('initialize failed')
+      await this.closeClient(rpc, 'initialize failed')
       if (!refusedCapability(error)) throw error
     }
     const stable = await this.spawnClient()
@@ -1167,23 +1273,27 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   private async owned<T>(
-    opts: SessionOpts,
+    _opts: SessionOpts,
     rpc: JsonRpcClient,
     open: () => Promise<T>
   ): Promise<T> {
-    if (!wantsTools(opts) && opts.toolPolicy !== 'readOnly') return open()
     try {
       return await open()
     } catch (error) {
-      rpc.close('could not open the thread')
+      await this.closeClient(rpc, 'could not open the thread')
       throw error
     }
   }
 
   private async handshake(): Promise<JsonRpcClient> {
     const rpc = await this.spawnClient()
-    await this.initialize(rpc, {})
-    return rpc
+    try {
+      await this.initialize(rpc, {})
+      return rpc
+    } catch (error) {
+      await this.closeClient(rpc, 'initialize failed')
+      throw error
+    }
   }
 
   private async spawnClient(): Promise<JsonRpcClient> {
@@ -1205,7 +1315,9 @@ export class CodexAdapter implements AgentAdapter {
       )
     }
 
-    return new JsonRpcClient({ transport: this.createTransport() })
+    const rpc = new JsonRpcClient({ transport: this.createTransport() })
+    this.openingClients.add(rpc)
+    return rpc
   }
 
   private async initialize(
@@ -1220,7 +1332,21 @@ export class CodexAdapter implements AgentAdapter {
     rpc.notify('initialized', {})
   }
 
-  private track(session: CodexSession): CodexSession {
+  private async closeClient(rpc: JsonRpcClient, reason: string): Promise<void> {
+    try {
+      await rpc.close(reason)
+      this.openingClients.delete(rpc)
+    } catch (error) {
+      throw new ProcessCleanupError(
+        error instanceof Error ? error.message : String(error),
+        () => this.closeClient(rpc, reason),
+        error
+      )
+    }
+  }
+
+  private track(session: CodexSession, rpc: JsonRpcClient): CodexSession {
+    this.openingClients.delete(rpc)
     this.sessions.push(session)
     return session
   }

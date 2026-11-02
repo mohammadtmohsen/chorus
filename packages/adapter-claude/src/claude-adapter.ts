@@ -1,6 +1,11 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { promisify } from 'node:util'
+import {
+  ownProcessTree,
+  ProcessCleanupError,
+  type OwnedProcessTree,
+} from '@chorus/shared/process-tree'
 import {
   forkSession,
   query,
@@ -10,6 +15,7 @@ import {
   type PermissionResult,
   type Query,
 } from '@anthropic-ai/claude-agent-sdk'
+import { BROWSER_TOOL_IDS, READ_CONSOLE_TOOL, browserMcpServer } from './browser-tool.js'
 import { editorMcpServer } from './editor-tool.js'
 import { NOTE_TOOL_IDS, READ_NOTE_TOOL, noteMcpServer } from './note-tool.js'
 import { REPORT_PROGRESS_TOOL, progressMcpServer } from './progress-tool.js'
@@ -277,6 +283,28 @@ interface LiveTool {
   contested: boolean
 }
 
+const STOP_DIAGNOSTIC_PREFIX = '[ede_diagnostic]'
+
+function withoutStopDiagnostics(
+  message: unknown
+): { message: unknown; onlyDiagnostics: boolean } | undefined {
+  const errors: unknown = (message as { errors?: unknown }).errors
+  if (!Array.isArray(errors)) return undefined
+  const entries = errors as unknown[]
+  const isDiagnostic = (entry: unknown): boolean =>
+    typeof entry === 'string' && entry.startsWith(STOP_DIAGNOSTIC_PREFIX)
+  if (!entries.some(isDiagnostic)) return undefined
+  const kept = entries.filter(
+    (entry): entry is string => typeof entry === 'string' && !isDiagnostic(entry)
+  )
+  return kept.length === 0
+    ? { message, onlyDiagnostics: true }
+    : {
+        message: { ...(message as Record<string, unknown>), errors: kept },
+        onlyDiagnostics: false,
+      }
+}
+
 export class ClaudeSession implements AgentSession {
   private readonly queue = new AsyncQueue<AgentEvent>()
   private readonly pendingApprovals = new Map<string, PendingApproval>()
@@ -293,6 +321,8 @@ export class ClaudeSession implements AgentSession {
   private seq = 0
   private resolvedSessionRef: string
   private closed = false
+  private closing: Promise<void> | null = null
+  private cleaned = false
   private streamEnded = false
   /**
    * Claude reports a user-initiated stop as `error_during_execution` with no
@@ -345,7 +375,10 @@ export class ClaudeSession implements AgentSession {
      */
     private readonly agentId: AgentId,
     /** A known catalogue, or undefined to ask the CLI — see `ClaudeAdapterOptions`. */
-    private readonly knownModels: readonly ModelChoice[] | undefined
+    private readonly knownModels: readonly ModelChoice[] | undefined,
+    private readonly onClosed?: (session: ClaudeSession) => void,
+    private readonly processTree?: () => OwnedProcessTree | undefined,
+    private readonly processStderr?: () => string
   ) {
     this.resolvedSessionRef = sessionRef
     this.emit({
@@ -407,8 +440,11 @@ export class ClaudeSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
-    this.interruptRequested = true
-    const receipt = await this.q.interrupt()
+    if (this.turnOpen) this.interruptRequested = true
+    const receipt = await this.q.interrupt().catch((error: unknown) => {
+      this.interruptRequested = false
+      throw error
+    })
 
     /*
      * What the stop did not stop.
@@ -658,26 +694,45 @@ export class ClaudeSession implements AgentSession {
   }
 
   close(): Promise<void> {
-    if (this.closed) return Promise.resolve()
+    if (this.cleaned) return Promise.resolve()
+    if (this.closing !== null) return this.closing
     this.closed = true
-    this.inbox.close()
-    // Anything still waiting on a decision would otherwise block the SDK's
-    // permission callback forever — it has no deadline of its own (plan §4.4).
-    for (const [, pending] of this.pendingApprovals) {
-      pending.resolve({ behavior: 'deny', message: 'Session closed' })
+    const closing = this.finishClose().then(
+      () => {
+        this.cleaned = true
+        this.onClosed?.(this)
+      },
+      (error: unknown) => {
+        this.closing = null
+        throw error
+      }
+    )
+    this.closing = closing
+    return closing
+  }
+
+  private async finishClose(): Promise<void> {
+    const graceful = (): void => {
+      this.inbox.close()
+      for (const [, pending] of this.pendingApprovals) {
+        pending.resolve({ behavior: 'deny', message: 'Session closed' })
+      }
+      this.pendingApprovals.clear()
+      this.liveTools.clear()
+      this.approvedEditRefs.clear()
+      for (const [, pending] of this.pendingUserInputs) {
+        pending.resolve({ behavior: 'deny', message: 'Session closed' })
+      }
+      this.pendingUserInputs.clear()
+      this.q.close()
     }
-    this.pendingApprovals.clear()
-    this.liveTools.clear()
-    this.approvedEditRefs.clear()
-    // Same reasoning for questions: an unanswered one holds `canUseTool` open
-    // forever, and the SDK imposes no deadline of its own.
-    for (const [, pending] of this.pendingUserInputs) {
-      pending.resolve({ behavior: 'deny', message: 'Session closed' })
+    try {
+      const owner = this.processTree?.()
+      if (owner === undefined) graceful()
+      else await owner.stop(graceful)
+    } finally {
+      this.queue.close()
     }
-    this.pendingUserInputs.clear()
-    this.q.close()
-    this.queue.close()
-    return Promise.resolve()
   }
 
   respondToUserInput(id: UserInputId, response: UserInputResponse): Promise<void> {
@@ -814,7 +869,9 @@ export class ClaudeSession implements AgentSession {
           continue
         }
 
-        const events = mapSdkMessage(message as never, {
+        const narrowed =
+          kind === 'result' && this.interruptRequested ? withoutStopDiagnostics(message) : undefined
+        const events = mapSdkMessage((narrowed?.message ?? message) as never, {
           seq: this.seq + 1,
           now: this.now(),
           agentId: this.agentId,
@@ -825,6 +882,7 @@ export class ClaudeSession implements AgentSession {
         })
         if (events.length > 0 && opensTurn(message as never)) this.openTurn()
         for (const event of events) {
+          if (narrowed?.onlyDiagnostics === true && event.type === 'error') continue
           this.emit(this.correctInterrupt(event))
         }
       }
@@ -834,9 +892,27 @@ export class ClaudeSession implements AgentSession {
         seq: ++this.seq,
         at: this.now(),
         type: 'error',
-        message: error instanceof Error ? error.message : String(error),
+        message: [error instanceof Error ? error.message : String(error), this.processStderr?.()]
+          .filter(Boolean)
+          .join('\n'),
         recoverable: false,
       })
+    }
+    if (!this.closed) {
+      try {
+        await this.processTree?.()?.stop(() => {
+          this.q.close()
+        })
+      } catch (error) {
+        this.emit({
+          agentId: this.agentId,
+          seq: ++this.seq,
+          at: this.now(),
+          type: 'error',
+          message: error instanceof Error ? error.message : String(error),
+          recoverable: false,
+        })
+      }
     }
     // The stream ending is how the supervisor detects a dead session.
     this.streamEnded = true
@@ -848,10 +924,9 @@ export class ClaudeSession implements AgentSession {
    * an error card for a button the user just pressed.
    */
   private correctInterrupt(event: AgentEvent): AgentEvent {
-    if (event.type !== 'turn.completed') return event
-    if (!this.interruptRequested || event.status === 'completed') return event
+    if (event.type !== 'turn.completed' || !this.interruptRequested) return event
     this.interruptRequested = false
-    return { ...event, status: 'interrupted' }
+    return event.status === 'completed' ? event : { ...event, status: 'interrupted' }
   }
 
   /**
@@ -1125,6 +1200,8 @@ export class ClaudeAdapter implements AgentAdapter {
   /** Undefined when the host has no editor to offer; see `editorMcpServer`. */
   private readonly editorEdit: EditorEditCapability | undefined
   private readonly sessions: ClaudeSession[] = []
+  private readonly auxiliarySessions = new Set<ClaudeSession>()
+  private readonly openingProcesses = new Set<OwnedProcessTree>()
   private readonly env: ClaudeAdapterOptions['env']
   private readonly precondition: (() => string | null) | undefined
   private readonly models: readonly ModelChoice[] | undefined
@@ -1319,8 +1396,13 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   async dispose(): Promise<void> {
-    await Promise.all(this.sessions.map((s) => s.close()))
+    await Promise.all([
+      ...[...this.sessions, ...this.auxiliarySessions].map((session) => session.close()),
+      ...[...this.openingProcesses].map((tree) => this.closeOpeningProcess(tree)),
+    ])
     this.sessions.length = 0
+    this.auxiliarySessions.clear()
+    this.openingProcesses.clear()
   }
 
   /**
@@ -1357,7 +1439,27 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
-  private spawn(opts: SessionOpts, resume: string | undefined, fork?: ForkOpts): ClaudeSession {
+  private async closeOpeningProcess(
+    tree: OwnedProcessTree,
+    graceful?: () => void | Promise<void>
+  ): Promise<void> {
+    try {
+      await tree.stop(graceful)
+      this.openingProcesses.delete(tree)
+    } catch (error) {
+      throw new ProcessCleanupError(
+        error instanceof Error ? error.message : String(error),
+        () => this.closeOpeningProcess(tree, graceful),
+        error
+      )
+    }
+  }
+
+  private async spawn(
+    opts: SessionOpts,
+    resume: string | undefined,
+    fork?: ForkOpts
+  ): Promise<ClaudeSession> {
     /*
      * The SDK reports a spawn ENOENT as "the native binary failed to launch —
      * this usually means the binary does not match this system's libc", which
@@ -1399,7 +1501,11 @@ export class ClaudeAdapter implements AgentAdapter {
 
     // canUseTool has to be captured before the session exists, but the SDK
     // only invokes it once the query is running — by which point it is set.
-    const holder: { session?: ClaudeSession } = {}
+    const holder: {
+      session?: ClaudeSession
+      processTree?: OwnedProcessTree
+      stderr: string
+    } = { stderr: '' }
 
     /*
      * Merged, never replacing. `strictMcpConfig` is deliberately not set — it
@@ -1408,24 +1514,36 @@ export class ClaudeAdapter implements AgentAdapter {
      * theirs. Same reasoning as `settingSources` being omitted below.
      */
     const readOnly = opts.toolPolicy === 'readOnly'
-    const editorServer = readOnly
-      ? {}
-      : editorMcpServer(this.editorEdit, opts.editorPlace ?? { host: '', root: opts.cwd })
-    const transcriptServer = transcriptMcpServer(opts.transcript)
-    const projectServer = projectMcpServer(opts.project)
+    const noTools = opts.toolPolicy === 'none'
+    const editorServer =
+      readOnly || noTools
+        ? {}
+        : editorMcpServer(this.editorEdit, opts.editorPlace ?? { host: '', root: opts.cwd })
+    const transcriptServer = noTools ? undefined : transcriptMcpServer(opts.transcript)
+    const projectServer = noTools ? undefined : projectMcpServer(opts.project)
     const progressServer =
-      readOnly || fork !== undefined ? undefined : progressMcpServer(opts.progress)
-    const noteServer = noteMcpServer(
-      opts.note === undefined || (!readOnly && (fork === undefined || fork.persist === true))
-        ? opts.note
-        : { read: opts.note.read }
-    )
+      readOnly || noTools || fork !== undefined ? undefined : progressMcpServer(opts.progress)
+    const noteServer = noTools
+      ? undefined
+      : noteMcpServer(
+          opts.note === undefined || (!readOnly && (fork === undefined || fork.persist === true))
+            ? opts.note
+            : { read: opts.note.read }
+        )
+    const browserServer = noTools
+      ? undefined
+      : browserMcpServer(
+          opts.browser === undefined || (!readOnly && (fork === undefined || fork.persist === true))
+            ? opts.browser
+            : { read: opts.browser.read }
+        )
     const mcpServers = {
       ...editorServer,
       ...transcriptServer,
       ...projectServer,
       ...progressServer,
       ...noteServer,
+      ...browserServer,
     }
     const readableTool = (name: string): boolean =>
       name === 'Read' ||
@@ -1433,10 +1551,41 @@ export class ClaudeAdapter implements AgentAdapter {
       name === 'Grep' ||
       (opts.transcript !== undefined && name === READ_TRANSCRIPT_TOOL) ||
       (projectServer !== undefined && PROJECT_TOOL_IDS.has(name)) ||
-      (noteServer !== undefined && name === READ_NOTE_TOOL)
+      (noteServer !== undefined && name === READ_NOTE_TOOL) ||
+      (browserServer !== undefined && name === READ_CONSOLE_TOOL)
 
     const options: Options = {
       cwd: opts.cwd,
+      spawnClaudeCodeProcess: (spec) => {
+        const child = spawn(spec.command, spec.args, {
+          ...(spec.cwd === undefined ? {} : { cwd: spec.cwd }),
+          env: spec.env,
+          signal: spec.signal,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
+          windowsHide: true,
+        })
+        const rootExited = new Promise<void>((resolve) => {
+          child.once('exit', () => {
+            resolve()
+          })
+          child.once('error', () => {
+            resolve()
+          })
+        })
+        if (child.pid !== undefined) {
+          holder.processTree = ownProcessTree(child.pid, {
+            processGroup: process.platform !== 'win32',
+            rootExited,
+          })
+          if (holder.session === undefined) this.openingProcesses.add(holder.processTree)
+        }
+        child.stderr.on('data', (chunk: Buffer) => {
+          holder.stderr = (holder.stderr + chunk.toString()).slice(-8_192)
+        })
+        child.stderr.on('error', () => undefined)
+        return child
+      },
       includePartialMessages: true,
       ...(Object.keys(mcpServers).length === 0 ? {} : { mcpServers }),
       /*
@@ -1611,7 +1760,25 @@ export class ClaudeAdapter implements AgentAdapter {
             ...(resume === undefined ? { persistSession: false } : {}),
           }
         : {}),
+      ...(noTools
+        ? {
+            tools: [],
+            settingSources: [],
+            strictMcpConfig: true,
+            persistSession: false,
+            plugins: [],
+            hooks: {},
+            settings: { disableAllHooks: true },
+            includeHookEvents: false,
+          }
+        : {}),
       canUseTool: (toolName, input, options) => {
+        if (noTools) {
+          return Promise.resolve<PermissionResult>({
+            behavior: 'deny',
+            message: 'This session does not allow tools.',
+          })
+        }
         if (readOnly) {
           return Promise.resolve<PermissionResult>(
             readableTool(toolName)
@@ -1627,7 +1794,8 @@ export class ClaudeAdapter implements AgentAdapter {
           toolName === READ_TRANSCRIPT_TOOL ||
           (projectServer !== undefined && PROJECT_TOOL_IDS.has(toolName)) ||
           (progressServer !== undefined && toolName === REPORT_PROGRESS_TOOL) ||
-          (noteServer !== undefined && NOTE_TOOL_IDS.has(toolName))
+          (noteServer !== undefined && NOTE_TOOL_IDS.has(toolName)) ||
+          (browserServer !== undefined && BROWSER_TOOL_IDS.has(toolName))
         ) {
           return Promise.resolve<PermissionResult>({ behavior: 'allow', updatedInput: input })
         }
@@ -1649,7 +1817,17 @@ export class ClaudeAdapter implements AgentAdapter {
       ((o: Options, prompt: AsyncIterable<unknown>) =>
         query({ prompt: prompt as never, options: o }))
 
-    const q = factory(options, inbox)
+    let q: Query
+    try {
+      q = factory(options, inbox)
+    } catch (error) {
+      if (holder.processTree !== undefined) {
+        await this.closeOpeningProcess(holder.processTree, () => {
+          inbox.close()
+        })
+      }
+      throw error
+    }
     const session = new ClaudeSession(
       resume ?? '',
       q,
@@ -1657,16 +1835,26 @@ export class ClaudeAdapter implements AgentAdapter {
       this.approvalTtlMs,
       this.now,
       this.id,
-      this.models
+      this.models,
+      noTools
+        ? (closed) => {
+            this.auxiliarySessions.delete(closed)
+          }
+        : undefined,
+      () => holder.processTree,
+      () => holder.stderr
     )
     if (transcriptServer !== undefined) session.transcriptTool = 'registered'
     holder.session = session
+    if (holder.processTree !== undefined) this.openingProcesses.delete(holder.processTree)
 
     // Not awaited: the caller wants a session, not a quota. It fills the
     // account panel a few seconds later, or never, and either is fine.
-    session.primeLimits()
-
-    this.sessions.push(session)
+    if (noTools) this.auxiliarySessions.add(session)
+    else {
+      session.primeLimits()
+      this.sessions.push(session)
+    }
     return session
   }
 }

@@ -49,6 +49,9 @@ import type {
  * an error.
  */
 export const CONNECTION_CHANNEL = 'workbench:connection'
+export const PROCESS_REPORT_CHANNEL = 'workbench:process:report'
+export const PROCESS_CLOSE_CHANNEL = 'workbench:process:close'
+export const PROCESS_CLOSE_RESULT_CHANNEL = 'workbench:process:close:result'
 /* The window-focus pair, push and pull on one name, under the same test. */
 export const FOCUS_CHANNEL = 'workbench:focus'
 export const TERMINAL_ENV_CHANNEL = 'workbench:terminalEnv'
@@ -132,6 +135,10 @@ export function asConnection(value: unknown): WorkbenchConnection | null {
     connectionToken: record['connectionToken'] as string,
     commit: record['commit'] as string,
     quality: record['quality'] as string,
+    ...(typeof record['processNonce'] === 'string' &&
+    /^[0-9a-f-]{36}$/i.test(record['processNonce'])
+      ? { processNonce: record['processNonce'] }
+      : {}),
     /*
      * Carried only when it is exactly the one string that means anything, and
      * dropped otherwise — a boolean, a typo, a future spelling, a value someone
@@ -324,6 +331,37 @@ const api: ChorusWorkbenchApi = {
     return () => {
       ipcRenderer.removeListener(STORAGE_CHANGED_CHANNEL, wrapped)
     }
+  },
+
+  reportProcesses: async (terminalPids) => {
+    await ipcRenderer.invoke(PROCESS_REPORT_CHANNEL, terminalPids)
+  },
+
+  onProcessCloseRequest: (handler) => {
+    ipcRenderer.on(PROCESS_CLOSE_CHANNEL, (_event, requestId: unknown, phase: unknown) => {
+      if (typeof requestId !== 'string' || (phase !== 'prepare' && phase !== 'stop')) return
+      void Promise.resolve()
+        .then(() => handler(phase))
+        .then(
+          (result) => {
+            ipcRenderer.send(
+              PROCESS_CLOSE_RESULT_CHANNEL,
+              requestId,
+              'refusal' in result ? [] : result,
+              null,
+              'refusal' in result ? result.refusal : null
+            )
+          },
+          (error: unknown) => {
+            ipcRenderer.send(
+              PROCESS_CLOSE_RESULT_CHANNEL,
+              requestId,
+              [],
+              error instanceof Error ? error.message : String(error)
+            )
+          }
+        )
+    })
   },
 
   onStorageFlushRequest: (handler) => {

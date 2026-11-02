@@ -237,6 +237,7 @@ const RUNTIME = {
   commit: '987c9597516278c9fcf10d963a0592ce1384ab93',
   quality: 'stable',
 }
+const LOCAL_RUNTIME = { ...RUNTIME, processNonce: expect.any(String) as string }
 /** How many views existed when the lease was taken — see the ordering test below. */
 let viewsAtAcquire = -1
 /*
@@ -285,6 +286,9 @@ vi.mock('./workbench-host.js', () => ({
     releaseWorkbenchRuntime(root)
   },
   workbenchHostLog: () => ({ info: () => undefined, warn: () => undefined }),
+  serverDataDir: () => tmpdir(),
+  stopIdleWorkbenchHost: () => Promise.resolve(),
+  workbenchServerPid: () => null,
 }))
 
 /**
@@ -640,7 +644,7 @@ describe('what main will open, and what it refuses', () => {
     // The descriptor is the resolved tree, not the second name for it. Two
     // spellings of one project would otherwise be two projects to every refcount,
     // cache key and storage path that comes after.
-    expect(view.webContents.sent).toEqual([{ ...RUNTIME, projectRoot: ROOT_A }])
+    expect(view.webContents.sent).toEqual([{ ...LOCAL_RUNTIME, projectRoot: ROOT_A }])
   })
 
   it('mints nothing from a cancelled dialog', async () => {
@@ -1082,7 +1086,7 @@ describe('the connection descriptor', () => {
     // queues, and the preload's buffer covers only the window after load.
     expect(view.webContents.sent).toEqual([])
     view.webContents.emit('did-finish-load')
-    expect(view.webContents.sent).toEqual([{ ...RUNTIME, projectRoot: ROOT_A }])
+    expect(view.webContents.sent).toEqual([{ ...LOCAL_RUNTIME, projectRoot: ROOT_A }])
   })
 
   it('answers a pull with the sender own project, not the most recent one', async () => {
@@ -1099,8 +1103,8 @@ describe('the connection descriptor', () => {
      * keyed on "the most recently opened project" passes the friendly version of
      * this test. A is asked *after* B was opened.
      */
-    expect(pull?.({ sender: a.webContents })).toEqual({ ...RUNTIME, projectRoot: ROOT_A })
-    expect(pull?.({ sender: b.webContents })).toEqual({ ...RUNTIME, projectRoot: ROOT_B })
+    expect(pull?.({ sender: a.webContents })).toEqual({ ...LOCAL_RUNTIME, projectRoot: ROOT_A })
+    expect(pull?.({ sender: b.webContents })).toEqual({ ...LOCAL_RUNTIME, projectRoot: ROOT_B })
   })
 
   it('refuses a sender it never minted a surface for', () => {
@@ -1188,8 +1192,8 @@ describe('the shared server lease', () => {
     // One shared server, so both hold the same authority and token — and each
     // still reports its own project, which is what a lookup keyed on "most
     // recently opened" would get wrong.
-    expect(a.webContents.sent).toEqual([{ ...RUNTIME, projectRoot: ROOT_A }])
-    expect(b.webContents.sent).toEqual([{ ...RUNTIME, projectRoot: ROOT_B }])
+    expect(a.webContents.sent).toEqual([{ ...LOCAL_RUNTIME, projectRoot: ROOT_A }])
+    expect(b.webContents.sent).toEqual([{ ...LOCAL_RUNTIME, projectRoot: ROOT_B }])
   })
 
   it('opens a remote project through its tunnel, as a folder path the URI accepts', async () => {
@@ -1205,6 +1209,12 @@ describe('the shared server lease', () => {
       ])
 
       await surface.closeSurface(shell as never, viewId)
+      view.webContents.destroyed = true
+      expect(releaseRemoteWorkbenchRuntime).not.toHaveBeenCalled()
+
+      const place = { host: 'officepc', root: 'C:/api' }
+      await surface.closeWorkbenchProject(place)
+      surface.reopenWorkbenchProject(place)
       expect(releaseRemoteWorkbenchRuntime).toHaveBeenCalledWith('officepc', 'C:/api')
       expect(releaseWorkbenchRuntime).not.toHaveBeenCalled()
     } finally {
@@ -1234,7 +1244,9 @@ describe('the shared server lease', () => {
       await surface.openSurface(shell as never, { projectId: 'local-windows' }, undefined)
       const view = lastView()
       view.webContents.emit('did-finish-load')
-      expect(view.webContents.sent).toEqual([{ ...RUNTIME, projectRoot: '/C:/Users/me/project' }])
+      expect(view.webContents.sent).toEqual([
+        { ...LOCAL_RUNTIME, projectRoot: '/C:/Users/me/project' },
+      ])
     } finally {
       surface.registerWorkbenchHandlers(undefined)
     }
@@ -1273,17 +1285,26 @@ describe('the shared server lease', () => {
     }
   })
 
-  it('releases only when the last surface on that root goes', async () => {
-    const first = await openAt(shell, ROOT_A)
-    const second = await openAt(shell, ROOT_A)
+  it('keeps the lease while surfaces close, and releases it with the project', async () => {
+    const place = { host: LOCAL_HOST, root: root(`lease-${randomUUID()}`) }
+    const first = await openAt(shell, place.root)
+    const firstView = lastView()
+    const second = await openAt(shell, place.root)
+    const secondView = lastView()
 
     await surface.closeSurface(shell as never, first)
+    firstView.webContents.destroyed = true
     // Still open elsewhere, so the project is still open. Releasing here would be
     // the refcount counting views again, one level in.
     expect(releaseWorkbenchRuntime).not.toHaveBeenCalled()
 
     await surface.closeSurface(shell as never, second)
-    expect(releaseWorkbenchRuntime).toHaveBeenCalledWith(ROOT_A)
+    secondView.webContents.destroyed = true
+    expect(releaseWorkbenchRuntime).not.toHaveBeenCalled()
+
+    await surface.closeWorkbenchProject(place)
+    surface.reopenWorkbenchProject(place)
+    expect(releaseWorkbenchRuntime).toHaveBeenCalledWith(place.root)
   })
 
   it('does not leave a lease behind when the window went away mid-acquire', async () => {
@@ -1680,8 +1701,8 @@ describe('bringing an editor back into view', () => {
     expect(shell.sentOn(WORKBENCH_ROW_REVEAL_PUSH_CHANNEL)).toEqual([])
   })
 
-  it('shows the row for a file the transcript opens', async () => {
-    const viewId = await openAt(shell, ROOT_A)
+  it('leaves the row where it is for a file the transcript opens', async () => {
+    await openAt(shell, ROOT_A)
     const view = lastView()
 
     const pending = surface.requestWorkbenchReveal(ROOT_A, {
@@ -1689,7 +1710,7 @@ describe('bringing an editor back into view', () => {
       line: 3,
       column: null,
     })
-    expect(shell.sentOn(WORKBENCH_ROW_REVEAL_PUSH_CHANNEL)).toEqual([{ viewId }])
+    expect(shell.sentOn(WORKBENCH_ROW_REVEAL_PUSH_CHANNEL)).toEqual([])
 
     const [sent] = view.webContents.sent as { requestId: string }[]
     pushes.get(WORKBENCH_REVEAL_RESULT_CHANNEL)?.(
@@ -1722,14 +1743,14 @@ describe('bringing an editor back into view', () => {
     expect(shell.sentOn(WORKBENCH_ROW_REVEAL_PUSH_CHANNEL)).toEqual([])
   })
 
-  it('shows it for a proposed diff, and not for closing one', async () => {
-    const viewId = await openAt(shell, ROOT_A)
+  it('leaves the row where it is for a proposed diff and for closing one', async () => {
+    await openAt(shell, ROOT_A)
     const view = lastView()
     const diff = { approvalId: 'approval-1', path: 'a.ts', before: 'a', proposed: 'b' }
 
     const opened = surface.requestWorkbenchAskDiff(ROOT_A, diff)
     const closed = surface.requestWorkbenchAskDiff(ROOT_A, { ...diff, close: true })
-    expect(shell.sentOn(WORKBENCH_ROW_REVEAL_PUSH_CHANNEL)).toEqual([{ viewId }])
+    expect(shell.sentOn(WORKBENCH_ROW_REVEAL_PUSH_CHANNEL)).toEqual([])
 
     for (const sent of view.webContents.sent as { requestId: string }[]) {
       pushes.get(WORKBENCH_ASK_DIFF_RESULT_CHANNEL)?.(
@@ -1842,5 +1863,111 @@ describe('a native participant under an overlay', () => {
       await setVisible?.({ sender: shell }, { visible: true })
       unregister()
     }
+  })
+})
+
+describe('reopening a closed project from its editor', () => {
+  const freshPlace = (): { host: string; root: string } => ({
+    host: LOCAL_HOST,
+    root: root(`closing-${randomUUID()}`),
+  })
+
+  async function withProjects(
+    place: { host: string; root: string },
+    openProject: ((projectId: string) => void) | undefined,
+    run: () => Promise<void>
+  ): Promise<void> {
+    surface.registerWorkbenchHandlers(
+      undefined,
+      (projectId) => {
+        if (projectId === 'a') return place
+        throw new Error(`No project with id ${projectId}`)
+      },
+      openProject
+    )
+    try {
+      await run()
+    } finally {
+      surface.registerWorkbenchHandlers(undefined)
+      surface.reopenWorkbenchProject(place)
+    }
+  }
+
+  it('still refuses a closed project when nothing reopens it', async () => {
+    const place = freshPlace()
+    await withProjects(place, undefined, async () => {
+      await surface.closeWorkbenchProject(place)
+      await expect(
+        surface.openSurface(shell as never, { projectId: 'a' }, undefined)
+      ).rejects.toThrow(/closed or still closing/)
+      expect(acquireWorkbenchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  it('reopens a closed project through the open callback before the closed guard', async () => {
+    const place = freshPlace()
+    const opened: string[] = []
+    await withProjects(
+      place,
+      (projectId) => {
+        opened.push(projectId)
+        surface.reopenWorkbenchProject(place)
+      },
+      async () => {
+        await surface.closeWorkbenchProject(place)
+        await expect(
+          surface.openSurface(shell as never, { projectId: 'a' }, undefined)
+        ).resolves.toEqual(expect.any(String))
+        expect(opened).toEqual(['a'])
+        expect(acquireWorkbenchRuntime).toHaveBeenCalledWith(place.root)
+      }
+    )
+  })
+
+  it('acquires nothing when the project refuses to reopen', async () => {
+    const place = freshPlace()
+    const views = constructed.length
+    await withProjects(
+      place,
+      () => {
+        throw new Error('This project is closing; retry its close action before reopening it')
+      },
+      async () => {
+        await expect(
+          surface.openSurface(shell as never, { projectId: 'a' }, undefined)
+        ).rejects.toThrow(/retry its close action/)
+        expect(acquireWorkbenchRuntime).not.toHaveBeenCalled()
+        expect(constructed).toHaveLength(views)
+      }
+    )
+  })
+
+  it('runs no lifecycle transition for a window or a project it refuses', async () => {
+    const place = freshPlace()
+    const openProject = vi.fn((_projectId: string) => undefined)
+    await withProjects(place, openProject, async () => {
+      surface.setDetachedAccessPredicate(() => false)
+      await expect(
+        surface.openSurface(shell as never, { projectId: 'a' }, undefined)
+      ).rejects.toThrow(/is open in this window/)
+      surface.setDetachedAccessPredicate(null)
+      await expect(
+        surface.openSurface(shell as never, { projectId: 'missing' }, undefined)
+      ).rejects.toThrow(/No project with id missing/)
+      expect(openProject).not.toHaveBeenCalled()
+    })
+  })
+
+  it('leaves a chooser grant to the closed guard without reopening the project', async () => {
+    const place = freshPlace()
+    const openProject = vi.fn((_projectId: string) => undefined)
+    await withProjects(place, openProject, async () => {
+      const grant = await grantFor(shell, place.root)
+      await surface.closeWorkbenchProject(place)
+      await expect(surface.openSurface(shell as never, { grant }, undefined)).rejects.toThrow(
+        /closed or still closing/
+      )
+      expect(openProject).not.toHaveBeenCalled()
+    })
   })
 })

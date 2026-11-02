@@ -142,6 +142,7 @@
     "nobodyHere": "Nobody is in this conversation. Add an agent to start again.",
     "quoteInMessage": "Quote in message",
     "sendSelection": "Send to chat",
+    "sendSelectionToNote": "Send to note",
     "forwardSelection": "Forward to new chat",
     "forwardReply": "Forward",
     "forwardReplyHint": "Forward this whole reply to a new chat",
@@ -215,7 +216,11 @@
     "working": "working",
     "unread_one": "{{count}} unread update",
     "unread_other": "{{count}} unread updates",
-    "closeTab": "Close {{title}} — the session keeps running",
+    "closeTab": "Close {{title}} and stop its agents and tools",
+    "stopping": "Stopping agents and tools. The project stays open until they have stopped.",
+    "confirmCloseProjectTitle": "Close this project?",
+    "confirmCloseProjectHint": "All agents and tools for this project will stop. The project and conversation history are kept.",
+    "confirmCloseProject": "Stop and close project",
     "closePane": "Close editor group — sessions keep running",
     "close": "Close",
     "closeOthers": "Close Others",
@@ -488,8 +493,8 @@
       "staleEditPreview": "The file changed after this was shown, so the edit was refused. Ask again to work from the current file.",
       "contextCarried": "This task starts from a snapshot of the previous conversation. Agents receive relevant excerpts and can look up the original history.",
       "nearCompaction": "The context window is nearly full — the agent compacts at the mark. A new conversation starts clean.",
-      "projectToolsUnavailable": "This Codex version refused Chorus's project tools, so this agent cannot read the project's terminal or traffic.",
-      "projectToolsUnconfirmed": "Codex cannot be given Chorus's project tools when a conversation is continued or branched. This agent can read the project's terminal and traffic only if its thread was first started with them. If it cannot, start a new conversation."
+      "projectToolsUnavailable": "This Codex version refused Chorus's project tools, so this agent cannot read the project's terminal or traffic, or use its Browser Console.",
+      "projectToolsUnconfirmed": "Codex cannot be given Chorus's project tools when a conversation is continued or branched. This agent can read the project's terminal and traffic, and use its Browser Console, only if its thread was first started with those tools. If it cannot, start a new conversation."
     },
     "omitted": "{{bytes}} bytes omitted — the output was too large to keep",
     "detail": "Details",
@@ -858,7 +863,10 @@
     "closeSurface": "Close this workbench",
     "noFolder": "No folder yet",
     "dismiss": "Dismiss",
-    "opening": "Starting the editor… the first run downloads and unpacks it, which takes a few minutes."
+    "opening": "Starting the editor… the first run downloads and unpacks it, which takes a few minutes.",
+    "serverDegradedTitle": "The editor server can no longer start extensions.",
+    "serverDegradedDetail": "It cannot start new processes, so editor extensions may fail to load, and file watching and source control may stop noticing changes on disk. Editors already open stay open.\n\nReloading the Chorus window or an editor reconnects to this same server and does not fix it. Quit Chorus completely and open it again.",
+    "serverDegradedRefusal": "The editor server can no longer start extensions, so no new editor can open on it. Reloading the Chorus window or an editor reuses the same server. Quit Chorus completely and open it again."
   },
   "rail": {
     "label": "Projects, terminal and settings",
@@ -1058,6 +1066,72 @@
       "storage-unreadable": "Saved passwords could not be read right now.",
       "failed": "That did not work. Try again."
     }
+  },
+  "console": {
+    "toggle": "Console",
+    "toggleLabel": "Show or hide this page's Console",
+    "title": "Console",
+    "levels": "Show levels",
+    "level": {
+      "error": "Errors",
+      "warning": "Warnings",
+      "info": "Info",
+      "log": "Logs",
+      "debug": "Verbose"
+    },
+    "filter": "Filter output",
+    "clear": "Clear",
+    "clearLabel": "Clear the Console for this project. Your command history is kept.",
+    "input": "JavaScript to run in this page",
+    "inputPlaceholder": "Run JavaScript in this page. Enter runs it, Shift+Enter adds a line, Up and Down recall earlier commands.",
+    "empty": "No Console output yet.",
+    "filteredEmpty": "No output matches these levels and this filter.",
+    "unreachable": "The Console could not be reached. Close and reopen it to try again.",
+    "pending": "Running…",
+    "cut": "Shortened",
+    "stack": "Stack",
+    "anonymous": "(anonymous)",
+    "navigated": "Navigated to {{url}}",
+    "crashed": "The page crashed ({{reason}}). Reload it to continue.",
+    "pageCleared": "The page cleared its console. Earlier output is kept here; use Clear to remove it.",
+    "assert": "Assertion failed: {{text}}",
+    "dropped_one": "{{count}} message was not kept because the page logged too fast.",
+    "dropped_other": "{{count}} messages were not kept because the page logged too fast.",
+    "loading": "Loading…",
+    "expandValue": "Show this value's properties",
+    "collapseValue": "Hide this value's properties",
+    "gone": "This value is no longer available: the page changed or the Console was cleared.",
+    "expandUnavailable": "This value cannot be inspected right now.",
+    "moreItems_one": "{{count}} more item is not shown.",
+    "moreItems_other": "{{count}} more items are not shown.",
+    "moreProperties_one": "{{count}} more property is not shown.",
+    "moreProperties_other": "{{count}} more properties are not shown.",
+    "state": {
+      "no-page": "Open a page in this Browser to use its Console.",
+      "connecting": "Connecting to the page…",
+      "ready": "Connected to the page.",
+      "paused": "Paused while DevTools is open for this page. The Console resumes when DevTools closes.",
+      "unavailable": "The Console cannot reach this page right now. Reloading the page may help."
+    },
+    "start": {
+      "no-page": "Open a page in this Browser first.",
+      "connecting": "The page is still connecting. Try again in a moment.",
+      "paused": "DevTools is open for this page. Close it to run commands here.",
+      "unavailable": "The Console cannot reach this page right now.",
+      "busy": "Too many commands are still running. Wait for one to finish.",
+      "invalid": "That command is empty or too long to run."
+    },
+    "status": {
+      "timeout": "Stopped waiting for a result. The page may still finish this command.",
+      "interrupted": "Interrupted: the page changed or closed before it finished.",
+      "failed": "Could not run: {{reason}}"
+    }
+  },
+  "browserConsole": {
+    "unavailable": "The project Browser Console is not available in Chorus right now.",
+    "closed": "This conversation or its project is no longer open in Chorus, so its Browser Console cannot be used from here.",
+    "readOnly": "This project or conversation is read-only, so agents cannot run JavaScript in its Browser. Nothing was run.",
+    "planning": "This conversation is planning, so agents cannot run JavaScript in its Browser until the plan is approved. Nothing was run."
   },
   "browserMenu": {
     "link-new-tab": "Open link in new tab",

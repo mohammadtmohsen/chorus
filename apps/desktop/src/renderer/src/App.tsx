@@ -42,6 +42,7 @@ import {
 } from './workspace/layout.js'
 import { measureTabGeometry, resolveTarget } from './workspace/useTabDrag.js'
 import { reorderSessions } from './workspace/session-row.js'
+import { useShellOverlay } from './workspace/overlay.js'
 import { NOTE_SIZE } from '../../shared/workspace-layout.js'
 import { setRunningPlatform } from './shortcuts.js'
 
@@ -117,6 +118,17 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   /** So the opening session of a launch is opened once, and only on a launch. */
   const autoStarted = useRef(false)
   const carries = useRef(new Map<string, SessionCarry>())
+  const closingChats = useRef(new Map<string, Promise<void>>())
+  const closingProjects = useRef(new Map<string, Promise<void>>())
+  const closingWindows = useRef(new Map<string, Promise<void>>())
+  const retainedCloseIds = useRef(new Set<string>())
+  const closingProjectIds = useRef(new Set<string>())
+  const projectCloseVersions = useRef(new Map<string, number>())
+  const [stoppingChats, setStoppingChats] = useState<readonly string[]>([])
+  const [stoppingProjects, setStoppingProjects] = useState<readonly string[]>([])
+  const stopping = stoppingChats.length > 0 || stoppingProjects.length > 0
+  // Native editor views otherwise cover the floating close-pending message.
+  useShellOverlay(stopping)
   /**
    * A way to read each mounted session's draft, lent by the session itself.
    *
@@ -126,7 +138,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   const draftReaders = useRef(new Map<string, () => string>())
   /** The room somebody asked to end, and what ending it would throw away. */
   const [confirmingEnd, setConfirmingEnd] = useState<{
-    readonly conversationId: string
+    readonly target: { kind: 'conversation'; id: string } | { kind: 'project'; id: string }
     readonly working: readonly string[]
     readonly decisions: number
     readonly draft: boolean
@@ -913,55 +925,127 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
     [updateSessions, persistLayout]
   )
 
-  /**
-   * Ends the room, with nothing asked and nothing checked.
-   *
-   * Split from `endNow` below because **restart already asks its own question**.
-   * `startIn`'s `replacing` runs this, so gating this function instead would put
-   * two dialogs in front of one gesture — `ConfirmRestart` and then the end
-   * confirmation, for the same conversation, one after the other.
-   */
+  const removeClosedProject = useCallback(
+    (projectId: string) => {
+      projectCloseVersions.current.set(
+        projectId,
+        (projectCloseVersions.current.get(projectId) ?? 0) + 1
+      )
+      const removed = sessionsRef.current.filter((session) => session.projectId === projectId)
+      for (const session of removed) {
+        closedIds.current.add(session.conversationId)
+        retainedCloseIds.current.delete(session.conversationId)
+        carries.current.delete(session.conversationId)
+        useWorkspaceStore.getState().removeSession(session.conversationId)
+      }
+      updateSessions((current) => current.filter((session) => session.projectId !== projectId))
+      closingProjectIds.current.delete(projectId)
+      useWorkspaceStore.getState().clearDetached(projectId)
+      useWorkspaceStore.getState().removeProject(projectId)
+      detachedVisibility.current.delete(projectId)
+    },
+    [updateSessions]
+  )
+
+  const closeDetachedProject = useCallback(
+    (projectId: string): Promise<void> => {
+      if (role.kind !== 'detached' || role.projectId !== projectId) return Promise.resolve()
+      const existing = closingWindows.current.get(projectId)
+      if (existing !== undefined) return existing
+      const work = window.chorus
+        .closeEmptyProject({ projectId })
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          closingWindows.current.delete(projectId)
+          throw error
+        })
+      closingWindows.current.set(projectId, work)
+      return work
+    },
+    [role]
+  )
+
+  const finishCloseProject = useCallback(
+    (projectId: string): Promise<void> => {
+      const existing = closingProjects.current.get(projectId)
+      if (existing !== undefined) return existing
+      const closing = sessionsRef.current.filter((session) => session.projectId === projectId)
+      for (const session of closing) retainedCloseIds.current.add(session.conversationId)
+      closingProjectIds.current.add(projectId)
+      setStoppingProjects((current) => [...current, projectId])
+      setError(null)
+      const work = Promise.resolve()
+        .then(async () => {
+          await window.chorus.closeProject({ projectId })
+          removeClosedProject(projectId)
+          await closeDetachedProject(projectId)
+          await refreshProjects()
+        })
+        .finally(() => {
+          closingProjects.current.delete(projectId)
+          closingProjectIds.current.delete(projectId)
+          setStoppingProjects((current) => current.filter((id) => id !== projectId))
+        })
+      closingProjects.current.set(projectId, work)
+      void work.catch(fail(setError))
+      return work
+    },
+    [refreshProjects, removeClosedProject, closeDetachedProject]
+  )
+
   const finishEnd = useCallback(
     (conversationId: string): Promise<void> => {
-      const cancelling = pendingRestarts.current.cancelRestartOf(conversationId)
-      closedIds.current.add(conversationId)
-      const ending = sessionsRef.current.find((s) => s.conversationId === conversationId)
-      carries.current.delete(conversationId)
-      updateSessions((current) =>
-        current.filter((session) => session.conversationId !== conversationId)
+      const existing = closingChats.current.get(conversationId)
+      if (existing !== undefined) return existing
+      const ending = sessionsRef.current.find(
+        (session) => session.conversationId === conversationId
       )
-      useWorkspaceStore.getState().removeSession(conversationId)
-      /*
-       * The project's tab closes only when its last conversation has gone, and
-       * that decision is here because this is the layer that can see the others.
-       *
-       * Ending one of three conversations used to close the tab it was in,
-       * because the tab was the conversation. Under project tabs the same call
-       * would take the other two off screen while they carried on running in
-       * main — the sharpest form of the UI disagreeing with what is actually
-       * alive.
-       */
-      const emptiedProject =
+      if (
         ending !== undefined &&
-        !sessionsRef.current.some((session) => session.projectId === ending.projectId)
-          ? ending.projectId
-          : null
-      if (emptiedProject !== null && role.kind !== 'detached') {
-        useWorkspaceStore.getState().removeProject(emptiedProject)
+        !sessionsRef.current.some(
+          (session) =>
+            session.projectId === ending.projectId && session.conversationId !== conversationId
+        )
+      ) {
+        return finishCloseProject(ending.projectId)
       }
-      const closed = Promise.all([
-        cancelling,
-        window.chorus.closeConversation({ conversationId }),
-      ]).then(async () => {
-        if (emptiedProject !== null && role.kind === 'detached') {
-          await window.chorus.closeEmptyProject({ projectId: emptiedProject })
-        }
-      })
-      void closed.catch(fail(setError))
-      void refreshProjects()
-      return closed
+      retainedCloseIds.current.add(conversationId)
+      setStoppingChats((current) => [...current, conversationId])
+      setError(null)
+      const work = Promise.resolve()
+        .then(async () => {
+          await Promise.all([
+            pendingRestarts.current.cancelRestartOf(conversationId),
+            window.chorus.closeConversation({ conversationId }),
+          ])
+          if (
+            ending !== undefined &&
+            !sessionsRef.current.some(
+              (session) =>
+                session.projectId === ending.projectId && session.conversationId !== conversationId
+            )
+          ) {
+            await finishCloseProject(ending.projectId)
+            return
+          }
+          closedIds.current.add(conversationId)
+          retainedCloseIds.current.delete(conversationId)
+          carries.current.delete(conversationId)
+          updateSessions((current) =>
+            current.filter((session) => session.conversationId !== conversationId)
+          )
+          useWorkspaceStore.getState().removeSession(conversationId)
+          await refreshProjects()
+        })
+        .finally(() => {
+          closingChats.current.delete(conversationId)
+          setStoppingChats((current) => current.filter((id) => id !== conversationId))
+        })
+      closingChats.current.set(conversationId, work)
+      void work.catch(fail(setError))
+      return work
     },
-    [updateSessions, refreshProjects, role.kind]
+    [updateSessions, refreshProjects, finishCloseProject]
   )
 
   /**
@@ -1005,14 +1089,66 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
    */
   const endNow = useCallback(
     (conversationId: string) => {
+      const ending = sessionsRef.current.find(
+        (session) => session.conversationId === conversationId
+      )
+      if (
+        ending !== undefined &&
+        !sessionsRef.current.some(
+          (session) =>
+            session.projectId === ending.projectId && session.conversationId !== conversationId
+        )
+      )
+        return
       const losing = wouldLose(conversationId)
       if (losing === null) {
         void finishEnd(conversationId)
         return
       }
-      setConfirmingEnd({ conversationId, ...losing })
+      setConfirmingEnd({ target: { kind: 'conversation', id: conversationId }, ...losing })
     },
     [wouldLose, finishEnd]
+  )
+
+  const closeProjectNow = useCallback(
+    (projectId: string) => {
+      if (closingProjects.current.has(projectId)) return
+      const losses = sessionsRef.current
+        .filter((session) => session.projectId === projectId)
+        .flatMap((session) => {
+          const loss = wouldLose(session.conversationId)
+          return loss === null ? [] : [loss]
+        })
+      if (losses.length === 0) {
+        void finishCloseProject(projectId)
+        return
+      }
+      setConfirmingEnd({
+        target: { kind: 'project', id: projectId },
+        working: [...new Set(losses.flatMap((loss) => loss.working))],
+        decisions: losses.reduce((total, loss) => total + loss.decisions, 0),
+        draft: losses.some((loss) => loss.draft),
+      })
+    },
+    [wouldLose, finishCloseProject]
+  )
+
+  useEffect(
+    () =>
+      window.chorus.onProjectClosed(({ projectId }) => {
+        removeClosedProject(projectId)
+        void closeDetachedProject(projectId).catch(fail(setError))
+        void refreshProjects()
+      }),
+    [removeClosedProject, refreshProjects, closeDetachedProject]
+  )
+
+  useEffect(
+    () =>
+      window.chorus.onProjectCloseRequested(({ projectId }) => {
+        if (role.kind === 'detached' && role.projectId === projectId) closeProjectNow(projectId)
+      }),
+    [role, closeProjectNow]
   )
 
   /*
@@ -1037,6 +1173,9 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
     sessionsRef,
     revision: sessionsRevision,
     closedIds,
+    retainedCloseIds,
+    closingProjectIds,
+    projectCloseVersions,
     updateSessions,
     finishEnd,
     refreshProjects,
@@ -1310,7 +1449,8 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   )
 
   const keepCarry = useCallback((conversationId: string, carry: SessionCarry) => {
-    carries.current.set(conversationId, trimCarry(carry))
+    if (!closedIds.current.has(conversationId))
+      carries.current.set(conversationId, trimCarry(carry))
   }, [])
 
   // Stable, because `Session` registers in an effect that depends on it: a fresh
@@ -1631,6 +1771,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
       */}
       {confirmingEnd !== null && (
         <ConfirmEndSession
+          project={confirmingEnd.target.kind === 'project'}
           working={confirmingEnd.working.join(', ')}
           decisions={confirmingEnd.decisions}
           draft={confirmingEnd.draft}
@@ -1638,9 +1779,10 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
             setConfirmingEnd(null)
           }}
           onConfirm={() => {
-            const { conversationId } = confirmingEnd
+            const { target } = confirmingEnd
             setConfirmingEnd(null)
-            void finishEnd(conversationId)
+            if (target.kind === 'project') void finishCloseProject(target.id)
+            else void finishEnd(target.id)
           }}
         />
       )}
@@ -1792,12 +1934,19 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
             }}
           />
         )}
+        {stopping && (
+          <p className="notice notice--workspace notice--closing" role="status">
+            {t('workspace.stopping')}
+          </p>
+        )}
         <DetachedStage
           sessions={sessions}
           projects={projects}
           onStartInProject={startIn}
           onRename={rename}
           onEnd={endNow}
+          onCloseProject={closeProjectNow}
+          closingProjects={stoppingProjects}
           onCommitLayout={commitLayout}
           onReorderSessions={moveSession}
           onRenameProject={renameProject}
@@ -1882,6 +2031,11 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
         />
       )}
 
+      {stopping && (
+        <p className="notice notice--workspace notice--closing" role="status">
+          {t('workspace.stopping')}
+        </p>
+      )}
       <Workspace
         sessions={sessions}
         starting={starting}
@@ -1889,6 +2043,8 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
         onStartInProject={startIn}
         onRename={rename}
         onEnd={endNow}
+        onCloseProject={closeProjectNow}
+        closingProjects={stoppingProjects}
         onCommitLayout={commitLayout}
         onReorderSessions={moveSession}
         onMoveProject={(projectId, beforeId) => {

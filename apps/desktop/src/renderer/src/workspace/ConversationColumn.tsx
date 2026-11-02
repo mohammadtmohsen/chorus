@@ -55,6 +55,9 @@ export function ConversationColumn(props: {
 
   const tabId = props.group.activeTabId ?? props.group.tabs[0] ?? null
   const session = props.sessions.find((candidate) => candidate.conversationId === tabId)
+  const canEnd = props.sessions.some(
+    (candidate) => candidate.projectId === props.projectId && candidate.conversationId !== tabId
+  )
 
   /*
    * What a drop here would do, for the highlight. Read off the live drag rather
@@ -210,18 +213,20 @@ export function ConversationColumn(props: {
                     room with no door. It goes through `App`'s confirmation
                     dialog for the same reason the card's End Session does.
                   */}
-                  <button
-                    type="button"
-                    className="conversation-dock-tab-close"
-                    aria-label={t('conversation.endTitled', { title: session.title })}
-                    title={t('conversation.endTitled', { title: session.title })}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      props.onEndConversation(session.conversationId)
-                    }}
-                  >
-                    <span aria-hidden="true">×</span>
-                  </button>
+                  {canEnd && (
+                    <button
+                      type="button"
+                      className="conversation-dock-tab-close"
+                      aria-label={t('conversation.endTitled', { title: session.title })}
+                      title={t('conversation.endTitled', { title: session.title })}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        props.onEndConversation(session.conversationId)
+                      }}
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  )}
                 </>
               )}
             </div>

@@ -113,7 +113,8 @@ export interface LayoutViewProps {
   readonly onEndConversation: (conversationId: string) => void
   readonly onActivate: (paneId: string, conversationId: string) => void
   readonly onFocus: (paneId: string) => void
-  readonly onClose: (paneId: string, conversationId: string) => void
+  readonly onClose: (paneId: string, projectId: string) => void
+  readonly closingProjects?: readonly string[]
   readonly onReorder: (paneId: string, fromIndex: number, slotBefore: number) => void
   readonly onRename: (conversationId: string, title: string) => void
   /**

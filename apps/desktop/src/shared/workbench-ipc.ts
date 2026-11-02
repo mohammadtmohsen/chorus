@@ -79,6 +79,7 @@ export const WorkbenchConnection = z.object({
   connectionToken: z.string().min(1),
   commit: z.string().regex(/^[0-9a-f]{40}$/),
   quality: z.string().min(1),
+  processNonce: z.uuid().optional(),
   /**
    * Present only when Workspace Trust is waived, and there is no value that says
    * "enforced" — the absence is what says it.
@@ -137,6 +138,11 @@ export function remotePath(path: string): string {
 }
 
 export const WORKBENCH_CONNECTION_CHANNEL = 'workbench:connection'
+export const WORKBENCH_PROCESS_REPORT_CHANNEL = 'workbench:process:report'
+export const WORKBENCH_PROCESS_CLOSE_CHANNEL = 'workbench:process:close'
+export const WORKBENCH_PROCESS_CLOSE_RESULT_CHANNEL = 'workbench:process:close:result'
+
+export type WorkbenchProcessCloseResult = readonly number[] | { readonly refusal: 'unsaved' }
 
 /**
  * Whether the window that currently holds this surface has focus.
@@ -1014,6 +1020,10 @@ export interface ChorusWorkbenchApi {
     handler: (scope: string, insert: Record<string, string>, remove: readonly string[]) => void
   ) => () => void
   readonly onStorageFlushRequest: (handler: () => Promise<void>) => void
+  readonly reportProcesses: (terminalPids: readonly number[]) => Promise<void>
+  readonly onProcessCloseRequest: (
+    handler: (phase: 'prepare' | 'stop') => Promise<WorkbenchProcessCloseResult>
+  ) => void
   /**
    * Receives an OAuth callback main has decided belongs to this surface.
    *

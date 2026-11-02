@@ -343,12 +343,22 @@ describe('what the strip says about the state', () => {
 describe('a forecast that has run out before the work has', () => {
   const partial = [opened(), started(0), revised(0, [step('a', 'done', 10), step('b', 'active')])]
 
-  it('says the remaining steps have no estimate, while working and while idle', () => {
-    const working = taskModel(strip(snapshotOf(partial, 12)))
+  it('has no estimate for the remaining steps until a pace exists, while working and while idle', () => {
+    const working = taskModel(strip(snapshotOf(partial, 0)))
     expect(working.forecast).toEqual({ kind: 'unestimated' })
     expect(working.progress).toEqual({ done: 1, total: 2 })
-    const idle = taskModel(strip(snapshotOf([...partial, completed(12)], 14)))
+    const idle = taskModel(strip(snapshotOf([...partial, completed(0)], 2)))
     expect(idle.forecast).toEqual({ kind: 'unestimated' })
+  })
+
+  it('fills the remaining steps from pace once the agent has worked', () => {
+    expect(taskModel(strip(snapshotOf(partial, 12))).forecast).toMatchObject({
+      kind: 'remaining',
+      pointMs: 12 * MINUTE,
+      paced: true,
+      rough: true,
+      partial: false,
+    })
   })
 
   it('reports an overrun of estimated work beside unestimated steps as a partial overrun', () => {

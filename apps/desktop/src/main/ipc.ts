@@ -82,11 +82,14 @@ import type { ChorusRuntime } from './runtime.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { readSettings, writeSettings, type Settings } from './settings.js'
 import { detachedWindowOf, raise } from './detached-windows.js'
+import { PROJECT_CLOSED_PUSH_CHANNEL } from '../shared/detached-window-ipc.js'
 import { agentKeyIsSet, clearAgentKey, writeAgentKey } from './agent-secrets.js'
 import { invalidateCompletionCredential } from './completion-client.js'
 import { applyTheme } from './theme.js'
 import { previewFile, stashFile } from './stash.js'
 import {
+  closeWorkbenchProject,
+  prepareWorkbenchProjectClose,
   requestWorkbenchReveal,
   requestWorkbenchSnapshot,
   setWorkbenchContextSink,
@@ -668,10 +671,21 @@ export function buildHandlers(
     'app:fetchNoteImage': (request: { address: string }) =>
       fetchNoteImage(app.getPath('userData'), request.address),
 
+    'project:close': async (request: { projectId: string }) => {
+      const project = runtime.projects.get(request.projectId)
+      if (project === null) throw new Error('That project is no longer registered.')
+      const place = { host: project.host, root: project.canonicalRoot }
+      await prepareWorkbenchProjectClose(place)
+      await runtime.closeProject(request.projectId, () => closeWorkbenchProject(place))
+      for (const window of shellWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send(PROJECT_CLOSED_PUSH_CHANNEL, { projectId: request.projectId })
+        }
+      }
+      return OK
+    },
+
     'conversation:close': async (request: { conversationId: string }) => {
-      // Before the close, while the conversation still resolves: a watcher held
-      // past the session's end keeps a recursive FSEvents subscription alive for
-      // a repository nothing is looking at.
       await runtime.closeConversation(request.conversationId)
       return OK
     },

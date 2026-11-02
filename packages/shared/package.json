@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./process-tree": {
+      "types": "./dist/process-tree.d.ts",
+      "default": "./dist/process-tree.js"
     }
   },
   "scripts": {

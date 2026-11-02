@@ -55,6 +55,9 @@ export interface ConversationStartsDeps {
   readonly sessionsRef: RefObject<SessionInfo[]>
   readonly revision: RefObject<number>
   readonly closedIds: RefObject<Set<string>>
+  readonly retainedCloseIds?: RefObject<Set<string>>
+  readonly closingProjectIds?: RefObject<Set<string>>
+  readonly projectCloseVersions?: RefObject<Map<string, number>>
   readonly updateSessions: (change: (current: SessionInfo[]) => SessionInfo[]) => void
   readonly finishEnd: (conversationId: string) => Promise<void>
   readonly refreshProjects: () => Promise<unknown>
@@ -113,6 +116,9 @@ export function useConversationStarts(deps: ConversationStartsDeps): {
     sessionsRef,
     revision,
     closedIds,
+    retainedCloseIds,
+    closingProjectIds,
+    projectCloseVersions,
     updateSessions,
     finishEnd,
     refreshProjects,
@@ -139,7 +145,14 @@ export function useConversationStarts(deps: ConversationStartsDeps): {
           if (!listed.has(id)) closedIds.current.delete(id)
         }
       }
-      const visible = scoped.filter((session) => !closedIds.current.has(session.conversationId))
+      const held = sessionsRef.current.filter(
+        (session) =>
+          retainedCloseIds?.current.has(session.conversationId) === true &&
+          !listed.has(session.conversationId)
+      )
+      const visible = [...scoped, ...held].filter(
+        (session) => !closedIds.current.has(session.conversationId)
+      )
       const latest = new Map<string, SessionInfo>(
         visible.map((session) => [session.conversationId, session])
       )
@@ -190,7 +203,16 @@ export function useConversationStarts(deps: ConversationStartsDeps): {
         .catch(reportError)
     }
     read()
-  }, [role, sessionsRef, revision, closedIds, updateSessions, reportError, forgetDetached])
+  }, [
+    role,
+    sessionsRef,
+    revision,
+    closedIds,
+    retainedCloseIds,
+    updateSessions,
+    reportError,
+    forgetDetached,
+  ])
 
   useEffect(() => window.chorus.onConversationsChanged(reconcile), [reconcile])
 
@@ -253,7 +275,9 @@ export function useConversationStarts(deps: ConversationStartsDeps): {
 
   const startIn = useCallback(
     (projectId: string, options: StartOptions = {}) => {
-      if (options.signal?.aborted === true) return
+      if (options.signal?.aborted === true || closingProjectIds?.current.has(projectId) === true)
+        return
+      const closeVersion = projectCloseVersions?.current.get(projectId) ?? 0
       const source = options.replacing
       if (
         source !== undefined &&
@@ -314,7 +338,11 @@ export function useConversationStarts(deps: ConversationStartsDeps): {
           (begun) => {
             pendingBegins.current -= 1
             createdId = begun.conversationId
-            if (options.signal?.aborted === true) {
+            if (
+              options.signal?.aborted === true ||
+              closingProjectIds?.current.has(projectId) === true ||
+              (projectCloseVersions?.current.get(projectId) ?? 0) !== closeVersion
+            ) {
               cancel()
               releaseHeldRead()
               return null
@@ -405,6 +433,8 @@ export function useConversationStarts(deps: ConversationStartsDeps): {
     },
     [
       profileId,
+      closingProjectIds,
+      projectCloseVersions,
       closedIds,
       sessionsRef,
       updateSessions,

@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChorusRuntime } from './runtime.js'
 import { DEFAULT_SETTINGS, writeSettings } from './settings.js'
-import { readOpenProjects } from './open-projects.js'
+import { readOpenProjects, writeOpenProjects, type OpenConversation } from './open-projects.js'
 
 class GatedAdapter extends FakeAdapter {
   starts = 0
@@ -541,7 +541,7 @@ describe('closing a room that is still starting', () => {
     expect(await runtime.awaitStart(begun.conversationId)).toEqual({ status: 'cancelled' })
   })
 
-  it('closes an agent already started without waiting for the slow one', async () => {
+  it('closes started agents and waits for late startup cleanup', async () => {
     codex.hold()
     const begun = runtime.beginConversation({ projectId, agents: BOTH })
     await vi.waitFor(() => {
@@ -550,13 +550,14 @@ describe('closing a room that is still starting', () => {
     await turn()
     await turn()
 
-    await runtime.closeConversation(begun.conversationId)
+    const closing = runtime.closeConversation(begun.conversationId)
     await vi.waitFor(() => {
       expect(claude.sessions[0]?.closed).toBe(true)
     })
     expect(codex.sessions).toHaveLength(0)
 
     codex.release()
+    await closing
     await vi.waitFor(() => {
       expect(codex.sessions[0]?.closed).toBe(true)
     })
@@ -569,9 +570,12 @@ describe('closing a room that is still starting', () => {
     claude.hold()
     const pending = runtime.startConversation({ projectId, agents: ['claude'] })
     const conversationId = runtime.activeSessions()[0]?.conversationId ?? ''
+    const refused = expect(pending).rejects.toThrow(/closed before its agents started/)
 
-    await runtime.closeConversation(conversationId)
-    await expect(pending).rejects.toThrow(/closed before its agents started/)
+    const closing = runtime.closeConversation(conversationId)
+    claude.release()
+    await closing
+    await refused
   })
 
   it('cancels the starting rooms of a project that is forgotten', async () => {
@@ -693,5 +697,232 @@ describe('shutting down while a room is starting', () => {
     await runtime.close()
     shutDown = true
     expect(Date.now() - began).toBeLessThan(2_900)
+  })
+
+  it('skips the remaining saved rooms instead of failing the restore once quit begins', async () => {
+    const saved = (conversationId: string): OpenConversation => ({
+      conversationId,
+      agents: ['claude'],
+      profileId: 'read-only',
+      title: conversationId,
+      sessionRefs: {},
+      lastSeenSeq: 0,
+      draft: '',
+    })
+    writeOpenProjects(dataPath, {
+      projects: [{ projectId, conversations: [saved('conv-1'), saved('conv-2')] }],
+      workspace: null,
+    })
+    claude.hold()
+    const restoring = runtime.restoreOpenConversations()
+    await vi.waitFor(() => {
+      expect(claude.starts).toBe(1)
+    })
+
+    const closing = runtime.close()
+    shutDown = true
+    claude.release()
+
+    await expect(restoring).resolves.toMatchObject({ sessions: [] })
+    await closing
+    expect(claude.starts).toBe(1)
+  })
+})
+
+describe('confirmed chat and project closure', () => {
+  it('keeps a closing chat visible and single-flights until the provider exits', async () => {
+    claude.holdClose()
+    const room = await runtime.startConversation({ projectId, agents: ['claude'] })
+    const closing = runtime.closeConversation(room.conversationId)
+    expect(runtime.closeConversation(room.conversationId)).toBe(closing)
+    await turn()
+    expect(
+      runtime.activeSessions().some((session) => session.conversationId === room.conversationId)
+    ).toBe(true)
+    await expect(runtime.send(room.conversationId, 'late message')).rejects.toThrow(/closing/)
+    claude.releaseClose()
+    await closing
+    expect(runtime.activeSessions()).toEqual([])
+    expect(claude.sessions[0]?.closed).toBe(true)
+  })
+
+  it('retains failed process cleanup for a retry', async () => {
+    const room = await runtime.startConversation({ projectId, agents: ['claude'] })
+    const session = claude.sessions[0]
+    if (session === undefined) throw new Error('Missing fake session')
+    const close = session.close.bind(session)
+    let refuse = true
+    session.close = async () => {
+      if (refuse) throw new Error('owned child is still running')
+      await close()
+    }
+    await expect(runtime.closeConversation(room.conversationId)).rejects.toThrow(
+      /owned child is still running/
+    )
+    expect(runtime.activeSessions().map((session) => session.conversationId)).toContain(
+      room.conversationId
+    )
+    refuse = false
+    await runtime.closeConversation(room.conversationId)
+    expect(runtime.activeSessions()).toEqual([])
+  })
+
+  it('keeps history and waits for editor cleanup before allowing a project to reopen', async () => {
+    const room = await runtime.startConversation({ projectId, agents: ['claude'] })
+    let release: () => void = () => undefined
+    const editorExit = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const closing = runtime.closeProject(projectId, () => editorExit)
+    expect(() => runtime.beginConversation({ projectId, agents: ['claude'] })).toThrow(/closing/)
+    await turn()
+    release()
+    await closing
+    expect(runtime.projects.get(projectId)).not.toBeNull()
+    expect(runtime.store.read(room.conversationId).length).toBeGreaterThan(0)
+    expect(runtime.activeSessions()).toEqual([])
+    await runtime.startConversation({ projectId, agents: ['claude'] })
+    expect(runtime.activeSessions()).toHaveLength(1)
+  })
+
+  it('retains the project close barrier after editor shutdown fails', async () => {
+    await runtime.startConversation({ projectId, agents: ['claude'] })
+    await expect(
+      runtime.closeProject(projectId, () =>
+        Promise.reject(new Error('extension host still running'))
+      )
+    ).rejects.toThrow(/extension host still running/)
+    expect(() => runtime.beginConversation({ projectId, agents: ['claude'] })).toThrow(/closing/)
+    await runtime.closeProject(projectId, () => Promise.resolve())
+    await runtime.startConversation({ projectId, agents: ['claude'] })
+    expect(runtime.activeSessions()).toHaveLength(1)
+  })
+
+  it('reopens a closed project for its editor without starting a chat', async () => {
+    await runtime.startConversation({ projectId, agents: ['claude'] })
+    await runtime.closeProject(projectId, () => Promise.resolve())
+    const alreadyClosed = vi.fn(() => Promise.resolve())
+    await runtime.closeProject(projectId, alreadyClosed)
+    expect(alreadyClosed).not.toHaveBeenCalled()
+    const starts = claude.starts
+    const listed = runtime.listConversations().length
+
+    runtime.openProject(projectId)
+
+    expect(claude.starts).toBe(starts)
+    expect(runtime.activeSessions()).toEqual([])
+    expect(runtime.listConversations()).toHaveLength(listed)
+    const reopenedCleanup = vi.fn(() => Promise.resolve())
+    await runtime.closeProject(projectId, reopenedCleanup)
+    expect(reopenedCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses to reopen a project while its close is pending or has failed', async () => {
+    await runtime.startConversation({ projectId, agents: ['claude'] })
+    let release: () => void = () => undefined
+    const editorExit = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const closing = runtime.closeProject(projectId, () => editorExit)
+    expect(() => {
+      runtime.openProject(projectId)
+    }).toThrow(/retry its close action/)
+    await turn()
+    release()
+    await closing
+    runtime.openProject(projectId)
+
+    await runtime.startConversation({ projectId, agents: ['claude'] })
+    await expect(
+      runtime.closeProject(projectId, () =>
+        Promise.reject(new Error('extension host still running'))
+      )
+    ).rejects.toThrow(/extension host still running/)
+    expect(() => {
+      runtime.openProject(projectId)
+    }).toThrow(/retry its close action/)
+    await runtime.closeProject(projectId, () => Promise.resolve())
+    expect(() => {
+      runtime.openProject(projectId)
+    }).not.toThrow()
+  })
+
+  it('validates the project and the app before reopening anything', async () => {
+    expect(() => {
+      runtime.openProject('no-such-project')
+    }).toThrow()
+    await runtime.close()
+    shutDown = true
+    expect(() => {
+      runtime.openProject(projectId)
+    }).toThrow(/shutting down/)
+  })
+
+  it('keeps a closed project’s messages and reopens the same conversation, before and after a restart', async () => {
+    const room = await runtime.startConversation({ projectId, agents: ['claude'] })
+    const said = (type: 'user.message' | 'agent.message.completed'): string[] =>
+      runtime.store
+        .read(room.conversationId)
+        .flatMap(({ payload }) =>
+          (payload.type === 'user.message' || payload.type === 'agent.message.completed') &&
+          payload.type === type
+            ? [payload.text]
+            : []
+        )
+    const listed = (): { projectId: string; open: boolean } | undefined =>
+      runtime
+        .listConversations()
+        .find((conversation) => conversation.conversationId === room.conversationId)
+
+    await runtime.send(room.conversationId, 'Fix the parser crash.')
+    const session = claude.sessions[0]
+    if (session === undefined) throw new Error('Missing fake session')
+    session.emit({ type: 'turn.started', turnRef: 't1' })
+    session.emit({ type: 'message.completed', itemRef: 'm1', text: 'Patched the parser.' })
+    session.emit({ type: 'turn.completed', turnRef: 't1', status: 'completed' })
+    await vi.waitFor(() => {
+      expect(said('agent.message.completed')).toContain('Patched the parser.')
+    })
+    expect(said('user.message')).toContain('Fix the parser crash.')
+
+    await runtime.closeProject(projectId, () => Promise.resolve())
+
+    expect(runtime.activeSessions()).toEqual([])
+    expect(runtime.projects.get(projectId)).not.toBeNull()
+    expect(listed()).toMatchObject({ projectId, open: false })
+    expect(said('user.message')).toContain('Fix the parser crash.')
+    expect(said('agent.message.completed')).toContain('Patched the parser.')
+
+    const starts = claude.starts
+    const reopened = await runtime.reopenConversation(room.conversationId)
+    expect(reopened).toMatchObject({ conversationId: room.conversationId, projectId })
+    expect([...reopened.participants].sort()).toEqual([...BOTH].sort())
+    expect(claude.starts).toBe(starts + 1)
+    expect(listed()).toMatchObject({ projectId, open: true })
+    expect(said('user.message')).toContain('Fix the parser crash.')
+    expect(said('agent.message.completed')).toContain('Patched the parser.')
+
+    await runtime.closeProject(projectId, () => Promise.resolve())
+    await runtime.close()
+    claude = new GatedAdapter({ id: 'claude' })
+    codex = new GatedAdapter({ id: 'codex' })
+    runtime = ChorusRuntime.open(
+      dataPath,
+      silent,
+      new Map<AgentId, AgentAdapter>([
+        ['claude', claude],
+        ['codex', codex],
+      ])
+    )
+
+    expect(runtime.projects.get(projectId)).not.toBeNull()
+    expect(listed()).toMatchObject({ projectId, open: false })
+    expect(said('user.message')).toContain('Fix the parser crash.')
+    expect(said('agent.message.completed')).toContain('Patched the parser.')
+    const restored = await runtime.reopenConversation(room.conversationId)
+    expect(restored).toMatchObject({ conversationId: room.conversationId, projectId })
+    expect([...restored.participants].sort()).toEqual([...BOTH].sort())
+    expect(said('user.message')).toContain('Fix the parser crash.')
+    expect(said('agent.message.completed')).toContain('Patched the parser.')
   })
 })

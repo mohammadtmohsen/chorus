@@ -22,6 +22,7 @@ import { IWebviewService } from '@codingame/monaco-vscode-api/vscode/vs/workbenc
 import type { IWebview } from '@codingame/monaco-vscode-api/vscode/vs/workbench/contrib/webview/browser/webview'
 import type { IMouseWheelEvent } from '@codingame/monaco-vscode-api/vscode/vs/base/browser/mouseEvent'
 import { prepareWorkbench } from './services.js'
+import { serveWorkbenchLifecycle } from './lifecycle.js'
 import { reportEditorContext } from './context.js'
 import { serveWorkbenchEdits, serveWorkbenchReveal, serveWorkbenchSnapshot } from './edit.js'
 import { serveAskDiff } from './ask-diff.js'
@@ -374,6 +375,7 @@ async function main(): Promise<void> {
     await flushWorkbenchStorage()
   })
   await initialize(services, container, options, env)
+  await serveWorkbenchLifecycle(connection)
 
   /*
    * After `initialize`, because the file service does not exist before it. Not

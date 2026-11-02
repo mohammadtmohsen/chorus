@@ -108,6 +108,16 @@ export function isBrowserPage(contents: WebContents): boolean {
   return browserPages.has(contents)
 }
 
+export interface BrowserConsoleHooks {
+  readonly mounted: (source: {
+    readonly browserId: string
+    readonly projectId: string
+    readonly owner: WebContents
+    readonly contents: WebContents
+  }) => void
+  readonly released: (contents: WebContents) => void
+}
+
 export interface BrowserSurfaceDeps {
   readonly settings: BrowserSettingsStore
   readonly vault: BrowserVault
@@ -115,6 +125,7 @@ export interface BrowserSurfaceDeps {
   readonly mainOwner: () => WebContents | null
   readonly downloads: { readonly expect: (contents: WebContents) => void }
   readonly deliver: (owner: WebContents, push: BrowserPush) => void
+  readonly console?: BrowserConsoleHooks
 }
 
 interface PendingCredential {
@@ -948,6 +959,14 @@ export class BrowserSurfaces {
     this.guard(contents, record)
     this.observe(contents, record)
     this.listen(contents, record)
+    if (record.scope.kind === 'project') {
+      this.deps.console?.mounted({
+        browserId: record.id,
+        projectId: record.scope.projectId,
+        owner: record.owner,
+        contents,
+      })
+    }
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     view.setVisible(false)
     parent.contentView.addChildView(view)
@@ -1012,6 +1031,7 @@ export class BrowserSurfaces {
     record.unregister?.()
     record.unregister = null
     if (view === null) return
+    if (record.scope.kind === 'project') this.deps.console?.released(view.webContents)
     const parent = record.owner.isDestroyed() ? null : BrowserWindow.fromWebContents(record.owner)
     if (parent !== null && !parent.isDestroyed()) parent.contentView.removeChildView(view)
     if (!view.webContents.isDestroyed()) view.webContents.close()

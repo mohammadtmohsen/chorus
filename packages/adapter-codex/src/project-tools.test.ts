@@ -22,6 +22,27 @@ const BASE: SessionOpts = {
   sandbox: { mode: 'readOnly', writableRoots: [], networkAccess: false },
 }
 
+describe('Tool-free session restrictions', () => {
+  it.each(['start', 'resume', 'fork'] as const)(
+    'refuses %s before starting an app-server',
+    async (operation) => {
+      const { adapter, connections } = fakeCodex()
+      const opts: SessionOpts = { ...BASE, toolPolicy: 'none' }
+      const opening =
+        operation === 'start'
+          ? adapter.start(opts)
+          : operation === 'resume'
+            ? adapter.resume('thr_existing', opts)
+            : adapter.fork('thr_existing', { ...opts, inherits: 'config' })
+
+      await expect(opening).rejects.toThrow(
+        'Codex does not support tool-free sessions through this adapter.'
+      )
+      expect(connections).toEqual([])
+    }
+  )
+})
+
 describe('Discussion session restrictions', () => {
   it('disables inherited external tools and applies a read-only sandbox to every turn', async () => {
     const { adapter, connections } = fakeCodex((method) =>
