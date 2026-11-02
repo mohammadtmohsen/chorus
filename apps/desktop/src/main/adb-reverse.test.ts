@@ -313,6 +313,42 @@ describe('AdbReverse', () => {
     reverse.close()
   })
 
+  it('forgets a phone that left, so closing has nothing to remove from it', async () => {
+    const { reverse, trackers, ran } = harness()
+    reverse.sync(new Set([30_100]))
+    trackers[0]?.devices('A\tdevice')
+    await settle()
+    trackers[0]?.devices()
+    const before = ran.length
+    await reverse.syncConfirmed(new Set())
+    expect(ran).toHaveLength(before)
+  })
+
+  it('still removes its ports when adb dies, because the phone may hold them', async () => {
+    const { reverse, trackers, ran } = harness()
+    reverse.sync(new Set([30_100]))
+    trackers[0]?.devices('A\tdevice')
+    await settle()
+    trackers[0]?.end(false)
+    const before = ran.length
+    await reverse.syncConfirmed(new Set())
+    expect(ran.slice(before)).toEqual([['-s', 'A', 'reverse', '--remove', 'tcp:30100']])
+  })
+
+  it('counts a removal as done when adb no longer has that device', async () => {
+    const { reverse, trackers, warned } = harness({
+      run: (args) =>
+        args.includes('--remove')
+          ? Promise.reject(new Error("Command failed\nadb: error: device 'A' not found\n"))
+          : Promise.resolve(),
+    })
+    reverse.sync(new Set([30_100]))
+    trackers[0]?.devices('A\tdevice')
+    await settle()
+    await reverse.syncConfirmed(new Set())
+    expect(warned).toEqual([])
+  })
+
   it('tells its listener when the forwarded count changes', async () => {
     const { reverse, trackers } = harness()
     let changes = 0

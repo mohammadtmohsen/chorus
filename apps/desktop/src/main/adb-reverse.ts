@@ -146,6 +146,9 @@ const runAdb = async (args: readonly string[]): Promise<void> => {
   await execAdb('adb', [...args], { timeout: COMMAND_TIMEOUT_MS })
 }
 
+const deviceNotFound = (error: unknown, serial: string): boolean =>
+  error instanceof Error && error.message.includes(`device '${serial}' not found`)
+
 export const adbTracker = (): AdbTracker => {
   const datas = new Set<(chunk: string) => void>()
   const exits = new Set<(missing: boolean) => void>()
@@ -335,7 +338,9 @@ export class AdbReverse {
       const read = parseDeviceLists(this.buffer + chunk)
       this.buffer = read.rest
       const latest = read.lists[read.lists.length - 1]
-      if (latest !== undefined) this.attached(latest)
+      if (latest === undefined) return
+      this.forgetDeparted(latest)
+      this.attached(latest)
     })
     tracker.onExit((missing) => {
       if (this.tracker !== tracker) return
@@ -385,6 +390,14 @@ export class AdbReverse {
   private async stopTracker(tracker: AdbTracker): Promise<void> {
     await tracker.stop()
     this.retiredTrackers.delete(tracker)
+  }
+
+  private forgetDeparted(devices: readonly TrackedDevice[]): void {
+    for (const serial of [...this.ownedReverses.keys()]) {
+      if (!devices.some((device) => device.serial === serial && device.state === 'device')) {
+        this.ownedReverses.delete(serial)
+      }
+    }
   }
 
   private attached(devices: readonly TrackedDevice[]): void {
@@ -458,6 +471,10 @@ export class AdbReverse {
           },
           (error: unknown) => {
             this.inFlight.delete(key)
+            if (!command.add && deviceNotFound(error, command.serial)) {
+              this.settled(command)
+              return
+            }
             this.warn('adb reverse failed', {
               serial: command.serial,
               port: command.port,

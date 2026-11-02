@@ -104,6 +104,8 @@ Retain existing busy/draft confirmation. Show closing state, await the backend r
 
 Known boundary: remote editor exit cannot be verified by this local implementation and reports failure. Daemons that fully escape ownership before sampling cannot be safely attributed. Ambiguous detectable ownership and inspection failures reject closure; POSIX birth fingerprints have second precision. Windows CIM/handle behavior remains unverified.
 
+Project close keeps every chat's note and draft journal; only closing a single chat deletes its note. An editor process tree that never established ownership, because the process had already exited or is not a descendant of the server, is logged rather than failing the close: stopping it can never succeed, so failing would strand the project until a full quit. Failing to stop an owned tree, close the view, disconnect a remote editor or release the server rejects the close and stays retryable. Android forwarding forgets a device once the tracker lists it as gone, and counts a removal as done when `adb` reports the device not found.
+
 ### `packages/orchestrator/src/supervisor.ts`
 
 Failed resume-event attachment and invalid persistent forks close the acquired provider before throwing. A failed physical cleanup propagates its retry handle rather than starting a replacement.

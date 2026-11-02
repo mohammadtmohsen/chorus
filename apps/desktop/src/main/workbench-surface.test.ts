@@ -386,6 +386,7 @@ beforeEach(async () => {
   showOpenDialog.mockReset()
   acquireWorkbenchRuntime.mockClear()
   releaseWorkbenchRuntime.mockClear()
+  releaseRemoteWorkbenchRuntime.mockClear()
   shell = new FakeWebContents()
   // The two halves of the trust waiver's condition, back to the shipped values.
   // Left set by a test that flipped them, every descriptor after it would be
@@ -1235,6 +1236,29 @@ describe('the shared server lease', () => {
    * forward slash after the drive letter, so a native `C:\...` path failed the
    * test even on a remote host, where the branch was meant to be working.
    */
+  it('fails a project close whose release failed, and releases again on retry', async () => {
+    const place = { host: 'officepc', root: 'C:/retry' }
+    surface.registerWorkbenchHandlers(undefined, () => place)
+    try {
+      const viewId = await surface.openSurface(shell as never, { projectId: 'remote' }, undefined)
+      const view = lastView()
+      await surface.closeSurface(shell as never, viewId)
+      view.webContents.destroyed = true
+
+      releaseRemoteWorkbenchRuntime.mockRejectedValueOnce(new Error('tunnel stuck'))
+      await expect(surface.closeWorkbenchProject(place)).rejects.toThrow('tunnel stuck')
+      await expect(
+        surface.openSurface(shell as never, { projectId: 'remote' }, undefined)
+      ).rejects.toThrow(/closed or still closing/)
+
+      await surface.closeWorkbenchProject(place)
+      surface.reopenWorkbenchProject(place)
+      expect(releaseRemoteWorkbenchRuntime).toHaveBeenCalledTimes(2)
+    } finally {
+      surface.registerWorkbenchHandlers(undefined)
+    }
+  })
+
   it('gives a local Windows root the leading slash, not only a remote one', async () => {
     surface.registerWorkbenchHandlers(undefined, () => ({
       host: LOCAL_HOST,

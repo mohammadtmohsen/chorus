@@ -3474,11 +3474,11 @@ export class ChorusRuntime {
       ],
       'Chat shutdown could not be confirmed'
     )
+    const projectId = conversation?.projectId ?? this.conversationProjects.get(conversationId)
+    if (projectId !== undefined && this.closingProjects.has(projectId)) return
     const noteFailure = this.forgetConversationNote(conversationId)
     if (noteFailure !== undefined) throw noteFailure
-    const projectId = conversation?.projectId ?? this.conversationProjects.get(conversationId)
-    if (projectId === undefined || !this.closingProjects.has(projectId))
-      this.finishConversationRemoval(conversationId)
+    this.finishConversationRemoval(conversationId)
   }
 
   private finishConversationRemoval(conversationId: string): void {

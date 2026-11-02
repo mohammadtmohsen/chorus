@@ -189,6 +189,7 @@ interface Surface {
   activityBarWidth: number
   readonly processNonce: string | null
   readonly processes: Map<number, OwnedProcessTree>
+  readonly ownedPids: Set<number>
   processCapture: Promise<void>
   closePrepared: boolean
 }
@@ -1163,6 +1164,7 @@ export async function openSurface(
     activityBarWidth: 0,
     processNonce: place.host === LOCAL_HOST ? randomUUID() : null,
     processes: new Map(),
+    ownedPids: new Set(),
     processCapture: Promise.resolve(),
     closePrepared: false,
   }
@@ -1479,15 +1481,23 @@ function captureSurfaceProcesses(surface: Surface, terminalPids: readonly number
       if (report.nonce !== surface.processNonce || report.root !== surface.projectRoot) {
         throw new Error('The editor process report does not belong to this project.')
       }
-      const pids = new Set([report.pid, ...terminalPids])
-      for (const pid of pids) {
-        if (pid === ancestor) throw new Error('A project cannot own the shared editor server.')
-        let owned = surface.processes.get(pid)
-        if (owned === undefined) {
-          owned = ownProcessTree(pid, { expectedAncestorPid: ancestor })
-          surface.processes.set(pid, owned)
+      const failures: unknown[] = []
+      for (const pid of new Set([report.pid, ...terminalPids])) {
+        try {
+          if (pid === ancestor) throw new Error('A project cannot own the shared editor server.')
+          let owned = surface.processes.get(pid)
+          if (owned === undefined) {
+            owned = ownProcessTree(pid, { expectedAncestorPid: ancestor })
+            surface.processes.set(pid, owned)
+          }
+          await owned.capture()
+          surface.ownedPids.add(pid)
+        } catch (error) {
+          failures.push(error)
         }
-        await owned.capture()
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'Some editor processes could not be owned.')
       }
     })
   surface.processCapture = capture
@@ -1513,6 +1523,7 @@ function awaitSurfaceDestroyed(surface: Surface): Promise<void> {
 
 async function closeProjectSurface(surface: Surface): Promise<void> {
   const contents = surface.view.webContents
+  const failures: unknown[] = []
   try {
     await flushSurfaceStorage(contents)
   } catch (error) {
@@ -1523,6 +1534,7 @@ async function closeProjectSurface(surface: Surface): Promise<void> {
       await requestProcessClose(surface, 'stop')
     } catch (error) {
       warnFailure('Workbench could not disconnect gracefully', error)
+      if (surface.host !== LOCAL_HOST) failures.push(error)
     }
   }
   try {
@@ -1531,23 +1543,27 @@ async function closeProjectSurface(surface: Surface): Promise<void> {
     warnFailure('Workbench process ownership could not be captured', error)
   }
   await Promise.all(
-    [...surface.processes.values()].map(async (tree) => {
+    [...surface.processes].map(async ([pid, tree]) => {
       try {
         await tree.stop()
       } catch (error) {
         warnFailure('Workbench process tree could not be stopped', error)
+        if (surface.ownedPids.has(pid)) failures.push(error)
       }
     })
   )
   const destroyed = awaitSurfaceDestroyed(surface).catch((error: unknown) => {
     warnFailure('Workbench view did not finish closing', error)
+    failures.push(error)
   })
   try {
     await destroySurface(surface.id, true)
   } catch (error) {
     warnFailure('Workbench surface could not close', error)
+    failures.push(error)
   }
   await destroyed
+  if (failures.length > 0) throw new AggregateError(failures, 'The editor did not finish closing.')
   processSurfaces.delete(surface.id)
   if (surface.processNonce !== null) {
     try {
@@ -1611,9 +1627,14 @@ export function closeWorkbenchProject(place: WorkbenchPlace): Promise<void> {
     const outcomes = await Promise.allSettled(
       surfaces.map((surface) => closeProjectSurface(surface))
     )
-    for (const outcome of outcomes) {
-      if (outcome.status === 'rejected')
-        warnFailure('Workbench surface could not close', outcome.reason)
+    const failures = outcomes.flatMap((outcome): unknown[] =>
+      outcome.status === 'rejected' ? [outcome.reason] : []
+    )
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        'Editor shutdown could not be confirmed; retry closing this project.'
+      )
     }
     try {
       if (place.host === LOCAL_HOST) {
@@ -1624,6 +1645,7 @@ export function closeWorkbenchProject(place: WorkbenchPlace): Promise<void> {
       }
     } catch (error) {
       warnFailure('Workbench runtime could not be released', error)
+      throw error
     }
   })().finally(() => {
     closingProjects.delete(key)

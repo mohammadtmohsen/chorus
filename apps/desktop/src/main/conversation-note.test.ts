@@ -222,6 +222,25 @@ describe('closing a chat', () => {
     expect(runtime.getConversationNote(conversationId).body).toBe('')
   })
 
+  it('keeps the note and its draft when the chat closes with its project', async () => {
+    runtime.setConversationNoteText(conversationId, PINNED, 0)
+    runtime.compareConversationNoteJournal(conversationId, null, 'pending draft')
+    const room = runtime
+      .activeSessions()
+      .find((session) => session.conversationId === conversationId)
+    const pushes: ConversationNotePush[] = []
+    runtime.onNoteChanged((push) => {
+      pushes.push(push)
+    })
+    await runtime.closeProject(room?.projectId ?? '')
+    expect(pushes).toEqual([])
+    expect(
+      runtime.activeSessions().some((session) => session.conversationId === conversationId)
+    ).toBe(false)
+    expect(runtime.getConversationNote(conversationId).body).toBe(PINNED)
+    expect(runtime.readConversationNoteJournal(conversationId)).toBe('pending draft')
+  })
+
   it('keeps the note of a chat left open across a shutdown and relaunch', async () => {
     runtime.setConversationNoteText(conversationId, PINNED, 0)
     runtime.setConversationNoteView(conversationId, { visible: true, width: 0.4 })
