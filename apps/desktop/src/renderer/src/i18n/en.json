@@ -479,6 +479,7 @@
     },
     "editorWorkbench": "Editor",
     "headingWorkbench": "Editor context",
+    "preview": "from the rendered preview; lines are the enclosing block",
     "attachedTitle": "Sent with your message: {{path}} lines {{lines}}"
   },
   "forwardTask": {

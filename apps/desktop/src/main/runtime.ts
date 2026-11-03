@@ -5976,7 +5976,7 @@ export class ChorusRuntime {
         host: LOCAL_HOST,
         root: preview.projectRoot,
       })
-      if (snapshot === undefined || snapshot === null) return decision
+      if (snapshot === undefined || snapshot === null || snapshot.preview === true) return decision
       const { startLine, endLine, text } = snapshot
       if (startLine === null || endLine === null || text.trim() === '') return decision
 

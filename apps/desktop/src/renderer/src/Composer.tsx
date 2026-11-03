@@ -1018,6 +1018,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
              */
             heading: t(snapshot.editor === 'workbench' ? 'ide.headingWorkbench' : 'ide.heading'),
             unsaved: t('ide.unsaved'),
+            preview: t('ide.preview'),
             version: version === null ? '' : t(version.key, version.params),
           }
         )

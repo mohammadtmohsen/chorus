@@ -45,6 +45,7 @@ export interface EditorBlock extends EditorReference {
    * editor — one is in the person's own window and one may not be running.
    */
   readonly editor?: 'workbench' | 'external' | undefined
+  readonly preview?: true | undefined
 }
 
 /**
@@ -134,7 +135,8 @@ export function formatContextBlock(block: EditorBlock, labels: ContextLabels): s
    * field is absent, and nothing is claimed.
    */
   const at = block.modelVersion === undefined ? '' : ` \`v${String(block.modelVersion)}\``
-  const head = `${labels.heading}: \`${reference}\`${at}${suffix}`
+  const rendered = block.preview === true ? ` (${labels.preview})` : ''
+  const head = `${labels.heading}: \`${reference}\`${at}${suffix}${rendered}`
   if (block.isEmpty || block.text === '') return head
   /*
    * The embedded editor always quotes its selection.
@@ -168,6 +170,7 @@ export function formatContextBlock(block: EditorBlock, labels: ContextLabels): s
 export interface ContextLabels {
   readonly heading: string
   readonly unsaved: string
+  readonly preview: string
   /**
    * Which version these lines are, translated by the caller, or `''` for the
    * working tree — where the path already says it.

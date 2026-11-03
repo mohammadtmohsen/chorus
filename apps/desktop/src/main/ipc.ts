@@ -1103,6 +1103,7 @@ export function buildHandlers(
           isDirty: embedded.isDirty,
           languageId: embedded.languageId,
           text: embedded.text,
+          ...(embedded.preview === true ? { preview: true as const } : {}),
           ...(embedded.version === null ? {} : { modelVersion: embedded.version }),
           editor: 'workbench' as const,
           /*

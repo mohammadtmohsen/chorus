@@ -360,6 +360,7 @@ export const IdeSnapshotResult = z.discriminatedUnion('outcome', [
     isDirty: z.boolean(),
     languageId: z.string(),
     text: z.string(),
+    preview: z.literal(true).optional(),
     /**
      * The editor's model version for this file — Phase 6e.
      *

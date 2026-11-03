@@ -3,6 +3,7 @@ import type {
   ChorusWorkbenchApi,
   EditorReport,
   CompletionPayload,
+  PreviewSelection,
   WorkbenchConnection,
   WorkbenchTerminalEnv,
 } from '../shared/workbench-ipc.js'
@@ -84,6 +85,7 @@ export const CLIPBOARD_READ_CHANNEL = 'workbench:clipboard:read'
 export const CONTEXT_CHANNEL = 'workbench:context'
 export const SNAPSHOT_CHANNEL = 'workbench:snapshot'
 export const SNAPSHOT_RESULT_CHANNEL = 'workbench:snapshot:result'
+export const PREVIEW_SELECTION_CHANNEL = 'workbench:preview-selection'
 export const EDIT_CHANNEL = 'workbench:edit'
 export const EDIT_RESULT_CHANNEL = 'workbench:edit:result'
 /* The proposed-edit diff — open, replace or close. */
@@ -418,6 +420,26 @@ const api: ChorusWorkbenchApi = {
   readClipboard: async () => {
     const raw: unknown = await ipcRenderer.invoke(CLIPBOARD_READ_CHANNEL)
     return typeof raw === 'string' ? raw : ''
+  },
+
+  readPreviewSelection: async (frameName): Promise<PreviewSelection | null> => {
+    const raw: unknown = await ipcRenderer.invoke(PREVIEW_SELECTION_CHANNEL, frameName)
+    if (typeof raw !== 'object' || raw === null) return null
+    const { source, text, startLine, endLine } = raw as Record<string, unknown>
+    if (
+      typeof source !== 'string' ||
+      source === '' ||
+      typeof text !== 'string' ||
+      typeof startLine !== 'number' ||
+      !Number.isInteger(startLine) ||
+      startLine < 1 ||
+      typeof endLine !== 'number' ||
+      !Number.isInteger(endLine) ||
+      endLine < 1
+    ) {
+      return null
+    }
+    return { source, text, startLine, endLine }
   },
 
   requestCompletion: async (requestId: string, payload: CompletionPayload) => {

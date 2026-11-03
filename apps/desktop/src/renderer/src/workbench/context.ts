@@ -3,6 +3,10 @@ import { IEditorService } from '@codingame/monaco-vscode-api/vscode/vs/workbench
 import { ICodeEditorService } from '@codingame/monaco-vscode-api/vscode/vs/editor/browser/services/codeEditorService.service'
 import type { ICodeEditor } from '@codingame/monaco-vscode-api/vscode/vs/editor/browser/editorBrowser'
 import { IWorkingCopyService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/workingCopy/common/workingCopyService.service'
+import { autorun } from '@codingame/monaco-vscode-api/vscode/vs/base/common/observableInternal/reactions/autorun'
+import { DisposableStore } from '@codingame/monaco-vscode-api/vscode/vs/base/common/lifecycle'
+import { URI } from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri'
+import type { IOverlayWebview } from '@codingame/monaco-vscode-api/vscode/vs/workbench/contrib/webview/browser/webview'
 import {
   activeInputChanged,
   addEditor,
@@ -26,7 +30,11 @@ import {
  */
 import { resolveDocument, type Provenance } from '@chorus/ide-protocol/document-identity'
 import { platformForRoot, relativeInside, type Platform } from '@chorus/ide-protocol/paths'
-import type { WorkbenchContext } from '../../../shared/workbench-ipc.js'
+import type {
+  PreviewSelection,
+  WorkbenchContext,
+  WorkbenchSnapshot,
+} from '../../../shared/workbench-ipc.js'
 
 /**
  * What this surface's editor is looking at, reported to main — Phase 6 slice 6a.
@@ -184,6 +192,62 @@ function resolveActive(
   }
 }
 
+const PREVIEW_VIEW_TYPES = new Set(['markdown.preview', 'vscode.markdown.preview.editor'])
+let previewActivation = 0
+
+function previewWebview(input: unknown): IOverlayWebview | null {
+  const webview = (input as { webview?: IOverlayWebview } | null)?.webview
+  return webview !== undefined && PREVIEW_VIEW_TYPES.has(webview.providedViewType ?? '')
+    ? webview
+    : null
+}
+
+function previewFrameName(webview: IOverlayWebview): string | null {
+  try {
+    return webview.container.querySelector('iframe')?.name ?? null
+  } catch {
+    return null
+  }
+}
+
+async function readActivePreview(editors: IEditorService): Promise<PreviewSelection | null> {
+  const input = editors.activeEditor ?? null
+  const activation = previewActivation
+  const webview = previewWebview(input)
+  const frameName = webview === null ? null : previewFrameName(webview)
+  if (webview === null || frameName === null) return null
+  const read = await window.chorusWorkbench.readPreviewSelection(frameName).catch(() => null)
+  return activation === previewActivation &&
+    editors.activeEditor === input &&
+    previewFrameName(webview) === frameName
+    ? read
+    : null
+}
+
+function previewContext(
+  projectRoot: string,
+  editorTypeId: string,
+  read: PreviewSelection,
+  workingCopies: IWorkingCopyService
+): WorkbenchContext {
+  const uri = URI.parse(read.source)
+  const document = resolveActive(projectRoot, editorTypeId, uri)
+  return {
+    relativePath: document.relativePath,
+    provenance: document.provenance,
+    scheme: document.scheme,
+    editorTypeId: document.editorTypeId,
+    reason: document.reason,
+    startLine: read.startLine,
+    endLine: read.endLine,
+    isEmpty: read.text === '',
+    isDirty: workingCopies.dirtyWorkingCopies.some((copy) => copy.resource.path === uri.path),
+    languageId: 'markdown',
+    selectedBytes: new TextEncoder().encode(read.text).length,
+    version: null,
+  }
+}
+
 /**
  * Subscribes to the editor and reports on change.
  *
@@ -254,13 +318,21 @@ function trackedEditor(editors: { activeEditor?: unknown }): ICodeEditor | null 
  * Two readers of one editor would drift — the range from one and the text from
  * another is how a quote ends up describing different lines from its own header.
  */
-export async function readEditorSnapshot(
-  projectRoot: string
-): Promise<WorkbenchContext & { text: string }> {
+export async function readEditorSnapshot(projectRoot: string): Promise<WorkbenchSnapshot> {
   const [editors, workingCopies] = await Promise.all([
     getService(IEditorService),
     getService(IWorkingCopyService),
   ])
+  const input = editors.activeEditor
+  const activation = previewActivation
+  const preview = previewWebview(input) === null ? null : await readActivePreview(editors)
+  if (preview !== null && editors.activeEditor === input && activation === previewActivation) {
+    return {
+      ...previewContext(projectRoot, input?.typeId ?? '', preview, workingCopies),
+      text: preview.text,
+      ...(preview.text === '' ? {} : { preview: true as const }),
+    }
+  }
   const editor = trackedEditor(editors)
   const model = editor?.getModel() ?? null
   /*
@@ -310,6 +382,9 @@ export async function reportEditorContext(projectRoot: string): Promise<void> {
    * reasoning as `WorkbenchFrame`'s rectangle dedupe, one channel over.
    */
   let last = ''
+  let lastPreview: PreviewSelection | null = null
+  let previewRefresh = 0
+  const previewEvents = new DisposableStore()
 
   /** Editors already subscribed, so no route can subscribe one twice. */
   const watched = new Set<ICodeEditor>()
@@ -336,43 +411,85 @@ export async function reportEditorContext(projectRoot: string): Promise<void> {
         ? 0
         : new TextEncoder().encode(model.getValueInRange(selection)).length
 
-    const context: WorkbenchContext = {
-      relativePath: document.relativePath,
-      provenance: document.provenance,
-      scheme: document.scheme,
-      editorTypeId: document.editorTypeId,
-      reason: document.reason,
-      startLine: selection?.startLineNumber ?? null,
-      endLine: selection?.endLineNumber ?? null,
-      isEmpty: selection?.isEmpty() ?? true,
-      /*
-       * Asked of the working copy service, because that is where dirty lives.
-       *
-       * A first version of this read `model.isDirty()` on the reasoning that the
-       * model is the thing being edited. `ITextModel` has no such method — the
-       * typechecker said so — and the reasoning was wrong as well as the code:
-       * a text model holds content and versions, and *dirtiness is a property of
-       * the working copy wrapping it*, which is why `Developer: Log Working
-       * Copies` is the tool C-059 ended up using to answer this same question.
-       */
-      isDirty: uri === undefined ? false : workingCopies.isDirty(uri),
-      languageId: model?.getLanguageId() ?? '',
-      selectedBytes,
-      /*
-       * The version an `editor_edit` must quote as `base_version`.
-       *
-       * Read from the same model the rest of this snapshot describes, so the
-       * version and the lines cannot disagree — taken separately they could,
-       * and an agent quoting a version that never went with those lines is the
-       * conflict this field exists to avoid.
-       */
-      version: model?.getVersionId() ?? null,
-    }
+    const context: WorkbenchContext =
+      lastPreview === null
+        ? {
+            relativePath: document.relativePath,
+            provenance: document.provenance,
+            scheme: document.scheme,
+            editorTypeId: document.editorTypeId,
+            reason: document.reason,
+            startLine: selection?.startLineNumber ?? null,
+            endLine: selection?.endLineNumber ?? null,
+            isEmpty: selection?.isEmpty() ?? true,
+            /*
+             * Asked of the working copy service, because that is where dirty lives.
+             *
+             * A first version of this read `model.isDirty()` on the reasoning that the
+             * model is the thing being edited. `ITextModel` has no such method — the
+             * typechecker said so — and the reasoning was wrong as well as the code:
+             * a text model holds content and versions, and *dirtiness is a property of
+             * the working copy wrapping it*, which is why `Developer: Log Working
+             * Copies` is the tool C-059 ended up using to answer this same question.
+             */
+            isDirty: uri === undefined ? false : workingCopies.isDirty(uri),
+            languageId: model?.getLanguageId() ?? '',
+            selectedBytes,
+            /*
+             * The version an `editor_edit` must quote as `base_version`.
+             *
+             * Read from the same model the rest of this snapshot describes, so the
+             * version and the lines cannot disagree — taken separately they could,
+             * and an agent quoting a version that never went with those lines is the
+             * conflict this field exists to avoid.
+             */
+            version: model?.getVersionId() ?? null,
+          }
+        : previewContext(
+            projectRoot,
+            editors.activeEditor?.typeId ?? '',
+            lastPreview,
+            workingCopies
+          )
 
     const rendered = JSON.stringify(context)
     if (rendered === last) return
     last = rendered
     window.chorusWorkbench.reportContext(context)
+  }
+
+  const refreshPreview = (): void => {
+    const refresh = ++previewRefresh
+    void readActivePreview(editors).then((read) => {
+      if (refresh !== previewRefresh) return
+      lastPreview = read ?? lastPreview
+      report()
+    })
+  }
+
+  const watchPreview = (): void => {
+    previewEvents.clear()
+    previewRefresh += 1
+    previewActivation += 1
+    lastPreview = null
+    const webview = previewWebview(editors.activeEditor ?? null)
+    if (webview === null) return
+    previewEvents.add(webview.onDidFocus(refreshPreview))
+    previewEvents.add(webview.onDidBlur(refreshPreview))
+    previewEvents.add(
+      webview.onDidDispose(() => {
+        previewRefresh += 1
+        previewActivation += 1
+        lastPreview = null
+        report()
+      })
+    )
+    previewEvents.add(
+      autorun((reader) => {
+        reader.readObservable(webview.intrinsicContentSize)
+        if (lastPreview === null) refreshPreview()
+      })
+    )
   }
 
   /*
@@ -459,6 +576,7 @@ export async function reportEditorContext(projectRoot: string): Promise<void> {
   }
 
   editors.onDidActiveEditorChange(() => {
+    watchPreview()
     /*
      * Clear before reporting. The retained editor may still be alive and still
      * hold its old selection, so without this, opening a second file would quote
@@ -606,6 +724,7 @@ export async function reportEditorContext(projectRoot: string): Promise<void> {
    * reproduces the very bug this exists to fix. The first version of this change
    * had exactly that ordering.
    */
+  watchPreview()
   hydrate()
   report()
 

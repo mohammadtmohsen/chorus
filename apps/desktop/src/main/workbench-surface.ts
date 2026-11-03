@@ -30,12 +30,14 @@ import {
   WORKBENCH_EDIT_CHANNEL,
   WORKBENCH_SNAPSHOT_CHANNEL,
   WORKBENCH_SNAPSHOT_RESULT_CHANNEL,
+  WORKBENCH_PREVIEW_SELECTION_CHANNEL,
   WORKBENCH_ASK_DIFF_CHANNEL,
   WORKBENCH_ASK_DIFF_RESULT_CHANNEL,
   WORKBENCH_EDIT_RESULT_CHANNEL,
   WORKBENCH_REVEAL_CHANNEL,
   WORKBENCH_REVEAL_RESULT_CHANNEL,
   WorkbenchContext,
+  PreviewSelection,
   WORKBENCH_CLIPBOARD_READ_CHANNEL,
   WORKBENCH_COMPLETION_CHANNEL,
   WORKBENCH_COMPLETION_CANCEL_CHANNEL,
@@ -90,6 +92,7 @@ import {
   requestCompletion,
 } from './completion-client.js'
 import { applyWorkbenchContentSecurityPolicy, lockDownNavigation } from './security.js'
+import { READ_PREVIEW_SELECTION } from './preview-selection.js'
 import { currentScale, onScaleChange } from './scale.js'
 import { isShellSender } from './shell-windows.js'
 import {
@@ -2240,6 +2243,37 @@ export function registerWorkbenchHandlers(
     if (!parsed.success) return
     onContext?.({ host: surface.host, projectRoot: surface.projectRoot, context: parsed.data })
   })
+
+  ipcMain.handle(
+    WORKBENCH_PREVIEW_SELECTION_CHANNEL,
+    async (event, frameName: unknown): Promise<PreviewSelection | null> => {
+      if (!byContents.has(event.sender) || !fromMainFrame(event)) {
+        throw new Error('unknown workbench surface')
+      }
+      if (typeof frameName !== 'string' || frameName === '') {
+        throw new Error('Frame name must be text')
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const frame = event.sender.mainFrame.frames.find((child) => child.name === frameName)
+        if (frame === undefined) return null
+        const raw: unknown = await Promise.race([
+          frame.executeJavaScript(READ_PREVIEW_SELECTION).catch(() => null),
+          new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+              resolve(null)
+            }, 500)
+          }),
+        ])
+        const parsed = PreviewSelection.safeParse(raw)
+        return parsed.success ? parsed.data : null
+      } catch {
+        return null
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+    }
+  )
 
   ipcMain.on(WORKBENCH_ACTIVITY_BAR_REPORT_CHANNEL, (event, raw: unknown) => {
     const surface = byContents.get(event.sender)
