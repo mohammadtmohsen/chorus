@@ -1268,8 +1268,10 @@ if (insideWebsiteSurface(event.target)) return
 `apps/desktop/src/renderer/src/workspace/row-drag.ts`, first line of `routeRowWheel`'s `onWheel` (`row-drag.ts:24`):
 
 ```ts
-if (insideWebsiteSurface(event.target)) return
+if (event.shiftKey && insideWebsiteSurface(event.target)) return
 ```
+
+Amended by plan 82: a sideways swipe over the website moves the row; Shift-wheel stays with the page.
 
 The two helpers live in NEW `apps/desktop/src/renderer/src/website-surface.ts`, beside `modifiersOf`, `buttonOf`, `buttonsOf`, `wheelPixels` (line and page `deltaMode` converted to pixels) and `keyEventFor`. All are pure and exported for tests.
 

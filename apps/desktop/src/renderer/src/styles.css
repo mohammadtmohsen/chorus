@@ -8244,7 +8244,7 @@ input::placeholder {
   background: var(--bg-chrome);
   text-overflow: clip;
   white-space: nowrap;
-  user-select: text;
+  pointer-events: none;
 }
 
 /*

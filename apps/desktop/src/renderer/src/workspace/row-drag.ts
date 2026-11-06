@@ -23,7 +23,7 @@ function stripCanMove(strip: HTMLElement, delta: number): boolean {
 
 export function routeRowWheel(row: HTMLElement): () => void {
   const onWheel = (event: WheelEvent): void => {
-    if (insideWebsiteSurface(event.target)) return
+    if (event.shiftKey && insideWebsiteSurface(event.target)) return
     if (event.defaultPrevented) return
     const delta = horizontalRowWheel(event, row.clientWidth)
     if (delta === 0) return
