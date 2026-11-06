@@ -2,11 +2,11 @@
 
 ## Status
 
-| Unit           | Result                                                                                                  |
-| -------------- | ------------------------------------------------------------------------------------------------------- |
-| Scope          | A sideways swipe moves the project row over a Traffic route and over the website box                    |
-| Implementation | Written and source reviewed; runtime behaviour unverified                                               |
-| Verification   | VSIX installed 2026-11-06; user passed hand checks 1–6; check 7 (desktop), tests and gate not run       |
+| Unit           | Result                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------- |
+| Scope          | A sideways swipe moves the project row over a Traffic route and over the website box                          |
+| Implementation | Written and source reviewed; runtime behaviour unverified                                                     |
+| Verification   | VSIX installed 2026-11-06; user passed hand checks 1–6; check 7 (desktop), tests and gate not run             |
 | Amends         | Plan 81's `routeRowWheel` guard (`81-chorus-extension-website-box.md:1268-1272`). Its acceptance row 7 stands |
 
 ## Current / Issue
@@ -77,12 +77,12 @@ flowchart TD
     Rule -- sideways --> Row[Row scrolls]
 ```
 
-| Over the website stage                   | Goes to |
-| ---------------------------------------- | ------- |
-| Sideways trackpad swipe                  | Row     |
-| Shift-wheel or Shift-swipe               | Page    |
-| Vertical scroll                          | Page    |
-| Pinch, Ctrl-wheel or Cmd-wheel           | Page    |
+| Over the website stage         | Goes to |
+| ------------------------------ | ------- |
+| Sideways trackpad swipe        | Row     |
+| Shift-wheel or Shift-swipe     | Page    |
+| Vertical scroll                | Page    |
+| Pinch, Ctrl-wheel or Cmd-wheel | Page    |
 
 The tooltip stops taking pointer input, so a wheel over a route lands on the Endpoint cell, inside
 the row, and the row's scroll closes the tooltip through its existing `scroll` listener.
@@ -131,18 +131,15 @@ The tooltip's pointer handlers go, since it no longer receives pointer events. T
 `onPointerEnter` and `onPointerLeave` alone open and close it.
 
 ```tsx
-{anchor !== null &&
-  createPortal(
-    <div
-      id={id}
-      role="tooltip"
-      className="traffic-url traffic-endpoint-tooltip"
-      style={anchor}
-    >
-      {props.label}
-    </div>,
-    document.body
-  )}
+{
+  anchor !== null &&
+    createPortal(
+      <div id={id} role="tooltip" className="traffic-url traffic-endpoint-tooltip" style={anchor}>
+        {props.label}
+      </div>,
+      document.body
+    )
+}
 ```
 
 `cursor: style.cursor,` leaves the `setAnchor` style object, because the tooltip no longer
@@ -176,15 +173,15 @@ The `row-drag.ts` snippet at lines 1268-1272 shows the new guard, followed by
 
 By hand in VS Code, after a build and install you approve:
 
-| #   | Check                                                                                  |
-| --- | -------------------------------------------------------------------------------------- |
+| #   | Check                                                                                 |
+| --- | ------------------------------------------------------------------------------------- |
 | 1   | A sideways swipe starting over an Endpoint cell moves the row, and the tooltip closes |
-| 2   | Hovering a long route still shows the full route over the cell                         |
-| 3   | Clicking a route selects it as before                                                  |
-| 4   | A sideways swipe over the website moves the row                                        |
-| 5   | Vertical scrolling and pinch-zoom over the website still act on the page               |
-| 6   | Shift-wheel over a wide page scrolls the page sideways and leaves the row              |
-| 7   | Desktop Chorus: a sideways swipe over a Traffic route moves the row                    |
+| 2   | Hovering a long route still shows the full route over the cell                        |
+| 3   | Clicking a route selects it as before                                                 |
+| 4   | A sideways swipe over the website moves the row                                       |
+| 5   | Vertical scrolling and pinch-zoom over the website still act on the page              |
+| 6   | Shift-wheel over a wide page scrolls the page sideways and leaves the row             |
+| 7   | Desktop Chorus: a sideways swipe over a Traffic route moves the row                   |
 
 Unit case for `apps/desktop/src/renderer/src/workspace/row-drag.test.ts`, inside
 `describe('swiping along the row')`, with `WEBSITE_SURFACE_ATTRIBUTE` imported from
