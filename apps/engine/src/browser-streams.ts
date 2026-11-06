@@ -72,17 +72,22 @@ export class BrowserStreams {
       height: request.height,
       scale: request.scale,
       credit: 1,
-      serial: sameInstance && existing !== undefined ? existing.serial : 0,
+      serial: sameInstance ? existing.serial : 0,
       held: null,
     })
     this.schedule(request.browserId)
   }
 
-  ack(peer: EnginePeer, browserId: string, instance: string, generation: number, serial: number): void {
+  ack(
+    peer: EnginePeer,
+    browserId: string,
+    instance: string,
+    generation: number,
+    serial: number
+  ): void {
     const subscription = this.subscriptions.get(`${peer.id}:${browserId}`)
     if (
-      subscription === undefined ||
-      subscription.instance !== instance ||
+      subscription?.instance !== instance ||
       subscription.generation !== generation ||
       subscription.serial !== serial
     )
@@ -155,8 +160,7 @@ export class BrowserStreams {
     this.closed = true
     for (const cast of this.casts.values()) {
       cast.dirty = false
-      if (cast.page !== null)
-        void cast.page.send('Page.stopScreencast', {}).catch(() => undefined)
+      if (cast.page !== null) void cast.page.send('Page.stopScreencast', {}).catch(() => undefined)
     }
     this.subscriptions.clear()
     this.hiddenPeers.clear()
@@ -165,7 +169,8 @@ export class BrowserStreams {
   }
 
   private deliver(subscription: Subscription): void {
-    if (subscription.credit === 0 || subscription.held === null || !this.showing(subscription)) return
+    if (subscription.credit === 0 || subscription.held === null || !this.showing(subscription))
+      return
     const held = subscription.held
     subscription.held = null
     subscription.credit = 0
@@ -203,10 +208,16 @@ export class BrowserStreams {
     }
     this.casts.set(browserId, cast)
     cast.dirty = true
-    cast.running ??= this.apply(browserId, cast).catch(() => undefined).finally(() => {
-      cast.running = null
-      if (cast.dirty && !this.closed) this.schedule(browserId)
-    })
+    cast.running ??= this.apply(browserId, cast)
+      .catch(() => undefined)
+      .finally(() => {
+        cast.running = null
+        if (cast.dirty && !this.closed) this.schedule(browserId)
+      })
+  }
+
+  private interrupted(cast: Cast): boolean {
+    return this.closed || cast.dirty
   }
 
   private async apply(browserId: string, cast: Cast): Promise<void> {
@@ -214,20 +225,27 @@ export class BrowserStreams {
       cast.dirty = false
       const page = this.active(browserId)
       const viewer = [...this.subscriptions.values()]
-        .filter((subscription) => subscription.browserId === browserId && this.showing(subscription))
+        .filter(
+          (subscription) => subscription.browserId === browserId && this.showing(subscription)
+        )
         .at(-1)
-      const geometry = viewer === undefined || page === null
-        ? null
-        : `${String(viewer.width)}x${String(viewer.height)}@${String(viewer.scale)}`
+      const geometry =
+        viewer === undefined || page === null
+          ? null
+          : `${String(viewer.width)}x${String(viewer.height)}@${String(viewer.scale)}`
       if (cast.page !== null && (cast.page !== page || cast.geometry !== geometry)) {
         await cast.page.send('Page.stopScreencast', {}).catch(() => undefined)
         cast.page = null
         cast.token = null
         cast.geometry = null
       }
-      if (this.closed || cast.dirty || page === null || viewer === undefined || geometry === null) continue
+      if (this.interrupted(cast) || page === null || viewer === undefined || geometry === null)
+        continue
       if (cast.page === page && cast.geometry === geometry) continue
-      const scale = Math.min(viewer.scale, Math.sqrt(MAX_STREAM_PIXELS / (viewer.width * viewer.height)))
+      const scale = Math.min(
+        viewer.scale,
+        Math.sqrt(MAX_STREAM_PIXELS / (viewer.width * viewer.height))
+      )
       try {
         await page.send('Emulation.setDeviceMetricsOverride', {
           width: viewer.width,
@@ -235,7 +253,7 @@ export class BrowserStreams {
           deviceScaleFactor: viewer.scale,
           mobile: false,
         })
-        if (this.closed || cast.dirty || this.active(browserId) !== page) continue
+        if (this.interrupted(cast) || this.active(browserId) !== page) continue
         cast.page = page
         cast.geometry = geometry
         cast.token = null
@@ -246,8 +264,7 @@ export class BrowserStreams {
           maxHeight: Math.max(1, Math.floor(viewer.height * scale)),
         })
       } catch {
-        if (cast.page === page)
-          await page.send('Page.stopScreencast', {}).catch(() => undefined)
+        if (cast.page === page) await page.send('Page.stopScreencast', {}).catch(() => undefined)
         cast.page = null
         cast.token = null
         cast.geometry = null

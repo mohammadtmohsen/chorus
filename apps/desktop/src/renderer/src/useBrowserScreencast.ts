@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import type { BrowserInputEvent, BrowserRequest, BrowserSelectPrompt, BrowserDialogPrompt } from '../../shared/browser-ipc.js'
+import type {
+  BrowserInputEvent,
+  BrowserRequest,
+  BrowserSelectPrompt,
+  BrowserDialogPrompt,
+} from '../../shared/browser-ipc.js'
 import {
   buttonOf,
   buttonsOf,
@@ -11,7 +16,7 @@ import {
   wheelPixels,
 } from './website-surface.js'
 
-type Frame = {
+interface Frame {
   readonly url: string
   readonly width: number
   readonly height: number
@@ -22,7 +27,7 @@ type MouseButton = Extract<BrowserInputEvent, { kind: 'mouse' }>['button']
 type ContinuousInput =
   | (Extract<BrowserInputEvent, { kind: 'mouse' }> & { readonly type: 'mouseMoved' })
   | Extract<BrowserInputEvent, { kind: 'wheel' }>
-type QueuedInput = {
+interface QueuedInput {
   event: BrowserInputEvent
   readonly browserId: string
   readonly settle: ((sent: boolean) => void) | null
@@ -80,13 +85,16 @@ export function useBrowserScreencast(
   useEffect(() => {
     const node = surface.current
     if (node === null) return undefined
-    const observer = new IntersectionObserver(([entry]) => {
-      setIntersecting(
-        entry?.isIntersecting === true &&
-        entry.intersectionRect.width > 0 &&
-        entry.intersectionRect.height > 0
-      )
-    }, { root: row.current })
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIntersecting(
+          entry?.isIntersecting === true &&
+            entry.intersectionRect.width > 0 &&
+            entry.intersectionRect.height > 0
+        )
+      },
+      { root: row.current }
+    )
     observer.observe(node)
     return () => {
       observer.disconnect()
@@ -116,20 +124,24 @@ export function useBrowserScreencast(
       const image = new Image()
       decoding.current = image
       image.src = `data:image/jpeg;base64,${pushed.data}`
-      void image.decode().then(() => {
-        if (
-          decoding.current !== image ||
-          pushed.generation !== generation.current ||
-          pushed.epoch !== epoch.current ||
-          !live.current
-        )
-          return
-        scheduled = true
-        setFrame({ url: image.src, width: pushed.width, height: pushed.height, receipt })
-      }).catch(() => undefined).finally(() => {
-        if (decoding.current === image) decoding.current = null
-        if (!scheduled) void window.chorus.ackBrowserFrame(receipt).catch(() => undefined)
-      })
+      void image
+        .decode()
+        .then(() => {
+          if (
+            decoding.current !== image ||
+            pushed.generation !== generation.current ||
+            pushed.epoch !== epoch.current ||
+            !live.current
+          )
+            return
+          scheduled = true
+          setFrame({ url: image.src, width: pushed.width, height: pushed.height, receipt })
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (decoding.current === image) decoding.current = null
+          if (!scheduled) void window.chorus.ackBrowserFrame(receipt).catch(() => undefined)
+        })
     })
     return () => {
       stop()
@@ -142,9 +154,13 @@ export function useBrowserScreencast(
     return window.chorus.onBrowser((pushed) => {
       if (pushed.browserId !== browserId) return
       if (pushed.kind === 'select')
-        setSelect((previous) => previous?.token === pushed.select?.token ? previous : pushed.select)
+        setSelect((previous) =>
+          previous?.token === pushed.select?.token ? previous : pushed.select
+        )
       else if (pushed.kind === 'dialog')
-        setDialog((previous) => previous?.token === pushed.dialog?.token ? previous : pushed.dialog)
+        setDialog((previous) =>
+          previous?.token === pushed.dialog?.token ? previous : pushed.dialog
+        )
       else if (pushed.kind === 'state' && !pushed.state.live) {
         cancelDecode()
         live.current = false
@@ -163,15 +179,17 @@ export function useBrowserScreencast(
       const { width, height } = node.getBoundingClientRect()
       generation.current += 1
       cancelDecode()
-      void window.chorus.streamBrowser({
-        browserId,
-        instance,
-        generation: generation.current,
-        visible: visible && width >= 1 && height >= 1,
-        width: Math.min(8192, Math.max(1, Math.round(width))),
-        height: Math.min(8192, Math.max(1, Math.round(height))),
-        scale: Math.min(4, Math.max(1, window.devicePixelRatio)),
-      }).catch(() => undefined)
+      void window.chorus
+        .streamBrowser({
+          browserId,
+          instance,
+          generation: generation.current,
+          visible: visible && width >= 1 && height >= 1,
+          width: Math.min(8192, Math.max(1, Math.round(width))),
+          height: Math.min(8192, Math.max(1, Math.round(height))),
+          scale: Math.min(4, Math.max(1, window.devicePixelRatio)),
+        })
+        .catch(() => undefined)
     }
     const observer = new ResizeObserver(report)
     observer.observe(node)
@@ -182,15 +200,17 @@ export function useBrowserScreencast(
       window.removeEventListener('resize', report)
       generation.current += 1
       cancelDecode()
-      void window.chorus.streamBrowser({
-        browserId,
-        instance,
-        generation: generation.current,
-        visible: false,
-        width: 1,
-        height: 1,
-        scale: 1,
-      }).catch(() => undefined)
+      void window.chorus
+        .streamBrowser({
+          browserId,
+          instance,
+          generation: generation.current,
+          visible: false,
+          width: 1,
+          height: 1,
+          scale: 1,
+        })
+        .catch(() => undefined)
     }
   }, [browserId, instance, visible, cancelDecode])
 
@@ -206,12 +226,7 @@ export function useBrowserScreencast(
   }, [])
 
   const inputTarget = useCallback((): string | null => {
-    if (
-      browserId === null ||
-      shownFrame.current === null ||
-      shownFrame.current.receipt.browserId !== browserId ||
-      !live.current
-    )
+    if (browserId === null || shownFrame.current?.receipt.browserId !== browserId || !live.current)
       return null
     return browserId
   }, [browserId])
@@ -239,37 +254,44 @@ export function useBrowserScreencast(
     }
   }, [])
 
-  const send = useCallback((event: BrowserInputEvent): Promise<boolean> => {
-    const target = inputTarget()
-    if (target === null) return Promise.resolve(false)
-    pendingMove.current = null
-    pendingWheel.current = null
-    return new Promise<boolean>((settle) => {
-      inputQueue.current.push({ browserId: target, event, settle })
-      void drainInput()
-    })
-  }, [inputTarget, drainInput])
+  const send = useCallback(
+    (event: BrowserInputEvent): Promise<boolean> => {
+      const target = inputTarget()
+      if (target === null) return Promise.resolve(false)
+      pendingMove.current = null
+      pendingWheel.current = null
+      return new Promise<boolean>((settle) => {
+        inputQueue.current.push({ browserId: target, event, settle })
+        void drainInput()
+      })
+    },
+    [inputTarget, drainInput]
+  )
 
-  const sendContinuous = useCallback((event: ContinuousInput): void => {
-    const target = inputTarget()
-    if (target === null) return
-    const pending = event.kind === 'wheel' ? pendingWheel : pendingMove
-    const queued = pending.current
-    if (queued !== null && queued.browserId === target) {
-      queued.event = event.kind === 'wheel' && queued.event.kind === 'wheel'
-        ? {
-            ...event,
-            deltaX: queued.event.deltaX + event.deltaX,
-            deltaY: queued.event.deltaY + event.deltaY,
-          }
-        : event
-    } else {
-      const next: QueuedInput = { browserId: target, event, settle: null }
-      pending.current = next
-      inputQueue.current.push(next)
-    }
-    void drainInput()
-  }, [inputTarget, drainInput])
+  const sendContinuous = useCallback(
+    (event: ContinuousInput): void => {
+      const target = inputTarget()
+      if (target === null) return
+      const pending = event.kind === 'wheel' ? pendingWheel : pendingMove
+      const queued = pending.current
+      if (queued !== null && queued.browserId === target) {
+        queued.event =
+          event.kind === 'wheel' && queued.event.kind === 'wheel'
+            ? {
+                ...event,
+                deltaX: queued.event.deltaX + event.deltaX,
+                deltaY: queued.event.deltaY + event.deltaY,
+              }
+            : event
+      } else {
+        const next: QueuedInput = { browserId: target, event, settle: null }
+        pending.current = next
+        inputQueue.current.push(next)
+      }
+      void drainInput()
+    },
+    [inputTarget, drainInput]
+  )
 
   const clearContinuous = useCallback((): void => {
     pendingMove.current = null
@@ -357,13 +379,20 @@ export function useBrowserScreencast(
     const onCut = (): void => {
       if (area.selectionStart === area.selectionEnd) return
       const key: KeyInput = {
-        kind: 'key', type: 'rawKeyDown', key: 'Delete', code: 'Delete', keyCode: 46,
-        autoRepeat: false, modifiers: 0,
+        kind: 'key',
+        type: 'rawKeyDown',
+        key: 'Delete',
+        code: 'Delete',
+        keyCode: 46,
+        autoRepeat: false,
+        modifiers: 0,
       }
-      void send(key).then(() => send({ ...key, type: 'keyUp' })).then(() => mirrorSelection(browserId, area))
+      void send(key)
+        .then(() => send({ ...key, type: 'keyUp' }))
+        .then(() => mirrorSelection(browserId, area))
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (!event.isComposing && event.key !== 'Process' && event.keyCode !== 229 && !composing.current)
+      if (!event.isComposing && event.key !== 'Process' && !composing.current)
         committed.current = null
     }
     const onCompositionStart = (): void => {
@@ -416,7 +445,15 @@ export function useBrowserScreencast(
     const clickCount = Math.min(3, Math.max(1, event.detail))
     heldButtons.current.set(button, clickCount)
     mouseButtons.current = buttonsOf(event.buttons)
-    void send({ kind: 'mouse', type: 'mousePressed', ...position, button, buttons: mouseButtons.current, clickCount, modifiers: modifiersOf(event) })
+    void send({
+      kind: 'mouse',
+      type: 'mousePressed',
+      ...position,
+      button,
+      buttons: mouseButtons.current,
+      clickCount,
+      modifiers: modifiersOf(event),
+    })
   }
 
   const pointerUp = (event: PointerEvent): void => {
@@ -426,44 +463,66 @@ export function useBrowserScreencast(
     heldButtons.current.delete(button)
     mouseButtons.current = buttonsOf(event.buttons)
     lastPoint.current = point(event.clientX, event.clientY)
-    void send({ kind: 'mouse', type: 'mouseReleased', ...lastPoint.current, button, buttons: mouseButtons.current, clickCount, modifiers: modifiersOf(event) })
-      .then(() => mirrorSelection(browserId, editor.current))
+    void send({
+      kind: 'mouse',
+      type: 'mouseReleased',
+      ...lastPoint.current,
+      button,
+      buttons: mouseButtons.current,
+      clickCount,
+      modifiers: modifiersOf(event),
+    }).then(() => mirrorSelection(browserId, editor.current))
   }
 
   const pointerMove = (event: PointerEvent): void => {
     lastPoint.current = point(event.clientX, event.clientY)
-    sendContinuous({ kind: 'mouse', type: 'mouseMoved', ...lastPoint.current, button: 'none', buttons: buttonsOf(event.buttons), clickCount: 0, modifiers: modifiersOf(event) })
+    sendContinuous({
+      kind: 'mouse',
+      type: 'mouseMoved',
+      ...lastPoint.current,
+      button: 'none',
+      buttons: buttonsOf(event.buttons),
+      clickCount: 0,
+      modifiers: modifiersOf(event),
+    })
   }
 
-  const keyDown = (event: KeyboardEvent): void => {
-    if (composing.current || event.isComposing || event.key === 'Process' || event.keyCode === 229) {
-      event.stopPropagation()
-      return
-    }
+  const keyDown = (event: KeyboardEvent): boolean => {
+    if (composing.current || event.isComposing || event.key === 'Process') return true
     const key = keyEventFor(event, 'down')
-    if (key === null) return
-    event.stopPropagation()
+    if (key === null) return false
     if (!printable(event)) event.preventDefault()
     heldKeys.current.set(key.code || key.key, key)
     void send(key)
+    return true
   }
 
-  const keyUp = (event: KeyboardEvent): void => {
-    if (composing.current || event.isComposing || event.key === 'Process' || event.keyCode === 229) {
-      event.stopPropagation()
-      return
-    }
+  const keyUp = (event: KeyboardEvent): boolean => {
+    if (composing.current || event.isComposing || event.key === 'Process') return true
     const key = keyEventFor(event, 'up')
-    if (key === null) return
-    event.stopPropagation()
+    if (key === null) return false
     const id = key.code || key.key
-    if (!heldKeys.current.has(id)) return
+    if (!heldKeys.current.has(id)) return true
     heldKeys.current.delete(id)
     void send(key).then(() => mirrorSelection(browserId, editor.current))
+    return true
   }
 
   return {
-    surface, editor, frame, select, setSelect, dialog, setDialog, visible, pointerDown, pointerUp, pointerMove,
-    keyDown, keyUp, releaseButtons, releaseHeld,
+    surface,
+    editor,
+    frame,
+    select,
+    setSelect,
+    dialog,
+    setDialog,
+    visible,
+    pointerDown,
+    pointerUp,
+    pointerMove,
+    keyDown,
+    keyUp,
+    releaseButtons,
+    releaseHeld,
   }
 }

@@ -102,7 +102,8 @@ class PageTransport implements CdpTransport {
     if (!this.isAttached()) throw new Error('browser-disconnected')
     const attachment = this.attachment
     const result = await this.page.send(method, params)
-    if (!this.isAttached() || this.attachment !== attachment) throw new Error('browser-disconnected')
+    if (!this.isAttached() || this.attachment !== attachment)
+      throw new Error('browser-disconnected')
     if (method === 'Runtime.enable')
       for (const [id, context] of this.page.runtimeContexts())
         if (!this.contexts.has(id)) this.receive('Runtime.executionContextCreated', context)

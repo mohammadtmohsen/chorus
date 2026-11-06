@@ -53,7 +53,10 @@ const SHELL_VIEW_ID = 'chorus.workspace'
 const SHELL_FOCUS_CONTEXT = 'chorus.shellFocused'
 const Adopted = IPC_CONTRACT['project:adopt'].response
 const ObjectParams = z.record(z.string(), z.unknown())
-type RestartRun = { readonly projectId: string; readonly commandId: string }
+interface RestartRun {
+  readonly projectId: string
+  readonly commandId: string
+}
 const RESTART_STOP_TIMEOUT_MS = 15_000
 const FileRequest = z.object({
   path: z.string(),
@@ -326,12 +329,11 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
       this.view.show(false)
       return
     }
-    void vscode.commands.executeCommand(`${SHELL_VIEW_ID}.focus`).then(
-      undefined,
-      (error: unknown) => {
+    void vscode.commands
+      .executeCommand(`${SHELL_VIEW_ID}.focus`)
+      .then(undefined, (error: unknown) => {
         this.failure(error)
-      }
-    )
+      })
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -376,7 +378,9 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
       this.viewDisposables
     )
     view.onDidChangeVisibility(
-      () => this.viewVisibilityChanged(view),
+      () => {
+        this.viewVisibilityChanged(view)
+      },
       undefined,
       this.viewDisposables
     )
@@ -650,10 +654,7 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
       this.queue.add(message)
       return
     }
-    if (
-      message.kind === 'showProject' &&
-      this.editorProjectRequests.at(-1) !== message.projectId
-    )
+    if (message.kind === 'showProject' && this.editorProjectRequests.at(-1) !== message.projectId)
       this.editorProjectRequests.push(message.projectId)
     void view.webview.postMessage(message)
   }
@@ -691,7 +692,11 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         : state === 'stopped'
           ? TEXT.engineStopped
           : TEXT.open
-    if ((state === 'stopped' || state === 'reconnecting') && !this.warningShown && !this.restarting) {
+    if (
+      (state === 'stopped' || state === 'reconnecting') &&
+      !this.warningShown &&
+      !this.restarting
+    ) {
       this.warningShown = true
       void vscode.window.showWarningMessage(TEXT.engineStopped, TEXT.restart).then((choice) => {
         if (choice === TEXT.restart) void this.restart()
@@ -715,7 +720,12 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     return this.projects.find((project) => project.id === projectId)?.name ?? projectId
   }
   private otherRestartWork(activity: EngineActivity): boolean {
-    return activity.conversations.length > 0 || activity.approvals > 0 || activity.questions > 0 || activity.starting > 0
+    return (
+      activity.conversations.length > 0 ||
+      activity.approvals > 0 ||
+      activity.questions > 0 ||
+      activity.starting > 0
+    )
   }
   private restartReason(activity: EngineActivity): string {
     if (!activity.busy) return TEXT.engineRestartRequired
@@ -734,29 +744,38 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
   private async recoverRuns(runs: readonly RestartRun[]): Promise<void> {
     const activity = await this.client.activity(1_500).catch(() => null)
     await this.resumeRuns(runs)
-    void vscode.window.showWarningMessage(activity?.busy === true
-      ? `${TEXT.engineRestartFailed} ${this.restartReason(activity)}`
-      : TEXT.engineRestartFailed)
+    void vscode.window.showWarningMessage(
+      activity?.busy === true
+        ? `${TEXT.engineRestartFailed} ${this.restartReason(activity)}`
+        : TEXT.engineRestartFailed
+    )
   }
   private async resumeRuns(runs: readonly RestartRun[]): Promise<boolean> {
-    const results = await Promise.all(runs.map(async (run) => {
-      try {
-        const state = RUN_CONTRACT['run:start'].response.parse(
-          await this.client.invoke('run:start', run, undefined, 15_000)
+    const results = await Promise.all(
+      runs.map(async (run) => {
+        try {
+          const state = RUN_CONTRACT['run:start'].response.parse(
+            await this.client.invoke('run:start', run, undefined, 15_000)
+          )
+          const process = state.process
+          if (
+            ((process.kind === 'running' || process.kind === 'starting') &&
+              process.active.id === run.commandId) ||
+            (process.kind === 'exited' &&
+              process.code === 0 &&
+              !state.cleanupPending &&
+              process.active.id === run.commandId)
+          )
+            return true
+        } catch (error) {
+          this.output.appendLine(String(error))
+        }
+        void vscode.window.showWarningMessage(
+          TEXT.engineRestartRerunFailed.replace('{{project}}', this.projectName(run.projectId))
         )
-        const process = state.process
-        if (
-          ((process.kind === 'running' || process.kind === 'starting') && process.active.id === run.commandId) ||
-          (process.kind === 'exited' && process.code === 0 && !state.cleanupPending && process.active.id === run.commandId)
-        ) return true
-      } catch (error) {
-        this.output.appendLine(String(error))
-      }
-      void vscode.window.showWarningMessage(
-        TEXT.engineRestartRerunFailed.replace('{{project}}', this.projectName(run.projectId))
-      )
-      return false
-    }))
+        return false
+      })
+    )
     return results.every((result) => result)
   }
   async restart(): Promise<void> {
@@ -767,7 +786,8 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     try {
       let activity = await this.client.activity(15_000)
       if (!activity.busy) {
-        if (!(await this.client.restartWhenIdle())) this.restartBusy(await this.client.activity(15_000))
+        if (!(await this.client.restartWhenIdle()))
+          this.restartBusy(await this.client.activity(15_000))
         else void vscode.window.showInformationMessage(TEXT.engineRestartReady)
         return
       }
@@ -780,7 +800,10 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         TEXT.engineRestartRuns,
         {
           modal: true,
-          detail: TEXT.engineRestartRunsDetail.replace('{{projects}}', projects.map((id) => this.projectName(id)).join('\n')),
+          detail: TEXT.engineRestartRunsDetail.replace(
+            '{{projects}}',
+            projects.map((id) => this.projectName(id)).join('\n')
+          ),
         },
         TEXT.restartAndRunAgain
       )
@@ -797,7 +820,13 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
           )
           const process = state.process
           const active = process.kind === 'idle' ? null : process.active
-          if (active !== null && (process.kind === 'running' || process.kind === 'starting' || process.kind === 'stopping' || state.cleanupPending))
+          if (
+            active !== null &&
+            (process.kind === 'running' ||
+              process.kind === 'starting' ||
+              process.kind === 'stopping' ||
+              state.cleanupPending)
+          )
             runs.push({ projectId, commandId: active.id })
         } catch (error) {
           this.output.appendLine(String(error))
@@ -808,15 +837,25 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         }
       }
       activity = await this.client.activity(15_000)
-      if (this.otherRestartWork(activity) || activity.runs.some((id) => !runs.some((run) => run.projectId === id))) {
+      if (
+        this.otherRestartWork(activity) ||
+        activity.runs.some((id) => !runs.some((run) => run.projectId === id))
+      ) {
         this.restartBusy(activity)
         return
       }
       stopping = true
       const deadline = Date.now() + RESTART_STOP_TIMEOUT_MS
-      const stopped = await Promise.allSettled(runs.map((run) => this.client.invoke(
-        'run:stop', { projectId: run.projectId }, undefined, Math.max(1, deadline - Date.now())
-      )))
+      const stopped = await Promise.allSettled(
+        runs.map((run) =>
+          this.client.invoke(
+            'run:stop',
+            { projectId: run.projectId },
+            undefined,
+            Math.max(1, deadline - Date.now())
+          )
+        )
+      )
       for (const result of stopped)
         if (result.status === 'rejected') this.output.appendLine(String(result.reason))
       if (!(await this.client.waitUntilIdle(Math.max(0, deadline - Date.now())))) {
@@ -828,7 +867,9 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         return
       }
       if (await this.resumeRuns(runs))
-        void vscode.window.showInformationMessage(runs.length === 0 ? TEXT.ready : TEXT.engineRestartRerunReady)
+        void vscode.window.showInformationMessage(
+          runs.length === 0 ? TEXT.ready : TEXT.engineRestartRerunReady
+        )
     } catch (error) {
       if (!stopping) this.failure(error)
       else {
@@ -920,7 +961,9 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         canSelectFolders: false,
         canSelectMany: many,
       })
-      return { paths: (picked ?? []).filter((uri) => uri.scheme === 'file').map((uri) => uri.fsPath) }
+      return {
+        paths: (picked ?? []).filter((uri) => uri.scheme === 'file').map((uri) => uri.fsPath),
+      }
     }
     if (method === 'browser.available') return this.getBrowser().available
     if (method.startsWith('browser.')) {

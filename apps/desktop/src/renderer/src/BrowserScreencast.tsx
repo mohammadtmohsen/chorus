@@ -27,8 +27,11 @@ export function BrowserScreencast(props: {
     const prompt = view.select
     selectToken.current = prompt?.token ?? null
     if (prompt === null) return
-    setHighlight(prompt.selectedIndex >= 0 && prompt.selectedIndex < prompt.options.length
-      ? prompt.selectedIndex : nextEnabled(prompt.options, -1, 1))
+    setHighlight(
+      prompt.selectedIndex >= 0 && prompt.selectedIndex < prompt.options.length
+        ? prompt.selectedIndex
+        : nextEnabled(prompt.options, -1, 1)
+    )
     if (props.selected && !props.collapsed) menu.current?.focus({ preventScroll: true })
   }, [view.select, props.selected, props.collapsed])
 
@@ -52,18 +55,36 @@ export function BrowserScreencast(props: {
       const scaleX = box.width / (view.frame?.width ?? (box.width || 1))
       const scaleY = box.height / (view.frame?.height ?? (box.height || 1))
       const next = {
-        left: Math.max(0, Math.min(prompt.rect.x * scaleX, box.width - Math.max(list.offsetWidth, Math.min(box.width, prompt.rect.width * scaleX)))),
-        top: Math.max(0, Math.min(prompt.rect.y * scaleY, box.height - Math.min(list.scrollHeight + 2, box.height))),
+        left: Math.max(
+          0,
+          Math.min(
+            prompt.rect.x * scaleX,
+            box.width - Math.max(list.offsetWidth, Math.min(box.width, prompt.rect.width * scaleX))
+          )
+        ),
+        top: Math.max(
+          0,
+          Math.min(prompt.rect.y * scaleY, box.height - Math.min(list.scrollHeight + 2, box.height))
+        ),
         minWidth: Math.max(1, Math.min(box.width, prompt.rect.width * scaleX)),
         maxHeight: Math.max(1, box.height),
       }
-      setMenuRect((previous) => previous.left === next.left && previous.top === next.top && previous.minWidth === next.minWidth && previous.maxHeight === next.maxHeight ? previous : next)
+      setMenuRect((previous) =>
+        previous.left === next.left &&
+        previous.top === next.top &&
+        previous.minWidth === next.minWidth &&
+        previous.maxHeight === next.maxHeight
+          ? previous
+          : next
+      )
     }
     const observer = new ResizeObserver(update)
     observer.observe(node)
     observer.observe(list)
     update()
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+    }
   }, [view.select, view.frame?.width, view.frame?.height, view.surface])
 
   useLayoutEffect(() => {
@@ -76,17 +97,25 @@ export function BrowserScreencast(props: {
   }, [highlight, view.select])
 
   const restoreEditor = (): void => {
-    if (selectToken.current === null && dialogToken.current === null && props.selected && !props.collapsed)
+    if (
+      selectToken.current === null &&
+      dialogToken.current === null &&
+      props.selected &&
+      !props.collapsed
+    )
       view.editor.current?.focus({ preventScroll: true })
   }
 
   const choose = (index: number): void => {
     const prompt = view.select
     if (prompt === null || props.browserId === null || selectToken.current !== prompt.token) return
-    if (index !== -1 && (prompt.options[index] === undefined || prompt.options[index]?.disabled)) return
+    if (index !== -1 && (prompt.options[index] === undefined || prompt.options[index].disabled))
+      return
     selectToken.current = null
     view.setSelect(null)
-    void window.chorus.chooseBrowserSelect({ browserId: props.browserId, token: prompt.token, index }).catch(() => undefined)
+    void window.chorus
+      .chooseBrowserSelect({ browserId: props.browserId, token: prompt.token, index })
+      .catch(() => undefined)
     restoreEditor()
   }
 
@@ -95,12 +124,14 @@ export function BrowserScreencast(props: {
     if (prompt === null || props.browserId === null || dialogToken.current !== prompt.token) return
     dialogToken.current = null
     view.setDialog(null)
-    void window.chorus.answerBrowserDialog({
-      browserId: props.browserId,
-      token: prompt.token,
-      accept,
-      ...(prompt.type === 'prompt' && accept ? { text: answer } : {}),
-    }).catch(() => undefined)
+    void window.chorus
+      .answerBrowserDialog({
+        browserId: props.browserId,
+        token: prompt.token,
+        accept,
+        ...(prompt.type === 'prompt' && accept ? { text: answer } : {}),
+      })
+      .catch(() => undefined)
     restoreEditor()
   }
   return (
@@ -129,11 +160,17 @@ export function BrowserScreencast(props: {
             view.editor.current?.focus({ preventScroll: true })
             view.pointerDown(event.nativeEvent)
           }}
-          onPointerUp={(event) => view.pointerUp(event.nativeEvent)}
-          onPointerMove={(event) => view.pointerMove(event.nativeEvent)}
+          onPointerUp={(event) => {
+            view.pointerUp(event.nativeEvent)
+          }}
+          onPointerMove={(event) => {
+            view.pointerMove(event.nativeEvent)
+          }}
           onPointerCancel={view.releaseButtons}
           onLostPointerCapture={view.releaseButtons}
-          onContextMenu={(event) => event.preventDefault()}
+          onContextMenu={(event) => {
+            event.preventDefault()
+          }}
         >
           <textarea
             ref={view.editor}
@@ -142,12 +179,10 @@ export function BrowserScreencast(props: {
             spellCheck={false}
             autoCapitalize="off"
             onKeyDown={(event) => {
-              view.keyDown(event.nativeEvent)
-              if (event.nativeEvent.cancelBubble) event.stopPropagation()
+              if (view.keyDown(event.nativeEvent)) event.stopPropagation()
             }}
             onKeyUp={(event) => {
-              view.keyUp(event.nativeEvent)
-              if (event.nativeEvent.cancelBubble) event.stopPropagation()
+              if (view.keyUp(event.nativeEvent)) event.stopPropagation()
             }}
             onBlur={view.releaseHeld}
           />
@@ -166,7 +201,9 @@ export function BrowserScreencast(props: {
             tabIndex={-1}
             ref={menu}
             style={menuRect}
-            onPointerDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => {
+              event.stopPropagation()
+            }}
             onKeyDown={(event) => {
               event.stopPropagation()
               const options = view.select?.options ?? []
@@ -177,16 +214,25 @@ export function BrowserScreencast(props: {
               else return
               event.preventDefault()
             }}
-            onKeyUp={(event) => event.stopPropagation()}
+            onKeyUp={(event) => {
+              event.stopPropagation()
+            }}
             onBlur={(event) => {
-              if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) choose(-1)
+              if (
+                !(event.relatedTarget instanceof Node) ||
+                !event.currentTarget.contains(event.relatedTarget)
+              )
+                choose(-1)
             }}
           >
             {view.select.options.map((option, index) => (
               <Fragment key={index}>
-                {option.group !== null && (index === 0 || view.select?.options[index - 1]?.group !== option.group) && (
-                  <li className="website-select-group" role="presentation">{option.group}</li>
-                )}
+                {option.group !== null &&
+                  (index === 0 || view.select?.options[index - 1]?.group !== option.group) && (
+                    <li className="website-select-group" role="presentation">
+                      {option.group}
+                    </li>
+                  )}
                 <li
                   id={`${menuId}-${String(index)}`}
                   data-option={index}
@@ -211,16 +257,25 @@ export function BrowserScreencast(props: {
             role="alertdialog"
             aria-label={t(`website.dialog.${view.dialog.type}`)}
             aria-modal="true"
-            onPointerDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => {
+              event.stopPropagation()
+            }}
             onKeyDown={(event) => {
               event.stopPropagation()
-              if (event.nativeEvent.isComposing || event.key === 'Process' || event.keyCode === 229) return
+              if (event.nativeEvent.isComposing || event.key === 'Process') return
               if (event.key === 'Tab') {
-                const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('input, button')]
-                const current = controls.findIndex((node) => node === event.currentTarget.ownerDocument.activeElement)
-                const next = current < 0
-                  ? event.shiftKey ? controls.length - 1 : 0
-                  : (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length
+                const controls = [
+                  ...event.currentTarget.querySelectorAll<HTMLElement>('input, button'),
+                ]
+                const current = controls.findIndex(
+                  (node) => node === event.currentTarget.ownerDocument.activeElement
+                )
+                const next =
+                  current < 0
+                    ? event.shiftKey
+                      ? controls.length - 1
+                      : 0
+                    : (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length
                 controls[next]?.focus({ preventScroll: true })
                 event.preventDefault()
                 return
@@ -229,11 +284,14 @@ export function BrowserScreencast(props: {
               else if (
                 event.key === 'Enter' &&
                 (event.target === event.currentTarget || event.target === promptInput.current)
-              ) reply(true)
+              )
+                reply(true)
               else return
               event.preventDefault()
             }}
-            onKeyUp={(event) => event.stopPropagation()}
+            onKeyUp={(event) => {
+              event.stopPropagation()
+            }}
           >
             <div className="website-dialog-body">
               <p>{view.dialog.message}</p>
@@ -243,17 +301,34 @@ export function BrowserScreencast(props: {
                   aria-label={t('website.dialog.prompt')}
                   value={answer}
                   maxLength={10_000}
-                  onChange={(event) => setAnswer(event.target.value)}
+                  onChange={(event) => {
+                    setAnswer(event.target.value)
+                  }}
                 />
               )}
               <div className="website-dialog-actions">
                 {view.dialog.type !== 'alert' && (
-                  <button type="button" onClick={() => reply(false)}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      reply(false)
+                    }}
+                  >
                     {t('website.dialog.cancel')}
                   </button>
                 )}
-                <button type="button" ref={dialogButton} onClick={() => reply(true)}>
-                  {t(view.dialog.type === 'beforeunload' ? 'website.dialog.leave' : 'website.dialog.ok')}
+                <button
+                  type="button"
+                  ref={dialogButton}
+                  onClick={() => {
+                    reply(true)
+                  }}
+                >
+                  {t(
+                    view.dialog.type === 'beforeunload'
+                      ? 'website.dialog.leave'
+                      : 'website.dialog.ok'
+                  )}
                 </button>
               </div>
             </div>

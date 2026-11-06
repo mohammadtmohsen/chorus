@@ -13,6 +13,7 @@ import { EventsPush, IPC_CONTRACT } from '../../desktop/src/shared/ipc.js'
 import { BROWSER_CONTRACT } from '../../desktop/src/shared/browser-ipc.js'
 import { NAMER_INSTRUCTIONS } from '../../desktop/src/main/runtime.js'
 import { serveEngine } from './server.js'
+import { ChromeProcess } from './chrome-process.js'
 import { ClientState } from './state.js'
 import { encodeFrame, FrameReader } from './wire.js'
 import {
@@ -175,6 +176,7 @@ describe('engine socket and runtime', () => {
     if (project === undefined) throw new Error('missing project')
     client.send({
       kind: 'focus',
+      viewVisible: true,
       focused: true,
       attentive: true,
       projectIds: [project.id],
@@ -232,101 +234,51 @@ describe('engine socket and runtime', () => {
     ).not.toMatchObject({ outcome: 'ok' })
   })
 
-  it('uses the Browser box id for Console commands and preserves the current tab when an older tab closes', async () => {
-    const client = await connect()
-    const a = await room(client, 'alpha')
-    const project = engine.runtime.projects.list().find((entry) => entry.canonicalRoot === a.root)
-    if (project === undefined) throw new Error('missing project')
-    const states = new Map<
-      string,
-      {
-        tabId: string
-        projectId: string
-        url: string
-        title: string
-        loading: boolean
-        canGoBack: boolean
-        canGoForward: boolean
-        generation: number
-      }
-    >()
-    client.hostAnswer = (method, raw) => {
-      if (method === 'browser.available') return Promise.resolve(true)
-      if (method === 'browser.open') {
-        const params = z.object({ browserId: z.string() }).parse(raw)
-        const state = {
-          tabId: params.browserId,
-          projectId: project.id,
-          url: 'http://localhost/first',
-          title: 'First',
-          loading: false,
-          canGoBack: false,
-          canGoForward: false,
-          generation: 0,
-        }
-        states.set(state.tabId, state)
-        return Promise.resolve(state)
-      }
-      if (method === 'browser.cdp') {
-        const params = z.object({ tabId: z.string(), method: z.string() }).parse(raw)
-        if (params.method === 'Runtime.enable')
-          client.send({
-            kind: 'browserEvent',
-            event: {
-              kind: 'cdp',
-              tabId: params.tabId,
-              projectId: project.id,
-              generation: 0,
-              method: 'Runtime.executionContextCreated',
-              params: {
-                context: {
-                  id: 1,
-                  uniqueId: 'main-context',
-                  origin: 'http://localhost',
-                  name: '',
-                  auxData: { frameId: 'root', isDefault: true },
-                },
-              },
-            },
-          })
-        if (params.method === 'Page.getFrameTree')
-          return Promise.resolve({ frameTree: { frame: { id: 'root' } } })
-      }
-      return Promise.resolve({})
+  it('shares Browser box identity by project and requires peers to attach without starting Chrome', async () => {
+    const startChrome = vi
+      .spyOn(ChromeProcess.prototype, 'start')
+      .mockRejectedValue(new Error('unexpected-browser-start'))
+    try {
+      const first = await connect()
+      const a = await room(first, 'alpha')
+      const b = await room(first, 'beta')
+      const projectA = engine.runtime.projects
+        .list()
+        .find((entry) => entry.canonicalRoot === a.root)
+      const projectB = engine.runtime.projects
+        .list()
+        .find((entry) => entry.canonicalRoot === b.root)
+      if (projectA === undefined || projectB === undefined) throw new Error('missing project')
+      const attached = BROWSER_CONTRACT['browser:attach'].response.parse(
+        await first.invoke('browser:attach', { projectId: projectA.id })
+      )
+      const other = BROWSER_CONTRACT['browser:attach'].response.parse(
+        await first.invoke('browser:attach', { projectId: projectB.id })
+      )
+      expect(other.browserId).not.toBe(attached.browserId)
+      const second = await connect()
+      await expect(
+        second.invoke('browser:selection', { browserId: attached.browserId })
+      ).rejects.toThrow()
+      const shared = BROWSER_CONTRACT['browser:attach'].response.parse(
+        await second.invoke('browser:attach', { projectId: projectA.id })
+      )
+      expect(shared.browserId).toBe(attached.browserId)
+      expect(await second.invoke('browser:selection', { browserId: shared.browserId })).toEqual({
+        text: '',
+      })
+      await second.close()
+      const reconnected = await connect(second.id)
+      await expect(
+        reconnected.invoke('browser:selection', { browserId: shared.browserId })
+      ).rejects.toThrow()
+      expect(await reconnected.invoke('browser:attach', { projectId: projectA.id })).toMatchObject({
+        browserId: attached.browserId,
+      })
+      expect(startChrome).not.toHaveBeenCalled()
+    } finally {
+      startChrome.mockRestore()
     }
-    const attached = BROWSER_CONTRACT['browser:attach'].response.parse(
-      await client.invoke('browser:attach', { projectId: project.id })
-    )
-    await client.invoke('browser:navigate', {
-      browserId: attached.browserId,
-      address: 'http://localhost/first',
-    })
-    await vi.waitFor(async () => {
-      expect(
-        await client.invoke('console:evaluate', {
-          projectId: project.id,
-          browserId: attached.browserId,
-          expression: '1+1',
-        })
-      ).toMatchObject({ status: 'started' })
-    })
-    const first = states.get(attached.browserId)
-    if (first === undefined) throw new Error('missing browser state')
-    const second = {
-      ...first,
-      tabId: randomUUID(),
-      url: 'http://localhost/second',
-      title: 'Second',
-    }
-    client.send({ kind: 'browserEvent', event: { kind: 'state', state: second } })
-    client.send({
-      kind: 'browserEvent',
-      event: { kind: 'state', state: { ...first, closed: true } },
-    })
-    await client.invoke('project:list', {})
-    expect(await client.invoke('browser:attach', { projectId: project.id })).toMatchObject({
-      state: { url: second.url, live: true },
-    })
   })
 
   it('streams reconnect history in bounded ordered batches while new events arrive', async () => {

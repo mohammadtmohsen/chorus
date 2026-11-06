@@ -285,62 +285,72 @@ const BrowserOk = z.object({ ok: z.literal(true) }).strict()
 const BrowserModifiers = z.number().int().min(0).max(15)
 const BrowserButtons = z.number().int().min(0).max(31)
 const BrowserGeneration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
-const BrowserInstance = z.string().uuid()
+const BrowserInstance = z.uuid()
 
 export const BrowserInputEvent = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('mouse'),
-    type: z.enum(['mousePressed', 'mouseReleased', 'mouseMoved']),
-    x: z.number(),
-    y: z.number(),
-    button: z.enum(['none', 'left', 'middle', 'right']),
-    buttons: BrowserButtons,
-    clickCount: z.number().int().min(0).max(3),
-    modifiers: BrowserModifiers,
-  }).strict(),
-  z.object({
-    kind: z.literal('wheel'),
-    x: z.number(),
-    y: z.number(),
-    deltaX: z.number(),
-    deltaY: z.number(),
-    modifiers: BrowserModifiers,
-  }).strict(),
-  z.object({
-    kind: z.literal('key'),
-    type: z.enum(['rawKeyDown', 'keyDown', 'keyUp']),
-    key: z.string().max(32),
-    code: z.string().max(32),
-    text: z.string().max(8).optional(),
-    keyCode: z.number().int().min(0).max(255),
-    autoRepeat: z.boolean(),
-    modifiers: BrowserModifiers,
-  }).strict(),
+  z
+    .object({
+      kind: z.literal('mouse'),
+      type: z.enum(['mousePressed', 'mouseReleased', 'mouseMoved']),
+      x: z.number(),
+      y: z.number(),
+      button: z.enum(['none', 'left', 'middle', 'right']),
+      buttons: BrowserButtons,
+      clickCount: z.number().int().min(0).max(3),
+      modifiers: BrowserModifiers,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('wheel'),
+      x: z.number(),
+      y: z.number(),
+      deltaX: z.number(),
+      deltaY: z.number(),
+      modifiers: BrowserModifiers,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('key'),
+      type: z.enum(['rawKeyDown', 'keyDown', 'keyUp']),
+      key: z.string().max(32),
+      code: z.string().max(32),
+      text: z.string().max(8).optional(),
+      keyCode: z.number().int().min(0).max(255),
+      autoRepeat: z.boolean(),
+      modifiers: BrowserModifiers,
+    })
+    .strict(),
   z.object({ kind: z.literal('text'), text: z.string().min(1).max(10_000) }).strict(),
 ])
 export type BrowserInputEvent = z.infer<typeof BrowserInputEvent>
 
-export const BrowserStreamRequest = z.object({
-  browserId: BrowserId,
-  instance: BrowserInstance,
-  generation: BrowserGeneration,
-  visible: z.boolean(),
-  width: z.number().int().min(1).max(8192),
-  height: z.number().int().min(1).max(8192),
-  scale: z.number().min(1).max(4),
-}).strict()
+export const BrowserStreamRequest = z
+  .object({
+    browserId: BrowserId,
+    instance: BrowserInstance,
+    generation: BrowserGeneration,
+    visible: z.boolean(),
+    width: z.number().int().min(1).max(8192),
+    height: z.number().int().min(1).max(8192),
+    scale: z.number().min(1).max(4),
+  })
+  .strict()
 export type BrowserStreamRequest = z.infer<typeof BrowserStreamRequest>
 
-export const BrowserFrame = z.object({
-  browserId: BrowserId,
-  instance: BrowserInstance,
-  generation: BrowserGeneration,
-  epoch: z.number().int().min(1),
-  serial: z.number().int().min(1),
-  data: z.string().max(BROWSER_FRAME_MAX),
-  width: z.number().positive(),
-  height: z.number().positive(),
-}).strict()
+export const BrowserFrame = z
+  .object({
+    browserId: BrowserId,
+    instance: BrowserInstance,
+    generation: BrowserGeneration,
+    epoch: z.number().int().min(1),
+    serial: z.number().int().min(1),
+    data: z.string().max(BROWSER_FRAME_MAX),
+    width: z.number().positive(),
+    height: z.number().positive(),
+  })
+  .strict()
 export type BrowserFrame = z.infer<typeof BrowserFrame>
 
 export const SelectToken = z.string().regex(/^[0-9a-f]{32}$/)
@@ -352,25 +362,31 @@ export const BROWSER_CONTRACT = {
     response: BrowserOk,
   },
   'browser:frameAck': {
-    request: z.object({
-      browserId: BrowserId,
-      instance: BrowserInstance,
-      generation: BrowserGeneration,
-      serial: z.number().int().min(1),
-    }).strict(),
+    request: z
+      .object({
+        browserId: BrowserId,
+        instance: BrowserInstance,
+        generation: BrowserGeneration,
+        serial: z.number().int().min(1),
+      })
+      .strict(),
     response: BrowserOk,
   },
   'browser:selectChoose': {
-    request: z.object({ browserId: BrowserId, token: SelectToken, index: z.number().int().min(-1) }).strict(),
+    request: z
+      .object({ browserId: BrowserId, token: SelectToken, index: z.number().int().min(-1) })
+      .strict(),
     response: BrowserOk,
   },
   'browser:dialogAnswer': {
-    request: z.object({
-      browserId: BrowserId,
-      token: z.string().uuid(),
-      accept: z.boolean(),
-      text: z.string().max(10_000).optional(),
-    }).strict(),
+    request: z
+      .object({
+        browserId: BrowserId,
+        token: z.uuid(),
+        accept: z.boolean(),
+        text: z.string().max(10_000).optional(),
+      })
+      .strict(),
     response: BrowserOk,
   },
   'browser:selection': {
@@ -510,28 +526,50 @@ export const BrowserPageRowWheel = z
   )
 export type BrowserPageRowWheel = z.infer<typeof BrowserPageRowWheel>
 
-export const BrowserSelectPrompt = z.object({
-  token: SelectToken,
-  selectedIndex: z.number().int(),
-  rect: z.object({ x: z.number(), y: z.number(), width: z.number().nonnegative() }).strict(),
-  options: z.array(z.object({
-    label: z.string().max(1_000),
-    disabled: z.boolean(),
-    group: z.string().max(1_000).nullable(),
-  }).strict()).max(2_000),
-}).strict()
+export const BrowserSelectPrompt = z
+  .object({
+    token: SelectToken,
+    selectedIndex: z.number().int(),
+    rect: z.object({ x: z.number(), y: z.number(), width: z.number().nonnegative() }).strict(),
+    options: z
+      .array(
+        z
+          .object({
+            label: z.string().max(1_000),
+            disabled: z.boolean(),
+            group: z.string().max(1_000).nullable(),
+          })
+          .strict()
+      )
+      .max(2_000),
+  })
+  .strict()
 export type BrowserSelectPrompt = z.infer<typeof BrowserSelectPrompt>
-export const BrowserDialogPrompt = z.object({
-  token: z.string().uuid(),
-  type: z.enum(['alert', 'confirm', 'prompt', 'beforeunload']),
-  message: z.string().max(10_000),
-  defaultPrompt: z.string().max(10_000),
-}).strict()
+export const BrowserDialogPrompt = z
+  .object({
+    token: z.uuid(),
+    type: z.enum(['alert', 'confirm', 'prompt', 'beforeunload']),
+    message: z.string().max(10_000),
+    defaultPrompt: z.string().max(10_000),
+  })
+  .strict()
 export type BrowserDialogPrompt = z.infer<typeof BrowserDialogPrompt>
 
 export const BrowserPush = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('select'), browserId: BrowserId, select: BrowserSelectPrompt.nullable() }).strict(),
-  z.object({ kind: z.literal('dialog'), browserId: BrowserId, dialog: BrowserDialogPrompt.nullable() }).strict(),
+  z
+    .object({
+      kind: z.literal('select'),
+      browserId: BrowserId,
+      select: BrowserSelectPrompt.nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('dialog'),
+      browserId: BrowserId,
+      dialog: BrowserDialogPrompt.nullable(),
+    })
+    .strict(),
   z.object({ kind: z.literal('state'), browserId: BrowserId, state: BrowserState }).strict(),
   z
     .object({ kind: z.literal('favorites'), browserId: BrowserId, favorites: BrowserFavorites })

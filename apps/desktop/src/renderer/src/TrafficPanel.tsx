@@ -350,10 +350,12 @@ export function TrafficPanel(props: {
       .attachTraffic({ projectId })
       .then((opened) => {
         if (cancelled) {
-          void window.chorus.detachTraffic({
-            projectId,
-            subscriptionId: opened.subscriptionId,
-          }).catch(() => undefined)
+          void window.chorus
+            .detachTraffic({
+              projectId,
+              subscriptionId: opened.subscriptionId,
+            })
+            .catch(() => undefined)
           return
         }
         attachment = {
@@ -393,7 +395,9 @@ export function TrafficPanel(props: {
       cancelled = true
       stopListening()
       if (attachment !== null) {
-        void window.chorus.detachTraffic({ projectId, subscriptionId: attachment.subscriptionId }).catch(() => undefined)
+        void window.chorus
+          .detachTraffic({ projectId, subscriptionId: attachment.subscriptionId })
+          .catch(() => undefined)
       }
     }
   }, [projectId, reconnect])

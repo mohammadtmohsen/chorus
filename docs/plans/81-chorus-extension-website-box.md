@@ -2,13 +2,13 @@
 
 Status: **draft, revised after codex's challenge, awaiting approval.** No product code written. Builds on plan 80 (Chorus for VS Code).
 
-| Phase | What ships | Status |
-|---|---|---|
-| 1 | Engine owns Chrome; Browser box and Console drive a project's Chrome page | Done 2026-11-06: installed; user saw title, Back/Reload and Console logs; Chrome confirmed on its own profile loading `localhost:30010`. Gap found: the Browser box keeps a stale id after an engine restart until the window reloads |
-| 2 | Website box: live stream, mouse, wheel, keyboard, paste, copy, IME | Installed 2026-11-06; user saw the live page in the website box. User confirmed typing, Backspace and ⌘A in the login field. IME, paste and copy not yet confirmed. Reconnect fixes for the Browser, Console and Traffic boxes installed; Traffic confirmed showing calls |
-| 3 | Page surfaces: popups, dropdowns, dialogs, file chooser | Implemented 2026-11-06 and reviewed (activation epochs, isolated-world bridge with a createIsolatedWorld fallback, Console follows the active page under the browser id). Installed 2026-11-06; user confirmed the photo upload opens VS Code's picker and works. Native dropdowns, dialogs and popups not yet confirmed |
-| 4 | VS Code browser-tab route deleted, proposed API dropped | Not started |
-| — | Restart Chorus restarts while project runs are active, and starts them again | Done 2026-11-06: installed; the engine restarted and `dev:clean` was started again by itself one second later |
+| Phase | What ships                                                                   | Status                                                                                                                                                                                                                                                                                                                   |
+| ----- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1     | Engine owns Chrome; Browser box and Console drive a project's Chrome page    | Done 2026-11-06: installed; user saw title, Back/Reload and Console logs; Chrome confirmed on its own profile loading `localhost:30010`. Gap found: the Browser box keeps a stale id after an engine restart until the window reloads                                                                                    |
+| 2     | Website box: live stream, mouse, wheel, keyboard, paste, copy, IME           | Installed 2026-11-06; user saw the live page in the website box. User confirmed typing, Backspace and ⌘A in the login field. IME, paste and copy not yet confirmed. Reconnect fixes for the Browser, Console and Traffic boxes installed; Traffic confirmed showing calls                                                |
+| 3     | Page surfaces: popups, dropdowns, dialogs, file chooser                      | Implemented 2026-11-06 and reviewed (activation epochs, isolated-world bridge with a createIsolatedWorld fallback, Console follows the active page under the browser id). Installed 2026-11-06; user confirmed the photo upload opens VS Code's picker and works. Native dropdowns, dialogs and popups not yet confirmed |
+| 4     | VS Code browser-tab route deleted, proposed API dropped                      | Not started                                                                                                                                                                                                                                                                                                              |
+| —     | Restart Chorus restarts while project runs are active, and starts them again | Done 2026-11-06: installed; the engine restarted and `dev:clean` was started again by itself one second later                                                                                                                                                                                                            |
 
 Decided by the user on 2026-11-06:
 
@@ -20,10 +20,10 @@ Decided by the user on 2026-11-06:
 
 Evidence that decided the route, both runs isolated, 2026-11-06:
 
-| Spike | Result |
-|---|---|
-| Stream a VS Code browser tab (`/tmp/chorus-spike-hidden-tab`) | 0 frames and a frozen page whenever the tab is not on screen; 300 frames per 5 s when visible |
-| Headless Chrome 157 over a pipe (`/tmp/chorus-spike-chrome`) | ~50–60 fps for two pages at once; click-to-frame 36 ms; `insertText` of `ASCII Hello مرحبا 😀` exact; wheel, shared cookie and cookie-after-restart pass; popup, alert and file-chooser events arrive; **native `<select>` popup never appears in frames** |
+| Spike                                                         | Result                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stream a VS Code browser tab (`/tmp/chorus-spike-hidden-tab`) | 0 frames and a frozen page whenever the tab is not on screen; 300 frames per 5 s when visible                                                                                                                                                              |
+| Headless Chrome 157 over a pipe (`/tmp/chorus-spike-chrome`)  | ~50–60 fps for two pages at once; click-to-frame 36 ms; `insertText` of `ASCII Hello مرحبا 😀` exact; wheel, shared cookie and cookie-after-restart pass; popup, alert and file-chooser events arrive; **native `<select>` popup never appears in frames** |
 
 What the spikes did **not** measure, and Phase 2 must: the full socket → extension → webview → `<img>` path, JPEG at the box's real size and scale, and the keydown/IME mapping below. The spike used `insertText` only.
 
@@ -62,14 +62,14 @@ flowchart LR
 
 ### Identity and ownership
 
-| Thing | Identity | Who changes it |
-|---|---|---|
-| `ProjectBrowser` | One per **project**, keyed by `projectId` (was `workspaceKey:projectId`), so `chorus_browser`'s project-only routing finds exactly one browser | Created on first `attach` |
-| `ChromePage` | One per Chrome target, with `targetId`, `sessionId` and a `generation` that increments on every new page | Created only by `navigate`, `restore`, or `reload` when no page is live |
-| Active target | Top of the project's stack: the main page, or the newest open popup | `Target.targetCreated` with a known `openerId` pushes; destroy/detach pops |
-| Controller | The peer whose Console source is mounted | Only explicit user actions: `attach`, `navigate`, `act`, `input`, `selectChoose`, `dialogAnswer`. **Never** `stream` or `frameAck` |
-| Viewers | Every peer that attached; all receive `browser:push` state | `attach` adds, `release` removes |
-| Stream subscription | `(peer, browserId, generation)` held by `BrowserStreams` | The website box's `browser:stream` calls |
+| Thing               | Identity                                                                                                                                       | Who changes it                                                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `ProjectBrowser`    | One per **project**, keyed by `projectId` (was `workspaceKey:projectId`), so `chorus_browser`'s project-only routing finds exactly one browser | Created on first `attach`                                                                                                          |
+| `ChromePage`        | One per Chrome target, with `targetId`, `sessionId` and a `generation` that increments on every new page                                       | Created only by `navigate`, `restore`, or `reload` when no page is live                                                            |
+| Active target       | Top of the project's stack: the main page, or the newest open popup                                                                            | `Target.targetCreated` with a known `openerId` pushes; destroy/detach pops                                                         |
+| Controller          | The peer whose Console source is mounted                                                                                                       | Only explicit user actions: `attach`, `navigate`, `act`, `input`, `selectChoose`, `dialogAnswer`. **Never** `stream` or `frameAck` |
+| Viewers             | Every peer that attached; all receive `browser:push` state                                                                                     | `attach` adds, `release` removes                                                                                                   |
+| Stream subscription | `(peer, browserId, generation)` held by `BrowserStreams`                                                                                       | The website box's `browser:stream` calls                                                                                           |
 
 ### Chrome lifecycle
 
@@ -137,11 +137,28 @@ const CANDIDATES: Partial<Record<NodeJS.Platform, readonly string[]>> = {
     '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
   ],
   win32: [
-    join(process.env['PROGRAMFILES'] ?? 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    join(
+      process.env['PROGRAMFILES'] ?? 'C:\\Program Files',
+      'Google',
+      'Chrome',
+      'Application',
+      'chrome.exe'
+    ),
     join(process.env['LOCALAPPDATA'] ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    join(process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    join(
+      process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)',
+      'Microsoft',
+      'Edge',
+      'Application',
+      'msedge.exe'
+    ),
   ],
-  linux: ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/microsoft-edge'],
+  linux: [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/microsoft-edge',
+  ],
 }
 
 export function findChrome(): string | null {
@@ -191,10 +208,12 @@ export class ChromeProcess {
 
   start(): Promise<void> {
     if (this.stopping) return Promise.reject(new Error('browser-stopping'))
-    this.starting ??= this.exited.then(() => this.launch()).catch((error: unknown) => {
-      this.starting = null
-      throw error
-    })
+    this.starting ??= this.exited
+      .then(() => this.launch())
+      .catch((error: unknown) => {
+        this.starting = null
+        throw error
+      })
     return this.starting
   }
 
@@ -267,7 +286,11 @@ export class ChromeProcess {
     }
   }
 
-  send(method: string, params: Readonly<Record<string, unknown>>, sessionId?: string): Promise<unknown> {
+  send(
+    method: string,
+    params: Readonly<Record<string, unknown>>,
+    sessionId?: string
+  ): Promise<unknown> {
     const input = this.input
     if (input === null) return Promise.reject(new Error('browser-stopped'))
     const id = ++this.nextId
@@ -277,7 +300,9 @@ export class ChromeProcess {
         reject(new Error('browser-timeout'))
       }, COMMAND_TIMEOUT_MS)
       this.pending.set(id, { resolve, reject, timer })
-      input.write(`${JSON.stringify({ id, method, params, ...(sessionId === undefined ? {} : { sessionId }) })}\0`)
+      input.write(
+        `${JSON.stringify({ id, method, params, ...(sessionId === undefined ? {} : { sessionId }) })}\0`
+      )
     })
   }
 
@@ -439,7 +464,9 @@ class PageTransport implements CdpTransport {
     this.attached = false
   }
   sendCommand = (method: string, params: Readonly<Record<string, unknown>>): Promise<unknown> =>
-    this.isAttached() ? this.page.send(method, params) : Promise.reject(new Error('browser-disconnected'))
+    this.isAttached()
+      ? this.page.send(method, params)
+      : Promise.reject(new Error('browser-disconnected'))
   onMessage(listener: (method: string, params: unknown) => void): () => void {
     return this.page.onEvent(listener)
   }
@@ -616,30 +643,30 @@ A person using the Console box is also an explicit action. Every Console request
 
 `act` on the active page:
 
-| Action | CDP |
-|---|---|
-| `back`, `forward` | `Page.getNavigationHistory`, then `Page.navigateToHistoryEntry` with the neighbouring `entryId` |
-| `reload` | `Page.reload` on a live page; **with no live page, `navigate(record, savedLastUrl)`** |
-| `stop` | `Page.stopLoading` |
-| `focus` | `streams.reveal(record)`, which pushes `{ kind: 'command', command: 'reveal' }` so the row scrolls to the website box |
-| `external` | Unchanged, `requestHost('openExternal')` |
-| `close` | Close every target in the stack with `Target.closeTarget` |
+| Action            | CDP                                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `back`, `forward` | `Page.getNavigationHistory`, then `Page.navigateToHistoryEntry` with the neighbouring `entryId`                       |
+| `reload`          | `Page.reload` on a live page; **with no live page, `navigate(record, savedLastUrl)`**                                 |
+| `stop`            | `Page.stopLoading`                                                                                                    |
+| `focus`           | `streams.reveal(record)`, which pushes `{ kind: 'command', command: 'reveal' }` so the row scrolls to the website box |
+| `external`        | Unchanged, `requestHost('openExternal')`                                                                              |
+| `close`           | Close every target in the stack with `Target.closeTarget`                                                             |
 
 Events that maintain `BrowserState` for the **active** page. Root-session events are routed by `targetId` through `ChromeProcess.onEvent` with `sessionId === undefined`.
 
-| Event | Session | State change |
-|---|---|---|
-| `Page.frameNavigated` (no `parentId`) | page | `url`, `documentId = targetId:loaderId`, `source.navigatedTo`, `settings.setLastUrl` (main page only) |
-| `Page.navigatedWithinDocument` | page | `url`, then history refresh |
-| `Page.lifecycleEvent` `load` | page | `status: 'ready'`, then `Page.getNavigationHistory` for `canGoBack` and `canGoForward` |
-| `Target.targetInfoChanged` | root | `title` and `url` for the matching `targetId` |
-| `Target.targetCreated`, `type: 'page'`, `openerId` in a stack | root | `createPage(record, openerId, targetId)`: the popup becomes active |
-| `Target.targetDestroyed` / `Target.detachedFromTarget` | root | Mark the page closed, release its source, pop it; the opener becomes active |
-| `Inspector.targetCrashed` | page | `status: 'error'`, `live: false`, `error.code = BROWSER_STOPPED_CODE` |
-| `Page.javascriptDialogOpening` | page | `record.dialog`, push `dialog` |
-| `Page.javascriptDialogClosed`, any main-frame navigation | page | Clear `record.dialog` and `record.select`, push `null` for each |
-| `Runtime.bindingCalled` `chorusSelect` | page | Validate (below), set `record.select`, push `select` |
-| `Page.fileChooserOpened` | page | `requestHost('browser.pickFiles')` to the controller; empty result does nothing, which keeps the field's current selection |
+| Event                                                         | Session | State change                                                                                                               |
+| ------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `Page.frameNavigated` (no `parentId`)                         | page    | `url`, `documentId = targetId:loaderId`, `source.navigatedTo`, `settings.setLastUrl` (main page only)                      |
+| `Page.navigatedWithinDocument`                                | page    | `url`, then history refresh                                                                                                |
+| `Page.lifecycleEvent` `load`                                  | page    | `status: 'ready'`, then `Page.getNavigationHistory` for `canGoBack` and `canGoForward`                                     |
+| `Target.targetInfoChanged`                                    | root    | `title` and `url` for the matching `targetId`                                                                              |
+| `Target.targetCreated`, `type: 'page'`, `openerId` in a stack | root    | `createPage(record, openerId, targetId)`: the popup becomes active                                                         |
+| `Target.targetDestroyed` / `Target.detachedFromTarget`        | root    | Mark the page closed, release its source, pop it; the opener becomes active                                                |
+| `Inspector.targetCrashed`                                     | page    | `status: 'error'`, `live: false`, `error.code = BROWSER_STOPPED_CODE`                                                      |
+| `Page.javascriptDialogOpening`                                | page    | `record.dialog`, push `dialog`                                                                                             |
+| `Page.javascriptDialogClosed`, any main-frame navigation      | page    | Clear `record.dialog` and `record.select`, push `null` for each                                                            |
+| `Runtime.bindingCalled` `chorusSelect`                        | page    | Validate (below), set `record.select`, push `select`                                                                       |
+| `Page.fileChooserOpened`                                      | page    | `requestHost('browser.pickFiles')` to the controller; empty result does nothing, which keeps the field's current selection |
 
 `stopped(reason)`, wired to `chrome.onExit`, marks every page closed, releases every source, empties every stack, and publishes `status: 'error'` with `BROWSER_STOPPED_CODE` and `live: false`.
 
@@ -661,7 +688,12 @@ interface Subscription {
   scale: number
   credit: number
   serial: number
-  held: { readonly epoch: number; readonly data: string; readonly width: number; readonly height: number } | null
+  held: {
+    readonly epoch: number
+    readonly data: string
+    readonly width: number
+    readonly height: number
+  } | null
 }
 
 interface Cast {
@@ -701,7 +733,13 @@ export class BrowserStreams {
     this.schedule(request.browserId)
   }
 
-  ack(peer: EnginePeer, browserId: string, instance: string, generation: number, serial: number): void {
+  ack(
+    peer: EnginePeer,
+    browserId: string,
+    instance: string,
+    generation: number,
+    serial: number
+  ): void {
     const subscription = this.subscriptions.get(`${peer.id}:${browserId}`)
     if (
       subscription?.instance !== instance ||
@@ -788,11 +826,22 @@ export class BrowserStreams {
   }
 
   private showing(subscription: Subscription): boolean {
-    return subscription.visible && !this.hiddenPeers.has(subscription.peer) && !subscription.peer.isGone()
+    return (
+      subscription.visible &&
+      !this.hiddenPeers.has(subscription.peer) &&
+      !subscription.peer.isGone()
+    )
   }
 
   private schedule(browserId: string): void {
-    const cast = this.casts.get(browserId) ?? { page: null, token: null, geometry: null, quality: HIGH_QUALITY, running: null, dirty: false }
+    const cast = this.casts.get(browserId) ?? {
+      page: null,
+      token: null,
+      geometry: null,
+      quality: HIGH_QUALITY,
+      running: null,
+      dirty: false,
+    }
     this.casts.set(browserId, cast)
     cast.dirty = true
     cast.running ??= this.apply(browserId, cast).finally(() => {
@@ -806,7 +855,9 @@ export class BrowserStreams {
       cast.dirty = false
       const page = this.active(browserId)
       const viewer = [...this.subscriptions.values()]
-        .filter((subscription) => subscription.browserId === browserId && this.showing(subscription))
+        .filter(
+          (subscription) => subscription.browserId === browserId && this.showing(subscription)
+        )
         .at(-1)
       const geometry =
         viewer === undefined || page === null
@@ -820,7 +871,10 @@ export class BrowserStreams {
       }
       if (page === null || viewer === undefined || geometry === null || cast.dirty) continue
       if (cast.page === page && cast.geometry === geometry) continue
-      const scale = Math.min(viewer.scale, Math.sqrt(MAX_STREAM_PIXELS / (viewer.width * viewer.height)))
+      const scale = Math.min(
+        viewer.scale,
+        Math.sqrt(MAX_STREAM_PIXELS / (viewer.width * viewer.height))
+      )
       try {
         await page.send('Emulation.setDeviceMetricsOverride', {
           width: viewer.width,
@@ -933,34 +987,40 @@ const Generation = z.number().int().min(0)
 const Buttons = z.number().int().min(0).max(31)
 
 export const BrowserInputEvent = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('mouse'),
-    type: z.enum(['mousePressed', 'mouseReleased', 'mouseMoved']),
-    x: z.number(),
-    y: z.number(),
-    button: z.enum(['none', 'left', 'middle', 'right']),
-    buttons: Buttons,
-    clickCount: z.number().int().min(0).max(3),
-    modifiers: Modifiers,
-  }).strict(),
-  z.object({
-    kind: z.literal('wheel'),
-    x: z.number(),
-    y: z.number(),
-    deltaX: z.number(),
-    deltaY: z.number(),
-    modifiers: Modifiers,
-  }).strict(),
-  z.object({
-    kind: z.literal('key'),
-    type: z.enum(['rawKeyDown', 'keyDown', 'keyUp']),
-    key: z.string().max(32),
-    code: z.string().max(32),
-    text: z.string().max(8).optional(),
-    keyCode: z.number().int().min(0).max(255),
-    autoRepeat: z.boolean(),
-    modifiers: Modifiers,
-  }).strict(),
+  z
+    .object({
+      kind: z.literal('mouse'),
+      type: z.enum(['mousePressed', 'mouseReleased', 'mouseMoved']),
+      x: z.number(),
+      y: z.number(),
+      button: z.enum(['none', 'left', 'middle', 'right']),
+      buttons: Buttons,
+      clickCount: z.number().int().min(0).max(3),
+      modifiers: Modifiers,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('wheel'),
+      x: z.number(),
+      y: z.number(),
+      deltaX: z.number(),
+      deltaY: z.number(),
+      modifiers: Modifiers,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('key'),
+      type: z.enum(['rawKeyDown', 'keyDown', 'keyUp']),
+      key: z.string().max(32),
+      code: z.string().max(32),
+      text: z.string().max(8).optional(),
+      keyCode: z.number().int().min(0).max(255),
+      autoRepeat: z.boolean(),
+      modifiers: Modifiers,
+    })
+    .strict(),
   z.object({ kind: z.literal('text'), text: z.string().min(1).max(10_000) }).strict(),
 ])
 export type BrowserInputEvent = z.infer<typeof BrowserInputEvent>
@@ -968,27 +1028,31 @@ export type BrowserInputEvent = z.infer<typeof BrowserInputEvent>
 const Instance = z.string().uuid()
 const SelectToken = z.string().regex(/^[0-9a-f]{32}$/)
 
-export const BrowserStreamRequest = z.object({
-  browserId: BrowserId,
-  instance: Instance,
-  generation: Generation,
-  visible: z.boolean(),
-  width: z.number().int().min(1).max(8192),
-  height: z.number().int().min(1).max(8192),
-  scale: z.number().min(1).max(4),
-}).strict()
+export const BrowserStreamRequest = z
+  .object({
+    browserId: BrowserId,
+    instance: Instance,
+    generation: Generation,
+    visible: z.boolean(),
+    width: z.number().int().min(1).max(8192),
+    height: z.number().int().min(1).max(8192),
+    scale: z.number().min(1).max(4),
+  })
+  .strict()
 export type BrowserStreamRequest = z.infer<typeof BrowserStreamRequest>
 
-export const BrowserFrame = z.object({
-  browserId: BrowserId,
-  instance: Instance,
-  generation: Generation,
-  epoch: z.number().int().min(1),
-  serial: z.number().int().min(1),
-  data: z.string(),
-  width: z.number(),
-  height: z.number(),
-}).strict()
+export const BrowserFrame = z
+  .object({
+    browserId: BrowserId,
+    instance: Instance,
+    generation: Generation,
+    epoch: z.number().int().min(1),
+    serial: z.number().int().min(1),
+    data: z.string(),
+    width: z.number(),
+    height: z.number(),
+  })
+  .strict()
 export type BrowserFrame = z.infer<typeof BrowserFrame>
 ```
 
@@ -1065,10 +1129,22 @@ import type { BrowserInputEvent, BrowserStreamRequest } from '../shared/browser-
 
 export interface BrowserStreamPort {
   stream(owner: ShellClient, request: BrowserStreamRequest): void
-  ack(owner: ShellClient, browserId: string, instance: string, generation: number, serial: number): void
+  ack(
+    owner: ShellClient,
+    browserId: string,
+    instance: string,
+    generation: number,
+    serial: number
+  ): void
   input(owner: ShellClient, browserId: string, event: BrowserInputEvent): Promise<void>
   chooseSelect(owner: ShellClient, browserId: string, token: string, index: number): Promise<void>
-  answerDialog(owner: ShellClient, browserId: string, token: string, accept: boolean, text: string | undefined): Promise<void>
+  answerDialog(
+    owner: ShellClient,
+    browserId: string,
+    token: string,
+    accept: boolean,
+    text: string | undefined
+  ): Promise<void>
   selection(owner: ShellClient, browserId: string): Promise<string>
 }
 ```
@@ -1076,16 +1152,16 @@ export interface BrowserStreamPort {
 ### `apps/desktop/src/main/browser-ipc.ts`
 
 ```ts
-    this.handle('browser:stream', BROWSER_CONTRACT['browser:stream'], (owner, request) => {
-      if (streams === undefined) throw new Error('not-eligible')
-      streams.stream(owner, request)
-      return { ok: true as const }
-    })
-    this.handle('browser:input', BROWSER_CONTRACT['browser:input'], async (owner, request) => {
-      if (streams === undefined) throw new Error('not-eligible')
-      await streams.input(owner, request.browserId, request.event)
-      return { ok: true as const }
-    })
+this.handle('browser:stream', BROWSER_CONTRACT['browser:stream'], (owner, request) => {
+  if (streams === undefined) throw new Error('not-eligible')
+  streams.stream(owner, request)
+  return { ok: true as const }
+})
+this.handle('browser:input', BROWSER_CONTRACT['browser:input'], async (owner, request) => {
+  if (streams === undefined) throw new Error('not-eligible')
+  await streams.input(owner, request.browserId, request.event)
+  return { ok: true as const }
+})
 ```
 
 The same shape covers `browser:frameAck`, `browser:selectChoose`, `browser:dialogAnswer` and `browser:selection`. `releaseShell(owner)` also calls `streams?.release(owner)`.
@@ -1093,15 +1169,15 @@ The same shape covers `browser:frameAck`, `browser:selectChoose`, `browser:dialo
 ### `apps/engine/src/server.ts` and `apps/engine/src/protocol.ts`
 
 ```ts
-  const browser = new BrowserIpc(
-    {
-      isAdopted: (id) => runtime.projects.get(id) !== null,
-      downloads: { list: () => [], act: () => null },
-      surfaces: browserSources.port,
-      streams: browserSources.streams,
-    },
-    registrar
-  )
+const browser = new BrowserIpc(
+  {
+    isAdopted: (id) => runtime.projects.get(id) !== null,
+    downloads: { list: () => [], act: () => null },
+    surfaces: browserSources.port,
+    streams: browserSources.streams,
+  },
+  registrar
+)
 ```
 
 The `focus` client message (`protocol.ts:95`) gains `viewVisible: z.boolean().default(true)`. The `case 'focus'` arm (`server.ts:398`) calls `browserSources.viewVisibility(current, message.viewVisible)`.
@@ -1186,13 +1262,13 @@ export function insideWebsiteSurface(target: EventTarget | null): boolean {
 `apps/desktop/src/renderer/src/workspace/Workspace.tsx`, first line of `onKeyDown` (`Workspace.tsx:~420`, registered with capture at `:497`):
 
 ```ts
-      if (insideWebsiteSurface(event.target)) return
+if (insideWebsiteSurface(event.target)) return
 ```
 
 `apps/desktop/src/renderer/src/workspace/row-drag.ts`, first line of `routeRowWheel`'s `onWheel` (`row-drag.ts:24`):
 
 ```ts
-    if (insideWebsiteSurface(event.target)) return
+if (insideWebsiteSurface(event.target)) return
 ```
 
 The two helpers live in NEW `apps/desktop/src/renderer/src/website-surface.ts`, beside `modifiersOf`, `buttonOf`, `buttonsOf`, `wheelPixels` (line and page `deltaMode` converted to pixels) and `keyEventFor`. All are pure and exported for tests.
@@ -1201,17 +1277,17 @@ The two helpers live in NEW `apps/desktop/src/renderer/src/website-surface.ts`, 
 
 The focus target is a transparent `<textarea>` inside the surface. It is the editing host that VS Code's webview clipboard routing and the OS IME need ([webview `pre/index.html`](https://github.com/microsoft/vscode/blob/1.145.0/src/vs/workbench/contrib/webview/browser/pre/index.html#L609)). It is positioned at the last pointer-down point so the IME candidate window appears there.
 
-| User does | Renderer | Chrome receives |
-|---|---|---|
-| Printable key, not composing | `keydown`: `rawKeyDown` without text. `beforeinput insertText`: `preventDefault`, send `text` | `rawKeyDown`, then `Input.insertText` |
-| Enter | `keyDown` with `text: '\r'` | Submits forms, inserts newlines |
-| Backspace, Delete, arrows, Tab, Escape, Home, End, PageUp, PageDown | `rawKeyDown` / `keyUp` with `keyCode` | Editing and navigation |
-| ⌘/Ctrl + letter, except C, V, X | `rawKeyDown` / `keyUp` with modifiers | Page shortcuts |
-| ⌘V / Ctrl+V | Not prevented and not stopped. VS Code's clipboard routing pastes into the focused textarea; a native `paste` listener calls `preventDefault` and sends `clipboardData` text | `Input.insertText` |
-| ⌘C / Ctrl+C | Not prevented. The textarea already holds the page's selection, refreshed on every `mouseup` and `keyup` through `browser:selection` (`window.getSelection().toString()` in the `chorus` world), so VS Code copies it | Nothing |
-| ⌘X / Ctrl+X | As copy, then `rawKeyDown` Delete | Delete |
-| IME composition | `compositionstart` stops forwarding keys; `compositionend`: send `text` with `event.data`, clear the textarea, restore the selection mirror | `Input.insertText` once |
-| Blur, `pointercancel`, `lostpointercapture` | `mouseReleased` for a held button; `keyUp` for held modifiers | Clean state |
+| User does                                                           | Renderer                                                                                                                                                                                                              | Chrome receives                       |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Printable key, not composing                                        | `keydown`: `rawKeyDown` without text. `beforeinput insertText`: `preventDefault`, send `text`                                                                                                                         | `rawKeyDown`, then `Input.insertText` |
+| Enter                                                               | `keyDown` with `text: '\r'`                                                                                                                                                                                           | Submits forms, inserts newlines       |
+| Backspace, Delete, arrows, Tab, Escape, Home, End, PageUp, PageDown | `rawKeyDown` / `keyUp` with `keyCode`                                                                                                                                                                                 | Editing and navigation                |
+| ⌘/Ctrl + letter, except C, V, X                                     | `rawKeyDown` / `keyUp` with modifiers                                                                                                                                                                                 | Page shortcuts                        |
+| ⌘V / Ctrl+V                                                         | Not prevented and not stopped. VS Code's clipboard routing pastes into the focused textarea; a native `paste` listener calls `preventDefault` and sends `clipboardData` text                                          | `Input.insertText`                    |
+| ⌘C / Ctrl+C                                                         | Not prevented. The textarea already holds the page's selection, refreshed on every `mouseup` and `keyup` through `browser:selection` (`window.getSelection().toString()` in the `chorus` world), so VS Code copies it | Nothing                               |
+| ⌘X / Ctrl+X                                                         | As copy, then `rawKeyDown` Delete                                                                                                                                                                                     | Delete                                |
+| IME composition                                                     | `compositionstart` stops forwarding keys; `compositionend`: send `text` with `event.data`, clear the textarea, restore the selection mirror                                                                           | `Input.insertText` once               |
+| Blur, `pointercancel`, `lostpointercapture`                         | `mouseReleased` for a held button; `keyUp` for held modifiers                                                                                                                                                         | Clean state                           |
 
 `autoRepeat` comes from `event.repeat`. A `keydown` with `event.isComposing` or key `Process` is never forwarded.
 
@@ -1230,7 +1306,11 @@ export function useBrowserScreencast(
   const epoch = useRef(0)
   const live = useRef(false)
   const composing = useRef(false)
-  const [frame, setFrame] = useState<{ readonly url: string; readonly width: number; readonly height: number } | null>(null)
+  const [frame, setFrame] = useState<{
+    readonly url: string
+    readonly width: number
+    readonly height: number
+  } | null>(null)
   const [select, setSelect] = useState<BrowserSelectPrompt | null>(null)
   const [dialog, setDialog] = useState<BrowserDialogPrompt | null>(null)
   const [intersecting, setIntersecting] = useState(false)
@@ -1245,9 +1325,12 @@ export function useBrowserScreencast(
   useEffect(() => {
     const node = surface.current
     if (node === null) return undefined
-    const observer = new IntersectionObserver(([entry]) => {
-      setIntersecting(entry?.isIntersecting === true)
-    }, { root: row.current })
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIntersecting(entry?.isIntersecting === true)
+      },
+      { root: row.current }
+    )
     observer.observe(node)
     return () => {
       observer.disconnect()
@@ -1271,7 +1354,12 @@ export function useBrowserScreencast(
       void image
         .decode()
         .then(() => {
-          if (pushed.generation !== generation.current || pushed.epoch !== epoch.current || !live.current) return
+          if (
+            pushed.generation !== generation.current ||
+            pushed.epoch !== epoch.current ||
+            !live.current
+          )
+            return
           setFrame({ url: image.src, width: pushed.width, height: pushed.height })
         })
         .finally(() => {
@@ -1347,7 +1435,8 @@ export function useBrowserScreencast(
 
   const send = useCallback(
     (event: BrowserInputEvent) => {
-      if (browserId !== null && frame !== null) void window.chorus.browserInput({ browserId, event })
+      if (browserId !== null && frame !== null)
+        void window.chorus.browserInput({ browserId, event })
     },
     [browserId, frame]
   )
@@ -1380,7 +1469,12 @@ export function useBrowserScreencast(
     }
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault()
-      send({ kind: 'wheel', ...point(event.clientX, event.clientY), ...wheelPixels(event), modifiers: modifiersOf(event) })
+      send({
+        kind: 'wheel',
+        ...point(event.clientX, event.clientY),
+        ...wheelPixels(event),
+        modifiers: modifiersOf(event),
+      })
     }
     area.addEventListener('beforeinput', onBeforeInput)
     area.addEventListener('paste', onPaste)
@@ -1396,7 +1490,19 @@ export function useBrowserScreencast(
     }
   }, [browserId, send, point])
 
-  return { surface, editor, composing, frame, select, dialog, point, send, setSelect, setDialog, visible }
+  return {
+    surface,
+    editor,
+    composing,
+    frame,
+    select,
+    dialog,
+    point,
+    send,
+    setSelect,
+    setDialog,
+    visible,
+  }
 }
 ```
 
@@ -1425,7 +1531,11 @@ export function BrowserScreencast(props: {
   const choose = (index: number): void => {
     const prompt = view.select
     if (prompt === null || props.browserId === null) return
-    void window.chorus.chooseBrowserSelect({ browserId: props.browserId, token: prompt.token, index })
+    void window.chorus.chooseBrowserSelect({
+      browserId: props.browserId,
+      token: prompt.token,
+      index,
+    })
     view.setSelect(null)
     editor.current?.focus()
   }
@@ -1458,62 +1568,104 @@ export function BrowserScreencast(props: {
         </button>
       </header>
       <div className="website-stage" {...{ [WEBSITE_SURFACE_ATTRIBUTE]: '' }}>
-      <div
-        className="website-surface"
-        ref={view.surface}
-        onPointerDown={(event) => {
-          event.currentTarget.setPointerCapture(event.pointerId)
-          placeEditor(editor.current, event)
-          editor.current?.focus()
-          view.send({ kind: 'mouse', type: 'mousePressed', ...view.point(event.clientX, event.clientY), button: buttonOf(event.button), buttons: buttonsOf(event.buttons), clickCount: Math.min(3, event.detail), modifiers: modifiersOf(event) })
-        }}
-        onPointerUp={(event) => {
-          view.send({ kind: 'mouse', type: 'mouseReleased', ...view.point(event.clientX, event.clientY), button: buttonOf(event.button), buttons: buttonsOf(event.buttons), clickCount: Math.min(3, event.detail), modifiers: modifiersOf(event) })
-          void mirrorSelection(props.browserId, editor.current)
-        }}
-        onPointerMove={(event) => {
-          view.send({ kind: 'mouse', type: 'mouseMoved', ...view.point(event.clientX, event.clientY), button: 'none', buttons: buttonsOf(event.buttons), clickCount: 0, modifiers: modifiersOf(event) })
-        }}
-        onPointerCancel={() => {
-          view.send({ kind: 'mouse', type: 'mouseReleased', x: 0, y: 0, button: 'left', buttons: 0, clickCount: 0, modifiers: 0 })
-        }}
-      >
-        <textarea
-          ref={editor}
-          className="website-editor"
-          aria-label={t('website.surface')}
-          spellCheck={false}
-          autoCapitalize="off"
-          onKeyDown={(event) => {
-            if (view.composing.current || event.nativeEvent.isComposing || event.key === 'Process') return
-            const key = keyEventFor(event.nativeEvent, 'down')
-            if (key === null) return
-            event.stopPropagation()
-            if (!printable(event.nativeEvent)) event.preventDefault()
-            view.send(key)
+        <div
+          className="website-surface"
+          ref={view.surface}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId)
+            placeEditor(editor.current, event)
+            editor.current?.focus()
+            view.send({
+              kind: 'mouse',
+              type: 'mousePressed',
+              ...view.point(event.clientX, event.clientY),
+              button: buttonOf(event.button),
+              buttons: buttonsOf(event.buttons),
+              clickCount: Math.min(3, event.detail),
+              modifiers: modifiersOf(event),
+            })
           }}
-          onKeyUp={(event) => {
-            if (view.composing.current) return
-            const key = keyEventFor(event.nativeEvent, 'up')
-            if (key === null) return
-            event.stopPropagation()
-            view.send(key)
+          onPointerUp={(event) => {
+            view.send({
+              kind: 'mouse',
+              type: 'mouseReleased',
+              ...view.point(event.clientX, event.clientY),
+              button: buttonOf(event.button),
+              buttons: buttonsOf(event.buttons),
+              clickCount: Math.min(3, event.detail),
+              modifiers: modifiersOf(event),
+            })
             void mirrorSelection(props.browserId, editor.current)
           }}
-        />
-        {view.frame === null ? (
-          <p className="website-placeholder">{t('website.empty')}</p>
-        ) : (
-          <img className="website-frame" src={view.frame.url} alt="" draggable={false} />
-        )}
-      </div>
+          onPointerMove={(event) => {
+            view.send({
+              kind: 'mouse',
+              type: 'mouseMoved',
+              ...view.point(event.clientX, event.clientY),
+              button: 'none',
+              buttons: buttonsOf(event.buttons),
+              clickCount: 0,
+              modifiers: modifiersOf(event),
+            })
+          }}
+          onPointerCancel={() => {
+            view.send({
+              kind: 'mouse',
+              type: 'mouseReleased',
+              x: 0,
+              y: 0,
+              button: 'left',
+              buttons: 0,
+              clickCount: 0,
+              modifiers: 0,
+            })
+          }}
+        >
+          <textarea
+            ref={editor}
+            className="website-editor"
+            aria-label={t('website.surface')}
+            spellCheck={false}
+            autoCapitalize="off"
+            onKeyDown={(event) => {
+              if (
+                view.composing.current ||
+                event.nativeEvent.isComposing ||
+                event.key === 'Process'
+              )
+                return
+              const key = keyEventFor(event.nativeEvent, 'down')
+              if (key === null) return
+              event.stopPropagation()
+              if (!printable(event.nativeEvent)) event.preventDefault()
+              view.send(key)
+            }}
+            onKeyUp={(event) => {
+              if (view.composing.current) return
+              const key = keyEventFor(event.nativeEvent, 'up')
+              if (key === null) return
+              event.stopPropagation()
+              view.send(key)
+              void mirrorSelection(props.browserId, editor.current)
+            }}
+          />
+          {view.frame === null ? (
+            <p className="website-placeholder">{t('website.empty')}</p>
+          ) : (
+            <img className="website-frame" src={view.frame.url} alt="" draggable={false} />
+          )}
+        </div>
         {view.select !== null && (
           <ul
             className="website-select"
             role="listbox"
             tabIndex={-1}
             ref={(node) => node?.focus()}
-            style={{ left: view.select.rect.x, top: view.select.rect.y, minWidth: view.select.rect.width }}
+            style={{
+              left: view.select.rect.x,
+              top: view.select.rect.y,
+              minWidth: view.select.rect.width,
+            }}
             onKeyDown={(event) => {
               event.stopPropagation()
               const options = view.select?.options ?? []
@@ -1574,8 +1726,14 @@ export function BrowserScreencast(props: {
                   {t('website.dialog.cancel')}
                 </button>
               )}
-              <button type="button" autoFocus={view.dialog.type !== 'prompt'} onClick={() => reply(true)}>
-                {t(view.dialog.type === 'beforeunload' ? 'website.dialog.leave' : 'website.dialog.ok')}
+              <button
+                type="button"
+                autoFocus={view.dialog.type !== 'prompt'}
+                onClick={() => reply(true)}
+              >
+                {t(
+                  view.dialog.type === 'beforeunload' ? 'website.dialog.leave' : 'website.dialog.ok'
+                )}
               </button>
             </div>
           </div>
@@ -1600,51 +1758,55 @@ When a select prompt arrives, `highlight` starts at its `selectedIndex`, and `an
 After the `browser-box` section (`EditorPane.tsx:696-723`):
 
 ```tsx
-            {projectId !== null && capabilities.streamedBrowser && (
-              <>
-                {rowSash}
-                <section
-                  className="website-box"
-                  data-collapsed={websiteCollapsed}
-                  style={{ flex: `0 0 ${String(websiteCollapsed ? COLLAPSED_BROWSER_WIDTH : rowWidth)}px` }}
-                >
-                  {pane.tabs.map((id) => (
-                    <BrowserScreencast
-                      key={id}
-                      browserId={browserIds[id] ?? null}
-                      selected={id === projectId}
-                      collapsed={collapsedWebsites[id] === true}
-                      row={scroller}
-                      onToggleCollapsed={() => {
-                        flushSync(() => {
-                          setWebsiteCollapsed(id, collapsedWebsites[id] !== true)
-                        })
-                        commitLayout()
-                      }}
-                    />
-                  ))}
-                </section>
-              </>
-            )}
+{
+  projectId !== null && capabilities.streamedBrowser && (
+    <>
+      {rowSash}
+      <section
+        className="website-box"
+        data-collapsed={websiteCollapsed}
+        style={{ flex: `0 0 ${String(websiteCollapsed ? COLLAPSED_BROWSER_WIDTH : rowWidth)}px` }}
+      >
+        {pane.tabs.map((id) => (
+          <BrowserScreencast
+            key={id}
+            browserId={browserIds[id] ?? null}
+            selected={id === projectId}
+            collapsed={collapsedWebsites[id] === true}
+            row={scroller}
+            onToggleCollapsed={() => {
+              flushSync(() => {
+                setWebsiteCollapsed(id, collapsedWebsites[id] !== true)
+              })
+              commitLayout()
+            }}
+          />
+        ))}
+      </section>
+    </>
+  )
+}
 ```
 
 `BrowserPanel` reports its `browserId` through a new `onBrowserId` prop, so both boxes share one record:
 
 ```tsx
-  const reportBrowserId = useCallback((id: string, browserId: string | null) => {
-    setBrowserIds((current) => (current[id] === browserId ? current : { ...current, [id]: browserId }))
-  }, [])
+const reportBrowserId = useCallback((id: string, browserId: string | null) => {
+  setBrowserIds((current) =>
+    current[id] === browserId ? current : { ...current, [id]: browserId }
+  )
+}, [])
 ```
 
 `BrowserPanel` calls it after `attach` resolves and with `null` in its cleanup. Every `BrowserPanel` stays mounted per tab with `hidden` (`BrowserPanel.tsx:468`), and every `BrowserScreencast` does the same, so a project's page state survives a switch. The `website-box` `rowSash` reuses the existing `rowWidth` slot.
 
 ### Collapse persistence
 
-| File | Change |
-|---|---|
-| `apps/desktop/src/shared/workspace-layout.ts` (`:277`) | `collapsedWebsites: z.record(z.string(), z.boolean()).default({})` beside `collapsedBrowsers` |
-| `apps/desktop/src/renderer/src/workspace/layout.ts` (`:179`) | Carry `collapsedWebsites` wherever a project slice moves with `collapsedBrowsers` |
-| Workspace store | `setWebsiteCollapsed(projectId, collapsed)`, mirroring `setBrowserCollapsed`, and include it in the snapshot |
+| File                                                         | Change                                                                                                       |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `apps/desktop/src/shared/workspace-layout.ts` (`:277`)       | `collapsedWebsites: z.record(z.string(), z.boolean()).default({})` beside `collapsedBrowsers`                |
+| `apps/desktop/src/renderer/src/workspace/layout.ts` (`:179`) | Carry `collapsedWebsites` wherever a project slice moves with `collapsedBrowsers`                            |
+| Workspace store                                              | `setWebsiteCollapsed(projectId, collapsed)`, mirroring `setBrowserCollapsed`, and include it in the snapshot |
 
 ### `apps/desktop/src/renderer/src/BrowserPanel.tsx`
 
@@ -1686,18 +1848,18 @@ After the `browser-box` section (`EditorPane.tsx:696-723`):
 
 ### Phase 4: deleted by ownership
 
-| Owner | Goes |
-|---|---|
-| `apps/extension/src/browser/` | `host.ts`, `index.ts`, `cdp-session.ts` and their tests |
-| `apps/extension/src/` | `browser-arguments.ts` and its test, `vscode.proposed.browser.d.ts` |
-| `apps/extension/package.json` | `enabledApiProposals`, the `chorus.enableBrowserTools` command and its nls key |
-| `apps/extension/src/extension.ts` | `enableBrowserTools`, `getBrowser`, `browserHost`, the reconnect `getBrowser().restore()` (`:206`), the `browser.*` host-call arms except `browser.pickFiles`, the `enableBrowser` receive branch, its command registration, `TEXT.browserEnabled`, `browserArgumentsFailed`, now-unused imports |
-| `apps/extension/src/webview/main.ts` | The `chorus:enable-browser` listener (`:122`) |
-| `apps/engine/src/` | `remote-browser-source.ts`, `browser-protocol.ts`; in `protocol.ts`, the `BrowserHostEvent` import and the `browserEvent` and `enableBrowser` schemas (`:4`); the `browserEvent` arm in `server.ts` (`:424`) |
-| `apps/desktop/src/shared/browser-ipc.ts` | `BROWSER_PROPOSAL_MISSING_CODE` |
-| `apps/desktop/src/renderer/src/` | `requestBrowserTools` in `host-actions.ts`, `extension.enableBrowser`, `extension.browserProposalMissing`, `extension.browserTabHelp` |
-| `apps/extension/e2e/` | `browser-drive.mjs` and `argv-drive.mjs` rewritten against the Chrome route |
-| `README.md` | The "Enable Browser Tools" step and the `argv.json` paragraph |
+| Owner                                    | Goes                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/extension/src/browser/`            | `host.ts`, `index.ts`, `cdp-session.ts` and their tests                                                                                                                                                                                                                                          |
+| `apps/extension/src/`                    | `browser-arguments.ts` and its test, `vscode.proposed.browser.d.ts`                                                                                                                                                                                                                              |
+| `apps/extension/package.json`            | `enabledApiProposals`, the `chorus.enableBrowserTools` command and its nls key                                                                                                                                                                                                                   |
+| `apps/extension/src/extension.ts`        | `enableBrowserTools`, `getBrowser`, `browserHost`, the reconnect `getBrowser().restore()` (`:206`), the `browser.*` host-call arms except `browser.pickFiles`, the `enableBrowser` receive branch, its command registration, `TEXT.browserEnabled`, `browserArgumentsFailed`, now-unused imports |
+| `apps/extension/src/webview/main.ts`     | The `chorus:enable-browser` listener (`:122`)                                                                                                                                                                                                                                                    |
+| `apps/engine/src/`                       | `remote-browser-source.ts`, `browser-protocol.ts`; in `protocol.ts`, the `BrowserHostEvent` import and the `browserEvent` and `enableBrowser` schemas (`:4`); the `browserEvent` arm in `server.ts` (`:424`)                                                                                     |
+| `apps/desktop/src/shared/browser-ipc.ts` | `BROWSER_PROPOSAL_MISSING_CODE`                                                                                                                                                                                                                                                                  |
+| `apps/desktop/src/renderer/src/`         | `requestBrowserTools` in `host-actions.ts`, `extension.enableBrowser`, `extension.browserProposalMissing`, `extension.browserTabHelp`                                                                                                                                                            |
+| `apps/extension/e2e/`                    | `browser-drive.mjs` and `argv-drive.mjs` rewritten against the Chrome route                                                                                                                                                                                                                      |
+| `README.md`                              | The "Enable Browser Tools" step and the `argv.json` paragraph                                                                                                                                                                                                                                    |
 
 With no proposed API left, the VSIX no longer needs `enable-proposed-api` in `argv.json`. Each deletion is checked by searching for its identifier and its i18n key, not by absence of a button.
 
@@ -1756,26 +1918,26 @@ flowchart TB
 
 Verified later, only when the user asks, on the installed VSIX:
 
-| # | Check |
-|---|---|
-| 1 | Each project row reads Traffic, Terminal, Browser box (toolbar and Console), website box |
-| 2 | `tpa-web-1` loads in the website box, the user signs in once, and a second project on the same origin is already signed in |
-| 3 | Sign-in survives quitting and reopening VS Code |
-| 4 | Clicks and drag-selection land where pressed, at the box's real size, during and after a resize, on a Retina display |
-| 5 | Typing English and Arabic, Enter, Backspace, arrows and Tab work; Arabic or Japanese IME commits once |
-| 6 | ⌘V pastes from the OS clipboard; ⌘C copies the page's selection to the OS clipboard |
-| 7 | ⌘W, ⌘K, ⌘1–4 and Shift-wheel inside the website box go to the page and never close the project or scroll the row |
-| 8 | A `<select>` opens Chorus's menu by click, Space and Alt+Down; arrows, Enter and Escape work; choosing updates a React-controlled form |
-| 9 | `alert`, `confirm`, `prompt` and `beforeunload` show with working buttons and answer the page |
-| 10 | `<input type="file">` opens VS Code's picker; Cancel keeps the field's previous file |
-| 11 | A login popup shows in the box, the Console reads it, and closing it returns to the opener |
-| 12 | The Console shows the active page's logs, and `chorus_browser` `run_javascript` acts on it |
-| 13 | Scrolling the row so the website box is off screen, collapsing it, hiding the side bar, or switching projects stops that stream; returning shows the page unchanged |
-| 14 | Frame sizes at the box's real size and scale stay under 1.5 MiB; CPU of Chrome plus VS Code while streaming is recorded |
-| 15 | Removing Chrome from its path shows the missing message; killing Chrome shows "The browser stopped", and Reload brings the saved page back |
-| 16 | Quitting VS Code leaves no Chrome process on the Chorus profile within 5 s |
-| 17 | No project page opens as a VS Code browser tab; `argv.json` no longer needs `enable-proposed-api` |
-| 18 | Desktop Chorus behaves exactly as before: `streamedBrowser` is false, the native browser and the row are untouched |
+| #   | Check                                                                                                                                                               |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Each project row reads Traffic, Terminal, Browser box (toolbar and Console), website box                                                                            |
+| 2   | `tpa-web-1` loads in the website box, the user signs in once, and a second project on the same origin is already signed in                                          |
+| 3   | Sign-in survives quitting and reopening VS Code                                                                                                                     |
+| 4   | Clicks and drag-selection land where pressed, at the box's real size, during and after a resize, on a Retina display                                                |
+| 5   | Typing English and Arabic, Enter, Backspace, arrows and Tab work; Arabic or Japanese IME commits once                                                               |
+| 6   | ⌘V pastes from the OS clipboard; ⌘C copies the page's selection to the OS clipboard                                                                                 |
+| 7   | ⌘W, ⌘K, ⌘1–4 and Shift-wheel inside the website box go to the page and never close the project or scroll the row                                                    |
+| 8   | A `<select>` opens Chorus's menu by click, Space and Alt+Down; arrows, Enter and Escape work; choosing updates a React-controlled form                              |
+| 9   | `alert`, `confirm`, `prompt` and `beforeunload` show with working buttons and answer the page                                                                       |
+| 10  | `<input type="file">` opens VS Code's picker; Cancel keeps the field's previous file                                                                                |
+| 11  | A login popup shows in the box, the Console reads it, and closing it returns to the opener                                                                          |
+| 12  | The Console shows the active page's logs, and `chorus_browser` `run_javascript` acts on it                                                                          |
+| 13  | Scrolling the row so the website box is off screen, collapsing it, hiding the side bar, or switching projects stops that stream; returning shows the page unchanged |
+| 14  | Frame sizes at the box's real size and scale stay under 1.5 MiB; CPU of Chrome plus VS Code while streaming is recorded                                             |
+| 15  | Removing Chrome from its path shows the missing message; killing Chrome shows "The browser stopped", and Reload brings the saved page back                          |
+| 16  | Quitting VS Code leaves no Chrome process on the Chorus profile within 5 s                                                                                          |
+| 17  | No project page opens as a VS Code browser tab; `argv.json` no longer needs `enable-proposed-api`                                                                   |
+| 18  | Desktop Chorus behaves exactly as before: `streamedBrowser` is false, the native browser and the row are untouched                                                  |
 
 ## Not in this plan
 

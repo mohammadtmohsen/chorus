@@ -31,8 +31,12 @@ const vscode = acquireVsCodeApi()
 const reportViewFocus = (focused: boolean): void => {
   vscode.postMessage({ kind: 'viewFocus', focused })
 }
-window.addEventListener('focus', () => reportViewFocus(true))
-window.addEventListener('blur', () => reportViewFocus(false))
+window.addEventListener('focus', () => {
+  reportViewFocus(true)
+})
+window.addEventListener('blur', () => {
+  reportViewFocus(false)
+})
 const Backup = z.object({
   storage: z.record(z.string(), z.string()).default({}),
   journals: z.record(z.string(), z.unknown()).default({}),

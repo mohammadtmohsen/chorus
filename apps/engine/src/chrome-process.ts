@@ -99,6 +99,10 @@ export class ChromeProcess {
     return starting
   }
 
+  private isStopping(): boolean {
+    return this.stopping
+  }
+
   private async launch(): Promise<void> {
     const executable = findChrome()
     if (executable === null) throw new Error('browser-missing')
@@ -176,9 +180,9 @@ export class ChromeProcess {
     })
     try {
       await this.send('Browser.getVersion', {})
-      if (!current() || this.stopping) throw new Error('browser-stopped')
+      if (!current() || this.isStopping()) throw new Error('browser-stopped')
       await this.send('Target.setDiscoverTargets', { discover: true })
-      if (!current() || this.stopping) throw new Error('browser-stopped')
+      if (!current() || this.isStopping()) throw new Error('browser-stopped')
     } catch (error) {
       failed('startup-failed')
       throw error
@@ -244,7 +248,8 @@ export class ChromeProcess {
     const exited = this.exited
     if (child !== null) void this.send('Browser.close', {}).catch(() => undefined)
     if (!(await within(exited, CLOSE_TIMEOUT_MS))) {
-      if (child !== null && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      if (child !== null && child.exitCode === null && child.signalCode === null)
+        child.kill('SIGKILL')
       await within(exited, KILL_TIMEOUT_MS)
     }
     if (this.child === child && child !== null) this.fail('shutdown')
@@ -331,7 +336,9 @@ function safeJson(raw: string): unknown {
 
 function within(promise: Promise<void>, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), ms)
+    const timer = setTimeout(() => {
+      resolve(false)
+    }, ms)
     void promise.then(() => {
       clearTimeout(timer)
       resolve(true)

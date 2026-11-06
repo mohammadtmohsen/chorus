@@ -75,7 +75,8 @@ bindings['Control+KeyL'] = ['centerSelectionInVisibleArea:']
 bindings['Control+KeyT'] = ['transpose:']
 bindings['Shift+Numpad5'] = ['delete:']
 
-export const MAC_EDITING_COMMANDS: Readonly<Record<string, readonly string[]>> = Object.freeze(bindings)
+export const MAC_EDITING_COMMANDS: Readonly<Record<string, readonly string[]>> =
+  Object.freeze(bindings)
 
 export function commandsFor(code: string, modifiers: number): string[] {
   const shortcut = [
@@ -84,9 +85,11 @@ export function commandsFor(code: string, modifiers: number): string[] {
     modifiers & 1 ? 'Alt' : null,
     modifiers & 4 ? 'Meta' : null,
     code,
-  ].filter((part) => part !== null).join('+')
+  ]
+    .filter((part) => part !== null)
+    .join('+')
   const selectors = Object.hasOwn(MAC_EDITING_COMMANDS, shortcut)
-    ? MAC_EDITING_COMMANDS[shortcut] ?? []
+    ? (MAC_EDITING_COMMANDS[shortcut] ?? [])
     : []
   return selectors
     .filter((selector) => !selector.startsWith('insert'))

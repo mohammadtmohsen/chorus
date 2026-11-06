@@ -4,6 +4,72 @@ export const WEBSITE_SURFACE_ATTRIBUTE = 'data-website-surface'
 type KeyInput = Extract<BrowserInputEvent, { kind: 'key' }>
 type MouseButton = Extract<BrowserInputEvent, { kind: 'mouse' }>['button']
 const mirrors = new WeakMap<HTMLTextAreaElement, number>()
+const NAMED_KEY_CODES: Readonly<Record<string, number | undefined>> = {
+  Backspace: 8,
+  Tab: 9,
+  Enter: 13,
+  NumpadEnter: 13,
+  Shift: 16,
+  ShiftLeft: 16,
+  ShiftRight: 16,
+  Control: 17,
+  ControlLeft: 17,
+  ControlRight: 17,
+  Alt: 18,
+  AltLeft: 18,
+  AltRight: 18,
+  Pause: 19,
+  CapsLock: 20,
+  Escape: 27,
+  Space: 32,
+  ' ': 32,
+  PageUp: 33,
+  PageDown: 34,
+  End: 35,
+  Home: 36,
+  ArrowLeft: 37,
+  ArrowUp: 38,
+  ArrowRight: 39,
+  ArrowDown: 40,
+  Insert: 45,
+  Delete: 46,
+  Meta: 91,
+  MetaLeft: 91,
+  MetaRight: 92,
+  ContextMenu: 93,
+  NumpadMultiply: 106,
+  NumpadAdd: 107,
+  NumpadSubtract: 109,
+  NumpadDecimal: 110,
+  NumpadDivide: 111,
+  NumLock: 144,
+  ScrollLock: 145,
+  Semicolon: 186,
+  Equal: 187,
+  Comma: 188,
+  Minus: 189,
+  Period: 190,
+  Slash: 191,
+  Backquote: 192,
+  BracketLeft: 219,
+  Backslash: 220,
+  BracketRight: 221,
+  Quote: 222,
+}
+
+export function virtualKeyCode(event: Pick<KeyboardEvent, 'code' | 'key'>): number {
+  if (/^Key[A-Z]$/.test(event.code)) return event.code.charCodeAt(3)
+  if (/^Digit[0-9]$/.test(event.code)) return event.code.charCodeAt(5)
+  if (/^Numpad[0-9]$/.test(event.code)) return 96 + Number(event.code.slice(6))
+  if (/^F(?:[1-9]|1[0-2])$/.test(event.code)) return 111 + Number(event.code.slice(1))
+  const named = Object.hasOwn(NAMED_KEY_CODES, event.code)
+    ? NAMED_KEY_CODES[event.code]
+    : Object.hasOwn(NAMED_KEY_CODES, event.key)
+      ? NAMED_KEY_CODES[event.key]
+      : undefined
+  if (named !== undefined) return named
+  return /^[a-z0-9]$/i.test(event.key) ? event.key.toUpperCase().charCodeAt(0) : 0
+}
 
 export function insideWebsiteSurface(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(`[${WEBSITE_SURFACE_ATTRIBUTE}]`) !== null
@@ -43,18 +109,19 @@ export function wheelPixels(
 }
 
 export function printable(event: KeyboardEvent): boolean {
-  return [...event.key].length === 1 && !event.ctrlKey && !event.metaKey
+  return /^.$/su.test(event.key) && !event.ctrlKey && !event.metaKey
 }
 
 export function keyEventFor(event: KeyboardEvent, phase: 'down' | 'up'): KeyInput | null {
-  if (event.isComposing || event.key === 'Process' || event.keyCode === 229) return null
-  if ((event.metaKey || event.ctrlKey) && ['c', 'v', 'x'].includes(event.key.toLowerCase())) return null
+  if (event.isComposing || event.key === 'Process') return null
+  if ((event.metaKey || event.ctrlKey) && ['c', 'v', 'x'].includes(event.key.toLowerCase()))
+    return null
   return {
     kind: 'key',
     type: phase === 'up' ? 'keyUp' : event.key === 'Enter' ? 'keyDown' : 'rawKeyDown',
     key: event.key.slice(0, 32),
     code: event.code.slice(0, 32),
-    keyCode: Math.min(255, Math.max(0, event.keyCode)),
+    keyCode: virtualKeyCode(event),
     autoRepeat: event.repeat,
     modifiers: modifiersOf(event),
     ...(phase === 'down' && event.key === 'Enter' ? { text: '\r' } : {}),
@@ -101,9 +168,9 @@ export function nextEnabled(
   direction: 1 | -1
 ): number {
   if (options.length === 0) return -1
-  let index = current >= 0 && current < options.length ? current : direction === 1 ? -1 : 0
-  for (let count = 0; count < options.length; count += 1) {
-    index = (index + direction + options.length) % options.length
+  const start = current >= 0 && current < options.length ? current : direction === 1 ? -1 : 0
+  for (const offset of options.keys()) {
+    const index = (start + direction * (offset + 1) + options.length) % options.length
     if (options[index]?.disabled === false) return index
   }
   return -1

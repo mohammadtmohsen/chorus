@@ -30,7 +30,12 @@ import { ChromeProcess, findChrome } from './chrome-process.js'
 import { ChromeBrowserSource, ChromePage } from './chrome-browser-source.js'
 import { BrowserStreams } from './browser-streams.js'
 import { commandsFor } from './mac-editing-commands.js'
-import { CHORUS_WORLD, SELECT_BINDING, SELECT_BRIDGE, chooseSelectExpression } from './chrome-page-scripts.js'
+import {
+  CHORUS_WORLD,
+  SELECT_BINDING,
+  SELECT_BRIDGE,
+  chooseSelectExpression,
+} from './chrome-page-scripts.js'
 
 interface ProjectBrowser {
   readonly id: string
@@ -43,7 +48,11 @@ interface ProjectBrowser {
   navigation: number
   lifetime: number
   state: BrowserState
-  select: { readonly prompt: BrowserSelectPrompt; readonly contextId: number; readonly page: ChromePage } | null
+  select: {
+    readonly prompt: BrowserSelectPrompt
+    readonly contextId: number
+    readonly page: ChromePage
+  } | null
   dialog: { readonly prompt: BrowserDialogPrompt; readonly page: ChromePage } | null
 }
 
@@ -77,21 +86,34 @@ const NavigationHistory = z.object({
 })
 const Navigated = z.object({ errorText: z.string().optional() })
 const TargetMetadata = TargetInfo.extend({ type: z.string(), openerId: z.string().optional() })
-const FrameNode = z.object({ frame: FrameNavigated.shape.frame, childFrames: z.array(z.unknown()).optional() })
+const FrameNode = z.object({
+  frame: FrameNavigated.shape.frame,
+  childFrames: z.array(z.unknown()).optional(),
+})
 const FrameTree = z.object({ frameTree: FrameNode })
 const ContextDescription = z.object({
   context: z.object({
-    id: z.number(), name: z.string(),
-    auxData: z.object({ isDefault: z.boolean().optional(), frameId: z.string().optional() }).optional(),
+    id: z.number(),
+    name: z.string(),
+    auxData: z
+      .object({ isDefault: z.boolean().optional(), frameId: z.string().optional() })
+      .optional(),
   }),
 })
-const BindingCalled = z.object({ name: z.string(), payload: z.string(), executionContextId: z.number() })
+const BindingCalled = z.object({
+  name: z.string(),
+  payload: z.string(),
+  executionContextId: z.number(),
+})
 const DialogOpening = z.object({
   type: BrowserDialogPrompt.shape.type,
   message: z.string(),
   defaultPrompt: z.string().default(''),
 })
-const FileChooserOpened = z.object({ mode: z.enum(['selectSingle', 'selectMultiple']), backendNodeId: z.number().optional() })
+const FileChooserOpened = z.object({
+  mode: z.enum(['selectSingle', 'selectMultiple']),
+  backendNodeId: z.number().optional(),
+})
 const CONSOLE_READY_TIMEOUT_MS = 15_000
 const NAVIGATION_TIMEOUT_MS = 120_000
 
@@ -117,7 +139,10 @@ export class EngineBrowsers {
   private readonly byId = new Map<string, ProjectBrowser>()
   private readonly sources = new Map<string, ChromeBrowserSource>()
   private readonly pageEvents = new Map<ChromePage, PageEvents>()
-  private readonly targets = new Map<string, { readonly record: ProjectBrowser; readonly page: ChromePage }>()
+  private readonly targets = new Map<
+    string,
+    { readonly record: ProjectBrowser; readonly page: ChromePage }
+  >()
   private readonly openingTargets = new Set<string>()
   private readonly settings: BrowserSettingsStore
   private readonly chrome: ChromeProcess
@@ -139,16 +164,26 @@ export class EngineBrowsers {
       stream: (owner, request) => {
         const record = this.viewed(owner, request.browserId)
         this.browserStreams.stream(owner as EnginePeer, request)
-        owner.send(BROWSER_PUSH_CHANNEL, { kind: 'select', browserId: record.id, select: record.select?.prompt ?? null })
-        owner.send(BROWSER_PUSH_CHANNEL, { kind: 'dialog', browserId: record.id, dialog: record.dialog?.prompt ?? null })
+        owner.send(BROWSER_PUSH_CHANNEL, {
+          kind: 'select',
+          browserId: record.id,
+          select: record.select?.prompt ?? null,
+        })
+        owner.send(BROWSER_PUSH_CHANNEL, {
+          kind: 'dialog',
+          browserId: record.id,
+          dialog: record.dialog?.prompt ?? null,
+        })
       },
       ack: (owner, id, instance, generation, serial) => {
         this.viewed(owner, id)
         this.browserStreams.ack(owner as EnginePeer, id, instance, generation, serial)
       },
       input: (owner, id, event) => this.input(this.controlled(owner, id), event),
-      chooseSelect: (owner, id, token, index) => this.chooseSelect(this.controlled(owner, id), token, index),
-      answerDialog: (owner, id, token, accept, text) => this.answerDialog(this.controlled(owner, id), token, accept, text),
+      chooseSelect: (owner, id, token, index) =>
+        this.chooseSelect(this.controlled(owner, id), token, index),
+      answerDialog: (owner, id, token, accept, text) =>
+        this.answerDialog(this.controlled(owner, id), token, accept, text),
       selection: (owner, id) => this.selection(this.viewed(owner, id)),
       release: (owner) => {
         this.browserStreams.release(owner as EnginePeer)
@@ -205,7 +240,7 @@ export class EngineBrowsers {
         this.push(record, {
           kind: 'favorites',
           browserId: record.id,
-          favorites: outcome.favorites,
+          favorites: [...outcome.favorites],
         })
         return { favorites: [...outcome.favorites], failure: outcome.failure }
       },
@@ -215,7 +250,7 @@ export class EngineBrowsers {
         this.push(record, {
           kind: 'favorites',
           browserId: record.id,
-          favorites: outcome.favorites,
+          favorites: [...outcome.favorites],
         })
         return { favorites: [...outcome.favorites], failure: outcome.failure }
       },
@@ -255,7 +290,8 @@ export class EngineBrowsers {
         timer.unref()
         const stop = this.consoles.subscribe((event) => {
           if (event.kind !== 'state' || event.projectId !== record.projectId) return
-          if (event.sources.find((source) => source.browserId === id)?.state === 'connecting') return
+          if (event.sources.find((source) => source.browserId === id)?.state === 'connecting')
+            return
           clearTimeout(timer)
           stop()
           resolve()
@@ -343,6 +379,10 @@ export class EngineBrowsers {
     return creating
   }
 
+  private isClosed(): boolean {
+    return this.closed
+  }
+
   private async createPage(
     record: ProjectBrowser,
     openerId: string | null = null,
@@ -350,13 +390,15 @@ export class EngineBrowsers {
   ): Promise<ChromePage> {
     const lifetime = record.lifetime
     await this.chrome.start()
-    if (this.closed || lifetime !== record.lifetime) {
+    if (this.isClosed() || lifetime !== record.lifetime) {
       if (existing !== undefined) await this.closeTarget(existing)
       throw new Error('browser-stopped')
     }
-    const targetId = existing ?? TargetCreated.parse(
-      await this.chrome.send('Target.createTarget', { url: 'about:blank', newWindow: true })
-    ).targetId
+    const targetId =
+      existing ??
+      TargetCreated.parse(
+        await this.chrome.send('Target.createTarget', { url: 'about:blank', newWindow: true })
+      ).targetId
     let page: ChromePage | null = null
     try {
       const { sessionId } = TargetAttached.parse(
@@ -368,14 +410,24 @@ export class EngineBrowsers {
         stop: initialized.onEvent((method, params) => {
           this.pageEvent(record, initialized, method, params)
         }),
-        frameId: null, loaderId: null, history: 0,
-        state: { ...(openerId === null ? record.state : emptyState()), live: true, status: 'ready', error: null },
+        frameId: null,
+        loaderId: null,
+        history: 0,
+        state: {
+          ...(openerId === null ? record.state : emptyState()),
+          live: true,
+          status: 'ready',
+          error: null,
+        },
         dialog: null,
         selectRevision: 0,
       }
       this.pageEvents.set(initialized, events)
       this.targets.set(targetId, { record, page: initialized })
-      await page.send('Runtime.addBinding', { name: SELECT_BINDING, executionContextName: CHORUS_WORLD })
+      await page.send('Runtime.addBinding', {
+        name: SELECT_BINDING,
+        executionContextName: CHORUS_WORLD,
+      })
       await Promise.all([
         page.send('Runtime.enable', {}),
         page.send('Page.enable', {}),
@@ -383,7 +435,9 @@ export class EngineBrowsers {
         page.send('Page.setInterceptFileChooserDialog', { enabled: true }),
       ])
       await page.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: SELECT_BRIDGE, worldName: CHORUS_WORLD, runImmediately: true,
+        source: SELECT_BRIDGE,
+        worldName: CHORUS_WORLD,
+        runImmediately: true,
       })
       const tree = FrameTree.parse(await page.send('Page.getFrameTree', {}))
       if (events.frameId === null) {
@@ -404,10 +458,16 @@ export class EngineBrowsers {
         frames.push(...(node.childFrames ?? []).map((child) => FrameNode.parse(child)))
         try {
           const { executionContextId } = z.object({ executionContextId: z.number() }).parse(
-            await page.send('Page.createIsolatedWorld', { frameId: node.frame.id, worldName: CHORUS_WORLD })
+            await page.send('Page.createIsolatedWorld', {
+              frameId: node.frame.id,
+              worldName: CHORUS_WORLD,
+            })
           )
           const installed = z.object({ exceptionDetails: z.unknown().optional() }).parse(
-            await page.send('Runtime.evaluate', { contextId: executionContextId, expression: SELECT_BRIDGE })
+            await page.send('Runtime.evaluate', {
+              contextId: executionContextId,
+              expression: SELECT_BRIDGE,
+            })
           )
           if (installed.exceptionDetails !== undefined) throw new Error('browser-bridge')
         } catch (error) {
@@ -415,16 +475,22 @@ export class EngineBrowsers {
         }
       }
       if (
-        this.closed || lifetime !== record.lifetime || page.isClosed() ||
-        (openerId !== null && !record.stack.some((entry) => entry.targetId === openerId && !entry.isClosed()))
+        this.isClosed() ||
+        lifetime !== record.lifetime ||
+        page.isClosed() ||
+        (openerId !== null &&
+          !record.stack.some((entry) => entry.targetId === openerId && !entry.isClosed()))
       )
         throw new Error('browser-stopped')
-      const { targetInfo } = z.object({ targetInfo: TargetInfo }).parse(
-        await this.chrome.send('Target.getTargetInfo', { targetId })
-      )
+      const { targetInfo } = z
+        .object({ targetInfo: TargetInfo })
+        .parse(await this.chrome.send('Target.getTargetInfo', { targetId }))
       if (
-        this.closed || lifetime !== record.lifetime || page.isClosed() ||
-        (openerId !== null && !record.stack.some((entry) => entry.targetId === openerId && !entry.isClosed()))
+        this.isClosed() ||
+        lifetime !== record.lifetime ||
+        page.isClosed() ||
+        (openerId !== null &&
+          !record.stack.some((entry) => entry.targetId === openerId && !entry.isClosed()))
       )
         throw new Error('browser-stopped')
       events.state = { ...events.state, title: targetInfo.title.slice(0, 512) }
@@ -464,7 +530,11 @@ export class EngineBrowsers {
     void this.refreshHistory(record, page)
   }
 
-  private setPageState(record: ProjectBrowser, page: ChromePage, change: Partial<BrowserState>): void {
+  private setPageState(
+    record: ProjectBrowser,
+    page: ChromePage,
+    change: Partial<BrowserState>
+  ): void {
     const events = this.pageEvents.get(page)
     if (events === undefined) return
     events.state = { ...(this.active(record) === page ? record.state : events.state), ...change }
@@ -551,7 +621,11 @@ export class EngineBrowsers {
         if (entry !== undefined) {
           record.state = { ...record.state, status: 'loading', error: null }
           this.publish(record)
-          await page.send('Page.navigateToHistoryEntry', { entryId: entry.id }, NAVIGATION_TIMEOUT_MS)
+          await page.send(
+            'Page.navigateToHistoryEntry',
+            { entryId: entry.id },
+            NAVIGATION_TIMEOUT_MS
+          )
         }
       } else if (action === 'reload') {
         record.state = { ...record.state, status: 'loading', error: null }
@@ -624,20 +698,26 @@ export class EngineBrowsers {
     if (page === null || frameId === null || frameId === undefined) return ''
     let contextId: number | undefined
     for (const payload of page.runtimeContexts().values()) {
-      const context = z.object({
-        context: z.object({
-          id: z.number(),
-          name: z.string(),
-          auxData: z.object({ frameId: z.string() }).optional(),
-        }),
-      }).safeParse(payload)
-      if (context.success && context.data.context.name === CHORUS_WORLD && context.data.context.auxData?.frameId === frameId)
+      const context = z
+        .object({
+          context: z.object({
+            id: z.number(),
+            name: z.string(),
+            auxData: z.object({ frameId: z.string() }).optional(),
+          }),
+        })
+        .safeParse(payload)
+      if (
+        context.success &&
+        context.data.context.name === CHORUS_WORLD &&
+        context.data.context.auxData?.frameId === frameId
+      )
         contextId = context.data.context.id
     }
     if (contextId === undefined) {
-      const created = z.object({ executionContextId: z.number() }).parse(
-        await page.send('Page.createIsolatedWorld', { frameId, worldName: CHORUS_WORLD })
-      )
+      const created = z
+        .object({ executionContextId: z.number() })
+        .parse(await page.send('Page.createIsolatedWorld', { frameId, worldName: CHORUS_WORLD }))
       contextId = created.executionContextId
     }
     if (this.active(record) !== page) return ''
@@ -661,7 +741,12 @@ export class EngineBrowsers {
     this.browserStreams.viewVisibility(peer, visible)
   }
 
-  private pageEvent(record: ProjectBrowser, page: ChromePage, method: string, params: unknown): void {
+  private pageEvent(
+    record: ProjectBrowser,
+    page: ChromePage,
+    method: string,
+    params: unknown
+  ): void {
     const events = this.pageEvents.get(page)
     if (events === undefined) return
     if (method === 'Page.screencastFrame') {
@@ -674,7 +759,11 @@ export class EngineBrowsers {
     }
     if (method === 'Runtime.executionContextDestroyed') {
       const parsed = z.object({ executionContextId: z.number() }).safeParse(params)
-      if (parsed.success && record.select?.page === page && record.select.contextId === parsed.data.executionContextId)
+      if (
+        parsed.success &&
+        record.select?.page === page &&
+        record.select.contextId === parsed.data.executionContextId
+      )
         this.clearSurfaces(record, page)
     } else if (method === 'Runtime.executionContextsCleared') this.clearSurfaces(record, page)
     else if (method === 'Page.javascriptDialogOpening') {
@@ -711,7 +800,11 @@ export class EngineBrowsers {
       events.dialog = null
       this.clearSurfaces(record, page)
       this.navigatedTo(record, page, frame.url + (frame.urlFragment ?? ''))
-      this.setPageState(record, page, { status: 'loading', documentId: `${page.targetId}:${frame.loaderId}`, error: null })
+      this.setPageState(record, page, {
+        status: 'loading',
+        documentId: `${page.targetId}:${frame.loaderId}`,
+        error: null,
+      })
       const source = this.sources.get(this.sourceId(record, page))
       if (source?.page === page) source.navigatedTo(page.url)
       void this.refreshHistory(record, page)
@@ -723,7 +816,12 @@ export class EngineBrowsers {
       void this.refreshHistory(record, page)
     } else if (method === 'Page.lifecycleEvent') {
       const parsed = Lifecycle.safeParse(params)
-      if (!parsed.success || parsed.data.frameId !== events.frameId || parsed.data.loaderId !== events.loaderId) return
+      if (
+        !parsed.success ||
+        parsed.data.frameId !== events.frameId ||
+        parsed.data.loaderId !== events.loaderId
+      )
+        return
       if (parsed.data.name === 'load') {
         this.setPageState(record, page, { status: 'ready', error: null })
         void this.refreshHistory(record, page)
@@ -731,7 +829,8 @@ export class EngineBrowsers {
     } else if (method === 'Page.frameStartedLoading' || method === 'Page.frameStoppedLoading') {
       const parsed = z.object({ frameId: z.string() }).safeParse(params)
       if (!parsed.success || parsed.data.frameId !== events.frameId) return
-      if (method === 'Page.frameStartedLoading') this.setPageState(record, page, { status: 'loading', error: null })
+      if (method === 'Page.frameStartedLoading')
+        this.setPageState(record, page, { status: 'loading', error: null })
       else if ((this.active(record) === page ? record.state : events.state).status !== 'error')
         this.setPageState(record, page, { status: 'ready' })
     } else if (method === 'Inspector.targetCrashed' || method === 'Inspector.detached') {
@@ -745,13 +844,22 @@ export class EngineBrowsers {
       const parsed = z.object({ targetInfo: TargetMetadata }).safeParse(params)
       if (!parsed.success) return
       const info = parsed.data.targetInfo
-      if (info.type !== 'page' || info.openerId === undefined || this.openingTargets.has(info.targetId) || this.targets.has(info.targetId)) return
+      if (
+        info.type !== 'page' ||
+        info.openerId === undefined ||
+        this.openingTargets.has(info.targetId) ||
+        this.targets.has(info.targetId)
+      )
+        return
       for (const record of this.records.values()) {
-        if (!record.stack.some((page) => page.targetId === info.openerId && !page.isClosed())) continue
+        if (!record.stack.some((page) => page.targetId === info.openerId && !page.isClosed()))
+          continue
         this.openingTargets.add(info.targetId)
-        void this.createPage(record, info.openerId, info.targetId).catch(() => undefined).finally(() => {
-          this.openingTargets.delete(info.targetId)
-        })
+        void this.createPage(record, info.openerId, info.targetId)
+          .catch(() => undefined)
+          .finally(() => {
+            this.openingTargets.delete(info.targetId)
+          })
         break
       }
     } else if (method === 'Target.targetInfoChanged') {
@@ -763,10 +871,13 @@ export class EngineBrowsers {
       this.navigatedTo(target.record, target.page, info.url)
       this.setPageState(target.record, target.page, { title: info.title.slice(0, 512) })
     } else if (method === 'Target.targetDestroyed' || method === 'Target.detachedFromTarget') {
-      const parsed = z.object({ targetId: z.string().optional(), sessionId: z.string().optional() }).safeParse(params)
+      const parsed = z
+        .object({ targetId: z.string().optional(), sessionId: z.string().optional() })
+        .safeParse(params)
       if (!parsed.success) return
       for (const { record, page } of this.targets.values()) {
-        if (page.targetId !== parsed.data.targetId && page.sessionId !== parsed.data.sessionId) continue
+        if (page.targetId !== parsed.data.targetId && page.sessionId !== parsed.data.sessionId)
+          continue
         this.removePage(record, page)
         break
       }
@@ -779,7 +890,9 @@ export class EngineBrowsers {
       if (previous !== page) record.state = this.pageEvents.get(page)?.state ?? record.state
       const pages = this.clearPages(record)
       this.unavailable(record, false)
-      void Promise.all(pages.filter((entry) => entry !== page).map((entry) => this.closeTarget(entry.targetId)))
+      void Promise.all(
+        pages.filter((entry) => entry !== page).map((entry) => this.closeTarget(entry.targetId))
+      )
       return
     }
     const index = record.stack.indexOf(page)
@@ -788,7 +901,9 @@ export class EngineBrowsers {
     this.releasePage(record, page)
     if (previous === page) {
       record.navigation += 1
-      const opener = record.stack.find((entry) => entry.targetId === page.openerId && !entry.isClosed())
+      const opener = record.stack.find(
+        (entry) => entry.targetId === page.openerId && !entry.isClosed()
+      )
       if (opener !== undefined && this.active(record) !== opener) {
         record.stack.splice(record.stack.indexOf(opener), 1)
         record.stack.push(opener)
@@ -820,13 +935,34 @@ export class EngineBrowsers {
     }
   }
 
-  private async selectOpened(record: ProjectBrowser, page: ChromePage, params: unknown): Promise<void> {
+  private async selectOpened(
+    record: ProjectBrowser,
+    page: ChromePage,
+    params: unknown
+  ): Promise<void> {
     const called = BindingCalled.safeParse(params)
-    if (!called.success || called.data.name !== SELECT_BINDING || called.data.payload.length > 4_000_000 || this.active(record) !== page) return
-    const context = ContextDescription.safeParse(page.runtimeContexts().get(called.data.executionContextId))
-    if (!context.success || context.data.context.name !== CHORUS_WORLD || context.data.context.auxData?.isDefault !== false) return
+    if (
+      !called.success ||
+      called.data.name !== SELECT_BINDING ||
+      called.data.payload.length > 4_000_000 ||
+      this.active(record) !== page
+    )
+      return
+    const context = ContextDescription.safeParse(
+      page.runtimeContexts().get(called.data.executionContextId)
+    )
+    if (
+      !context.success ||
+      context.data.context.name !== CHORUS_WORLD ||
+      context.data.context.auxData?.isDefault !== false
+    )
+      return
     let payload: unknown
-    try { payload = JSON.parse(called.data.payload) } catch { return }
+    try {
+      payload = JSON.parse(called.data.payload)
+    } catch {
+      return
+    }
     const parsed = BrowserSelectPrompt.safeParse(payload)
     if (!parsed.success) return
     const events = this.pageEvents.get(page)
@@ -838,38 +974,69 @@ export class EngineBrowsers {
     const mainFrame = this.pageEvents.get(page)?.frameId
     if (frameId === undefined) return
     if (frameId !== mainFrame) {
-      const owner = z.object({ backendNodeId: z.number() }).parse(await page.send('DOM.getFrameOwner', { frameId }))
-      const box = z.object({ model: z.object({ content: z.array(z.number()).length(8) }) }).parse(
-        await page.send('DOM.getBoxModel', { backendNodeId: owner.backendNodeId })
-      )
-      prompt.rect = { ...prompt.rect, x: prompt.rect.x + (box.model.content[0] ?? 0), y: prompt.rect.y + (box.model.content[1] ?? 0) }
+      const owner = z
+        .object({ backendNodeId: z.number() })
+        .parse(await page.send('DOM.getFrameOwner', { frameId }))
+      const box = z
+        .object({ model: z.object({ content: z.array(z.number()).length(8) }) })
+        .parse(await page.send('DOM.getBoxModel', { backendNodeId: owner.backendNodeId }))
+      prompt.rect = {
+        ...prompt.rect,
+        x: prompt.rect.x + (box.model.content[0] ?? 0),
+        y: prompt.rect.y + (box.model.content[1] ?? 0),
+      }
     }
-    if (events.selectRevision !== revision || this.active(record) !== page || !page.runtimeContexts().has(current.contextId)) return
+    if (
+      events.selectRevision !== revision ||
+      this.active(record) !== page ||
+      !page.runtimeContexts().has(current.contextId)
+    )
+      return
     record.select = current
     this.push(record, { kind: 'select', browserId: record.id, select: prompt })
   }
 
   private async chooseSelect(record: ProjectBrowser, token: string, index: number): Promise<void> {
     const current = record.select
-    if (current === null || current.prompt.token !== token || this.active(record) !== current.page) return
-    const context = ContextDescription.safeParse(current.page.runtimeContexts().get(current.contextId))
-    if (!context.success || context.data.context.name !== CHORUS_WORLD || context.data.context.auxData?.isDefault !== false) return
+    if (current?.prompt.token !== token || this.active(record) !== current.page) return
+    const context = ContextDescription.safeParse(
+      current.page.runtimeContexts().get(current.contextId)
+    )
+    if (
+      !context.success ||
+      context.data.context.name !== CHORUS_WORLD ||
+      context.data.context.auxData?.isDefault !== false
+    )
+      return
     record.select = null
     this.push(record, { kind: 'select', browserId: record.id, select: null })
     await current.page.send('Runtime.evaluate', {
-      contextId: current.contextId, expression: chooseSelectExpression(token, index), returnByValue: true,
+      contextId: current.contextId,
+      expression: chooseSelectExpression(token, index),
+      returnByValue: true,
     })
   }
 
-  private async answerDialog(record: ProjectBrowser, token: string, accept: boolean, text: string | undefined): Promise<void> {
+  private async answerDialog(
+    record: ProjectBrowser,
+    token: string,
+    accept: boolean,
+    text: string | undefined
+  ): Promise<void> {
     const current = record.dialog
-    if (current === null || current.prompt.token !== token || this.active(record) !== current.page) return
+    if (current?.prompt.token !== token || this.active(record) !== current.page) return
     record.dialog = null
     this.push(record, { kind: 'dialog', browserId: record.id, dialog: null })
     try {
-      await current.page.send('Page.handleJavaScriptDialog', { accept, ...(text === undefined ? {} : { promptText: text }) })
+      await current.page.send('Page.handleJavaScriptDialog', {
+        accept,
+        ...(text === undefined ? {} : { promptText: text }),
+      })
     } catch (error) {
-      if (this.active(record) === current.page && this.pageEvents.get(current.page)?.dialog?.token === token) {
+      if (
+        this.active(record) === current.page &&
+        this.pageEvents.get(current.page)?.dialog?.token === token
+      ) {
         record.dialog = current
         this.push(record, { kind: 'dialog', browserId: record.id, dialog: current.prompt })
       }
@@ -877,17 +1044,41 @@ export class EngineBrowsers {
     }
   }
 
-  private async pickFiles(record: ProjectBrowser, page: ChromePage, params: unknown): Promise<void> {
+  private async pickFiles(
+    record: ProjectBrowser,
+    page: ChromePage,
+    params: unknown
+  ): Promise<void> {
     const parsed = FileChooserOpened.safeParse(params)
     const owner = record.controller
     const events = this.pageEvents.get(page)
-    if (!parsed.success || parsed.data.backendNodeId === undefined || this.active(record) !== page || owner === null || owner.isGone() || events === undefined) return
+    if (
+      !parsed.success ||
+      parsed.data.backendNodeId === undefined ||
+      this.active(record) !== page ||
+      owner === null ||
+      owner.isGone() ||
+      events === undefined
+    )
+      return
     const loaderId = events.loaderId
     const result = z.object({ paths: z.array(z.string().max(8192)).max(1_000) }).parse(
-      await owner.requestHost('browser.pickFiles', { many: parsed.data.mode === 'selectMultiple' })
+      await owner.requestHost('browser.pickFiles', {
+        many: parsed.data.mode === 'selectMultiple',
+      })
     )
-    if (result.paths.length === 0 || this.active(record) !== page || record.controller !== owner || owner.isGone() || this.pageEvents.get(page)?.loaderId !== loaderId) return
-    await page.send('DOM.setFileInputFiles', { files: result.paths, backendNodeId: parsed.data.backendNodeId })
+    if (
+      result.paths.length === 0 ||
+      this.active(record) !== page ||
+      record.controller !== owner ||
+      owner.isGone() ||
+      this.pageEvents.get(page)?.loaderId !== loaderId
+    )
+      return
+    await page.send('DOM.setFileInputFiles', {
+      files: result.paths,
+      backendNodeId: parsed.data.backendNodeId,
+    })
   }
 
   private async refreshHistory(record: ProjectBrowser, page: ChromePage): Promise<void> {
@@ -900,7 +1091,8 @@ export class EngineBrowsers {
       record.state = {
         ...record.state,
         canGoBack: history.currentIndex > 0,
-        canGoForward: history.currentIndex >= 0 && history.currentIndex < history.entries.length - 1,
+        canGoForward:
+          history.currentIndex >= 0 && history.currentIndex < history.entries.length - 1,
       }
       this.publish(record)
     } catch {
@@ -970,7 +1162,9 @@ export class EngineBrowsers {
       documentId: null,
       error: {
         code: missing ? BROWSER_MISSING_CODE : BROWSER_STOPPED_CODE,
-        description: missing ? messages.extension.browserMissing : messages.extension.browserStopped,
+        description: missing
+          ? messages.extension.browserMissing
+          : messages.extension.browserStopped,
       },
     }
     this.publish(record)

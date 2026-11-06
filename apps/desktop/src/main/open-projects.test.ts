@@ -68,6 +68,7 @@ describe('open project persistence', () => {
         trafficPanels: {},
         projectTerminals: {},
         collapsedBrowsers: {},
+        collapsedWebsites: {},
         rowScroll: {},
         editorWidthFractions: {},
         webTabs: NO_WEB_TABS,

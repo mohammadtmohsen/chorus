@@ -295,10 +295,13 @@ export class EngineClient {
       const timer =
         deadline === null && message.kind === 'invoke' && PERSON_PACED_CHANNELS.has(message.channel)
           ? undefined
-          : setTimeout(() => {
-              this.pending.delete(id)
-              reject(new Error('engine-request-timeout'))
-            }, deadline === null ? 180_000 : Math.max(1, deadline - Date.now()))
+          : setTimeout(
+              () => {
+                this.pending.delete(id)
+                reject(new Error('engine-request-timeout'))
+              },
+              deadline === null ? 180_000 : Math.max(1, deadline - Date.now())
+            )
       this.pending.set(id, { message: request, resolve, reject, timer })
       this.socket?.write(encodeFrame(request))
     })
@@ -308,9 +311,12 @@ export class EngineClient {
   }
   private beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error('engine-request-timeout'))
-      }, Math.max(0, deadline - Date.now()))
+      const timer = setTimeout(
+        () => {
+          reject(new Error('engine-request-timeout'))
+        },
+        Math.max(0, deadline - Date.now())
+      )
       promise.then(
         (value) => {
           clearTimeout(timer)
@@ -318,7 +324,7 @@ export class EngineClient {
         },
         (error: unknown) => {
           clearTimeout(timer)
-          reject(error)
+          reject(error instanceof Error ? error : new Error(String(error)))
         }
       )
     })
@@ -372,7 +378,9 @@ export class EngineClient {
       } catch {
         return false
       }
-      await new Promise((resolve) => setTimeout(resolve, Math.min(200, Math.max(0, deadline - Date.now()))))
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(200, Math.max(0, deadline - Date.now())))
+      )
     }
     return false
   }
@@ -392,17 +400,24 @@ export class EngineClient {
     let timer: ReturnType<typeof setTimeout> | undefined
     const connected = new Promise<void>((resolve, reject) => {
       stop = this.onState((state) => {
-        if (state === 'connected' && this.welcome !== null && this.welcome.generation !== generation)
+        if (
+          state === 'connected' &&
+          this.welcome !== null &&
+          this.welcome.generation !== generation
+        )
           resolve()
       })
-      timer = setTimeout(() => reject(new Error('engine-restart-timeout')), 60_000)
+      timer = setTimeout(() => {
+        reject(new Error('engine-restart-timeout'))
+      }, 60_000)
     })
     void connected.catch(() => undefined)
     try {
       try {
         await this.request({ kind: 'shutdown' }, undefined, Math.max(1, deadline - Date.now()))
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== 'engine-shutdown-disconnected') throw error
+        if (!(error instanceof Error) || error.message !== 'engine-shutdown-disconnected')
+          throw error
       }
       await connected
       return true
