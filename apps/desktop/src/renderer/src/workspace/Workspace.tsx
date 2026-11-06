@@ -502,42 +502,46 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
     }
   }, [capabilities.nativeBrowserViews, capabilities.globalTerminal])
 
+  const rail = (
+    <QuickRail
+      sessions={props.sessions}
+      starting={props.starting}
+      preview={preview}
+      onNewSession={props.onNewSession}
+      projects={props.projects}
+      onAddProject={props.onAddProject}
+      onAddRemoteProject={props.onAddRemoteProject}
+      onOpenProject={props.onOpenProject}
+      onOpenSettings={props.onOpenSettings}
+      onOpenHistory={props.onOpenHistory}
+      terminalOpen={globalTerminal.open}
+      onToggleTerminal={toggleGlobalTerminal}
+      onProjectPointerDown={onProjectPointerDown}
+      onReorderSessions={props.onReorderSessions}
+      draggingId={drag.drag?.fromRail === true ? drag.drag.conversationId : null}
+      /*
+       * Where the tiles would land if you let go now.
+       *
+       * Passed as the move rather than as a reordered list, so the rail owns
+       * one reading of it — the same `moveBefore` the store uses to write it.
+       * Two places computing an order is how the preview and the result come to
+       * disagree, and the preview is the one that gets believed.
+       *
+       * Null unless a rail drag is currently over a gap, which is also what
+       * clears the offsets the moment the pointer leaves the rail.
+       */
+      pendingMove={
+        drag.drag?.fromRail === true && drag.drag.target?.kind === 'rail-move'
+          ? { projectId: drag.drag.conversationId, beforeId: drag.drag.target.beforeId }
+          : null
+      }
+      consumeSuppressedClick={drag.consumeSuppressedClick}
+    />
+  )
+
   return (
-    <div className="workspace-shell">
-      <QuickRail
-        sessions={props.sessions}
-        starting={props.starting}
-        preview={preview}
-        onNewSession={props.onNewSession}
-        projects={props.projects}
-        onAddProject={props.onAddProject}
-        onAddRemoteProject={props.onAddRemoteProject}
-        onOpenProject={props.onOpenProject}
-        onOpenSettings={props.onOpenSettings}
-        onOpenHistory={props.onOpenHistory}
-        terminalOpen={globalTerminal.open}
-        onToggleTerminal={toggleGlobalTerminal}
-        onProjectPointerDown={onProjectPointerDown}
-        onReorderSessions={props.onReorderSessions}
-        draggingId={drag.drag?.fromRail === true ? drag.drag.conversationId : null}
-        /*
-         * Where the tiles would land if you let go now.
-         *
-         * Passed as the move rather than as a reordered list, so the rail owns
-         * one reading of it — the same `moveBefore` the store uses to write it.
-         * Two places computing an order is how the preview and the result come to
-         * disagree, and the preview is the one that gets believed.
-         *
-         * Null unless a rail drag is currently over a gap, which is also what
-         * clears the offsets the moment the pointer leaves the rail.
-         */
-        pendingMove={
-          drag.drag?.fromRail === true && drag.drag.target?.kind === 'rail-move'
-            ? { projectId: drag.drag.conversationId, beforeId: drag.drag.target.beforeId }
-            : null
-        }
-        consumeSuppressedClick={drag.consumeSuppressedClick}
-      />
+    <div className="workspace-shell" data-rail={capabilities.railOnRight ? 'right' : 'left'}>
+      {!capabilities.railOnRight && rail}
       <main className="workspace-editor" aria-label="Workspace">
         <div className="workspace-layout">
           {layout === null ? (
@@ -613,6 +617,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
           />
         )}
       </main>
+      {capabilities.railOnRight && rail}
       <DragFeedback drag={drag.drag} />
       {/*
           One preview for the app, beside the shell rather than inside the rail,

@@ -8757,6 +8757,10 @@ input::placeholder {
   -webkit-app-region: drag;
 }
 
+.workspace-shell[data-rail='right'] .quick-rail {
+  padding: var(--rail-top) calc(var(--step) * 2) calc(var(--step) * 2) 0;
+}
+
 /*
  * The session list scrolls, so none of it may be a drag region.
  *
