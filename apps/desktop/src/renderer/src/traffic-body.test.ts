@@ -6,6 +6,7 @@ import {
   bytesFromBase64,
   curlCommand,
   describeBody,
+  encodedFields,
   formFields,
   hexDump,
   isForm,
@@ -13,6 +14,7 @@ import {
   jsonTree,
   prettyJson,
   previewTokens,
+  queryStringOf,
   textOf,
   treeRows,
   type JsonNode,
@@ -81,6 +83,30 @@ describe('formFields', () => {
   it('is only offered when the type says so', () => {
     expect(isForm('application/x-www-form-urlencoded')).toBe(true)
     expect(isForm('application/json')).toBe(false)
+  })
+})
+
+describe('queryStringOf', () => {
+  it('takes the query as sent from an absolute or a relative URL, without the fragment', () => {
+    expect(queryStringOf('http://h/a?sort%5B%5D=x,asc&page=1#top')).toBe('sort%5B%5D=x,asc&page=1')
+    expect(queryStringOf('/a?page=1')).toBe('page=1')
+  })
+
+  it('finds nothing in a URL with no query', () => {
+    expect(queryStringOf('http://h/a')).toBe('')
+    expect(queryStringOf('http://h/a#x?y=1')).toBe('')
+  })
+})
+
+describe('encodedFields', () => {
+  it('keeps every occurrence in order, exactly as it was sent', () => {
+    expect(encodedFields('sort%5B%5D=a%20b&sort%5B%5D=c&flag&empty=&&x=1=2')).toEqual([
+      ['sort%5B%5D', 'a%20b'],
+      ['sort%5B%5D', 'c'],
+      ['flag', ''],
+      ['empty', ''],
+      ['x', '1=2'],
+    ])
   })
 })
 

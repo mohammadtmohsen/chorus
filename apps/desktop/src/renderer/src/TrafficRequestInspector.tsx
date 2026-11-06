@@ -12,7 +12,14 @@ import {
   type TrafficDetailResult,
 } from '../../shared/traffic-ipc.js'
 import { maskHeaders } from '../../shared/traffic-mask.js'
-import { bytesFromBase64, curlCommand, textOf } from './traffic-body.js'
+import {
+  bytesFromBase64,
+  curlCommand,
+  encodedFields,
+  formFields,
+  queryStringOf,
+  textOf,
+} from './traffic-body.js'
 import { TrafficBody } from './TrafficBody.js'
 import { isPending } from './traffic-filter.js'
 import { createSignal, useSignal } from './workspace/signal.js'
@@ -203,6 +210,8 @@ export function TrafficRequestInspector(props: {
   const [gone, setGone] = useState<TrafficDetailResult | null>(null)
   const [failure, setFailure] = useState(false)
   const [reveal, setReveal] = useState(false)
+  const [querySource, setQuerySource] = useState(false)
+  const [queryEncoded, setQueryEncoded] = useState(false)
   const [chunks, setChunks] = useState<Record<Side, Uint8Array[]>>({ request: [], response: [] })
   const [loaded, setLoaded] = useState<Record<Side, boolean>>({ request: false, response: false })
   const [loading, setLoading] = useState<Record<Side, boolean>>({ request: false, response: false })
@@ -389,6 +398,14 @@ export function TrafficRequestInspector(props: {
   const millis = (from: number | null, to: number | null): string =>
     from === null || to === null ? '—' : `${String(to - from)} ms`
 
+  const query = detail === null ? '' : queryStringOf(detail.url)
+  const queryRows = (queryEncoded ? encodedFields(query) : formFields(query)).map(
+    ([name, value]): readonly [string, string] => [
+      name,
+      value === '' ? t('traffic.emptyValue') : value,
+    ]
+  )
+
   return (
     <section className="traffic-inspector" aria-label={t('traffic.detailTitle')}>
       {layout.failed && (
@@ -413,6 +430,45 @@ export function TrafficRequestInspector(props: {
         >
           <div className="traffic-pane" data-side="request" id={requestPaneId}>
             <h3 className="traffic-label">{t('traffic.tab.request')}</h3>
+
+            {queryRows.length > 0 && (
+              <details className="traffic-query" open>
+                <summary>
+                  {t('traffic.queryParameters')}
+                  <button
+                    type="button"
+                    className="traffic-tab"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      setQuerySource((shown) => !shown)
+                    }}
+                  >
+                    {querySource ? t('traffic.viewParsed') : t('traffic.viewSource')}
+                  </button>
+                  {!querySource && (
+                    <button
+                      type="button"
+                      className="traffic-tab"
+                      onClick={(event) => {
+                        event.preventDefault()
+                        setQueryEncoded((shown) => !shown)
+                      }}
+                    >
+                      {queryEncoded ? t('traffic.viewDecoded') : t('traffic.viewEncoded')}
+                    </button>
+                  )}
+                </summary>
+                {querySource ? (
+                  <pre className="traffic-body-text">{query}</pre>
+                ) : (
+                  pairList(queryRows)
+                )}
+              </details>
+            )}
+
+            {queryRows.length > 0 && detail.requestBody.observedBytes > 0 && (
+              <h3 className="traffic-label">{t('traffic.bodyHeading')}</h3>
+            )}
 
             <TrafficBody
               side="request"

@@ -210,6 +210,21 @@ export const formFields = (text: string): readonly (readonly [string, string])[]
   return fields
 }
 
+export const encodedFields = (text: string): readonly (readonly [string, string])[] =>
+  text
+    .split('&')
+    .filter((part) => part !== '')
+    .map((part): readonly [string, string] => {
+      const at = part.indexOf('=')
+      return at === -1 ? [part, ''] : [part.slice(0, at), part.slice(at + 1)]
+    })
+
+export const queryStringOf = (url: string): string => {
+  const [beforeFragment = ''] = url.split('#', 1)
+  const start = beforeFragment.indexOf('?')
+  return start === -1 ? '' : beforeFragment.slice(start + 1)
+}
+
 const PRINTABLE_FROM = 32
 const PRINTABLE_TO = 126
 

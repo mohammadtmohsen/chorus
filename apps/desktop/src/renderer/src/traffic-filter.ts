@@ -50,7 +50,7 @@ export const statusClassOf = (row: HttpRow): string => {
 }
 
 /**
- * What the table draws for an endpoint: the path and query, without the origin.
+ * What the table draws for an endpoint: the path, without the origin or the query.
  *
  * Every row of a real capture begins with the same twenty-six characters —
  * `http://88.99.104.107:30081` — so the part that differs starts a quarter of the
@@ -64,21 +64,20 @@ export const statusClassOf = (row: HttpRow): string => {
  * untouched — the request was for the table only.
  *
  * A line that is not an absolute URL — the 400 a proxy request without a target
- * produces — comes back as it is, because there is no origin to remove.
+ * produces — loses only its query, because there is no origin to remove.
  */
 export const pathOf = (url: string, hiddenPathPrefix = ''): string => {
   let path: string
   try {
-    const parsed = new URL(url)
-    path = `${parsed.pathname}${parsed.search}`
+    path = new URL(url).pathname
   } catch {
-    path = url
+    const [beforeQuery = ''] = url.split('?', 1)
+    path = beforeQuery
   }
   const prefix = hiddenPathPrefix.trim().replace(/\/+$/, '')
   if (!prefix.startsWith('/') || /[?#]/.test(prefix)) return path
-  const rest = path.slice(prefix.length)
-  if (path === prefix || path.startsWith(`${prefix}?`)) return `/${rest}`
-  return path.startsWith(`${prefix}/`) ? rest : path
+  if (path === prefix) return '/'
+  return path.startsWith(`${prefix}/`) ? path.slice(prefix.length) : path
 }
 
 export const filterRows = (

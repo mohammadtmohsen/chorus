@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TrafficRowShape } from '../../shared/ipc.js'
 import type { TrafficBodyDescriptor, TrafficDetail } from '../../shared/traffic-ipc.js'
@@ -45,12 +45,14 @@ const body = (state: TrafficBodyDescriptor['state'], text: string): TrafficBodyD
 
 let answered = false
 let detailReads = 0
+let detailUrl = PENDING.u
+let requestText = REQUEST
 
 const detailOf = (key: TrafficDetail['key']): TrafficDetail => ({
   key,
   method: 'POST',
-  url: PENDING.u,
-  forwardedUrl: PENDING.u,
+  url: detailUrl,
+  forwardedUrl: detailUrl,
   requestHeaders: [],
   forwardedHeaders: [],
   responseHeaders: [],
@@ -58,7 +60,7 @@ const detailOf = (key: TrafficDetail['key']): TrafficDetail => ({
   status: answered ? 200 : null,
   transport: null,
   timing: { startedAt: 0, upstreamAt: null, upstreamDoneAt: null, settledAt: null },
-  requestBody: body('complete', REQUEST),
+  requestBody: body('complete', requestText),
   responseBody: answered ? body('complete', RESPONSE) : body('pending', ''),
 })
 
@@ -75,7 +77,7 @@ const bridge = (): Partial<Chorus> => ({
     return Promise.resolve({ kind: 'detail' as const, detail: detailOf(key) })
   },
   readTrafficBody: (request) => {
-    const text = request.side === 'request' ? REQUEST : answered ? RESPONSE : ''
+    const text = request.side === 'request' ? requestText : answered ? RESPONSE : ''
     const key = {
       projectId: request.projectId,
       captureId: request.captureId,
@@ -86,7 +88,7 @@ const bridge = (): Partial<Chorus> => ({
       key,
       offset: request.offset,
       dataBase64: request.offset === 0 ? btoa(text) : '',
-      body: request.side === 'request' ? body('complete', REQUEST) : detailOf(key).responseBody,
+      body: request.side === 'request' ? body('complete', requestText) : detailOf(key).responseBody,
     })
   },
 })
@@ -109,6 +111,8 @@ const responseText = (container: HTMLElement): string =>
 beforeEach(() => {
   answered = false
   detailReads = 0
+  detailUrl = PENDING.u
+  requestText = REQUEST
   Object.assign(window, { chorus: bridge() })
 })
 
@@ -154,5 +158,85 @@ describe('a request selected before it answered', () => {
 
     expect(responseText(container)).toContain('traffic.waitingForResponse')
     expect(container.querySelector('.traffic-head')).toBeNull()
+  })
+})
+
+describe('query string parameters', () => {
+  const QUERY = 'sort%5B%5D=a%20b&sort%5B%5D=c&page=1&flag='
+
+  const requestPaneText = (container: HTMLElement): string =>
+    container.querySelector('[data-side="request"]')?.textContent ?? ''
+
+  const listed = (container: HTMLElement): (readonly [string, string])[] =>
+    [...container.querySelectorAll('.traffic-query .traffic-header')].map(
+      (each) =>
+        [
+          each.querySelector('dt')?.textContent ?? '',
+          each.querySelector('dd')?.textContent ?? '',
+        ] as const
+    )
+
+  const press = (container: HTMLElement, label: string): void => {
+    const button = [...container.querySelectorAll('.traffic-query button')].find(
+      (each) => each.textContent === label
+    )
+    if (button === undefined) throw new Error(`${label} is not drawn`)
+    fireEvent.click(button)
+  }
+
+  it('lists each parameter decoded, on its own row, with no body label when there is no body', async () => {
+    detailUrl = `/api/lines?${QUERY}`
+    requestText = ''
+    const { container } = render(inspector(row()))
+    await flush()
+
+    expect(listed(container)).toEqual([
+      ['sort[]', 'a b'],
+      ['sort[]', 'c'],
+      ['page', '1'],
+      ['flag', 'traffic.emptyValue'],
+    ])
+    expect(requestPaneText(container)).not.toContain('traffic.bodyHeading')
+  })
+
+  it('shows the values as sent, and the whole query as sent, through its two views', async () => {
+    detailUrl = `/api/lines?${QUERY}`
+    requestText = ''
+    const { container } = render(inspector(row()))
+    await flush()
+
+    press(container, 'traffic.viewEncoded')
+    expect(listed(container)[0]).toEqual(['sort%5B%5D', 'a%20b'])
+
+    press(container, 'traffic.viewSource')
+    expect(container.querySelector('.traffic-query pre')?.textContent).toBe(QUERY)
+    expect(listed(container)).toEqual([])
+
+    press(container, 'traffic.viewParsed')
+    expect(listed(container)[0]).toEqual(['sort%5B%5D', 'a%20b'])
+
+    press(container, 'traffic.viewDecoded')
+    expect(listed(container)[0]).toEqual(['sort[]', 'a b'])
+  })
+
+  it('labels the body when the request has both, with the parameters first', async () => {
+    detailUrl = `/api/lines?${QUERY}`
+    const { container } = render(inspector(row()))
+    await flush()
+
+    const text = requestPaneText(container)
+    expect(text.indexOf('traffic.queryParameters')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('traffic.bodyHeading')).toBeGreaterThan(
+      text.indexOf('traffic.queryParameters')
+    )
+    expect(text).toContain('username')
+  })
+
+  it('draws neither the section nor the body label when the URL has no query', async () => {
+    const { container } = render(inspector(row()))
+    await flush()
+
+    expect(container.querySelector('.traffic-query')).toBeNull()
+    expect(requestPaneText(container)).not.toContain('traffic.bodyHeading')
   })
 })
