@@ -250,7 +250,6 @@ export function TrafficPanel(props: {
   const filtered = filterRows(stream.rows, search)
   const shown = filtered.slice(-callLimit)
   const newestSeq = shown.at(-1)?.seq ?? null
-  const newestRequestSeq = shown.findLast((row) => row.source === 'http')?.seq ?? null
   const currentProcess = props.run?.process
   const runToken = currentProcess && 'token' in currentProcess ? currentProcess.token : null
   const runIsBusy = runBusy(props.run ?? null)
@@ -275,8 +274,8 @@ export function TrafficPanel(props: {
   }, [projectId, advertisedHost])
 
   useEffect(() => {
-    setSelectedSeq(stream.projectId === projectId ? newestRequestSeq : null)
-  }, [projectId, stream.projectId, stream.captureId, newestRequestSeq])
+    setSelectedSeq(null)
+  }, [projectId, stream.projectId, stream.captureId])
 
   useEffect(() => {
     setupSession.current += 1

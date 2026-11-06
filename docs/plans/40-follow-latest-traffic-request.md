@@ -7,6 +7,7 @@
 | Scope          | Keep the newest visible request selected and in view as calls arrive |
 | Implementation | Written and source reviewed; runtime behavior unverified             |
 | Verification   | Not run; the user has not requested tests or a build                 |
+| Selection      | Reversed by plan 78; the list still scrolls to the newest row        |
 
 ## Current / Issue
 

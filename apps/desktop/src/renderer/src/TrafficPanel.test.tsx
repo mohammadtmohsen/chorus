@@ -77,7 +77,7 @@ const bridge = (
   detachTraffic: () => Promise.resolve({ ok: true as const }),
   setWorkbenchVisible: () => Promise.resolve({ ok: true as const, stills: [] }),
   /*
-   * Needed as soon as a row exists, because a selected row mounts the
+   * Needed as soon as a row is picked, because a selected row mounts the
    * inspector. `not-found` rather than a detail: what these tests assert is
    * which row is selected, and an empty inspector is the shortest way to have
    * one without describing an exchange.
@@ -264,38 +264,104 @@ describe('hiding a project path prefix', () => {
   })
 })
 
-describe('switching project', () => {
-  /*
-   * The case the first version of the auto-selection missed, and it was missed
-   * in the reasoning rather than in the code: nothing clears the stream when the
-   * project changes, so for one round trip `rows` still belongs to the project
-   * being left. Reading them armed the guard against the *new* project while
-   * selecting a stale row — and the reset effect then cleared that selection, so
-   * the new project never selected anything at all and the inspector stayed
-   * empty until somebody clicked.
-   */
-  it('selects the first call of the project being switched to', async () => {
+describe('picking a call', () => {
+  const pickedSeq = (container: HTMLElement): string | null =>
+    container.querySelector('.traffic-row-button[aria-pressed="true"]')?.getAttribute('data-seq') ??
+    null
+
+  const pick = async (container: HTMLElement, seq: number): Promise<void> => {
+    const row = container.querySelector(`.traffic-row-button[data-seq="${String(seq)}"]`)
+    if (row === null) throw new Error(`row ${String(seq)} is not listed`)
+    fireEvent.click(row)
+    await act(() => Promise.resolve())
+  }
+
+  const installWithPushes = (
+    rows: Record<string, readonly TrafficRowShape[]>
+  ): ((push: TrafficPush) => void) => {
+    const listeners: ((push: TrafficPush) => void)[] = []
     Object.assign(
       installed,
-      bridge(() => Promise.resolve({ state: state(), failure: null }), {
-        p1: [httpRow(1)],
-        p2: [httpRow(7)],
-      })
+      bridge(() => Promise.resolve({ state: state(), failure: null }), rows),
+      {
+        onTraffic: (listener: (push: TrafficPush) => void) => {
+          listeners.push(listener)
+          return () => undefined
+        },
+      }
     )
-    const { container, rerender } = render(<TrafficPanel projectId="p1" terminals={[]} />)
+    return (push) => {
+      act(() => {
+        for (const listener of listeners) listener(push)
+      })
+    }
+  }
+
+  it('selects nothing until a call is picked, and a newer call leaves the pick alone', async () => {
+    const emit = installWithPushes({ p1: [httpRow(1), httpRow(2)] })
+    const { container } = render(<TrafficPanel projectId="p1" terminals={[]} />)
     await act(() => Promise.resolve())
 
-    const chosen = () =>
-      container
-        .querySelector('.traffic-row-button[aria-pressed="true"]')
-        ?.getAttribute('data-seq') ?? null
-    expect(chosen()).toBe('1')
+    expect(pickedSeq(container)).toBeNull()
+    expect(container.querySelector('.traffic-inspector--empty')).not.toBeNull()
+
+    await pick(container, 1)
+    expect(pickedSeq(container)).toBe('1')
+
+    emit({
+      kind: 'rows',
+      projectId: 'p1',
+      subscriptionId: 'sub-p1',
+      captureId: 'cap-p1',
+      seq: 3,
+      rows: [httpRow(3)],
+    })
+
+    expect(container.querySelector('.traffic-row-button[data-seq="3"]')).not.toBeNull()
+    expect(pickedSeq(container)).toBe('1')
+  })
+
+  it('forgets the pick when the capture is cleared, even if the next call reuses its sequence', async () => {
+    const emit = installWithPushes({ p1: [httpRow(1)] })
+    const { container } = render(<TrafficPanel projectId="p1" terminals={[]} />)
+    await act(() => Promise.resolve())
+    await pick(container, 1)
+    expect(pickedSeq(container)).toBe('1')
+
+    emit({
+      kind: 'reset',
+      projectId: 'p1',
+      subscriptionId: 'sub-p1',
+      captureId: 'cap-p1-cleared',
+      seq: 0,
+      reason: 'cleared',
+    })
+    emit({
+      kind: 'rows',
+      projectId: 'p1',
+      subscriptionId: 'sub-p1',
+      captureId: 'cap-p1-cleared',
+      seq: 1,
+      rows: [httpRow(1)],
+    })
+
+    expect(container.querySelector('.traffic-row-button[data-seq="1"]')).not.toBeNull()
+    expect(pickedSeq(container)).toBeNull()
+  })
+
+  it('forgets the pick on switching project, even if that project has the same sequence', async () => {
+    installWithPushes({ p1: [httpRow(7)], p2: [httpRow(7)] })
+    const { container, rerender } = render(<TrafficPanel projectId="p1" terminals={[]} />)
+    await act(() => Promise.resolve())
+    await pick(container, 7)
+    expect(pickedSeq(container)).toBe('7')
 
     rerender(<TrafficPanel projectId="p2" terminals={[]} />)
     await act(() => Promise.resolve())
     await act(() => Promise.resolve())
 
-    expect(chosen()).toBe('7')
+    expect(container.querySelector('.traffic-row-button[data-seq="7"]')).not.toBeNull()
+    expect(pickedSeq(container)).toBeNull()
   })
 })
 
