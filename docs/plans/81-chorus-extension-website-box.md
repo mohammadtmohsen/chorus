@@ -8,6 +8,7 @@ Status: **draft, revised after codex's challenge, awaiting approval.** No produc
 | 2 | Website box: live stream, mouse, wheel, keyboard, paste, copy, IME | Installed 2026-11-06; user saw the live page in the website box. User confirmed typing, Backspace and ⌘A in the login field. IME, paste and copy not yet confirmed. Reconnect fixes for the Browser, Console and Traffic boxes installed; Traffic confirmed showing calls |
 | 3 | Page surfaces: popups, dropdowns, dialogs, file chooser | Implemented 2026-11-06 and reviewed (activation epochs, isolated-world bridge with a createIsolatedWorld fallback, Console follows the active page under the browser id). Installed 2026-11-06; user confirmed the photo upload opens VS Code's picker and works. Native dropdowns, dialogs and popups not yet confirmed |
 | 4 | VS Code browser-tab route deleted, proposed API dropped | Not started |
+| — | Restart Chorus restarts while project runs are active, and starts them again | Done 2026-11-06: installed; the engine restarted and `dev:clean` was started again by itself one second later |
 
 Decided by the user on 2026-11-06:
 

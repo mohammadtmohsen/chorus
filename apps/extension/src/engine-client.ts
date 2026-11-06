@@ -8,7 +8,7 @@ import {
   PROTOCOL_VERSION,
   ServerMessage,
   type ClientMessage,
-  type EngineActivity,
+  EngineActivity,
   type Hello,
 } from '../../engine/src/protocol.js'
 import { readDescriptor } from '../../engine/src/descriptor.js'
@@ -257,6 +257,12 @@ export class EngineClient {
         if (this.socket === socket) {
           this.socket = null
           this.welcome = null
+          for (const [id, pending] of this.pending) {
+            if (pending.message.kind !== 'shutdown') continue
+            this.pending.delete(id)
+            clearTimeout(pending.timer)
+            pending.reject(new Error('engine-shutdown-disconnected'))
+          }
         }
         if (!welcomed) {
           reject(new Error(replacing ? 'engine-replace-idle' : 'engine-gone'))
@@ -275,23 +281,47 @@ export class EngineClient {
       })
     })
   }
-  async request(message: RequestInput, id: string = randomUUID()): Promise<unknown> {
-    await this.connect()
+  async request(
+    message: RequestInput,
+    id: string = randomUUID(),
+    timeoutMs?: number
+  ): Promise<unknown> {
+    const deadline = timeoutMs === undefined ? null : Date.now() + timeoutMs
+    if (deadline === null) await this.connect()
+    else await this.beforeDeadline(this.connect(), deadline)
+    if (deadline !== null && Date.now() >= deadline) throw new Error('engine-request-timeout')
     return await new Promise((resolve, reject) => {
       const request = { ...message, id }
       const timer =
-        message.kind === 'invoke' && PERSON_PACED_CHANNELS.has(message.channel)
+        deadline === null && message.kind === 'invoke' && PERSON_PACED_CHANNELS.has(message.channel)
           ? undefined
           : setTimeout(() => {
               this.pending.delete(id)
               reject(new Error('engine-request-timeout'))
-            }, 180_000)
+            }, deadline === null ? 180_000 : Math.max(1, deadline - Date.now()))
       this.pending.set(id, { message: request, resolve, reject, timer })
       this.socket?.write(encodeFrame(request))
     })
   }
-  invoke(channel: string, request: unknown, id?: string): Promise<unknown> {
-    return this.request({ kind: 'invoke', channel, request }, id)
+  invoke(channel: string, request: unknown, id?: string, timeoutMs?: number): Promise<unknown> {
+    return this.request({ kind: 'invoke', channel, request }, id, timeoutMs)
+  }
+  private beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error('engine-request-timeout'))
+      }, Math.max(0, deadline - Date.now()))
+      promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error: unknown) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    })
   }
   notify(
     message: Extract<
@@ -331,14 +361,55 @@ export class EngineClient {
         })
       )
   }
-  async restartWhenIdle(): Promise<boolean> {
-    const activity = (await this.request({ kind: 'status' })) as EngineActivity
+  async activity(timeoutMs?: number): Promise<EngineActivity> {
+    return EngineActivity.parse(await this.request({ kind: 'status' }, undefined, timeoutMs))
+  }
+  async waitUntilIdle(timeoutMs = 15_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      try {
+        if (!(await this.activity(deadline - Date.now())).busy) return true
+      } catch {
+        return false
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(200, Math.max(0, deadline - Date.now()))))
+    }
+    return false
+  }
+  async restartWhenIdle(waitForConnection = false): Promise<boolean> {
+    const activity = await this.activity(waitForConnection ? 15_000 : undefined)
     if (activity.busy) {
       this.report('restart-required', activity)
       return false
     }
-    await this.request({ kind: 'shutdown' })
-    return true
+    if (!waitForConnection) {
+      await this.request({ kind: 'shutdown' })
+      return true
+    }
+    const generation = this.welcome?.generation
+    const deadline = Date.now() + 60_000
+    let stop = (): void => undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const connected = new Promise<void>((resolve, reject) => {
+      stop = this.onState((state) => {
+        if (state === 'connected' && this.welcome !== null && this.welcome.generation !== generation)
+          resolve()
+      })
+      timer = setTimeout(() => reject(new Error('engine-restart-timeout')), 60_000)
+    })
+    void connected.catch(() => undefined)
+    try {
+      try {
+        await this.request({ kind: 'shutdown' }, undefined, Math.max(1, deadline - Date.now()))
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'engine-shutdown-disconnected') throw error
+      }
+      await connected
+      return true
+    } finally {
+      clearTimeout(timer)
+      stop()
+    }
   }
   dispose(): void {
     this.closed = true

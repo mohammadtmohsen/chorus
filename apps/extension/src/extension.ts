@@ -21,6 +21,7 @@ import {
   IPC_CONTRACT,
 } from '../../desktop/src/shared/ipc.js'
 import { BROWSER_FRAME_CHANNEL } from '../../desktop/src/shared/browser-ipc.js'
+import { RUN_CONTRACT } from '../../desktop/src/shared/run-ipc.js'
 import messages from '../../desktop/src/renderer/src/i18n/en.json'
 import { EngineClient, type EngineState } from './engine-client.js'
 import { AttentionCenter } from './attention.js'
@@ -52,6 +53,8 @@ const SHELL_VIEW_ID = 'chorus.workspace'
 const SHELL_FOCUS_CONTEXT = 'chorus.shellFocused'
 const Adopted = IPC_CONTRACT['project:adopt'].response
 const ObjectParams = z.record(z.string(), z.unknown())
+type RestartRun = { readonly projectId: string; readonly commandId: string }
+const RESTART_STOP_TIMEOUT_MS = 15_000
 const FileRequest = z.object({
   path: z.string(),
   line: z.number().nullable().optional(),
@@ -89,6 +92,7 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
   private readonly attention: AttentionCenter
   private attentionCount = 0
   private engineConnected = true
+  private restarting = false
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -687,7 +691,7 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         : state === 'stopped'
           ? TEXT.engineStopped
           : TEXT.open
-    if ((state === 'stopped' || state === 'reconnecting') && !this.warningShown) {
+    if ((state === 'stopped' || state === 'reconnecting') && !this.warningShown && !this.restarting) {
       this.warningShown = true
       void vscode.window.showWarningMessage(TEXT.engineStopped, TEXT.restart).then((choice) => {
         if (choice === TEXT.restart) void this.restart()
@@ -707,15 +711,132 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         })
     })
   }
+  private projectName(projectId: string): string {
+    return this.projects.find((project) => project.id === projectId)?.name ?? projectId
+  }
+  private otherRestartWork(activity: EngineActivity): boolean {
+    return activity.conversations.length > 0 || activity.approvals > 0 || activity.questions > 0 || activity.starting > 0
+  }
+  private restartReason(activity: EngineActivity): string {
+    if (!activity.busy) return TEXT.engineRestartRequired
+    if (!this.otherRestartWork(activity) && activity.runs.length === 0)
+      return TEXT.engineRestartTerminalBusy
+    return TEXT.engineRestartBusy
+      .replace('{{chats}}', String(activity.conversations.length))
+      .replace('{{approvals}}', String(activity.approvals))
+      .replace('{{questions}}', String(activity.questions))
+      .replace('{{runs}}', String(activity.runs.length))
+      .replace('{{starting}}', String(activity.starting))
+  }
+  private restartBusy(activity: EngineActivity): void {
+    void vscode.window.showWarningMessage(this.restartReason(activity))
+  }
+  private async recoverRuns(runs: readonly RestartRun[]): Promise<void> {
+    const activity = await this.client.activity(1_500).catch(() => null)
+    await this.resumeRuns(runs)
+    void vscode.window.showWarningMessage(activity?.busy === true
+      ? `${TEXT.engineRestartFailed} ${this.restartReason(activity)}`
+      : TEXT.engineRestartFailed)
+  }
+  private async resumeRuns(runs: readonly RestartRun[]): Promise<boolean> {
+    const results = await Promise.all(runs.map(async (run) => {
+      try {
+        const state = RUN_CONTRACT['run:start'].response.parse(
+          await this.client.invoke('run:start', run, undefined, 15_000)
+        )
+        const process = state.process
+        if (
+          ((process.kind === 'running' || process.kind === 'starting') && process.active.id === run.commandId) ||
+          (process.kind === 'exited' && process.code === 0 && !state.cleanupPending && process.active.id === run.commandId)
+        ) return true
+      } catch (error) {
+        this.output.appendLine(String(error))
+      }
+      void vscode.window.showWarningMessage(
+        TEXT.engineRestartRerunFailed.replace('{{project}}', this.projectName(run.projectId))
+      )
+      return false
+    }))
+    return results.every((result) => result)
+  }
   async restart(): Promise<void> {
+    if (this.restarting) return
+    this.restarting = true
+    const runs: RestartRun[] = []
+    let stopping = false
     try {
-      if (!(await this.client.restartWhenIdle())) {
-        void vscode.window.showInformationMessage(TEXT.engineRestartRequired)
+      let activity = await this.client.activity(15_000)
+      if (!activity.busy) {
+        if (!(await this.client.restartWhenIdle())) this.restartBusy(await this.client.activity(15_000))
+        else void vscode.window.showInformationMessage(TEXT.engineRestartReady)
         return
       }
-      void vscode.window.showInformationMessage(TEXT.engineRestartReady)
+      if (this.otherRestartWork(activity) || activity.runs.length === 0) {
+        this.restartBusy(activity)
+        return
+      }
+      const projects = [...new Set(activity.runs)]
+      const choice = await vscode.window.showWarningMessage(
+        TEXT.engineRestartRuns,
+        {
+          modal: true,
+          detail: TEXT.engineRestartRunsDetail.replace('{{projects}}', projects.map((id) => this.projectName(id)).join('\n')),
+        },
+        TEXT.restartAndRunAgain
+      )
+      if (choice !== TEXT.restartAndRunAgain) return
+      activity = await this.client.activity(15_000)
+      if (this.otherRestartWork(activity) || activity.runs.some((id) => !projects.includes(id))) {
+        this.restartBusy(activity)
+        return
+      }
+      for (const projectId of projects) {
+        try {
+          const state = RUN_CONTRACT['run:state'].response.parse(
+            await this.client.invoke('run:state', { projectId }, undefined, 15_000)
+          )
+          const process = state.process
+          const active = process.kind === 'idle' ? null : process.active
+          if (active !== null && (process.kind === 'running' || process.kind === 'starting' || process.kind === 'stopping' || state.cleanupPending))
+            runs.push({ projectId, commandId: active.id })
+        } catch (error) {
+          this.output.appendLine(String(error))
+          void vscode.window.showWarningMessage(
+            TEXT.engineRestartCaptureFailed.replace('{{project}}', this.projectName(projectId))
+          )
+          return
+        }
+      }
+      activity = await this.client.activity(15_000)
+      if (this.otherRestartWork(activity) || activity.runs.some((id) => !runs.some((run) => run.projectId === id))) {
+        this.restartBusy(activity)
+        return
+      }
+      stopping = true
+      const deadline = Date.now() + RESTART_STOP_TIMEOUT_MS
+      const stopped = await Promise.allSettled(runs.map((run) => this.client.invoke(
+        'run:stop', { projectId: run.projectId }, undefined, Math.max(1, deadline - Date.now())
+      )))
+      for (const result of stopped)
+        if (result.status === 'rejected') this.output.appendLine(String(result.reason))
+      if (!(await this.client.waitUntilIdle(Math.max(0, deadline - Date.now())))) {
+        await this.recoverRuns(runs)
+        return
+      }
+      if (!(await this.client.restartWhenIdle(true))) {
+        await this.recoverRuns(runs)
+        return
+      }
+      if (await this.resumeRuns(runs))
+        void vscode.window.showInformationMessage(runs.length === 0 ? TEXT.ready : TEXT.engineRestartRerunReady)
     } catch (error) {
-      this.failure(error)
+      if (!stopping) this.failure(error)
+      else {
+        this.output.appendLine(String(error))
+        await this.recoverRuns(runs)
+      }
+    } finally {
+      this.restarting = false
     }
   }
   private async adoptFolder(uri?: vscode.Uri) {
