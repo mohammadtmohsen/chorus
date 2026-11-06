@@ -12939,6 +12939,105 @@ input::placeholder {
   pointer-events: none;
 }
 
+.website-box .website-select {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: var(--step);
+  margin: 0;
+  overflow: auto;
+  color: var(--text-primary);
+  font-size: 12px;
+  list-style: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px #0004;
+  outline: none;
+}
+
+.website-box .website-select [role='option'],
+.website-box .website-select-group {
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
+  overflow-wrap: anywhere;
+}
+
+.website-box .website-select [aria-selected='true'] {
+  color: var(--text-primary);
+  background: var(--bg-control);
+  outline: 1px solid var(--border-default);
+}
+
+.website-box .website-select [aria-disabled='true'] {
+  color: var(--text-disabled);
+}
+
+.website-box .website-select-group {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.website-box .website-dialog {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--step) * 3);
+  overflow: auto;
+  color: var(--text-primary);
+  font-size: 12px;
+  background: #0004;
+}
+
+.website-box .website-dialog-body {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 420px;
+  max-height: 100%;
+  padding: calc(var(--step) * 3);
+  overflow: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px #0004;
+}
+
+.website-box .website-dialog p {
+  margin: 0 0 calc(var(--step) * 3);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.website-box .website-dialog input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: calc(var(--step) * 2);
+  color: inherit;
+  font: inherit;
+  background: var(--bg-control);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+}
+
+.website-box .website-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--step) * 2);
+  margin-top: calc(var(--step) * 3);
+}
+
+.website-box .website-dialog button {
+  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
+  color: inherit;
+  font: inherit;
+  background: var(--bg-control);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+}
+
 .browser-box {
   flex: 0 0 auto;
   display: flex;

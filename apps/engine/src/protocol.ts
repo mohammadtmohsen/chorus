@@ -15,6 +15,7 @@ export const PERSON_PACED_CHANNELS: ReadonlySet<string> = new Set([
 export const PERSON_PACED_HOST_METHODS: ReadonlySet<string> = new Set([
   'pickDirectory',
   'pickFiles',
+  'browser.pickFiles',
 ])
 export const SecretId = z.enum([
   'claude',

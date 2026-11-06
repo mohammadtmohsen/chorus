@@ -94,3 +94,17 @@ export async function mirrorSelection(
     return
   }
 }
+
+export function nextEnabled(
+  options: readonly { readonly disabled: boolean }[],
+  current: number,
+  direction: 1 | -1
+): number {
+  if (options.length === 0) return -1
+  let index = current >= 0 && current < options.length ? current : direction === 1 ? -1 : 0
+  for (let count = 0; count < options.length; count += 1) {
+    index = (index + direction + options.length) % options.length
+    if (options[index]?.disabled === false) return index
+  }
+  return -1
+}

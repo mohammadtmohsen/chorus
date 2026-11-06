@@ -6,7 +6,7 @@ Status: **draft, revised after codex's challenge, awaiting approval.** No produc
 |---|---|---|
 | 1 | Engine owns Chrome; Browser box and Console drive a project's Chrome page | Done 2026-11-06: installed; user saw title, Back/Reload and Console logs; Chrome confirmed on its own profile loading `localhost:30010`. Gap found: the Browser box keeps a stale id after an engine restart until the window reloads |
 | 2 | Website box: live stream, mouse, wheel, keyboard, paste, copy, IME | Installed 2026-11-06; user saw the live page in the website box. User confirmed typing, Backspace and ⌘A in the login field. IME, paste and copy not yet confirmed. Reconnect fixes for the Browser, Console and Traffic boxes installed; Traffic confirmed showing calls |
-| 3 | Page surfaces: popups, dropdowns, dialogs, file chooser | Not started |
+| 3 | Page surfaces: popups, dropdowns, dialogs, file chooser | Implemented 2026-11-06 and reviewed (activation epochs, isolated-world bridge with a createIsolatedWorld fallback, Console follows the active page under the browser id). Installed 2026-11-06; user confirmed the photo upload opens VS Code's picker and works. Native dropdowns, dialogs and popups not yet confirmed |
 | 4 | VS Code browser-tab route deleted, proposed API dropped | Not started |
 
 Decided by the user on 2026-11-06:

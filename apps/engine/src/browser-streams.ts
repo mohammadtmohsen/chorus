@@ -50,6 +50,7 @@ export class BrowserStreams {
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly casts = new Map<string, Cast>()
   private readonly hiddenPeers = new Set<EnginePeer>()
+  private readonly epochs = new Map<string, number>()
   private closed = false
 
   constructor(private readonly active: (browserId: string) => ChromePage | null) {}
@@ -113,6 +114,7 @@ export class BrowserStreams {
   }
 
   activeChanged(browserId: string): void {
+    this.epochs.set(browserId, (this.epochs.get(browserId) ?? 0) + 1)
     for (const subscription of this.subscriptions.values())
       if (subscription.browserId === browserId) {
         subscription.held = null
@@ -125,7 +127,7 @@ export class BrowserStreams {
     const frame = ScreencastFrame.parse(params)
     void page.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => undefined)
     const cast = this.casts.get(browserId)
-    if (this.closed || cast?.page !== page) return
+    if (this.closed || cast?.page !== page || this.active(browserId) !== page) return
     cast.token ??= frame.sessionId
     if (cast.token !== frame.sessionId) return
     if (frame.data.length > BROWSER_FRAME_MAX) {
@@ -139,7 +141,7 @@ export class BrowserStreams {
     for (const subscription of this.subscriptions.values()) {
       if (subscription.browserId !== browserId || !this.showing(subscription)) continue
       subscription.held = {
-        epoch: page.generation,
+        epoch: this.epochs.get(browserId) ?? page.generation,
         data: frame.data,
         width: frame.metadata.deviceWidth,
         height: frame.metadata.deviceHeight,
@@ -158,6 +160,7 @@ export class BrowserStreams {
     }
     this.subscriptions.clear()
     this.hiddenPeers.clear()
+    this.epochs.clear()
     this.casts.clear()
   }
 

@@ -309,6 +309,8 @@ export function createChorusApi(transport: ShellTransport): ChorusApi {
     streamBrowser: invokeBrowser('browser:stream'),
     browserInput: invokeBrowser('browser:input'),
     ackBrowserFrame: invokeBrowser('browser:frameAck'),
+    chooseBrowserSelect: invokeBrowser('browser:selectChoose'),
+    answerBrowserDialog: invokeBrowser('browser:dialogAnswer'),
     browserSelection: invokeBrowser('browser:selection'),
     onBrowserFrame: (listener) => {
       const wrapped = (payload: unknown): void => {

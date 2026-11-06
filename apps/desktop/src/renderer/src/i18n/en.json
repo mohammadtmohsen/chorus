@@ -1362,7 +1362,16 @@
     "surface": "Website page",
     "expand": "Expand website",
     "collapse": "Collapse website",
-    "empty": "Enter an address in the Browser box to load a page here."
+    "empty": "Enter an address in the Browser box to load a page here.",
+    "dialog": {
+      "alert": "Message from the page",
+      "confirm": "The page asks you to confirm",
+      "prompt": "The page asks for a value",
+      "beforeunload": "Leave this page?",
+      "ok": "OK",
+      "cancel": "Cancel",
+      "leave": "Leave"
+    }
   },
   "extension": {
     "browserUnavailable": "The VS Code browser is unavailable. Reopen the page to try again.",

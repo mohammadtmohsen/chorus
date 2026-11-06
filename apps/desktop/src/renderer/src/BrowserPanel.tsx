@@ -172,6 +172,9 @@ export function BrowserPanel(props: {
         case 'command':
           if (push.command === 'reveal') rowTarget.current.onRevealWebsite?.(projectId)
           break
+        case 'select':
+        case 'dialog':
+          break
         case 'found':
         case 'tab-open':
         case 'downloads':

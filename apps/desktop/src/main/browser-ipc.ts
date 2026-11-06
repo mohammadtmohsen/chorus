@@ -48,6 +48,16 @@ export class BrowserIpc {
       streams.ack(owner, request.browserId, request.instance, request.generation, request.serial)
       return { ok: true as const }
     })
+    this.handle('browser:selectChoose', BROWSER_CONTRACT['browser:selectChoose'], async (owner, request) => {
+      if (streams === undefined) throw new Error('not-eligible')
+      await streams.chooseSelect(owner, request.browserId, request.token, request.index)
+      return { ok: true as const }
+    })
+    this.handle('browser:dialogAnswer', BROWSER_CONTRACT['browser:dialogAnswer'], async (owner, request) => {
+      if (streams === undefined) throw new Error('not-eligible')
+      await streams.answerDialog(owner, request.browserId, request.token, request.accept, request.text)
+      return { ok: true as const }
+    })
     this.handle('browser:selection', BROWSER_CONTRACT['browser:selection'], async (owner, request) => {
       if (streams === undefined) throw new Error('not-eligible')
       return { text: await streams.selection(owner, request.browserId) }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import type { BrowserInputEvent, BrowserRequest } from '../../shared/browser-ipc.js'
+import type { BrowserInputEvent, BrowserRequest, BrowserSelectPrompt, BrowserDialogPrompt } from '../../shared/browser-ipc.js'
 import {
   buttonOf,
   buttonsOf,
@@ -52,6 +52,8 @@ export function useBrowserScreencast(
   const pendingWheel = useRef<QueuedInput | null>(null)
   const shownFrame = useRef<Frame | null>(null)
   const [frame, setFrame] = useState<Frame | null>(null)
+  const [select, setSelect] = useState<BrowserSelectPrompt | null>(null)
+  const [dialog, setDialog] = useState<BrowserDialogPrompt | null>(null)
   const [intersecting, setIntersecting] = useState(false)
   const visible = selected && intersecting
 
@@ -71,6 +73,8 @@ export function useBrowserScreencast(
     live.current = false
     shownFrame.current = null
     setFrame(null)
+    setSelect(null)
+    setDialog(null)
   }, [browserId, cancelDecode])
 
   useEffect(() => {
@@ -136,11 +140,19 @@ export function useBrowserScreencast(
   useEffect(() => {
     if (browserId === null) return undefined
     return window.chorus.onBrowser((pushed) => {
-      if (pushed.browserId !== browserId || pushed.kind !== 'state' || pushed.state.live) return
-      cancelDecode()
-      live.current = false
-      shownFrame.current = null
-      setFrame(null)
+      if (pushed.browserId !== browserId) return
+      if (pushed.kind === 'select')
+        setSelect((previous) => previous?.token === pushed.select?.token ? previous : pushed.select)
+      else if (pushed.kind === 'dialog')
+        setDialog((previous) => previous?.token === pushed.dialog?.token ? previous : pushed.dialog)
+      else if (pushed.kind === 'state' && !pushed.state.live) {
+        cancelDecode()
+        live.current = false
+        shownFrame.current = null
+        setFrame(null)
+        setSelect(null)
+        setDialog(null)
+      }
     })
   }, [browserId, cancelDecode])
 
@@ -451,7 +463,7 @@ export function useBrowserScreencast(
   }
 
   return {
-    surface, editor, frame, visible, pointerDown, pointerUp, pointerMove,
+    surface, editor, frame, select, setSelect, dialog, setDialog, visible, pointerDown, pointerUp, pointerMove,
     keyDown, keyUp, releaseButtons, releaseHeld,
   }
 }

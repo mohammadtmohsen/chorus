@@ -343,6 +343,8 @@ export const BrowserFrame = z.object({
 }).strict()
 export type BrowserFrame = z.infer<typeof BrowserFrame>
 
+export const SelectToken = z.string().regex(/^[0-9a-f]{32}$/)
+
 export const BROWSER_CONTRACT = {
   'browser:stream': { request: BrowserStreamRequest, response: BrowserOk },
   'browser:input': {
@@ -355,6 +357,19 @@ export const BROWSER_CONTRACT = {
       instance: BrowserInstance,
       generation: BrowserGeneration,
       serial: z.number().int().min(1),
+    }).strict(),
+    response: BrowserOk,
+  },
+  'browser:selectChoose': {
+    request: z.object({ browserId: BrowserId, token: SelectToken, index: z.number().int().min(-1) }).strict(),
+    response: BrowserOk,
+  },
+  'browser:dialogAnswer': {
+    request: z.object({
+      browserId: BrowserId,
+      token: z.string().uuid(),
+      accept: z.boolean(),
+      text: z.string().max(10_000).optional(),
     }).strict(),
     response: BrowserOk,
   },
@@ -495,7 +510,28 @@ export const BrowserPageRowWheel = z
   )
 export type BrowserPageRowWheel = z.infer<typeof BrowserPageRowWheel>
 
+export const BrowserSelectPrompt = z.object({
+  token: SelectToken,
+  selectedIndex: z.number().int(),
+  rect: z.object({ x: z.number(), y: z.number(), width: z.number().nonnegative() }).strict(),
+  options: z.array(z.object({
+    label: z.string().max(1_000),
+    disabled: z.boolean(),
+    group: z.string().max(1_000).nullable(),
+  }).strict()).max(2_000),
+}).strict()
+export type BrowserSelectPrompt = z.infer<typeof BrowserSelectPrompt>
+export const BrowserDialogPrompt = z.object({
+  token: z.string().uuid(),
+  type: z.enum(['alert', 'confirm', 'prompt', 'beforeunload']),
+  message: z.string().max(10_000),
+  defaultPrompt: z.string().max(10_000),
+}).strict()
+export type BrowserDialogPrompt = z.infer<typeof BrowserDialogPrompt>
+
 export const BrowserPush = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('select'), browserId: BrowserId, select: BrowserSelectPrompt.nullable() }).strict(),
+  z.object({ kind: z.literal('dialog'), browserId: BrowserId, dialog: BrowserDialogPrompt.nullable() }).strict(),
   z.object({ kind: z.literal('state'), browserId: BrowserId, state: BrowserState }).strict(),
   z
     .object({ kind: z.literal('favorites'), browserId: BrowserId, favorites: BrowserFavorites })
@@ -630,6 +666,12 @@ export interface BrowserApi {
   readonly ackBrowserFrame: (
     request: BrowserRequest<'browser:frameAck'>
   ) => Promise<BrowserResponse<'browser:frameAck'>>
+  readonly chooseBrowserSelect: (
+    request: BrowserRequest<'browser:selectChoose'>
+  ) => Promise<BrowserResponse<'browser:selectChoose'>>
+  readonly answerBrowserDialog: (
+    request: BrowserRequest<'browser:dialogAnswer'>
+  ) => Promise<BrowserResponse<'browser:dialogAnswer'>>
   readonly browserSelection: (
     request: BrowserRequest<'browser:selection'>
   ) => Promise<BrowserResponse<'browser:selection'>>

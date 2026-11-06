@@ -792,6 +792,15 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         ...(revealPath === undefined ? {} : { revealPath }),
       })
     }
+    if (method === 'browser.pickFiles') {
+      const { many } = z.object({ many: z.boolean() }).parse(params)
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: many,
+      })
+      return { paths: (picked ?? []).filter((uri) => uri.scheme === 'file').map((uri) => uri.fsPath) }
+    }
     if (method === 'browser.available') return this.getBrowser().available
     if (method.startsWith('browser.')) {
       const browser = this.getBrowser()
