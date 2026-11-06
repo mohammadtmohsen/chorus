@@ -586,12 +586,15 @@ function RailProject(props: {
  * yet" in words; it never shows `0%`, which would claim an empty account.
  */
 function RailUsage(): React.JSX.Element {
+  const capabilities = useHostCapabilities()
   const { t } = useTranslation()
   const readings = useUsage()
   const [refreshing, setRefreshing] = useState(false)
   const anchor = useRef<HTMLButtonElement>(null)
   const tip = useRef<HTMLDivElement>(null)
-  const [detail, setDetail] = useState<{ top: number; left: number } | null>(null)
+  const [detail, setDetail] = useState<
+    { top: number; left: number } | { top: number; right: number } | null
+  >(null)
   /**
    * Whether the tip has been measured and moved to where it fits.
    *
@@ -758,7 +761,11 @@ function RailUsage(): React.JSX.Element {
     // which changes the card's height — is measured again rather than trusting
     // the last open's answer.
     setPlaced(false)
-    setDetail({ top: Math.round(box.top), left: Math.round(box.right + 8) })
+    setDetail(
+      capabilities.railOnRight
+        ? { top: Math.round(box.top), right: Math.round(window.innerWidth - box.left + 8) }
+        : { top: Math.round(box.top), left: Math.round(box.right + 8) }
+    )
   }
 
   return (
@@ -970,8 +977,7 @@ function RailUsage(): React.JSX.Element {
             ref={tip}
             className="usage-tip"
             style={{
-              top: detail.top,
-              left: detail.left,
+              ...detail,
               /*
                * Hidden for the one commit it takes to measure, the same way the
                * composer's mention menu is. `visibility` rather than not

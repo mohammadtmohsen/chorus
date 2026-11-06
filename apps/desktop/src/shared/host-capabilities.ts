@@ -7,6 +7,7 @@ export const HostCapabilities = z.object({
   detachedWindows: z.boolean(),
   globalTerminal: z.boolean(),
   ownTheme: z.boolean(),
+  railOnRight: z.boolean(),
 })
 
 export type HostCapabilities = z.infer<typeof HostCapabilities>
@@ -18,6 +19,7 @@ export const DESKTOP_CAPABILITIES: HostCapabilities = {
   detachedWindows: true,
   globalTerminal: true,
   ownTheme: true,
+  railOnRight: false,
 }
 
 export const EXTENSION_CAPABILITIES: HostCapabilities = {
@@ -27,4 +29,5 @@ export const EXTENSION_CAPABILITIES: HostCapabilities = {
   detachedWindows: false,
   globalTerminal: false,
   ownTheme: false,
+  railOnRight: true,
 }

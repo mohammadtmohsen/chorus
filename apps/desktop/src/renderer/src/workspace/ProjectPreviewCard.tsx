@@ -1,3 +1,4 @@
+import { useHostCapabilities } from '../host-context.js'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -52,6 +53,7 @@ export function ProjectPreviewCard(props: {
   readonly onRelocate: () => Promise<void>
   readonly onForget: () => Promise<void>
 }): React.JSX.Element {
+  const capabilities = useHostCapabilities()
   const { t } = useTranslation()
   const [renaming, setRenaming] = useState(false)
   const card = useRef<HTMLDivElement | null>(null)
@@ -111,16 +113,18 @@ export function ProjectPreviewCard(props: {
     if (card.current === null) return
     const box = card.current.getBoundingClientRect()
     const margin = 8
-    const left = Math.min(
-      props.anchor.right + margin,
-      Math.max(margin, window.innerWidth - box.width - margin)
-    )
+    const left = capabilities.railOnRight
+      ? Math.max(margin, props.anchor.left - margin - box.width)
+      : Math.min(
+          props.anchor.right + margin,
+          Math.max(margin, window.innerWidth - box.width - margin)
+        )
     const top = Math.min(
       Math.max(margin, props.anchor.top),
       Math.max(margin, window.innerHeight - box.height - margin)
     )
     setPlaced({ left: Math.round(left), top: Math.round(top) })
-  }, [props.anchor])
+  }, [props.anchor, capabilities.railOnRight])
 
   return createPortal(
     <div
