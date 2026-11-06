@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import { FakeAdapter } from '@chorus/orchestrator'
 import type { AgentAdapter, HealthStatus } from '@chorus/agent-protocol'
 import { Logger, type AgentId } from '@chorus/shared'
@@ -46,7 +47,7 @@ function open(): void {
   claude = new CountingAdapter({ id: 'claude' })
   codex = new CountingAdapter({ id: 'codex' })
   runtime = ChorusRuntime.open(
-    dataPath,
+    testHostPorts(dataPath),
     silent,
     new Map<AgentId, AgentAdapter>([
       ['claude', claude],

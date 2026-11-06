@@ -10,9 +10,11 @@ import {
 } from '../../../shared/workspace-layout.js'
 import type { SessionInfo } from '../Session.js'
 import { BrowserPanel } from '../BrowserPanel.js'
+import { BrowserScreencast } from '../BrowserScreencast.js'
 import { ProjectTerminalPane } from '../ProjectTerminalPane.js'
 import { TrafficPanel, type TrafficTerminalOption } from '../TrafficPanel.js'
-import type { WorkbenchGeometry } from '../workbench/WorkbenchFrame.js'
+import type { WorkbenchGeometry } from '../host-views.js'
+import { useHostEnvironment } from '../host-context.js'
 import { ConversationTree } from './ConversationTree.js'
 import { ProjectNotes } from './ProjectNotes.js'
 import type { NoteSize } from '../noteSize.js'
@@ -45,7 +47,6 @@ import {
   useTrafficPanel,
   useWorkspaceActions,
 } from './hooks.js'
-import { PaneWorkbench } from './PaneWorkbench.js'
 import { PaneTabStrip } from './PaneTabStrip.js'
 import {
   routeRowWheel,
@@ -144,8 +145,13 @@ export interface LayoutViewProps {
 export function EditorPane(
   props: LayoutViewProps & { readonly paneId: string }
 ): React.JSX.Element {
+  const {
+    capabilities,
+    views: { PaneWorkbench },
+  } = useHostEnvironment()
+  const embeddedEditor = capabilities.embeddedEditor
   const { t } = useTranslation()
-  const webShowing = props.webShowing === true
+  const webShowing = capabilities.nativeBrowserViews && props.webShowing === true
   const pane = usePane(props.paneId)
   /*
    * The workbench failure message moved down into `PaneWorkbench`, which holds
@@ -172,6 +178,7 @@ export function EditorPane(
   const scroller = useRef<HTMLDivElement>(null)
   const trafficBox = useRef<HTMLElement>(null)
   const terminalBox = useRef<HTMLElement>(null)
+  const websiteBox = useRef<HTMLElement>(null)
   const [runHost, setRunHost] = useState<HTMLDivElement | null>(null)
   const activityBar = useRef<HTMLDivElement>(null)
   const [paneWidth, setPaneWidth] = useState(0)
@@ -179,6 +186,19 @@ export function EditorPane(
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth)
   const [activityBars, setActivityBars] = useState<Readonly<Record<string, number>>>({})
   const collapsedBrowsers = useCollapsedBrowsers()
+  const collapsedWebsites = useWorkspaceStore((state) => state.collapsedWebsites)
+  const [browserLinks, setBrowserLinks] = useState<
+    Record<string, { id: string | null; revision: number }>
+  >({})
+  const reportBrowserId = useCallback((id: string, browserId: string | null): void => {
+    setBrowserLinks((current) => ({
+      ...current,
+      [id]: {
+        id: browserId,
+        revision: (current[id]?.revision ?? 0) + (browserId === null ? 0 : 1),
+      },
+    }))
+  }, [])
   const hasPane = pane !== undefined
   useLayoutEffect(() => {
     const element = content.current
@@ -203,14 +223,16 @@ export function EditorPane(
     return row === null ? undefined : routeRowWheel(row)
   }, [hasPane])
   const editorFraction = useEditorWidthFraction(projectId)
-  const editorCapacity = clampEditorWidth(windowWidth, windowWidth)
+  const editorCapacity = embeddedEditor ? clampEditorWidth(windowWidth, windowWidth) : 0
   const barWidth =
-    projectId === null
+    !embeddedEditor || projectId === null
       ? 0
       : clampActivityBar(activityBars[projectId] ?? 0, editorCapacity, paneWidth)
-  const gutterWidth = ROW_EDGE_INSET + barWidth
+  const gutterWidth = embeddedEditor ? ROW_EDGE_INSET + barWidth : 0
   const availableWidth = rowWidth > 0 ? rowWidth + gutterWidth : paneWidth || windowWidth
-  const editorWidth = editorWidthIn(windowWidth, editorFraction, availableWidth)
+  const editorWidth = embeddedEditor
+    ? editorWidthIn(windowWidth, editorFraction, availableWidth)
+    : 0
   const rowOrigin = editorCapacity - editorWidth
   const bodyWidth = Math.max(0, editorCapacity - gutterWidth)
   const geometry = useCallback((host: HTMLElement): WorkbenchGeometry | null => {
@@ -262,6 +284,7 @@ export function EditorPane(
     ? COLLAPSED_TOOL_WIDTH
     : projectTerminalWidth(terminalPane)
   const browserCollapsed = projectId !== null && collapsedBrowsers[projectId] === true
+  const websiteCollapsed = projectId !== null && collapsedWebsites[projectId] === true
   const trafficBodyId = useId()
   const markRowTouched = useRowScroll(scroller, projectId, run !== null, hasPane, rowOrigin)
   const widths = arrangement === undefined ? [] : columnWidths(arrangement)
@@ -283,10 +306,25 @@ export function EditorPane(
     setTrafficCollapsed,
     setProjectTerminalCollapsed,
     setBrowserCollapsed,
+    setWebsiteCollapsed,
     addProjectShell,
     removeProjectShell,
   } = useWorkspaceActions()
   const commitLayout = props.onCommitLayout
+  const revealWebsite = (id: string): void => {
+    if (!capabilities.streamedBrowser || id !== projectId) return
+    markRowTouched(id)
+    if (collapsedWebsites[id] === true) {
+      flushSync(() => {
+        setWebsiteCollapsed(id, false)
+      })
+      commitLayout()
+    }
+    revealInRow(websiteBox.current)
+    websiteBox.current
+      ?.querySelector<HTMLTextAreaElement>('.website-panel:not([hidden]) .website-editor')
+      ?.focus({ preventScroll: true })
+  }
   const revealTraffic = (): void => {
     if (projectId !== null) markRowTouched(projectId)
     if (
@@ -307,6 +345,7 @@ export function EditorPane(
    * pane re-renders only that pane.
    */
   const conversationDrag = useConversationDrag({
+    projectId,
     onMove: (boxId, targetGroupId, direction) => {
       if (projectId === null) return
       moveConversationBox(projectId, boxId, targetGroupId, direction)
@@ -323,7 +362,7 @@ export function EditorPane(
     startRowPush(event, applyRow(projectId), commitLayout)
   }
   const applyEditorWidth = (width: number): void => {
-    if (projectId === null || windowWidth <= 0) return
+    if (!embeddedEditor || projectId === null || windowWidth <= 0) return
     setEditorWidthFraction(projectId, width / windowWidth)
     setRowScroll(projectId, 0)
     if (scroller.current !== null) scroller.current.scrollLeft = editorCapacity - width
@@ -359,8 +398,9 @@ export function EditorPane(
       setRowScroll(projectId, 0)
     })
     if (scroller.current !== null) {
-      scroller.current.scrollLeft =
-        editorCapacity - editorWidthIn(windowWidth, undefined, availableWidth)
+      scroller.current.scrollLeft = embeddedEditor
+        ? editorCapacity - editorWidthIn(windowWidth, undefined, availableWidth)
+        : 0
     }
     commitLayout()
   }
@@ -468,7 +508,7 @@ export function EditorPane(
           </div>
         )}
         <div className="workspace-pane-row">
-          {projectId !== null && (
+          {embeddedEditor && projectId !== null && (
             <div
               className="workspace-pane-gutter"
               style={{
@@ -484,7 +524,7 @@ export function EditorPane(
             </div>
           )}
           <div className="conversation-scroller" ref={scroller}>
-            {projectId !== null && (
+            {embeddedEditor && projectId !== null && (
               /*
                 One slot per project open in this pane, keyed by project so a tab
                 switch moves which one is visible rather than destroying one surface
@@ -496,24 +536,27 @@ export function EditorPane(
               >
                 {/* `pane` is non-null here: `projectId` is read off it, and the
                     guard above is what narrows both. */}
-                {pane.tabs.map((id) => (
-                  <PaneWorkbench
-                    key={id}
-                    projectId={id}
-                    active={id === projectId && !webShowing}
-                    projectRoot={
-                      [...props.sessions.values()].find((session) => session.projectId === id)
-                        ?.cwd ?? ''
-                    }
-                    geometry={geometry}
-                    onActivityBar={recordActivityBar}
-                    onRevealRow={revealRow}
-                    onScrollRow={scrollRow}
-                  />
-                ))}
+                {pane.tabs.map(
+                  (id) =>
+                    PaneWorkbench !== null && (
+                      <PaneWorkbench
+                        key={id}
+                        projectId={id}
+                        active={id === projectId && !webShowing}
+                        projectRoot={
+                          [...props.sessions.values()].find((session) => session.projectId === id)
+                            ?.cwd ?? ''
+                        }
+                        geometry={geometry}
+                        onActivityBar={recordActivityBar}
+                        onRevealRow={revealRow}
+                        onScrollRow={scrollRow}
+                      />
+                    )
+                )}
               </div>
             )}
-            {projectId !== null && (
+            {embeddedEditor && projectId !== null && (
               <EditorResizeDivider
                 projectId={projectId}
                 width={editorWidth}
@@ -700,10 +743,44 @@ export function EditorPane(
                       scroller={scroller}
                       markTouched={markRowTouched}
                       onReveal={revealInRow}
+                      {...(capabilities.streamedBrowser
+                        ? { onBrowserId: reportBrowserId, onRevealWebsite: revealWebsite }
+                        : {})}
                       onToggleCollapsed={() => {
                         flushSync(() => {
                           setBrowserCollapsed(id, collapsedBrowsers[id] !== true)
                         })
+                        commitLayout()
+                      }}
+                    />
+                  ))}
+                </section>
+              </>
+            )}
+            {projectId !== null && capabilities.streamedBrowser && (
+              <>
+                {rowSash}
+                <section
+                  className="website-box"
+                  ref={websiteBox}
+                  data-collapsed={websiteCollapsed}
+                  style={{
+                    flex: `0 0 ${String(websiteCollapsed ? COLLAPSED_BROWSER_WIDTH : rowWidth)}px`,
+                  }}
+                >
+                  {pane.tabs.map((id) => (
+                    <BrowserScreencast
+                      key={`${id}:${String(browserLinks[id]?.revision ?? 0)}`}
+                      browserId={browserLinks[id]?.id ?? null}
+                      selected={id === projectId && !webShowing}
+                      collapsed={collapsedWebsites[id] === true}
+                      row={scroller}
+                      onToggleCollapsed={() => {
+                        markRowTouched(id)
+                        flushSync(() => {
+                          setWebsiteCollapsed(id, collapsedWebsites[id] !== true)
+                        })
+                        if (collapsedWebsites[id] === true) revealInRow(websiteBox.current)
                         commitLayout()
                       }}
                     />

@@ -1,3 +1,4 @@
+import { electronIpcRegistrar, electronShellClient } from './electron-shell-client.js'
 import { createServer } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
@@ -83,13 +84,16 @@ function build(registry: unknown): {
 } {
   const { sender, sent } = fakeWindow()
   const listeners: ((push: unknown) => void)[] = []
-  const ipc = new TrafficIpc({
-    registry: registry as never,
-    isAdopted: () => true,
-    legacy: () => legacy,
-    decideLegacy: () => undefined,
-  })
-  ipc.registerShell(sender as unknown as WebContents, { kind: 'main' })
+  const ipc = new TrafficIpc(
+    {
+      registry: registry as never,
+      isAdopted: () => true,
+      legacy: () => legacy,
+      decideLegacy: () => undefined,
+    },
+    electronIpcRegistrar
+  )
+  ipc.registerShell(electronShellClient(sender as unknown as WebContents), { kind: 'main' })
   return { ipc, sent, event: { sender, senderFrame: sender['senderFrame'] }, listeners }
 }
 
@@ -383,13 +387,15 @@ describe('traffic ipc subscriptions', () => {
   it('releases every subscription of a closed window and none of another window', async () => {
     const { ipc, sent, listeners, event } = stubRegistry()
     const second = fakeWindow(8)
-    ipc.registerShell(second.sender as unknown as WebContents, { kind: 'main' })
+    ipc.registerShell(electronShellClient(second.sender as unknown as WebContents), {
+      kind: 'main',
+    })
     const secondEvent = { sender: second.sender, senderFrame: second.sender['senderFrame'] }
     await attach(event, PROJECT)
     await attach(event, OTHER)
     const surviving = await attach(secondEvent, PROJECT)
 
-    ipc.releaseShell((event as { sender: WebContents }).sender)
+    ipc.releaseShell(electronShellClient((event as { sender: WebContents }).sender))
     listeners[0]?.(rowsFor(PROJECT))
     listeners[0]?.(rowsFor(OTHER))
 
@@ -409,14 +415,17 @@ describe('manual capture beside a managed run', () => {
       start: () => Promise.reject(new Error('the registry was asked directly')),
       stop: () => Promise.reject(new Error('the registry was asked directly')),
     }
-    const ipc = new TrafficIpc({
-      registry: registry as never,
-      isAdopted: () => true,
-      legacy: () => legacy,
-      decideLegacy: () => undefined,
-      capture,
-    })
-    ipc.registerShell(sender as unknown as WebContents, { kind: 'main' })
+    const ipc = new TrafficIpc(
+      {
+        registry: registry as never,
+        isAdopted: () => true,
+        legacy: () => legacy,
+        decideLegacy: () => undefined,
+        capture,
+      },
+      electronIpcRegistrar
+    )
+    ipc.registerShell(electronShellClient(sender as unknown as WebContents), { kind: 'main' })
     return { sender, senderFrame: sender['senderFrame'] }
   }
 

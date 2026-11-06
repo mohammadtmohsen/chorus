@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import { FakeAdapter } from '@chorus/orchestrator'
 import type { AgentAdapter } from '@chorus/agent-protocol'
 import { Logger, type AgentId } from '@chorus/shared'
@@ -44,7 +45,7 @@ beforeEach(() => {
   claude = new FakeAdapter({ id: 'claude' })
   codex = new FakeAdapter({ id: 'codex' })
   runtime = ChorusRuntime.open(
-    dataPath,
+    testHostPorts(dataPath),
     silent,
     new Map<AgentId, AgentAdapter>([
       ['claude', claude],
@@ -340,7 +341,7 @@ describe('a catalogue that fails', () => {
      */
     const broken = new FakeAdapter({ id: 'claude', models: new Error('the CLI fell over') })
     const other = ChorusRuntime.open(
-      mkdtempSync(join(tmpdir(), 'chorus-broken-')),
+      testHostPorts(mkdtempSync(join(tmpdir(), 'chorus-broken-'))),
       silent,
       new Map<AgentId, AgentAdapter>([['claude', broken]])
     )

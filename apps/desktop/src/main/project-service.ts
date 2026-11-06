@@ -16,7 +16,7 @@ import {
 import { remoteProjectRoot } from '@chorus/workspace'
 import { DEFAULT_TRAFFIC_PORT } from '../shared/ipc.js'
 import { readSavedTrafficConnection, type SavedTrafficConnection } from './settings.js'
-import { approveProjectRoot, type WorkbenchPlace } from './workbench-surface.js'
+import { approveProjectRoot, type WorkbenchPlace } from './project-root.js'
 
 /**
  * The durable set of projects the person has adopted — Phase 2's domain service,
@@ -162,7 +162,7 @@ export class ProjectService {
      * error about validation rather than about the path.
      */
     const trimmed = name?.trim() ?? ''
-    const chosen = trimmed === '' ? basename(canonicalRoot) : trimmed
+    const chosen = trimmed === '' ? basename(canonicalRoot) || canonicalRoot : trimmed
 
     try {
       return {

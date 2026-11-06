@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentId } from '@chorus/shared'
-import type { WebContents } from 'electron'
+import type { BrowserSource } from './browser-source.js'
+import type { ShellClient } from './shell-client.js'
 import { z } from 'zod'
 import {
   CONSOLE_ENTRIES_MAX,
@@ -197,15 +198,10 @@ const CdpReferences = z.object({
   symbol: CdpReference.optional(),
 })
 
-export interface ConsoleSourceInput {
-  readonly browserId: string
-  readonly projectId: string
-  readonly owner: WebContents
-  readonly contents: WebContents
-}
+export type ConsoleSourceInput = BrowserSource
 
 export interface BrowserConsolesDeps {
-  readonly preferredOwner: (projectId: string) => WebContents | null
+  readonly preferredOwner: (projectId: string) => ShellClient | null
   readonly now?: () => number
 }
 
@@ -260,7 +256,7 @@ export interface ConsoleEvaluation {
   readonly actor: ConsoleActor
   readonly timeoutMs: number
   readonly browserId?: string
-  readonly owner?: WebContents
+  readonly owner?: ShellClient
 }
 
 export interface ConsoleReadRequest {
@@ -338,8 +334,8 @@ interface Source {
   readonly id: string
   readonly browserId: string
   readonly projectId: string
-  readonly owner: WebContents
-  readonly contents: WebContents
+  readonly owner: ShellClient
+  readonly contents: BrowserSource
   readonly order: number
   readonly contexts: Map<string, ExecutionContext>
   readonly groups: Set<string>
@@ -348,6 +344,7 @@ interface Source {
   readonly cleanup: (() => void)[]
   state: ConsoleState
   attached: boolean
+  connecting: boolean
   attachment: number
   session: number
   generation: number
@@ -774,7 +771,7 @@ export class BrowserConsoles {
   private readonly now: () => number
   private readonly stores = new Map<string, Store>()
   private readonly sources = new Map<string, Source>()
-  private readonly byContents = new Map<WebContents, Source>()
+  private readonly byContents = new Map<BrowserSource, Source>()
   private readonly byBrowser = new Map<string, Source>()
   private readonly handles = new Map<string, Handle>()
   private readonly listeners = new Set<(event: ConsoleServiceEvent) => void>()
@@ -796,16 +793,17 @@ export class BrowserConsoles {
   }
 
   mount(input: ConsoleSourceInput): void {
-    if (this.closed || input.contents.isDestroyed() || this.byContents.has(input.contents)) return
-    const previous = this.byBrowser.get(input.browserId)
+    if (this.closed || input.projectId === null || input.isGone() || this.byContents.has(input))
+      return
+    const previous = this.byBrowser.get(input.id)
     if (previous !== undefined) this.release(previous.contents)
     this.order += 1
     const source: Source = {
       id: randomUUID(),
-      browserId: input.browserId,
+      browserId: input.id,
       projectId: input.projectId,
       owner: input.owner,
-      contents: input.contents,
+      contents: input,
       order: this.order,
       contexts: new Map(),
       groups: new Set(),
@@ -814,6 +812,7 @@ export class BrowserConsoles {
       cleanup: [],
       state: 'connecting',
       attached: false,
+      connecting: false,
       attachment: 0,
       session: 0,
       generation: 0,
@@ -833,7 +832,8 @@ export class BrowserConsoles {
     this.touch(this.storeOf(source.projectId))
   }
 
-  release(contents: WebContents): void {
+  release(contents: BrowserSource | undefined): void {
+    if (contents === undefined) return
     const source = this.byContents.get(contents)
     if (source === undefined) return
     source.released = true
@@ -845,7 +845,7 @@ export class BrowserConsoles {
     const attached = source.attached
     source.attached = false
     this.cancelRequests(source)
-    if (attached && !contents.isDestroyed()) this.detachQuietly(contents)
+    if (attached && !contents.isGone()) this.detachQuietly(contents)
     const store = this.stores.get(source.projectId)
     if (store !== undefined) this.touch(store)
   }
@@ -895,11 +895,11 @@ export class BrowserConsoles {
     if (
       source?.projectId !== request.projectId ||
       (request.owner !== undefined && source.owner !== request.owner) ||
-      source.contents.isDestroyed()
+      source.contents.isGone()
     ) {
       return refused('no-page')
     }
-    if (!source.attached && !source.contents.isDevToolsOpened()) this.connect(source)
+    if (!source.attached && !source.contents.isInspectorOpen()) this.connect(source)
     const context = this.mainContext(source)
     if (this.stateOf(source) !== 'ready' || context === undefined) {
       return refused(startOf(this.stateOf(source)))
@@ -1137,64 +1137,64 @@ export class BrowserConsoles {
 
   private listen(source: Source): void {
     const { contents } = source
-    const debuggee = contents.debugger
-    const onMessage = (
-      _event: unknown,
-      method: string,
-      params: unknown,
-      sessionId?: string
-    ): void => {
-      if (sessionId !== undefined && sessionId !== '') return
-      this.receive(source, method, params)
-    }
-    const onDetach = (): void => {
-      this.detached(source)
-    }
-    const onNavigate = (_event: unknown, url: string): void => {
-      this.navigated(source, url)
-    }
-    const onGone = (_event: unknown, details: { readonly reason: string }): void => {
-      this.crashed(source, details.reason)
-    }
-    const onOpened = (): void => {
-      if (source.attached) return
-      source.state = 'paused'
-      this.touch(this.storeOf(source.projectId))
-    }
-    const onClosed = (): void => {
-      if (!source.attached || source.state !== 'ready') this.connect(source)
-    }
-    const onDestroyed = (): void => {
-      this.release(contents)
-    }
-    debuggee.on('message', onMessage)
-    debuggee.on('detach', onDetach)
-    contents.on('did-navigate', onNavigate)
-    contents.on('render-process-gone', onGone)
-    contents.on('devtools-opened', onOpened)
-    contents.on('devtools-closed', onClosed)
-    contents.once('destroyed', onDestroyed)
-    source.cleanup.push(() => {
-      debuggee.removeListener('message', onMessage)
-      debuggee.removeListener('detach', onDetach)
-      contents.removeListener('did-navigate', onNavigate)
-      contents.removeListener('render-process-gone', onGone)
-      contents.removeListener('devtools-opened', onOpened)
-      contents.removeListener('devtools-closed', onClosed)
-      contents.removeListener('destroyed', onDestroyed)
-    })
+    source.cleanup.push(
+      contents.transport.onMessage((method, params) => {
+        this.receive(source, method, params)
+      }),
+      contents.transport.onDetached(() => {
+        this.detached(source)
+      }),
+      contents.onNavigated((url) => {
+        this.navigated(source, url)
+      }),
+      contents.onCrashed((reason) => {
+        this.crashed(source, reason)
+      }),
+      contents.onGone(() => {
+        this.release(contents)
+      }),
+      contents.onInspectorChanged((open) => {
+        if (open) {
+          if (source.attached) return
+          source.state = 'paused'
+          this.touch(this.storeOf(source.projectId))
+        } else if (!source.attached || source.state !== 'ready') this.connect(source)
+      })
+    )
   }
 
   private connect(source: Source): void {
-    if (source.released || this.closed || source.contents.isDestroyed()) return
+    if (source.released || this.closed || source.connecting || source.contents.isGone()) return
     const store = this.storeOf(source.projectId)
-    const debuggee = source.contents.debugger
+    const debuggee = source.contents.transport
     if (!debuggee.isAttached()) {
       try {
-        debuggee.attach(PROTOCOL_VERSION)
+        const pending = debuggee.attach(PROTOCOL_VERSION)
+        if (pending !== undefined) {
+          source.connecting = true
+          const attachment = source.attachment
+          void pending.then(
+            () => {
+              if (source.released || this.closed) {
+                this.detachQuietly(source.contents)
+                return
+              }
+              if (source.attachment !== attachment) return
+              source.connecting = false
+              this.connect(source)
+            },
+            () => {
+              if (source.released || source.attachment !== attachment) return
+              source.connecting = false
+              source.state = source.contents.isInspectorOpen() ? 'paused' : 'unavailable'
+              this.touch(store)
+            }
+          )
+          return
+        }
       } catch {
         source.attached = false
-        source.state = source.contents.isDevToolsOpened() ? 'paused' : 'unavailable'
+        source.state = source.contents.isInspectorOpen() ? 'paused' : 'unavailable'
         this.touch(store)
         return
       }
@@ -1238,9 +1238,9 @@ export class BrowserConsoles {
     )
   }
 
-  private detachQuietly(contents: WebContents): boolean {
+  private detachQuietly(contents: BrowserSource): boolean {
     try {
-      contents.debugger.detach()
+      contents.transport.detach()
       return true
     } catch {
       return false
@@ -1252,10 +1252,10 @@ export class BrowserConsoles {
     method: string,
     params: Readonly<Record<string, unknown>> = {}
   ): Promise<unknown> {
-    if (source.released || !source.attached || source.contents.isDestroyed()) {
+    if (source.released || !source.attached || source.contents.isGone()) {
       throw new Error('The page is not connected')
     }
-    const reply: unknown = await source.contents.debugger.sendCommand(method, params)
+    const reply: unknown = await source.contents.transport.sendCommand(method, params)
     return reply
   }
 
@@ -1447,6 +1447,7 @@ export class BrowserConsoles {
   private detached(source: Source): void {
     if (source.released) return
     source.attached = false
+    source.connecting = false
     source.replaying = false
     source.session += 1
     source.contexts.clear()
@@ -1454,7 +1455,7 @@ export class BrowserConsoles {
     source.rootFailed = false
     this.cancelRequests(source)
     this.invalidate(source)
-    const paused = !source.contents.isDestroyed() && source.contents.isDevToolsOpened()
+    const paused = !source.contents.isGone() && source.contents.isInspectorOpen()
     source.state = paused ? 'paused' : 'unavailable'
     this.touch(this.storeOf(source.projectId))
   }
@@ -1468,7 +1469,7 @@ export class BrowserConsoles {
       text: cut(url, CONSOLE_URL_MAX),
       url: url === '' ? null : cut(url, CONSOLE_URL_MAX),
     })
-    if (source.attached ? source.state === 'unavailable' : !source.contents.isDevToolsOpened()) {
+    if (source.attached ? source.state === 'unavailable' : !source.contents.isInspectorOpen()) {
       this.connect(source)
     }
   }
@@ -1997,7 +1998,7 @@ export class BrowserConsoles {
     let chosen: Source | undefined
     let newest: Source | undefined
     for (const source of this.sources.values()) {
-      if (source.projectId !== projectId || source.contents.isDestroyed()) continue
+      if (source.projectId !== projectId || source.contents.isGone()) continue
       if (newest === undefined || source.order > newest.order) newest = source
       if (owner === null || source.owner !== owner) continue
       if (chosen === undefined || source.order > chosen.order) chosen = source
@@ -2006,14 +2007,14 @@ export class BrowserConsoles {
   }
 
   private stateOf(source: Source): ConsoleState {
-    if (source.contents.isDestroyed()) return 'unavailable'
+    if (source.contents.isGone()) return 'unavailable'
     if (source.state !== 'ready' || this.mainContext(source) !== undefined) return source.state
     return source.rootFailed ? 'unavailable' : 'connecting'
   }
 
   private urlOf(source: Source): string | null {
-    if (source.contents.isDestroyed()) return null
-    const url = source.contents.getURL()
+    if (source.contents.isGone()) return null
+    const url = source.contents.url()
     return url === '' ? null : cut(url, CONSOLE_URL_MAX)
   }
 

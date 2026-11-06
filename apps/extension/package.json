@@ -1,0 +1,273 @@
+{
+  "name": "@chorus/extension",
+  "displayName": "Chorus",
+  "description": "Chorus projects, collaborative agents, chats, terminals and Traffic in VS Code.",
+  "publisher": "mohammadtmohsen",
+  "version": "0.20.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.145.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "enabledApiProposals": [
+    "browser"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onWebviewPanel:chorus.shell",
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "build": "node build.mjs && vite build && node stage-development.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "package": "node package.mjs"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "chorus.open",
+        "title": "%command.open%"
+      },
+      {
+        "command": "chorus.addProject",
+        "title": "%command.addProject%"
+      },
+      {
+        "command": "chorus.restart",
+        "title": "%command.restart%"
+      },
+      {
+        "command": "chorus.shellKey",
+        "title": "%command.shellKey%"
+      },
+      {
+        "command": "chorus.sendDiagnostic",
+        "title": "%command.sendDiagnostic%"
+      },
+      {
+        "command": "chorus.markdownPreview",
+        "title": "%command.markdownPreview%"
+      },
+      {
+        "command": "chorus.enableBrowserTools",
+        "title": "%command.enableBrowserTools%"
+      },
+      {
+        "command": "chorus.revealConversation",
+        "title": "%command.revealConversation%"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "chorus.sendDiagnostic",
+          "when": "editorTextFocus",
+          "group": "navigation@99"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "chorus.addProject",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation@99"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "chorus.revealConversation",
+          "when": "false"
+        },
+        {
+          "command": "chorus.shellKey",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+w",
+        "mac": "cmd+w",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+\\",
+        "mac": "cmd+\\",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+1",
+        "mac": "cmd+1",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+2",
+        "mac": "cmd+2",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+3",
+        "mac": "cmd+3",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+4",
+        "mac": "cmd+4",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+shift+[",
+        "mac": "cmd+shift+[",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+shift+]",
+        "mac": "cmd+shift+]",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+left",
+        "mac": "cmd+alt+left",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+right",
+        "mac": "cmd+alt+right",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+up",
+        "mac": "cmd+alt+up",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+down",
+        "mac": "cmd+alt+down",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+shift+left",
+        "mac": "cmd+alt+shift+left",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+shift+right",
+        "mac": "cmd+alt+shift+right",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+shift+up",
+        "mac": "cmd+alt+shift+up",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+alt+shift+down",
+        "mac": "cmd+alt+shift+down",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+n",
+        "mac": "cmd+n",
+        "when": "chorus.shellFocused"
+      },
+      {
+        "command": "chorus.shellKey",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n",
+        "when": "chorus.shellFocused"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "chorus",
+          "title": "%view.container%",
+          "icon": "media/chorus.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "chorus-sidebar",
+          "title": "%view.container%",
+          "icon": "media/chorus.svg"
+        }
+      ]
+    },
+    "views": {
+      "chorus": [
+        {
+          "id": "chorus.attention",
+          "name": "%view.attention%",
+          "contextualTitle": "Chorus"
+        }
+      ],
+      "chorus-sidebar": [
+        {
+          "id": "chorus.workspace",
+          "name": "%view.container%",
+          "type": "webview"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "chorus.attention",
+        "contents": "%view.attention.empty%"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@chorus/agent-protocol": "workspace:*",
+    "@chorus/engine": "workspace:*",
+    "@chorus/ide-protocol": "workspace:*",
+    "@types/vscode": "^1.145.0",
+    "@vitejs/plugin-react": "^6.0.5",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.25.12",
+    "jsonc-parser": "3.3.1",
+    "postcss": "^8.5.6",
+    "vite": "^8.2.0",
+    "zod": "^4.4.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mohammadtmohsen/workbench.git"
+  },
+  "author": "Chorus",
+  "type": "module"
+}

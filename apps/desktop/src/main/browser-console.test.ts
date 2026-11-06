@@ -1,3 +1,5 @@
+import { electronBrowserSource, electronBrowserSourceOf } from './electron-browser-source.js'
+import { electronShellClient } from './electron-shell-client.js'
 import { EventEmitter } from 'node:events'
 import type { WebContents } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -136,17 +138,22 @@ async function setup(): Promise<{
   const owner = asContents({ id: 1 })
   const contents = new FakeContents()
   let preferred: WebContents | null = owner
-  const consoles = new BrowserConsoles({ preferredOwner: () => preferred, now: () => 5_000 })
+  const consoles = new BrowserConsoles({
+    preferredOwner: () => (preferred === null ? null : electronShellClient(preferred)),
+    now: () => 5_000,
+  })
   const events: ConsoleServiceEvent[] = []
   consoles.subscribe((event) => {
     events.push(event)
   })
-  consoles.mount({
-    browserId: 'browser-1',
-    projectId: PROJECT,
-    owner,
-    contents: asContents(contents),
-  })
+  consoles.mount(
+    electronBrowserSource({
+      browserId: 'browser-1',
+      projectId: PROJECT,
+      owner,
+      contents: asContents(contents),
+    })
+  )
   await drain()
   context(contents, 1, ROOT_FRAME)
   await drain()
@@ -165,7 +172,7 @@ function human(owner: WebContents, expression: string) {
   return {
     projectId: PROJECT,
     browserId: 'browser-1',
-    owner,
+    owner: electronShellClient(owner),
     expression,
     actor: 'user' as const,
     timeoutMs: 30_000,
@@ -237,13 +244,18 @@ describe('BrowserConsoles evaluation', () => {
   it('waits for the root frame’s default context and always pins evaluation to it', async () => {
     const owner = asContents({ id: 1 })
     const contents = new FakeContents()
-    const consoles = new BrowserConsoles({ preferredOwner: () => owner, now: () => 5_000 })
-    consoles.mount({
-      browserId: 'browser-1',
-      projectId: PROJECT,
-      owner,
-      contents: asContents(contents),
+    const consoles = new BrowserConsoles({
+      preferredOwner: () => electronShellClient(owner),
+      now: () => 5_000,
     })
+    consoles.mount(
+      electronBrowserSource({
+        browserId: 'browser-1',
+        projectId: PROJECT,
+        owner,
+        contents: asContents(contents),
+      })
+    )
     await drain()
     context(contents, 7, 'frame-child')
     await drain()
@@ -324,7 +336,12 @@ describe('BrowserConsoles evaluation', () => {
 
   it('refuses a human command aimed at another window or project', async () => {
     const { consoles, contents, owner } = await setup()
-    expect(consoles.evaluate({ ...human(owner, '1 + 1'), owner: asContents({ id: 2 }) })).toEqual({
+    expect(
+      consoles.evaluate({
+        ...human(owner, '1 + 1'),
+        owner: electronShellClient(asContents({ id: 2 })),
+      })
+    ).toEqual({
       commandId: null,
       status: 'no-page',
       done: null,
@@ -341,12 +358,14 @@ describe('BrowserConsoles evaluation', () => {
     const { consoles, contents, prefer } = await setup()
     const detachedOwner = asContents({ id: 3 })
     const detached = new FakeContents()
-    consoles.mount({
-      browserId: 'browser-2',
-      projectId: PROJECT,
-      owner: detachedOwner,
-      contents: asContents(detached),
-    })
+    consoles.mount(
+      electronBrowserSource({
+        browserId: 'browser-2',
+        projectId: PROJECT,
+        owner: detachedOwner,
+        contents: asContents(detached),
+      })
+    )
     await drain()
     context(detached, 1, ROOT_FRAME)
     await drain()
@@ -401,14 +420,16 @@ describe('BrowserConsoles lifecycle', () => {
   it('keeps output when a project page is remounted', async () => {
     const { consoles, contents, owner } = await setup()
     log(contents, 'before remount', 1_000)
-    consoles.release(asContents(contents))
+    consoles.release(electronBrowserSourceOf(asContents(contents)))
     const next = new FakeContents()
-    consoles.mount({
-      browserId: 'browser-3',
-      projectId: PROJECT,
-      owner,
-      contents: asContents(next),
-    })
+    consoles.mount(
+      electronBrowserSource({
+        browserId: 'browser-3',
+        projectId: PROJECT,
+        owner,
+        contents: asContents(next),
+      })
+    )
     expect(consoles.snapshot(PROJECT).entries.map((entry) => entry.text)).toEqual([
       'before remount',
     ])
@@ -556,13 +577,18 @@ describe('BrowserConsoles protocol requests', () => {
     contents.debugger.replies.set('Page.getFrameTree', () =>
       Promise.reject(new Error('not available'))
     )
-    const consoles = new BrowserConsoles({ preferredOwner: () => owner, now: () => 5_000 })
-    consoles.mount({
-      browserId: 'browser-1',
-      projectId: PROJECT,
-      owner,
-      contents: asContents(contents),
+    const consoles = new BrowserConsoles({
+      preferredOwner: () => electronShellClient(owner),
+      now: () => 5_000,
     })
+    consoles.mount(
+      electronBrowserSource({
+        browserId: 'browser-1',
+        projectId: PROJECT,
+        owner,
+        contents: asContents(contents),
+      })
+    )
     await drain()
     context(contents, 1, ROOT_FRAME)
     await drain()

@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import {
   NOTE_READ_ONLY,
   runNoteTool,
@@ -32,7 +33,11 @@ let dataDir: string
 beforeEach(async () => {
   adapters = new Map(AGENT_IDS.map((id) => [id, new CapturingAdapter({ id })]))
   dataDir = mkdtempSync(join(tmpdir(), 'chorus-conversation-note-'))
-  runtime = ChorusRuntime.open(dataDir, new Logger(), new Map<AgentId, AgentAdapter>(adapters))
+  runtime = ChorusRuntime.open(
+    testHostPorts(dataDir),
+    new Logger(),
+    new Map<AgentId, AgentAdapter>(adapters)
+  )
   const started = await runtime.startConversationIn({ agents: [...AGENT_IDS], cwd: process.cwd() })
   conversationId = started.conversationId
 })
@@ -247,7 +252,7 @@ describe('closing a chat', () => {
     runtime.compareConversationNoteJournal(conversationId, null, 'pending draft')
     await runtime.close()
     runtime = ChorusRuntime.open(
-      dataDir,
+      testHostPorts(dataDir),
       new Logger(),
       new Map<AgentId, AgentAdapter>(AGENT_IDS.map((id) => [id, new FakeAdapter({ id })]))
     )

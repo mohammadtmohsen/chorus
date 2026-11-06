@@ -1,3 +1,4 @@
+import { useHostCapabilities } from './host-context.js'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { TOAST_WINDOW_NAME } from '../../shared/toast-window-ipc.js'
 import type { WorkbenchRect } from '../../shared/workbench-ipc.js'
@@ -57,6 +58,8 @@ function cardRegions(cards: HTMLElement, popup: Window): WorkbenchRect[] {
 }
 
 export function useToastWindow(active: boolean, onClosed: () => void): ToastLayer {
+  const capabilities = useHostCapabilities()
+  const nativeViews = capabilities.embeddedEditor || capabilities.nativeBrowserViews
   const anchor = useRef<HTMLDivElement>(null)
   const stack = useRef<HTMLDivElement>(null)
   const [host, setHost] = useState<HTMLDivElement | null>(null)
@@ -82,7 +85,7 @@ export function useToastWindow(active: boolean, onClosed: () => void): ToastLaye
   }, [active])
 
   useEffect(() => {
-    if (!needed) return undefined
+    if (!needed || !nativeViews) return undefined
     const popup = window.open('about:blank', TOAST_WINDOW_NAME)
     if (popup === null) return undefined
     const childDocument = popup.document
@@ -301,7 +304,7 @@ export function useToastWindow(active: boolean, onClosed: () => void): ToastLaye
       rememberFocus.current = null
       popup.close()
     }
-  }, [needed, generation])
+  }, [needed, generation, nativeViews])
 
   return { host, anchor, stack }
 }

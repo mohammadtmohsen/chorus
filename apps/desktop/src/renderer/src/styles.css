@@ -12841,6 +12841,104 @@ input::placeholder {
   display: none;
 }
 
+.website-box {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.website-box .website-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-canvas);
+}
+
+.website-box .website-panel[hidden] {
+  display: none;
+}
+
+.website-box .website-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--step) * 2);
+  min-height: 32px;
+  padding: var(--step) calc(var(--step) * 2);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  font-size: 12px;
+}
+
+.website-box .website-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.website-box .website-collapse {
+  flex: 0 0 auto;
+  padding: var(--step);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.website-box .website-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.website-box .website-panel[data-collapsed='true'] .website-stage {
+  display: none;
+}
+
+.website-box .website-surface {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: default;
+  touch-action: none;
+}
+
+.website-box .website-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.website-box .website-editor {
+  position: absolute;
+  z-index: 1;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  border: 0;
+  resize: none;
+  pointer-events: none;
+}
+
+.website-box .website-placeholder {
+  padding: calc(var(--step) * 6);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  pointer-events: none;
+}
+
 .browser-box {
   flex: 0 0 auto;
   display: flex;
@@ -13084,6 +13182,10 @@ input::placeholder {
   font-size: 12px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border-default);
+}
+
+.browser-panel[data-native-browser='false'] .conversation-body > .console-panel {
+  flex: 1;
 }
 
 .console-toolbar,

@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { SubmitEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { BROWSER_RECT_MAX } from '../../shared/browser-ipc.js'
+import {
+  BROWSER_RECT_MAX,
+  BROWSER_PROPOSAL_MISSING_CODE,
+  BROWSER_MISSING_CODE,
+  BROWSER_STOPPED_CODE,
+} from '../../shared/browser-ipc.js'
+import { useHostCapabilities } from './host-context.js'
+import { onHostReconnected, requestBrowserTools } from './host-actions.js'
 import type {
   BrowserAction,
   BrowserFailure,
@@ -17,7 +24,7 @@ import { BrowserPasswords as PasswordControls } from './BrowserPasswords.js'
 import { ConsolePanel } from './ConsolePanel.js'
 import { browserViewport } from './workspace/layout.js'
 import { useWorkbenchStill } from './workspace/overlay.js'
-import { horizontalRowWheel } from './workbench/viewport.js'
+import { horizontalRowWheel } from './workspace/viewport.js'
 
 interface Geometry {
   readonly rect: BrowserRect
@@ -79,11 +86,25 @@ export function BrowserPanel(props: {
   readonly scroller: React.RefObject<HTMLDivElement | null>
   readonly markTouched: (projectId: string) => void
   readonly onReveal: (box: Element | null) => void
+  readonly onBrowserId?: (projectId: string, browserId: string | null) => void
+  readonly onRevealWebsite?: (projectId: string) => void
   readonly onToggleCollapsed: () => void
 }): React.JSX.Element {
-  const { projectId, active, collapsed, scroller, markTouched, onReveal, onToggleCollapsed } = props
+  const {
+    projectId,
+    active,
+    collapsed,
+    scroller,
+    markTouched,
+    onReveal,
+    onToggleCollapsed,
+    onBrowserId,
+    onRevealWebsite,
+  } = props
   const visible = active && !collapsed
   const { t } = useTranslation()
+  const capabilities = useHostCapabilities()
+  const native = capabilities.nativeBrowserViews
   const root = useRef<HTMLDivElement>(null)
   const body = useRef<HTMLDivElement>(null)
   const bodyId = useId()
@@ -94,7 +115,7 @@ export function BrowserPanel(props: {
   const lastOrigin = useRef<BrowserPoint>(HIDDEN_ORIGIN)
   const frame = useRef<number | null>(null)
   const revealAfterExpand = useRef(false)
-  const rowTarget = useRef({ active: visible, scroller, projectId, markTouched })
+  const rowTarget = useRef({ active: visible, scroller, projectId, markTouched, onRevealWebsite })
   const [attempt, setAttempt] = useState(0)
   const [browserId, setBrowserId] = useState<string | null>(null)
   const [attachFailed, setAttachFailed] = useState(false)
@@ -107,12 +128,18 @@ export function BrowserPanel(props: {
   const [prompt, setPrompt] = useState<BrowserPasswordPrompt | null>(null)
   const [passwords, setPasswords] = useState<BrowserPasswords | null>(null)
   const [passwordButtonHost, setPasswordButtonHost] = useState<HTMLSpanElement | null>(null)
-  const [consoleOpen, setConsoleOpen] = useState(false)
+  const [consoleOpen, setConsoleOpen] = useState(!native)
   const overlayStill = useWorkbenchStill(browserId)
 
   useLayoutEffect(() => {
-    rowTarget.current = { active: visible, scroller, projectId, markTouched }
-  }, [visible, scroller, projectId, markTouched])
+    rowTarget.current = { active: visible, scroller, projectId, markTouched, onRevealWebsite }
+  }, [visible, scroller, projectId, markTouched, onRevealWebsite])
+
+  useEffect(() => {
+    return onHostReconnected(() => {
+      setAttempt((current) => current + 1)
+    })
+  }, [])
 
   useEffect(() => {
     let current = true
@@ -142,9 +169,11 @@ export function BrowserPanel(props: {
           row.scrollLeft += delta
           break
         }
+        case 'command':
+          if (push.command === 'reveal') rowTarget.current.onRevealWebsite?.(projectId)
+          break
         case 'found':
         case 'tab-open':
-        case 'command':
         case 'downloads':
           break
       }
@@ -161,6 +190,7 @@ export function BrowserPanel(props: {
         revision.current = 0
         lastSent.current = null
         setBrowserId(reply.browserId)
+        onBrowserId?.(projectId, reply.browserId)
         admitState(reply.state)
         setFavorites(reply.favorites)
         setSettings(reply.settings)
@@ -172,11 +202,12 @@ export function BrowserPanel(props: {
     return () => {
       current = false
       unsubscribe()
+      onBrowserId?.(projectId, null)
       if (attached === null) return
       if (idRef.current === attached) idRef.current = null
       window.chorus.detachBrowser({ browserId: attached }).catch(() => undefined)
     }
-  }, [projectId, attempt, admitState])
+  }, [projectId, attempt, admitState, onBrowserId])
 
   const send = useCallback((geometry: Geometry) => {
     const id = idRef.current
@@ -210,7 +241,7 @@ export function BrowserPanel(props: {
   }, [measure])
 
   useEffect(() => {
-    if (!visible || browserId === null) return undefined
+    if (!native || !visible || browserId === null) return undefined
     const row = scroller.current
     const panel = root.current
     const region = body.current
@@ -248,9 +279,10 @@ export function BrowserPanel(props: {
         fullyVisible: false,
       })
     }
-  }, [visible, browserId, scroller, schedule, send])
+  }, [native, visible, browserId, scroller, schedule, send])
 
   useLayoutEffect(() => {
+    if (!native) return
     if (!visible) {
       if (frame.current !== null) {
         window.cancelAnimationFrame(frame.current)
@@ -276,7 +308,8 @@ export function BrowserPanel(props: {
   }
 
   const reveal = (): void => {
-    onReveal(root.current?.parentElement ?? null)
+    if (capabilities.streamedBrowser && onRevealWebsite !== undefined) onRevealWebsite(projectId)
+    else onReveal(root.current?.parentElement ?? null)
     schedule()
   }
 
@@ -393,6 +426,10 @@ export function BrowserPanel(props: {
   }
 
   const live = state?.live === true
+  const canReload =
+    live ||
+    (!native &&
+      (state?.error?.code === BROWSER_MISSING_CODE || state?.error?.code === BROWSER_STOPPED_CODE))
   const loading = state?.status === 'loading'
   const still = live ? overlayStill : null
   const url = state?.url ?? null
@@ -400,6 +437,21 @@ export function BrowserPanel(props: {
   const ready = browserId !== null && state !== null
 
   const placeholder = ((): React.ReactNode => {
+    if (!native)
+      return (
+        <>
+          <p>
+            {state?.error?.code === BROWSER_PROPOSAL_MISSING_CODE
+              ? t('extension.browserProposalMissing')
+              : (state?.error?.description ?? t('extension.browserWebsiteHelp'))}
+          </p>
+          {state?.error?.code === BROWSER_PROPOSAL_MISSING_CODE && (
+            <button type="button" className="browser-button" onClick={requestBrowserTools}>
+              {t('extension.enableBrowser')}
+            </button>
+          )}
+        </>
+      )
     if (attachFailed) {
       return (
         <>
@@ -446,7 +498,7 @@ export function BrowserPanel(props: {
   })()
 
   return (
-    <div className="browser-panel" ref={root} hidden={!active}>
+    <div className="browser-panel" data-native-browser={native} ref={root} hidden={!active}>
       <div className="conversation-dock">
         <div className="conversation-dock-tabs">
           <div className="conversation-dock-tab" data-active="true">
@@ -523,7 +575,7 @@ export function BrowserPanel(props: {
             className="browser-button"
             aria-label={loading ? t('browser.stop') : t('browser.reload')}
             title={loading ? t('browser.stop') : t('browser.reload')}
-            disabled={!live}
+            disabled={!canReload}
             onClick={() => {
               act(loading ? 'stop' : 'reload')
             }}
@@ -566,7 +618,7 @@ export function BrowserPanel(props: {
           >
             ☆
           </button>
-          <span className="browser-password-button" ref={setPasswordButtonHost} />
+          {native && <span className="browser-password-button" ref={setPasswordButtonHost} />}
           <button
             type="button"
             className="browser-button"
@@ -579,18 +631,20 @@ export function BrowserPanel(props: {
           >
             ↗
           </button>
-          <button
-            type="button"
-            className="browser-button browser-button--text"
-            aria-label={t('browser.devtools')}
-            title={t('browser.devtools')}
-            disabled={!live}
-            onClick={() => {
-              act('devtools')
-            }}
-          >
-            {t('browser.devtoolsShort')}
-          </button>
+          {native && (
+            <button
+              type="button"
+              className="browser-button browser-button--text"
+              aria-label={t('browser.devtools')}
+              title={t('browser.devtools')}
+              disabled={!live}
+              onClick={() => {
+                act('devtools')
+              }}
+            >
+              {t('browser.devtoolsShort')}
+            </button>
+          )}
           <button
             type="button"
             className="browser-button browser-button--text"
@@ -604,15 +658,17 @@ export function BrowserPanel(props: {
           >
             {t('console.toggle')}
           </button>
-          <button
-            type="button"
-            className="browser-button browser-button--text"
-            aria-label={t('browser.reveal')}
-            title={t('browser.reveal')}
-            onClick={showBrowser}
-          >
-            {t('browser.revealShort')}
-          </button>
+          {(native || capabilities.streamedBrowser) && (
+            <button
+              type="button"
+              className="browser-button browser-button--text"
+              aria-label={t('browser.reveal')}
+              title={t('browser.reveal')}
+              onClick={showBrowser}
+            >
+              {t('browser.revealShort')}
+            </button>
+          )}
           <button
             type="button"
             className="browser-button"
@@ -693,17 +749,27 @@ export function BrowserPanel(props: {
             )}
           </div>
         )}
-        <PasswordControls
-          browserId={browserId}
-          state={state}
-          prompt={prompt}
-          passwords={passwords}
-          buttonHost={passwordButtonHost}
-          onPrompt={(candidateId) => {
-            setPrompt((current) => (current?.candidateId === candidateId ? null : current))
-          }}
-        />
-        <div className="browser-body" ref={body}>
+        {native && (
+          <PasswordControls
+            browserId={browserId}
+            state={state}
+            prompt={prompt}
+            passwords={passwords}
+            buttonHost={passwordButtonHost}
+            onPrompt={(candidateId) => {
+              setPrompt((current) => (current?.candidateId === candidateId ? null : current))
+            }}
+          />
+        )}
+        <div
+          className="browser-body"
+          ref={body}
+          style={
+            !native && consoleOpen && loadError === null
+              ? { flex: 'none', minHeight: 0, height: 0, overflow: 'hidden' }
+              : undefined
+          }
+        >
           {still !== null ? (
             <button
               type="button"

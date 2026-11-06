@@ -1,3 +1,5 @@
+import { useHostCapabilities } from '../host-context.js'
+import { insideWebsiteSurface } from '../website-surface.js'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { CSSProperties, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -163,7 +165,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
   const { t } = useTranslation()
   countRender('Workspace')
   const { layout, focusedPaneId } = useWorkspaceLayout()
+  const capabilities = useHostCapabilities()
   const webTabs = useWebTabs()
+  const webShowing = capabilities.nativeBrowserViews && webTabs.showing
   const {
     placeSession,
     splitWithSession,
@@ -209,7 +213,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
     ),
     onReorder: props.onReorderSessions,
     onMoveProject: props.onMoveProject,
-    onDropOutside: props.onDetachProject,
+    onDropOutside: (projectId) => {
+      if (capabilities.detachedWindows) props.onDetachProject(projectId)
+    },
   })
 
   /*
@@ -256,10 +262,11 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
   const commitRef = useRef(commit)
   commitRef.current = commit
   useEffect(() => {
+    if (!capabilities.nativeBrowserViews) return undefined
     return startWebPages(() => {
       commitRef.current()
     })
-  }, [])
+  }, [capabilities.nativeBrowserViews])
   /*
    * The shortcut effect runs once, so anything it reads from props would be
    * frozen at the first render — a reorder computed against the session list as
@@ -273,6 +280,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
   reorderRef.current = props.onReorderSessions
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (insideWebsiteSurface(event.target)) return
       if (event.defaultPrevented) return
       const state = useWorkspaceStore.getState()
       const paneId = state.focusedPaneId
@@ -293,6 +301,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         runningPlatform()
       )
       if (
+        capabilities.nativeBrowserViews &&
         command !== null &&
         (state.webTabs.showing || command === 'new-tab' || command === 'reopen-tab')
       ) {
@@ -303,6 +312,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
       }
       if (event.isComposing) return
       if (
+        capabilities.nativeBrowserViews &&
         state.webTabs.showing &&
         event.repeat &&
         (primaryOnly(event) || primaryShift(event)) &&
@@ -312,7 +322,12 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         return
       }
 
-      if (primaryShift(event) && !event.altKey && event.key.toLowerCase() === 'j') {
+      if (
+        capabilities.globalTerminal &&
+        primaryShift(event) &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'j'
+      ) {
         event.preventDefault()
         state.toggleGlobalTerminal()
         return
@@ -359,6 +374,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
        * Windows key is not held".
        */
       if (
+        capabilities.globalTerminal &&
         event.ctrlKey &&
         event.shiftKey &&
         !event.metaKey &&
@@ -384,12 +400,12 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
           state.addGlobalTerminal()
           return
         }
-        if (state.webTabs.showing) return
+        if (capabilities.nativeBrowserViews && state.webTabs.showing) return
         if (activeId === null) return
         state.addSessionTerminal(activeId)
         return
       }
-      if (state.webTabs.showing) return
+      if (capabilities.nativeBrowserViews && state.webTabs.showing) return
       if (primaryOnly(event) && event.key.toLowerCase() === 'k' && !inTerminal) {
         event.preventDefault()
         chordUntil.current = performance.now() + 1500
@@ -484,7 +500,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
     }
-  }, [])
+  }, [capabilities.nativeBrowserViews, capabilities.globalTerminal])
 
   return (
     <div className="workspace-shell">
@@ -526,9 +542,11 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
         <div className="workspace-layout">
           {layout === null ? (
             <>
-              <div className="workspace-tab-strip web-tab-strip-empty" role="tablist">
-                <WebTabStrip />
-              </div>
+              {capabilities.nativeBrowserViews && (
+                <div className="workspace-tab-strip web-tab-strip-empty" role="tablist">
+                  <WebTabStrip />
+                </div>
+              )}
               <EmptyWorkspace />
             </>
           ) : (
@@ -539,7 +557,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
               trafficTerminals={trafficTerminals}
               focusedPaneId={focusedPaneId}
               webTabsPaneId={topRightPaneId(layout)}
-              webShowing={webTabs.showing}
+              webShowing={webShowing}
               drag={drag.drag}
               onTabPointerDown={drag.onPointerDown}
               onStartInProject={props.onStartInProject}
@@ -562,7 +580,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
               renderSession={props.renderSession}
             />
           )}
-          {webTabs.showing && webTabs.activeId !== null && (
+          {webShowing && webTabs.activeId !== null && (
             <WebTabStage key={webTabs.activeId} webTabId={webTabs.activeId} />
           )}
         </div>
@@ -574,7 +592,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
             conversation, so it is mounted here and not inside a `Session` —
             nothing about a conversation ending should reach it.
           */}
-        {globalTerminal.open && (
+        {capabilities.globalTerminal && globalTerminal.open && (
           <TerminalPanel
             panel={globalTerminal}
             refFor={globalTerminalRef}

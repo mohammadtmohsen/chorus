@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "../desktop/src/renderer/src/env.d.ts",
+    "../desktop/src/renderer/src/assets.d.ts",
+    "../desktop/src/renderer/src/worker.d.ts",
+    "vite.config.ts",
+    "build/**/*.ts",
+    "vitest.config.ts"
+  ]
+}

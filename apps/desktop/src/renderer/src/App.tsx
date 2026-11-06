@@ -1,3 +1,6 @@
+import { onHostProjectAdopted } from './host-actions.js'
+import { diagnosticStaging } from './diagnostic-staging.js'
+import { useHostCapabilities } from './host-context.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ErrorNotice } from './ErrorNotice.js'
 import { ToastStack } from './ToastStack.js'
@@ -56,6 +59,7 @@ import { setRunningPlatform } from './shortcuts.js'
 const SEEN_DEBOUNCE_MS = 1_000
 
 export function App({ role }: { readonly role: WindowRole }): React.JSX.Element {
+  const capabilities = useHostCapabilities()
   const { t } = useTranslation()
   const [appVersion, setAppVersion] = useState<string | null>(null)
   /** Where "no folder" resolves to, so a card can say which it is looking at. */
@@ -114,6 +118,21 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   const [explainLanguage, setExplainLanguage] = useState('')
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const sessionsRef = useRef<SessionInfo[]>([])
+  useEffect(
+    () =>
+      window.chorus.onDiagnostic((diagnostic) => {
+        const session = sessionsRef.current.find(
+          (entry) => entry.conversationId === diagnostic.conversationId
+        )
+        if (session === undefined) return
+        const state = useWorkspaceStore.getState()
+        if (role.kind === 'main' && state.detached[session.projectId] !== undefined) return
+        diagnosticStaging.stage(diagnostic)
+        state.openProject(session.projectId)
+        state.showConversation(session.projectId, session.conversationId)
+      }),
+    [role.kind]
+  )
   const sessionsRevision = useRef(0)
   /** So the opening session of a launch is opened once, and only on a launch. */
   const autoStarted = useRef(false)
@@ -675,23 +694,25 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
             sessions: conversations,
             workspace: detachedSnapshot(projectId, slice),
           }))
-        : Promise.all([
-            window.chorus.restoreConversations(),
-            window.chorus.readDetachedState(),
-          ]).then(([restored, { entries }]) => {
-            useWorkspaceStore
-              .getState()
-              .setDetached(
-                Object.fromEntries(entries.map((entry) => [entry.projectId, entry.returnSlot]))
-              )
-            return {
-              ...restored,
-              workspace:
-                restored.workspace === null
-                  ? null
-                  : applyDetachedEntries(restored.workspace, entries),
-            }
-          })
+        : !capabilities.detachedWindows
+          ? window.chorus.restoreConversations()
+          : Promise.all([
+              window.chorus.restoreConversations(),
+              window.chorus.readDetachedState(),
+            ]).then(([restored, { entries }]) => {
+              useWorkspaceStore
+                .getState()
+                .setDetached(
+                  Object.fromEntries(entries.map((entry) => [entry.projectId, entry.returnSlot]))
+                )
+              return {
+                ...restored,
+                workspace:
+                  restored.workspace === null
+                    ? null
+                    : applyDetachedEntries(restored.workspace, entries),
+              }
+            })
     reopen
       .then(({ sessions: reopened, workspace }) => {
         /*
@@ -803,7 +824,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
     return () => {
       clearTimeout(grace)
     }
-  }, [updateSessions, role.kind])
+  }, [updateSessions, role.kind, capabilities.detachedWindows])
 
   const remember = useCallback((patch: Partial<Defaults>) => {
     setDefaults((current) => ({ ...current, ...patch }))
@@ -1229,6 +1250,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
 
   const detachProject = useCallback(
     (projectId: string) => {
+      if (!capabilities.detachedWindows) return
       const title = projects.find((project) => project.id === projectId)?.name ?? projectId
       let release = (): void => undefined
       let releaseRestarts = (): void => undefined
@@ -1270,7 +1292,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
         })
         .catch(fail(setError))
     },
-    [projects, holdRestarts]
+    [projects, holdRestarts, capabilities.detachedWindows]
   )
 
   const redockProject = useCallback(
@@ -1313,6 +1335,16 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
       }
     },
     [refreshProjects, startIn]
+  )
+
+  useEffect(
+    () =>
+      onHostProjectAdopted((project) => {
+        setError(null)
+        showProject(project.id)
+        void openAdopted(project).catch(fail(setError))
+      }),
+    [openAdopted, showProject]
   )
 
   const addProject = useCallback(async () => {
@@ -1685,21 +1717,21 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   }, [persistLayout])
 
   useEffect(() => {
-    if (role.kind !== 'main') return undefined
+    if (!capabilities.detachedWindows || role.kind !== 'main') return undefined
     return window.chorus.onProjectSlice(({ projectId, slice }) => {
       useWorkspaceStore.setState((state) => mergeSlice(workspaceSnapshot(state), projectId, slice))
     })
-  }, [role.kind])
+  }, [role.kind, capabilities.detachedWindows])
 
   useEffect(() => {
-    if (role.kind !== 'main') return undefined
+    if (!capabilities.detachedWindows || role.kind !== 'main') return undefined
     return window.chorus.onProjectVisibility(({ projectId, focused, visibleConversationIds }) => {
       detachedVisibility.current.set(projectId, { focused, visibleConversationIds })
     })
-  }, [role.kind])
+  }, [role.kind, capabilities.detachedWindows])
 
   useEffect(() => {
-    if (role.kind !== 'main') return undefined
+    if (!capabilities.detachedWindows || role.kind !== 'main') return undefined
     return window.chorus.onHitTestRequest(({ requestId, x, y }) => {
       const state = useWorkspaceStore.getState()
       const target = resolveTarget(
@@ -1722,10 +1754,10 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
         )
         .catch(fail(setError))
     })
-  }, [role.kind])
+  }, [role.kind, capabilities.detachedWindows])
 
   useEffect(() => {
-    if (role.kind !== 'main') return undefined
+    if (!capabilities.detachedWindows || role.kind !== 'main') return undefined
     return window.chorus.onProjectReturned(({ projectId, returnSlot, slice }) => {
       const store = useWorkspaceStore.getState()
       store.clearDetached(projectId)
@@ -1739,7 +1771,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
       )
       commitLayout()
     })
-  }, [role.kind, commitLayout])
+  }, [role.kind, commitLayout, capabilities.detachedWindows])
 
   /*
    * Reorder writes through the same way, but builds its own order: the

@@ -493,6 +493,16 @@ export class TerminalService {
   }
 
   /** What a confirmation dialog would need to say. */
+  hasBusyShells(): boolean {
+    return [...this.byShell.values()].some((shells) =>
+      [...shells.values()].some(
+        (session) =>
+          !session.exited &&
+          describeForeground(session.pty.process, session.shellName, this.platform).busy
+      )
+    )
+  }
+
   describe(ref: TerminalRef): TerminalDescription | null {
     const session = this.find(ref)
     if (session === null) return null

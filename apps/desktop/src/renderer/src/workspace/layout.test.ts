@@ -725,6 +725,12 @@ describe('one chat per box', () => {
     expect(leafPaneIds(next.layout)).toEqual(['a', 'b'])
   })
 
+  it('refuses a destination outside the source project without lifting its chat', () => {
+    for (const direction of ['left', 'right', 'up', 'down'] as const) {
+      expect(moveBox(three, 'a', 'another-project', direction)).toBe(three)
+    }
+  })
+
   it('ignores a drop on the box being dragged, or on one that is gone', () => {
     expect(moveBox(three, 'a', 'a', 'up')).toBe(three)
     expect(moveBox(three, 'gone', 'a', 'up')).toBe(three)

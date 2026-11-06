@@ -2,7 +2,7 @@ import { ProcessCleanupError } from '@chorus/shared/process-tree'
 import { existsSync, renameSync, rmSync } from 'node:fs'
 import { TRANSCRIPT_TYPES } from '../shared/transcript-events.js'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve as resolvePreviewPath } from 'node:path'
 import { ClaudeAdapter, anthropicManagedEnv, type ResolvedExecutable } from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
@@ -56,15 +56,9 @@ import {
   type BindAssignmentResult,
   type ForwardedReadContext,
 } from './forwarded-work.js'
-import {
-  hasWorkbenchSurface,
-  refreshWorkbenchTerminalEnv,
-  reopenWorkbenchProject,
-  requestWorkbenchAskDiff,
-  requestWorkbenchEdit,
-  requestWorkbenchSnapshot,
-  type WorkbenchPlace,
-} from './workbench-surface.js'
+import type { HostPorts, SecretsPort } from './host-ports.js'
+import { editorApprovalRequest } from './editor-preview.js'
+import type { WorkbenchPlace } from './project-root.js'
 import {
   AppNoteStore,
   ConversationNoteStore,
@@ -137,6 +131,7 @@ import {
   readOpenProjects,
   writeOpenProjects,
   type OpenConversation,
+  type OpenProjectsState,
 } from './open-projects.js'
 import { ProjectService } from './project-service.js'
 import { EditPreviews } from './edit-preview.js'
@@ -152,7 +147,6 @@ import {
 } from '../shared/collaboration.js'
 import { collaborationPrompt, teamIntroduction } from './collaboration-prompt.js'
 
-import { readAgentKey } from './agent-secrets.js'
 import { readSettings, type SavedTrafficConnection } from './settings.js'
 import {
   TerminalService,
@@ -1027,6 +1021,7 @@ export class ChorusRuntime {
   private readonly closingProjects = new Set<string>()
   private readonly closedProjects = new Set<string>()
   private readonly namerOwners = new WeakMap<AgentSession, string>()
+  private readonly backgroundWork = new WeakMap<ConversationService, number>()
   private readonly seating = new WeakMap<ActiveConversation, Map<AgentId, Promise<Participant>>>()
   private closing = false
   /**
@@ -1167,14 +1162,19 @@ export class ChorusRuntime {
    * decision read back after a restart is one nobody is waiting on.
    */
   private readonly previews = new EditPreviews()
+  private readonly editorPreviews = new Map<string, { root: string; path: string }>()
   private readonly liveReplies: LiveReplies
+
+  private get userDataPath(): string {
+    return this.ports.userDataPath
+  }
 
   private constructor(
     readonly store: EventStore,
     private readonly adapters: Map<AgentId, AgentAdapter>,
     readonly log: Logger,
     /** Where the note about what was open is kept, next to the log and the db. */
-    private readonly userDataPath: string,
+    readonly ports: HostPorts,
     /**
      * The project registry — Phase 2's domain, and the thing that turns a project
      * id into a root without putting a dialog in front of somebody.
@@ -1222,7 +1222,7 @@ export class ChorusRuntime {
     this.traffic.subscribe((push) => {
       if (push.kind !== 'state') return
       this.adbReverse.sync(this.traffic.capturingPorts())
-      refreshWorkbenchTerminalEnv()
+      this.ports.editor.refreshTerminalEnv()
     })
     this.adbReverse.onChange(() => {
       this.traffic.setForwarded((port) => this.adbReverse.forwarded(port))
@@ -1312,15 +1312,16 @@ export class ChorusRuntime {
   private ownsLocalSurface(projectId: string): boolean {
     const project = this.projects.get(projectId)
     if (project?.host !== LOCAL_HOST) return false
-    return hasWorkbenchSurface({ host: LOCAL_HOST, root: project.canonicalRoot })
+    return this.ports.editor.hasSurface({ host: LOCAL_HOST, root: project.canonicalRoot })
   }
 
   static open(
-    userDataPath: string,
+    ports: HostPorts,
     log: Logger,
     adapters?: Map<AgentId, AgentAdapter>,
     options: { readonly deferRestoredAgents?: boolean } = {}
   ): ChorusRuntime {
+    const userDataPath = ports.userDataPath
     const path = join(userDataPath, DATABASE_FILE)
     const { db, store, recovered } = openOrRecover(path, userDataPath)
     if (recovered !== null) log.warn('database was unreadable and was moved aside', { recovered })
@@ -1353,9 +1354,9 @@ export class ChorusRuntime {
 
     return new ChorusRuntime(
       store,
-      adapters ?? defaultAdapters(userDataPath),
+      adapters ?? defaultAdapters(ports),
       log,
-      userDataPath,
+      ports,
       projects,
       new AppNoteStore(db),
       new KeptNoteStore(db),
@@ -3544,7 +3545,7 @@ export class ChorusRuntime {
       'Project shutdown could not be confirmed'
     )
     await this.adbReverse.syncConfirmed(this.traffic.capturingPorts())
-    refreshWorkbenchTerminalEnv()
+    this.ports.editor.refreshTerminalEnv()
     for (const id of conversations) this.finishConversationRemoval(id)
     this.browserConsoles?.dispose(projectId)
     this.closingProjects.delete(projectId)
@@ -3556,7 +3557,7 @@ export class ChorusRuntime {
     if (this.closing) throw new Error('Chorus is shutting down')
     if (this.closingProjects.has(projectId))
       throw new Error('This project is closing; retry its close action before reopening it')
-    reopenWorkbenchProject(this.projects.workbenchTarget(projectId))
+    this.ports.editor.reopenProject(this.projects.workbenchTarget(projectId))
     this.closedProjects.delete(projectId)
     this.runner.allowProject(projectId)
     this.terminals.allowProject(projectId)
@@ -3589,7 +3590,7 @@ export class ChorusRuntime {
      * show. Reopening is not what starts an agent; `startParticipant` is, and
      * that is where the guard belongs.
      */
-    const savedState = readOpenProjects(this.userDataPath)
+    const savedState = this.ports.openProjects?.read() ?? readOpenProjects(this.userDataPath)
     const saved = openConversations(savedState)
     this.workspaceSnapshot = savedState.workspace
     const restored: {
@@ -4091,6 +4092,12 @@ export class ChorusRuntime {
      * file was a flat session list with a path on each entry; conversations that
      * shared a folder repeated it, and nothing said they were the same place.
      */
+    const state = this.snapshotOpenProjects()
+    if (this.ports.openProjects === undefined) writeOpenProjects(this.userDataPath, state)
+    else this.ports.openProjects.write(state)
+  }
+
+  snapshotOpenProjects(): OpenProjectsState {
     const byProject = new Map<string, OpenConversation[]>()
     for (const c of this.active.values()) {
       const conversations = byProject.get(c.projectId) ?? []
@@ -4120,13 +4127,13 @@ export class ChorusRuntime {
       byProject.set(c.projectId, conversations)
     }
 
-    writeOpenProjects(this.userDataPath, {
+    return {
       projects: [...byProject].map(([projectId, conversations]) => ({
         projectId,
         conversations,
       })),
       workspace: this.workspaceSnapshot,
-    })
+    }
   }
 
   /**
@@ -4166,6 +4173,95 @@ export class ChorusRuntime {
   setConversationLayout(order: readonly string[], workspace: WorkspaceSnapshot): void {
     this.workspaceSnapshot = workspace
     this.reorderConversations(order)
+  }
+
+  attentionRooms(): {
+    conversationId: string
+    projectId: string
+    projectName: string
+    title: string
+    approvals: number
+    questions: number
+  }[] {
+    const rooms = []
+    for (const [conversationId, conversation] of this.active) {
+      const pending = this.pendingDecisions(conversationId)
+      const approvals = pending.pendingApprovalIds.length
+      const questions = pending.pendingQuestionIds.length
+      if (approvals + questions === 0) continue
+      rooms.push({
+        conversationId,
+        projectId: conversation.projectId,
+        projectName: this.projects.get(conversation.projectId)?.name ?? '',
+        title: conversation.title,
+        approvals,
+        questions,
+      })
+    }
+    return rooms
+  }
+
+  activeWork(): {
+    conversations: string[]
+    approvals: number
+    questions: number
+    runs: string[]
+    starting: number
+    busy: boolean
+  } {
+    const conversations = new Set<string>()
+    let approvals = 0
+    let questions = 0
+    for (const [id, conversation] of this.active) {
+      const pending = this.pendingDecisions(id)
+      approvals += pending.pendingApprovalIds.length
+      questions += pending.pendingQuestionIds.length
+      if (
+        conversation.working.size > 0 ||
+        this.liveReplies.pendingReplies(id).length > 0 ||
+        [...conversation.participants.values()].some(
+          (participant) => (this.backgroundWork.get(participant.service) ?? 0) > 0
+        )
+      )
+        conversations.add(id)
+    }
+    for (const [id, aside] of this.asides) {
+      const state = this.store.transcriptState(id)
+      if (state.working.length > 0) conversations.add(id)
+      approvals += aside.service.pendingApprovals().length
+      questions += aside.service.pendingQuestions().length
+    }
+    const runs = this.projects
+      .list()
+      .filter((project) => {
+        const state = this.runner.snapshot(project.id)
+        return (
+          state.process.kind === 'running' ||
+          state.process.kind === 'starting' ||
+          state.process.kind === 'stopping' ||
+          state.cleanupPending
+        )
+      })
+      .map((project) => project.id)
+    const starting =
+      this.startupWork.size +
+      [...this.namers.values()].filter(
+        (namer) => namer.starting !== undefined || namer.pending !== undefined
+      ).length
+    return {
+      conversations: [...conversations],
+      approvals,
+      questions,
+      runs,
+      starting,
+      busy:
+        conversations.size > 0 ||
+        approvals > 0 ||
+        questions > 0 ||
+        runs.length > 0 ||
+        starting > 0 ||
+        this.terminals.hasBusyShells(),
+    }
   }
 
   activeSessions(): {
@@ -5807,7 +5903,7 @@ export class ChorusRuntime {
     this.disposeProjectShells(projectId)
     this.browserConsoles?.dispose(projectId)
     this.adbReverse.sync(this.traffic.capturingPorts())
-    refreshWorkbenchTerminalEnv()
+    this.ports.editor.refreshTerminalEnv()
     return { forgotten: this.projects.forget(projectId) }
   }
 
@@ -5972,7 +6068,7 @@ export class ChorusRuntime {
     if (preview === undefined) return decision
 
     try {
-      const snapshot = await requestWorkbenchSnapshot({
+      const snapshot = await this.ports.editor.snapshot({
         host: LOCAL_HOST,
         root: preview.projectRoot,
       })
@@ -6458,7 +6554,22 @@ export class ChorusRuntime {
       (this.closingProjects.has(ref.projectId) || this.closedProjects.has(ref.projectId))
     )
       return null
+    if (ref.scope === 'shell' && this.shellRoot(ref.projectId) !== null) {
+      try {
+        await this.traffic.prepare(ref.projectId)
+      } catch (error) {
+        this.log.warn('project shell Traffic could not be prepared', {
+          projectId: ref.projectId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+      if (this.projectTerminalClosed(ref.projectId)) return null
+    }
     return await this.terminals.attach(ref, size)
+  }
+
+  private projectTerminalClosed(projectId: string): boolean {
+    return this.closing || this.closingProjects.has(projectId) || this.closedProjects.has(projectId)
   }
 
   detachTerminal(ref: TerminalRef, epoch: number): void {
@@ -6594,7 +6705,7 @@ export class ChorusRuntime {
     await this.traffic.dispose(projectId)
     this.disposeProjectShells(projectId)
     this.adbReverse.sync(this.traffic.capturingPorts())
-    refreshWorkbenchTerminalEnv()
+    this.ports.editor.refreshTerminalEnv()
   }
 
   async close(): Promise<void> {
@@ -7034,6 +7145,7 @@ export class ChorusRuntime {
        * falsy guard here would leave the indicator stuck on forever.
        */
       onTasks: (tasks) => {
+        this.backgroundWork.set(service, tasks.length)
         this.onTasks?.({ conversationId, agentId, tasks: tasks.map((task) => ({ ...task })) })
       },
       /*
@@ -7083,6 +7195,19 @@ export class ChorusRuntime {
             request,
           })
         }
+        if (request.kind === 'editorEdit' && this.ports.editor.previewEdit !== undefined) {
+          this.editorPreviews.set(request.id, {
+            root: this.agentDirectory(conversationId),
+            path: request.path,
+          })
+          void this.ports.editor
+            .previewEdit(this.editorPlace(conversationId), {
+              ...editorApprovalRequest(request),
+              approvalId: request.id,
+            })
+            .catch(() => undefined)
+          return
+        }
         if (request.kind !== 'fileChange') return
         const projectRoot = this.agentDirectory(conversationId)
         void this.previews
@@ -7099,7 +7224,7 @@ export class ChorusRuntime {
              * card still asks and still carries the patch. The tab is the better
              * read, not the only one.
              */
-            await requestWorkbenchAskDiff(projectRoot, {
+            await this.ports.editor.askDiff(projectRoot, {
               approvalId: preview.approvalId,
               path: preview.path,
               before: preview.before,
@@ -7130,17 +7255,33 @@ export class ChorusRuntime {
        */
       preflightApproval: async (request) => this.previews.stillCurrent(request.id),
       onApprovalSettled: (approvalId) => {
+        const editorPreview = this.editorPreviews.get(approvalId)
+        if (editorPreview !== undefined) {
+          this.editorPreviews.delete(approvalId)
+          void this.ports.editor
+            .askDiff(editorPreview.root, {
+              approvalId,
+              path: editorPreview.path,
+              before: null,
+              proposed: '',
+              close: true,
+              revealPath: resolvePreviewPath(editorPreview.root, editorPreview.path),
+            })
+            .catch(() => undefined)
+        }
         const preview = this.previews.release(approvalId)
         if (preview === undefined) return
         // The decision is made, so the diff describing it goes with it.
-        void requestWorkbenchAskDiff(preview.projectRoot, {
-          approvalId,
-          path: preview.path,
-          before: null,
-          proposed: '',
-          close: true,
-          revealPath: preview.absolutePath,
-        }).catch(() => undefined)
+        void this.ports.editor
+          .askDiff(preview.projectRoot, {
+            approvalId,
+            path: preview.path,
+            before: null,
+            proposed: '',
+            close: true,
+            revealPath: preview.absolutePath,
+          })
+          .catch(() => undefined)
       },
     })
     owner.service = service
@@ -7308,13 +7449,13 @@ function readOnlyProfiling(): boolean {
   return process.env['CHORUS_PROFILE_READONLY'] === '1'
 }
 
-function defaultAdapters(userDataPath: string): Map<AgentId, AgentAdapter> {
+function defaultAdapters(ports: HostPorts): Map<AgentId, AgentAdapter> {
   return new Map<AgentId, AgentAdapter>([
     // The command is resolved lazily, on first use: asking a login shell at
     // module load would delay the window for something not needed until a
     // session starts.
-    ['codex', new CodexAdapter(codexOptions(userDataPath))],
-    ['claude', new ClaudeAdapter(claudeOptions(userDataPath))],
+    ['codex', new CodexAdapter(codexOptions(ports.secrets))],
+    ['claude', new ClaudeAdapter(claudeOptions(ports))],
     /*
      * The same class and the same binary, pointed elsewhere.
      *
@@ -7325,7 +7466,7 @@ function defaultAdapters(userDataPath: string): Map<AgentId, AgentAdapter> {
      * both needing a restart. Present-but-refusing is a state the UI already
      * knows how to draw, and `deepseekOptions` reads the key at each spawn.
      */
-    ['deepseek', new ClaudeAdapter(deepseekOptions(userDataPath))],
+    ['deepseek', new ClaudeAdapter(deepseekOptions(ports.secrets))],
   ])
 }
 
@@ -7342,14 +7483,14 @@ function defaultAdapters(userDataPath: string): Map<AgentId, AgentAdapter> {
  * The key is read **at each spawn**, not captured here, which is what lets it be
  * added, rotated or removed without restarting.
  */
-function deepseekOptions(userDataPath: string): {
+function deepseekOptions(secrets: SecretsPort): {
   id: AgentId
   resolveExecutable: () => Promise<ResolvedExecutable | null>
   env: { inject: () => Record<string, string> | undefined; clear: (key: string) => boolean }
   precondition: () => string | null
   models: readonly ModelChoice[]
 } {
-  const key = (): string | null => readAgentKey(userDataPath, 'deepseek')
+  const key = (): string | null => secrets.read('deepseek')
   return {
     id: 'deepseek',
     // The same binary as Claude's, so the same lookup answers for both.
@@ -7369,7 +7510,7 @@ function deepseekOptions(userDataPath: string): {
     env: {
       inject: () => {
         const token = key()
-        return token === null ? undefined : { ...deepseekEnv(token), ...serviceEnv(userDataPath) }
+        return token === null ? undefined : { ...deepseekEnv(token), ...serviceEnv(secrets) }
       },
       clear: anthropicManagedEnv,
     },
@@ -7471,8 +7612,8 @@ export function deepseekEnv(token: string): Record<string, string> {
  * *present* variable, and a caller reading one would send an empty bearer token
  * and get a 401 instead of recognising that nothing is configured.
  */
-function serviceEnv(userDataPath: string): Record<string, string> | undefined {
-  const typesafe = readAgentKey(userDataPath, 'typesafe')
+function serviceEnv(secrets: SecretsPort): Record<string, string> | undefined {
+  const typesafe = secrets.read('typesafe')
   return typesafe === null ? undefined : { TYPESAFE_API_KEY: typesafe }
 }
 
@@ -7484,7 +7625,7 @@ function serviceEnv(userDataPath: string): Record<string, string> | undefined {
  * reach it by copying its body — which asserts a duplicate and passes even if
  * the real one loses its guard. Naming it is what makes the test real.
  */
-function codexOptions(userDataPath: string): {
+function codexOptions(secrets: SecretsPort): {
   resolveCommand: () => Promise<{ readonly file: string; readonly args: string[] } | null>
   env: () => Record<string, string> | undefined
 } {
@@ -7494,11 +7635,11 @@ function codexOptions(userDataPath: string): {
       const resolved = await resolveCommand('codex')
       return resolved === null ? null : spawnSpec(resolved)
     },
-    env: () => serviceEnv(userDataPath),
+    env: () => serviceEnv(secrets),
   }
 }
 
-function claudeOptions(userDataPath: string): {
+function claudeOptions(ports: HostPorts): {
   resolveExecutable: () => Promise<ResolvedExecutable | null>
   env: { inject: () => Record<string, string> | undefined; clear: (key: string) => boolean }
   editorEdit: EditorEditCapability
@@ -7513,7 +7654,7 @@ function claudeOptions(userDataPath: string): {
      * out of the agent they use most, which is what the old unconditional scrub
      * would have done the moment this instance was given any environment at all.
      */
-    env: { inject: () => serviceEnv(userDataPath), clear: () => false },
+    env: { inject: () => serviceEnv(ports.secrets), clear: () => false },
     resolveExecutable: async () => {
       if (readOnlyProfiling()) return null
       const resolved = await resolveCommand('claude')
@@ -7531,7 +7672,7 @@ function claudeOptions(userDataPath: string): {
      * the point of not widening either to a string.
      */
     editorEdit: async (place, request) => {
-      const result = await requestWorkbenchEdit(place, request)
+      const result = await ports.editor.edit(place, request)
       return result.ok
         ? { ok: true, version: result.version }
         : { ok: false, refusal: result.refusal, message: result.message, version: result.version }

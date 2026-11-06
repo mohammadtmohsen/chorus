@@ -1,7 +1,8 @@
+import { safeStorage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { AgentId } from '@chorus/shared'
-import { safeStorage } from 'electron'
+import type { SecretId } from './host-ports.js'
+export type { SecretId } from './host-ports.js'
 
 /**
  * A credential an agent needs, encrypted, and reachable only from main.
@@ -37,7 +38,6 @@ function secretsPath(userData: string): string {
 }
 
 /** An agent, or a service an agent calls and Chorus holds the credential for. */
-export type SecretId = AgentId | 'typesafe' | 'completion-deepseek' | 'completion-codestral'
 
 /** Base64 ciphertext per holder. The names are not secret; the values are. */
 type SecretsFile = Partial<Record<SecretId, string>>

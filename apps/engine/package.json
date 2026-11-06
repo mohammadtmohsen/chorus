@@ -1,0 +1,27 @@
+{
+  "name": "@chorus/engine",
+  "version": "0.20.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chorus/adapter-claude": "workspace:*",
+    "@chorus/adapter-codex": "workspace:*",
+    "@chorus/agent-protocol": "workspace:*",
+    "@chorus/event-store": "workspace:*",
+    "@chorus/orchestrator": "workspace:*",
+    "@chorus/shared": "workspace:*",
+    "@chorus/workspace": "workspace:*",
+    "@chorus/ide-protocol": "workspace:*",
+    "better-sqlite3": "^13.0.2",
+    "node-pty": "^1.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  }
+}

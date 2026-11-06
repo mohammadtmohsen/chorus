@@ -1,3 +1,4 @@
+import { hostStorage } from './host-storage.js'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { IpcResponse } from '../../shared/ipc.js'
 import type { WindowRole } from '../../shared/detached-window-ipc.js'
@@ -87,9 +88,9 @@ const sameAgents = (a: readonly string[], b: readonly string[]): boolean =>
 function copyMessageMode(source: string | undefined, target: string): void {
   if (source === undefined) return
   try {
-    const mode = localStorage.getItem(`chorus:message-mode:${source}`)
+    const mode = hostStorage.getItem(`chorus:message-mode:${source}`)
     if (mode === 'work' || mode === 'discussion') {
-      localStorage.setItem(`chorus:message-mode:${target}`, mode)
+      hostStorage.setItem(`chorus:message-mode:${target}`, mode)
     }
   } catch {
     return

@@ -1,3 +1,6 @@
+import { electronBrowserSource, electronBrowserSourceOf } from './electron-browser-source.js'
+import { electronBrowserPort, electronBrowserDownloads } from './electron-browser-port.js'
+import { electronIpcRegistrar, electronShellClient } from './electron-shell-client.js'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -52,6 +55,7 @@ import { applyScale, currentScale } from './scale.js'
 import { reapOrphanedChildren } from './reap.js'
 import { isReparentMode, runReparentCheck } from './reparent-check.js'
 import { ChorusRuntime } from './runtime.js'
+import { desktopHostPorts } from './desktop-host-ports.js'
 import { applyContentSecurityPolicy, lockDownNavigation } from './security.js'
 import { reapedOrphanedServers, setWorkbenchHostLog, stopWorkbenchHost } from './workbench-host.js'
 import { setCompletionLog } from './completion-client.js'
@@ -156,15 +160,15 @@ function createWindow(role: ShellWindowRole): BrowserWindow {
     role.kind === 'main'
       ? { kind: 'main' as const }
       : { kind: 'detached' as const, projectId: role.projectId }
-  trafficIpc?.registerShell(window.webContents, shellRole)
-  runIpc?.registerShell(window.webContents, shellRole)
-  browserIpc?.registerShell(window.webContents, shellRole)
-  consoleIpc?.registerShell(window.webContents, shellRole)
+  trafficIpc?.registerShell(electronShellClient(window.webContents), shellRole)
+  runIpc?.registerShell(electronShellClient(window.webContents), shellRole)
+  browserIpc?.registerShell(electronShellClient(window.webContents), shellRole)
+  consoleIpc?.registerShell(electronShellClient(window.webContents), shellRole)
   window.webContents.on('destroyed', () => {
-    trafficIpc?.releaseShell(window.webContents)
-    runIpc?.releaseShell(window.webContents)
-    browserIpc?.releaseShell(window.webContents)
-    consoleIpc?.releaseShell(window.webContents)
+    trafficIpc?.releaseShell(electronShellClient(window.webContents))
+    runIpc?.releaseShell(electronShellClient(window.webContents))
+    browserIpc?.releaseShell(electronShellClient(window.webContents))
+    consoleIpc?.releaseShell(electronShellClient(window.webContents))
   })
 
   // Avoids a white flash before the renderer has painted.
@@ -373,7 +377,7 @@ void app.whenReady().then(async () => {
   // A local binding as well as the module one: the workbench resolver below is a
   // closure, and the module `runtime` is nullable for the whole life of the app,
   // so narrowing it here would not survive into the callback.
-  const opened = ChorusRuntime.open(app.getPath('userData'), log, undefined, {
+  const opened = ChorusRuntime.open(desktopHostPorts(app.getPath('userData')), log, undefined, {
     deferRestoredAgents: true,
   })
   runtime = opened
@@ -442,29 +446,35 @@ void app.whenReady().then(async () => {
   if (savedTraffic.kind === 'unreadable') {
     log.warn('the saved traffic connection could not be read', { reason: savedTraffic.reason })
   }
-  trafficIpc = new TrafficIpc({
-    registry: opened.trafficRegistry(),
-    /*
-     * Adopted, not merely named. A project id that appears in a request is a
-     * claim; this is the registry answering whether the id is one it knows.
-     */
-    isAdopted: (projectId) => opened.projects.get(projectId) !== null,
-    legacy: () => opened.legacyTraffic(),
-    decideLegacy: (keep) => {
-      opened.decideLegacyTraffic(keep)
+  trafficIpc = new TrafficIpc(
+    {
+      registry: opened.trafficRegistry(),
+      /*
+       * Adopted, not merely named. A project id that appears in a request is a
+       * claim; this is the registry answering whether the id is one it knows.
+       */
+      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
+      legacy: () => opened.legacyTraffic(),
+      decideLegacy: (keep) => {
+        opened.decideLegacyTraffic(keep)
+      },
+      capture: (projectId, change) => opened.projectRunner().captureOnly(projectId, change),
     },
-    capture: (projectId, change) => opened.projectRunner().captureOnly(projectId, change),
-  })
-  runIpc = new RunIpc({
-    runner: opened.projectRunner(),
-    project: (projectId) => opened.projects.get(projectId),
-    isAdopted: (projectId) => opened.projects.get(projectId) !== null,
-    setCommands: (projectId, commands) => {
-      opened.setRunCommands(projectId, commands)
+    electronIpcRegistrar
+  )
+  runIpc = new RunIpc(
+    {
+      runner: opened.projectRunner(),
+      project: (projectId) => opened.projects.get(projectId),
+      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
+      setCommands: (projectId, commands) => {
+        opened.setRunCommands(projectId, commands)
+      },
+      detect: detectScripts,
+      platform: process.platform,
     },
-    detect: detectScripts,
-    platform: process.platform,
-  })
+    electronIpcRegistrar
+  )
   const userData = app.getPath('userData')
   const browserSettings = new BrowserSettingsStore(userData)
   const webTabIds = new Set(
@@ -485,7 +495,9 @@ void app.whenReady().then(async () => {
   const consoles = new BrowserConsoles({
     preferredOwner: (projectId) => {
       const detached = detachedWindowOf(projectId)
-      return detached !== null && !detached.isDestroyed() ? detached.webContents : mainOwner()
+      const owner =
+        detached !== null && !detached.isDestroyed() ? detached.webContents : mainOwner()
+      return owner === null ? null : electronShellClient(owner)
     },
   })
   browserConsoles = consoles
@@ -501,14 +513,14 @@ void app.whenReady().then(async () => {
       },
     },
     deliver: (owner, push) => {
-      browserIpc?.deliver(owner, push)
+      browserIpc?.deliver(electronShellClient(owner), push)
     },
     console: {
       mounted: (source) => {
-        consoles.mount(source)
+        consoles.mount(electronBrowserSource(source))
       },
       released: (contents) => {
-        consoles.release(contents)
+        consoles.release(electronBrowserSourceOf(contents))
       },
     },
   })
@@ -518,19 +530,25 @@ void app.whenReady().then(async () => {
     mainOwner,
     directory: () => app.getPath('downloads'),
     deliver: (owner, push) => {
-      browserIpc?.deliver(owner, push)
+      browserIpc?.deliver(electronShellClient(owner), push)
     },
   })
   browserDownloads = downloads
-  browserIpc = new BrowserIpc({
-    surfaces: browserSurfaces,
-    downloads,
-    isAdopted: (projectId) => opened.projects.get(projectId) !== null,
-  })
-  consoleIpc = new ConsoleIpc({
-    consoles,
-    isAdopted: (projectId) => opened.projects.get(projectId) !== null,
-  })
+  browserIpc = new BrowserIpc(
+    {
+      surfaces: electronBrowserPort(browserSurfaces),
+      downloads: electronBrowserDownloads(downloads),
+      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
+    },
+    electronIpcRegistrar
+  )
+  consoleIpc = new ConsoleIpc(
+    {
+      consoles,
+      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
+    },
+    electronIpcRegistrar
+  )
   // Takes no runtime: the watches are keyed by the conversations that ask for
   // one, not by what the runtime happens to have open.
   // Owns ⌘+ / ⌘− / ⌘0; a menu accelerator is handled before the page sees it.

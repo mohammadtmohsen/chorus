@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import type { IpcRegistrar, ShellClient, ShellRequest } from './shell-client.js'
 import type { z } from 'zod'
 import {
   BROWSER_CHANNELS,
@@ -7,28 +7,51 @@ import {
   BrowserPush,
   type BrowserChannel,
 } from '../shared/browser-ipc.js'
-import type { BrowserSurfaces } from './browser-surface.js'
-import type { BrowserDownloads } from './browser-downloads.js'
+import type { BrowserSurfacePort, BrowserDownloadPort } from './browser-port.js'
 import type { ShellRole } from './traffic-ipc.js'
+import type { BrowserStreamPort } from './browser-stream-port.js'
 
 interface Deps {
-  readonly surfaces: BrowserSurfaces
-  readonly downloads: BrowserDownloads
+  readonly streams?: BrowserStreamPort
+  readonly surfaces: BrowserSurfacePort
+  readonly downloads: BrowserDownloadPort
   readonly isAdopted: (projectId: string) => boolean
 }
 
 interface Shell {
-  readonly webContents: WebContents
+  readonly webContents: ShellClient
   readonly role: ShellRole
 }
 
 export class BrowserIpc {
   private readonly deps: Deps
-  private readonly shells = new Map<number, Shell>()
+  private readonly shells = new Map<string, Shell>()
 
-  constructor(deps: Deps) {
+  constructor(
+    deps: Deps,
+    private readonly registrar: IpcRegistrar
+  ) {
     this.deps = deps
-    const { surfaces } = deps
+    const { surfaces, streams } = deps
+    this.handle('browser:stream', BROWSER_CONTRACT['browser:stream'], (owner, request) => {
+      if (streams === undefined) throw new Error('not-eligible')
+      streams.stream(owner, request)
+      return { ok: true as const }
+    })
+    this.handle('browser:input', BROWSER_CONTRACT['browser:input'], async (owner, request) => {
+      if (streams === undefined) throw new Error('not-eligible')
+      await streams.input(owner, request.browserId, request.event)
+      return { ok: true as const }
+    })
+    this.handle('browser:frameAck', BROWSER_CONTRACT['browser:frameAck'], (owner, request) => {
+      if (streams === undefined) throw new Error('not-eligible')
+      streams.ack(owner, request.browserId, request.instance, request.generation, request.serial)
+      return { ok: true as const }
+    })
+    this.handle('browser:selection', BROWSER_CONTRACT['browser:selection'], async (owner, request) => {
+      if (streams === undefined) throw new Error('not-eligible')
+      return { text: await streams.selection(owner, request.browserId) }
+    })
     this.handle(
       'browser:webReady',
       BROWSER_CONTRACT['browser:webReady'],
@@ -119,23 +142,24 @@ export class BrowserIpc {
     )
   }
 
-  registerShell(webContents: WebContents, role: ShellRole): void {
+  registerShell(webContents: ShellClient, role: ShellRole): void {
     this.shells.set(webContents.id, { webContents, role })
   }
 
-  releaseShell(webContents: WebContents): void {
+  releaseShell(webContents: ShellClient): void {
+    this.deps.streams?.release(webContents)
     this.shells.delete(webContents.id)
-    this.deps.surfaces.closeOwner(webContents)
+    void Promise.resolve(this.deps.surfaces.closeOwner(webContents)).catch(() => undefined)
   }
 
-  deliver(owner: WebContents, push: BrowserPush): void {
-    if (owner.isDestroyed() || this.shells.get(owner.id)?.webContents !== owner) return
+  deliver(owner: ShellClient, push: BrowserPush): void {
+    if (owner.isGone() || this.shells.get(owner.id)?.webContents !== owner) return
     const parsed = BrowserPush.safeParse(push)
     if (parsed.success) owner.send(BROWSER_PUSH_CHANNEL, parsed.data)
   }
 
   async close(): Promise<void> {
-    for (const channel of BROWSER_CHANNELS) ipcMain.removeHandler(channel)
+    for (const channel of BROWSER_CHANNELS) this.registrar.removeHandler(channel)
     this.shells.clear()
     await this.deps.surfaces.shutdown()
   }
@@ -144,12 +168,12 @@ export class BrowserIpc {
     channel: BrowserChannel,
     contract: { readonly request: Q; readonly response: R },
     handler: (
-      owner: WebContents,
+      owner: ShellClient,
       request: z.output<Q>,
       role: ShellRole
     ) => Promise<z.output<R>> | z.output<R>
   ): void {
-    ipcMain.handle(channel, async (event: IpcMainInvokeEvent, raw: unknown) => {
+    this.registrar.handle(channel, async (event: ShellRequest, raw: unknown) => {
       const role = this.role(event)
       if (role === null) throw new Error('The browser is not available to this document')
       const parsed = contract.request.safeParse(raw)
@@ -165,8 +189,8 @@ export class BrowserIpc {
     })
   }
 
-  private role(event: IpcMainInvokeEvent): ShellRole | null {
-    if (event.senderFrame !== event.sender.mainFrame) return null
+  private role(event: ShellRequest): ShellRole | null {
+    if (!event.isMainFrame) return null
     const shell = this.shells.get(event.sender.id)
     return shell?.webContents === event.sender ? shell.role : null
   }

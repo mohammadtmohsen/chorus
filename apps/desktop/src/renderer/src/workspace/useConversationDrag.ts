@@ -59,6 +59,7 @@ export interface ConversationDrag {
 }
 
 export function useConversationDrag(options: {
+  readonly projectId: string | null
   readonly onMove: (boxId: string, targetGroupId: string, direction: SplitDirection) => void
 }): ConversationDrag {
   const [drag, setDrag] = useState<ConversationDragState | null>(null)
@@ -116,7 +117,7 @@ export function useConversationDrag(options: {
         tab.setPointerCapture(pointerId)
         started = true
       }
-      const target = targetAt(moved.clientX, moved.clientY, groupId)
+      const target = targetAt(moved.clientX, moved.clientY, groupId, options.projectId)
       const next = {
         tabId,
         fromGroupId: groupId,
@@ -193,11 +194,17 @@ export function useConversationDrag(options: {
  * to be. `elementFromPoint` cannot go stale, and at pointer-move rates the cost
  * is not measurable against the layout the browser is doing anyway.
  */
-function targetAt(x: number, y: number, fromGroupId: string): ConversationDropTarget | null {
+export function targetAt(
+  x: number,
+  y: number,
+  fromGroupId: string,
+  projectId: string | null
+): ConversationDropTarget | null {
   const under = document.elementFromPoint(x, y)
   const column = under?.closest<HTMLElement>('.conversation-column')
   const groupId = column?.dataset['group']
   if (column === null || column === undefined || groupId === undefined) return null
+  if (projectId === null || column.dataset['project'] !== projectId) return null
 
   if (groupId === fromGroupId) return null
 

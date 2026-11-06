@@ -1,3 +1,5 @@
+import type { JournalAnswer, JournalBackend } from '../../shared/note-journal.js'
+export type { JournalAnswer, JournalBackend } from '../../shared/note-journal.js'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
   CONVERSATION_NOTE_MAX_LENGTH,
@@ -357,15 +359,6 @@ function journalOwner(raw: string): string | null {
   }
 }
 
-export type JournalAnswer =
-  | { readonly ok: true; readonly matched: boolean; readonly current: string | null }
-  | { readonly ok: false }
-
-export interface JournalBackend {
-  read(): JournalAnswer
-  compare(expected: string | null, next: string | null): JournalAnswer
-}
-
 export type JournalRead =
   | { readonly ok: true; readonly raw: string | null; readonly journal: NoteJournal | null }
   | { readonly ok: false }
@@ -398,7 +391,8 @@ export class NoteJournalSlot {
       desired === null
         ? null
         : JSON.stringify({ owner: this.owner, text: desired.text, view: desired.view })
-    if (next === null && this.seen === null && this.settled) return 'ok'
+    if (next === null && this.seen === null && this.settled && this.backend.subscribe === undefined)
+      return 'ok'
     let expected = this.seen
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const answer = this.backend.compare(expected, next)
@@ -510,6 +504,7 @@ function journalAnswer(call: () => ConversationNoteJournalResponse): JournalAnsw
 }
 
 export interface NoteApi {
+  readonly prepare?: (conversationId: string) => Promise<void>
   readonly load: (conversationId: string) => Promise<ConversationNote>
   readonly saveText: (
     conversationId: string,
@@ -524,6 +519,7 @@ export interface NoteApi {
 }
 
 const WINDOW_NOTE_API: NoteApi = {
+  prepare: (conversationId) => window.chorus.prepareConversationNoteJournal({ conversationId }),
   load: (conversationId) => window.chorus.getConversationNote({ conversationId }),
   saveText: (conversationId, text, baseRevision) =>
     window.chorus.setConversationNoteText({ conversationId, text, baseRevision }),
@@ -535,6 +531,10 @@ const WINDOW_NOTE_API: NoteApi = {
       journalAnswer(() =>
         window.chorus.compareConversationNoteJournal({ conversationId, expected, next })
       ),
+    subscribe: (listener) =>
+      window.chorus.onConversationNoteJournal((push) => {
+        if (push.conversationId === conversationId) listener()
+      }),
   }),
 }
 
@@ -549,6 +549,7 @@ export class NoteSync {
   private state: NoteState
   private readonly listeners = new Set<() => void>()
   private readonly slot: NoteJournalSlot
+  private readonly stopJournal: (() => void) | undefined
   private textTimer: ReturnType<typeof setTimeout> | null = null
   private loading = false
   private disposed = false
@@ -558,7 +559,8 @@ export class NoteSync {
     private readonly api: NoteApi = WINDOW_NOTE_API,
     owner: string = journalOwnerId()
   ) {
-    this.slot = new NoteJournalSlot(api.journal(conversationId), owner)
+    const journal = api.journal(conversationId)
+    this.slot = new NoteJournalSlot(journal, owner)
     const read = this.slot.read()
     if (read.ok) {
       this.slot.adopt(read.raw)
@@ -566,6 +568,18 @@ export class NoteSync {
     } else {
       this.state = initialNoteState(null, 'readFailed')
     }
+    this.stopJournal = journal.subscribe?.(() => {
+      this.commit()
+    })
+  }
+
+  static async open(
+    conversationId: string,
+    api: NoteApi = WINDOW_NOTE_API,
+    owner: string = journalOwnerId()
+  ): Promise<NoteSync> {
+    await api.prepare?.(conversationId)
+    return new NoteSync(conversationId, api, owner)
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -626,6 +640,24 @@ export class NoteSync {
 
   readonly retry = (): void => {
     if (this.disposed) return
+    if (this.api.prepare !== undefined) {
+      void this.api.prepare(this.conversationId).then(
+        () => {
+          this.retryPrepared()
+        },
+        () => {
+          if (this.disposed) return
+          this.state = reduceNote(this.state, { type: 'journaled', health: 'readFailed' })
+          for (const listener of this.listeners) listener()
+        }
+      )
+      return
+    }
+    this.retryPrepared()
+  }
+
+  private retryPrepared(): void {
+    if (this.disposed) return
     if (this.state.load === 'failed') this.load()
     if (this.state.journal === 'readFailed') {
       const read = this.slot.read()
@@ -641,6 +673,7 @@ export class NoteSync {
   readonly dispose = (): void => {
     if (this.disposed) return
     this.disposed = true
+    this.stopJournal?.()
     if (this.textTimer !== null) {
       clearTimeout(this.textTimer)
       this.textTimer = null
@@ -708,20 +741,22 @@ export class NoteSync {
 }
 
 const syncs = new Map<string, NoteSync>()
+const preparingSyncs = new Map<string, Promise<NoteSync>>()
 let listening = false
 
 function forgetSync(conversationId: string): void {
+  preparingSyncs.delete(conversationId)
   const sync = syncs.get(conversationId)
   if (sync === undefined) return
   syncs.delete(conversationId)
   sync.dispose()
 }
 
-function noteSync(conversationId: string): NoteSync {
+function noteSync(conversationId: string): Promise<NoteSync> {
   const known = syncs.get(conversationId)
-  if (known !== undefined) return known
-  const created = new NoteSync(conversationId)
-  syncs.set(conversationId, created)
+  if (known !== undefined) return Promise.resolve(known)
+  const pending = preparingSyncs.get(conversationId)
+  if (pending !== undefined) return pending
   if (!listening) {
     listening = true
     window.chorus.onConversationNote((push) => {
@@ -729,8 +764,30 @@ function noteSync(conversationId: string): NoteSync {
       else syncs.get(push.conversationId)?.pushed(push.note)
     })
   }
-  return created
+  const preparing = NoteSync.open(conversationId).then((created) => {
+    if (preparingSyncs.get(conversationId) !== preparing) {
+      created.dispose()
+      throw new Error()
+    }
+    syncs.set(conversationId, created)
+    return created
+  })
+  preparingSyncs.set(conversationId, preparing)
+  const finished = (): void => {
+    if (preparingSyncs.get(conversationId) === preparing) preparingSyncs.delete(conversationId)
+  }
+  void preparing.then(finished, finished)
+  return preparing
 }
+
+const WAITING_NOTE_STATE = initialNoteState(null)
+const UNPREPARED_NOTE_STATE: NoteState = {
+  ...initialNoteState(null, 'readFailed'),
+  load: 'failed',
+}
+const EMPTY_SUBSCRIBE = (): (() => void) => () => undefined
+const WAITING_SNAPSHOT = (): NoteState => WAITING_NOTE_STATE
+const UNPREPARED_SNAPSHOT = (): NoteState => UNPREPARED_NOTE_STATE
 
 export interface ConversationNoteHandle {
   readonly state: NoteState
@@ -751,23 +808,54 @@ export function useConversationNote(
   conversationId: string,
   starting: boolean
 ): ConversationNoteHandle {
-  const [sync] = useState(() => noteSync(conversationId))
-  const state = useSyncExternalStore(sync.subscribe, sync.snapshot)
+  const [attached, setAttached] = useState<{
+    readonly conversationId: string
+    readonly sync: NoteSync
+  } | null>(null)
+  const [failedConversation, setFailedConversation] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const sync = attached?.conversationId === conversationId ? attached.sync : null
+  const preparationFailed = failedConversation === conversationId
+  const state = useSyncExternalStore(
+    sync?.subscribe ?? EMPTY_SUBSCRIBE,
+    sync?.snapshot ?? (preparationFailed ? UNPREPARED_SNAPSHOT : WAITING_SNAPSHOT)
+  )
   useEffect(() => {
-    if (!starting) sync.load()
-  }, [sync, starting])
+    if (starting) return
+    let active = true
+    setFailedConversation(null)
+    void noteSync(conversationId).then(
+      (ready) => {
+        if (!active) return
+        setAttached({ conversationId, sync: ready })
+        ready.load()
+      },
+      () => {
+        if (active) setFailedConversation(conversationId)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [conversationId, starting, attempt])
   return {
     state,
-    status: noteStatus(state),
+    status: preparationFailed ? 'journalReadFailed' : noteStatus(state),
     text: noteText(state),
     view: noteView(state),
     conflict: noteConflict(state),
-    attention: noteNeedsAttention(state),
-    edit: sync.edit,
-    changeView: sync.changeView,
-    toggle: sync.toggle,
-    keepMine: sync.keepMine,
-    useSaved: sync.useSaved,
-    retry: sync.retry,
+    attention: preparationFailed || noteNeedsAttention(state),
+    edit: (text) => sync?.edit(text),
+    changeView: (view) => sync?.changeView(view),
+    toggle: () => {
+      if (sync === null && preparationFailed) setAttempt((value) => value + 1)
+      else sync?.toggle()
+    },
+    keepMine: () => sync?.keepMine(),
+    useSaved: () => sync?.useSaved(),
+    retry: () => {
+      if (sync === null) setAttempt((value) => value + 1)
+      else sync.retry()
+    },
   }
 }

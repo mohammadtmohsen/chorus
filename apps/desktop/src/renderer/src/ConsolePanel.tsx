@@ -7,6 +7,7 @@ import {
   type ConsoleLevel,
 } from '../../shared/console-ipc.js'
 import { ConsoleValueView } from './ConsoleValueView.js'
+import { onHostReconnected } from './host-actions.js'
 import {
   EMPTY_CONSOLE,
   clockOf,
@@ -30,6 +31,7 @@ export function ConsolePanel(props: {
   const { t } = useTranslation()
   const [stream, setStream] = useState<ConsoleStream>(EMPTY_CONSOLE)
   const [failure, setFailure] = useState(false)
+  const [reconnect, setReconnect] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [levels, setLevels] = useState<ReadonlySet<ConsoleLevel>>(() => new Set(LEVELS))
   const [filter, setFilter] = useState('')
@@ -40,6 +42,12 @@ export function ConsolePanel(props: {
   const pinned = useRef(true)
 
   useEffect(() => {
+    return onHostReconnected(() => {
+      setReconnect((current) => current + 1)
+    })
+  }, [])
+
+  useEffect(() => {
     if (!active) return undefined
     const link = openConsoleLink(window.chorus, projectId, {
       onStream: setStream,
@@ -48,7 +56,7 @@ export function ConsolePanel(props: {
     return () => {
       link.close()
     }
-  }, [active, projectId])
+  }, [active, projectId, reconnect])
 
   const shown = useMemo(
     () => visibleEntries(stream.entries, levels, filter),

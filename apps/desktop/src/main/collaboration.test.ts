@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import type { AgentAdapter } from '@chorus/agent-protocol'
 import { FakeAdapter, type FakeAgentSession } from '@chorus/orchestrator'
 import { AGENT_IDS, Logger, type AgentId } from '@chorus/shared'
@@ -30,7 +31,7 @@ const logged = (): string[] =>
 beforeEach(async () => {
   adapters = new Map(AGENT_IDS.map((id) => [id, new FakeAdapter({ id })]))
   runtime = ChorusRuntime.open(
-    mkdtempSync(join(tmpdir(), 'chorus-collaboration-')),
+    testHostPorts(mkdtempSync(join(tmpdir(), 'chorus-collaboration-'))),
     new Logger(),
     new Map<AgentId, AgentAdapter>(adapters)
   )

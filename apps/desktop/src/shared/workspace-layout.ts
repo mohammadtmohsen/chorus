@@ -275,6 +275,7 @@ export const WorkspaceSnapshot = z.object({
   trafficPanels: z.record(z.string(), TrafficPanelState).default({}),
   projectTerminals: z.record(z.string(), ProjectTerminalPaneState).default({}),
   collapsedBrowsers: z.record(z.string(), z.boolean()).default({}),
+  collapsedWebsites: z.record(z.string(), z.boolean()).default({}),
   rowScroll: z.record(z.string(), z.number()).default({}),
   editorWidthFractions: z.record(z.string(), z.number()).default({}),
   webTabs: WebTabsState.default(NO_WEB_TABS),
@@ -289,6 +290,7 @@ export const ProjectLayoutSlice = z.object({
   trafficPanel: TrafficPanelState.optional(),
   projectTerminal: ProjectTerminalPaneState.optional(),
   browserCollapsed: z.boolean().optional(),
+  websiteCollapsed: z.boolean().optional(),
   rowScroll: z.number().optional(),
   editorWidthFraction: z.number().optional(),
 })

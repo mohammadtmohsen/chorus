@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import type { AgentAdapter, ProgressReport } from '@chorus/agent-protocol'
 import { FakeAdapter, type FakeAgentSession } from '@chorus/orchestrator'
 import { Logger, newApprovalId, type AgentId } from '@chorus/shared'
@@ -82,7 +83,7 @@ beforeEach(async () => {
   claude = new FakeAdapter({ id: 'claude' })
   codex = new FakeAdapter({ id: 'codex' })
   runtime = ChorusRuntime.open(
-    mkdtempSync(join(tmpdir(), 'chorus-task-progress-')),
+    testHostPorts(mkdtempSync(join(tmpdir(), 'chorus-task-progress-'))),
     new Logger(),
     new Map<AgentId, AgentAdapter>([
       ['claude', claude],
@@ -400,7 +401,7 @@ describe('a hard kill', () => {
     const directory = mkdtempSync(join(tmpdir(), 'chorus-task-kill-'))
     const before = new FakeAdapter({ id: 'claude' })
     const killed = ChorusRuntime.open(
-      directory,
+      testHostPorts(directory),
       new Logger(),
       new Map<AgentId, AgentAdapter>([['claude', before]])
     )
@@ -416,7 +417,7 @@ describe('a hard kill', () => {
 
     const after = new FakeAdapter({ id: 'claude' })
     const reopened = ChorusRuntime.open(
-      directory,
+      testHostPorts(directory),
       new Logger(),
       new Map<AgentId, AgentAdapter>([['claude', after]]),
       { deferRestoredAgents: true }

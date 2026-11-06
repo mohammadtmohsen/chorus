@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import { FakeAdapter } from '@chorus/orchestrator'
 import type { AgentAdapter } from '@chorus/agent-protocol'
 import { Logger, newApprovalId, type AgentId } from '@chorus/shared'
@@ -81,7 +82,7 @@ const reply = (text: string): string => {
 
 beforeEach(async () => {
   dataPath = mkdtempSync(join(tmpdir(), 'chorus-aside-'))
-  runtime = ChorusRuntime.open(dataPath, silent, adapters())
+  runtime = ChorusRuntime.open(testHostPorts(dataPath), silent, adapters())
   const started = await runtime.startConversationIn({ agents: ['claude'], cwd: process.cwd() })
   conversationId = started.conversationId
 })
@@ -1368,7 +1369,7 @@ describe('naming a conversation', () => {
       codex: new FakeAdapter({ id: 'codex' }),
     }
     runtime = ChorusRuntime.open(
-      dataPath,
+      testHostPorts(dataPath),
       silent,
       new Map<AgentId, AgentAdapter>([
         ['claude', fakes.claude],
@@ -1702,7 +1703,7 @@ describe('naming a conversation', () => {
     try {
       await runtime.close()
     } finally {
-      runtime = ChorusRuntime.open(dataPath, silent, new Map())
+      runtime = ChorusRuntime.open(testHostPorts(dataPath), silent, new Map())
     }
   })
 

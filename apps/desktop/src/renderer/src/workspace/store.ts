@@ -342,6 +342,7 @@ export interface WorkspaceActions {
   setTrafficCollapsed: (projectId: string, collapsed: boolean) => void
   setProjectTerminalCollapsed: (projectId: string, collapsed: boolean) => void
   setBrowserCollapsed: (projectId: string, collapsed: boolean) => void
+  setWebsiteCollapsed: (projectId: string, collapsed: boolean) => void
   addProjectShell: (projectId: string) => string
   removeProjectShell: (projectId: string, id: string) => void
   setRowScroll: (projectId: string, left: number) => void
@@ -495,6 +496,7 @@ function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
     trafficPanels: state.trafficPanels,
     projectTerminals: state.projectTerminals,
     collapsedBrowsers: state.collapsedBrowsers,
+    collapsedWebsites: state.collapsedWebsites,
     rowScroll: state.rowScroll,
     editorWidthFractions: state.editorWidthFractions,
     terminals: state.terminals,
@@ -1130,6 +1132,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       setBrowserCollapsed: (projectId, collapsed) => {
         set((state) => ({
           collapsedBrowsers: { ...state.collapsedBrowsers, [projectId]: collapsed },
+        }))
+      },
+      setWebsiteCollapsed: (projectId, collapsed) => {
+        set((state) => ({
+          collapsedWebsites: { ...state.collapsedWebsites, [projectId]: collapsed },
         }))
       },
       addProjectShell: (projectId) => {

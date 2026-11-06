@@ -870,11 +870,12 @@ describe('project:close', () => {
       .spyOn(workbench, 'prepareWorkbenchProjectClose')
       .mockReturnValue(preparation.promise)
     const closeEditor = vi.spyOn(workbench, 'closeWorkbenchProject').mockReturnValue(editor.promise)
-    const listed = vi
-      .spyOn(windows, 'shellWindows')
-      .mockReturnValue([
-        { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow,
-      ])
+    const listed = vi.spyOn(windows, 'shellWindows').mockReturnValue([
+      {
+        isDestroyed: () => false,
+        webContents: { id: 1, isDestroyed: () => false, send },
+      } as unknown as BrowserWindow,
+    ])
     const closeProject = vi.fn((_id: string, cleanup: () => Promise<void>) =>
       Promise.all([agents.promise, cleanup()]).then(() => undefined)
     )
@@ -919,11 +920,12 @@ describe('project:close', () => {
       .spyOn(workbench, 'prepareWorkbenchProjectClose')
       .mockResolvedValue(undefined)
     const closeEditor = vi.spyOn(workbench, 'closeWorkbenchProject').mockReturnValue(editor.promise)
-    const listed = vi
-      .spyOn(windows, 'shellWindows')
-      .mockReturnValue([
-        { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow,
-      ])
+    const listed = vi.spyOn(windows, 'shellWindows').mockReturnValue([
+      {
+        isDestroyed: () => false,
+        webContents: { id: 1, isDestroyed: () => false, send },
+      } as unknown as BrowserWindow,
+    ])
     const runtime = {
       projects: { get: () => ({ host: 'local', canonicalRoot: '/tmp/repo' }) },
       closeProject: async (_id: string, cleanup: () => Promise<void>) => {

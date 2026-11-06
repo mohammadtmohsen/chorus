@@ -1,7 +1,3 @@
-import { randomUUID } from 'node:crypto'
-import { realpathSync, statSync } from 'node:fs'
-import { delimiter, isAbsolute, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { LOCAL_HOST } from '@chorus/event-store'
 import { ownProcessTree, type OwnedProcessTree } from '@chorus/shared/process-tree'
 import {
@@ -17,73 +13,75 @@ import {
   type Session,
   type WebContents,
 } from 'electron'
+import { randomUUID } from 'node:crypto'
+import { delimiter, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
-  WORKBENCH_CONNECTION_CHANNEL,
-  WORKBENCH_PROCESS_REPORT_CHANNEL,
-  WORKBENCH_PROCESS_CLOSE_CHANNEL,
-  WORKBENCH_PROCESS_CLOSE_RESULT_CHANNEL,
-  WORKBENCH_FOCUS_CHANNEL,
-  WORKBENCH_TERMINAL_ENV_CHANNEL,
-  WORKBENCH_SHELL_CHANNELS,
-  WORKBENCH_SHELL_CONTRACT,
-  WORKBENCH_CONTEXT_CHANNEL,
-  WORKBENCH_EDIT_CHANNEL,
-  WORKBENCH_SNAPSHOT_CHANNEL,
-  WORKBENCH_SNAPSHOT_RESULT_CHANNEL,
-  WORKBENCH_PREVIEW_SELECTION_CHANNEL,
+  PreviewSelection,
+  WORKBENCH_ACTIVITY_BAR_PUSH_CHANNEL,
+  WORKBENCH_ACTIVITY_BAR_REPORT_CHANNEL,
   WORKBENCH_ASK_DIFF_CHANNEL,
   WORKBENCH_ASK_DIFF_RESULT_CHANNEL,
-  WORKBENCH_EDIT_RESULT_CHANNEL,
-  WORKBENCH_REVEAL_CHANNEL,
-  WORKBENCH_REVEAL_RESULT_CHANNEL,
-  WorkbenchContext,
-  PreviewSelection,
-  WORKBENCH_CLIPBOARD_READ_CHANNEL,
-  WORKBENCH_COMPLETION_CHANNEL,
-  WORKBENCH_COMPLETION_CANCEL_CHANNEL,
-  WORKBENCH_EDITOR_REPORT_CHANNEL,
-  WORKBENCH_COMPLETION_PROBE_CHANNEL,
   WORKBENCH_BROWSER_EXTENSIONS_CHANGED_CHANNEL,
   WORKBENCH_BROWSER_EXTENSIONS_READ_CHANNEL,
   WORKBENCH_BROWSER_EXTENSIONS_WRITE_CHANNEL,
+  WORKBENCH_CLIPBOARD_READ_CHANNEL,
+  WORKBENCH_COMPLETION_CANCEL_CHANNEL,
+  WORKBENCH_COMPLETION_CHANNEL,
+  WORKBENCH_COMPLETION_PROBE_CHANNEL,
+  WORKBENCH_CONNECTION_CHANNEL,
+  WORKBENCH_CONTEXT_CHANNEL,
+  WORKBENCH_EDITOR_REPORT_CHANNEL,
+  WORKBENCH_EDIT_CHANNEL,
+  WORKBENCH_EDIT_RESULT_CHANNEL,
+  WORKBENCH_FOCUS_CHANNEL,
+  WORKBENCH_LAYOUT_CHANNEL,
+  WORKBENCH_PREVIEW_SELECTION_CHANNEL,
+  WORKBENCH_PROCESS_CLOSE_CHANNEL,
+  WORKBENCH_PROCESS_CLOSE_RESULT_CHANNEL,
+  WORKBENCH_PROCESS_REPORT_CHANNEL,
+  WORKBENCH_REVEAL_CHANNEL,
+  WORKBENCH_REVEAL_RESULT_CHANNEL,
+  WORKBENCH_ROW_REQUEST_CHANNEL,
+  WORKBENCH_ROW_REVEAL_PUSH_CHANNEL,
+  WORKBENCH_ROW_SCROLL_PUSH_CHANNEL,
+  WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL,
   WORKBENCH_SECRET_DELETE_CHANNEL,
   WORKBENCH_SECRET_READ_CHANNEL,
   WORKBENCH_SECRET_WRITE_CHANNEL,
+  WORKBENCH_SHELL_CHANNELS,
+  WORKBENCH_SHELL_CONTRACT,
+  WORKBENCH_SNAPSHOT_CHANNEL,
+  WORKBENCH_SNAPSHOT_RESULT_CHANNEL,
   WORKBENCH_STORAGE_CHANGED_CHANNEL,
   WORKBENCH_STORAGE_FLUSH_CHANNEL,
   WORKBENCH_STORAGE_FLUSH_RESULT_CHANNEL,
   WORKBENCH_STORAGE_READ_CHANNEL,
   WORKBENCH_STORAGE_WRITE_CHANNEL,
+  WORKBENCH_TERMINAL_ENV_CHANNEL,
   WORKBENCH_URL_CHANNEL,
   WORKBENCH_USER_SETTINGS_READ_CHANNEL,
   WORKBENCH_USER_SETTINGS_WRITE_CHANNEL,
-  WORKBENCH_LAYOUT_CHANNEL,
-  WORKBENCH_ACTIVITY_BAR_REPORT_CHANNEL,
-  WORKBENCH_ACTIVITY_BAR_PUSH_CHANNEL,
-  WORKBENCH_ROW_REQUEST_CHANNEL,
-  WORKBENCH_ROW_REVEAL_PUSH_CHANNEL,
-  WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL,
-  WORKBENCH_ROW_SCROLL_PUSH_CHANNEL,
   WorkbenchActivityBarWidth,
+  WorkbenchContext,
   WorkbenchRowScrollDelta,
   remotePath,
+  type CompletionReply,
   type WorkbenchActivityBarPush,
-  type WorkbenchRowRevealPush,
-  type WorkbenchRowScrollPush,
-  type WorkbenchConnection,
-  type WorkbenchEditRequest,
   type WorkbenchAskDiffRequest,
   type WorkbenchAskDiffResult,
+  type WorkbenchConnection,
+  type WorkbenchEditRequest,
   type WorkbenchEditResult,
-  type WorkbenchRevealResult,
-  type WorkbenchSnapshotResult,
   type WorkbenchRect,
+  type WorkbenchRevealResult,
+  type WorkbenchRowRevealPush,
+  type WorkbenchRowScrollPush,
   type WorkbenchShellResponse,
+  type WorkbenchSnapshotResult,
   type WorkbenchTarget,
   type WorkbenchTerminalEnv,
-  type CompletionReply,
 } from '../shared/workbench-ipc.js'
-import { acquireRemoteWorkbenchRuntime, releaseRemoteWorkbenchRuntime } from './remote-workbench.js'
 import {
   completionConfigured,
   isCompletionPayload,
@@ -91,34 +89,35 @@ import {
   recordEditorOutcome,
   requestCompletion,
 } from './completion-client.js'
-import { applyWorkbenchContentSecurityPolicy, lockDownNavigation } from './security.js'
 import { READ_PREVIEW_SELECTION } from './preview-selection.js'
+import { acquireRemoteWorkbenchRuntime, releaseRemoteWorkbenchRuntime } from './remote-workbench.js'
 import { currentScale, onScaleChange } from './scale.js'
+import { applyWorkbenchContentSecurityPolicy, lockDownNavigation } from './security.js'
 import { isShellSender } from './shell-windows.js'
+import {
+  readWorkbenchBrowserExtensions,
+  writeWorkbenchBrowserExtensions,
+} from './workbench-browser-extensions.js'
 import {
   acquireWorkbenchRuntime,
   releaseWorkbenchRuntime,
-  workbenchHostLog,
   serverDataDir,
   stopIdleWorkbenchHost,
+  workbenchHostLog,
   workbenchServerPid,
   type WorkbenchRuntime,
 } from './workbench-host.js'
+import {
+  forgetWorkbenchProcessOwner,
+  readWorkbenchProcessOwner,
+} from './workbench-process-owner.js'
 import {
   deleteWorkbenchSecret,
   readWorkbenchSecret,
   writeWorkbenchSecret,
 } from './workbench-secrets.js'
 import { applyWorkbenchStorageDelta, readWorkbenchStorage } from './workbench-storage.js'
-import {
-  readWorkbenchProcessOwner,
-  forgetWorkbenchProcessOwner,
-} from './workbench-process-owner.js'
 import { readWorkbenchUserSettings, writeWorkbenchUserSettings } from './workbench-user-settings.js'
-import {
-  readWorkbenchBrowserExtensions,
-  writeWorkbenchBrowserExtensions,
-} from './workbench-browser-extensions.js'
 
 /**
  * The isolated workbench surfaces of preflight §4.1a.
@@ -157,10 +156,8 @@ import {
  */
 export const WORKBENCH_PARTITION = 'chorus-workbench'
 
-export interface WorkbenchPlace {
-  readonly host: string
-  readonly root: string
-}
+import { approveProjectRoot, type WorkbenchPlace } from './project-root.js'
+export { approveProjectRoot, type WorkbenchPlace } from './project-root.js'
 
 interface Surface {
   readonly id: string
@@ -330,58 +327,6 @@ function workbenchEntry(devServerUrl: string | undefined): WorkbenchEntry {
     return { href: pathToFileURL(file).href, file }
   }
   return { href: `${devServerUrl}/workbench.html`, file: null }
-}
-
-/**
- * What the person picked, canonicalised — and this is now the *only* place a
- * string becomes a project root.
- *
- * It used to be handed the renderer's own string, which is where the defect
- * lived: canonicalisation makes a path well-formed, not permitted, so "absolute,
- * exists, is a directory" admitted every directory on the disk to anything that
- * could reach the channel. The caller here is main's own chooser, so the question
- * this answers is no longer "may the renderer open this?" but "which tree did the
- * person actually pick?" — and that still has to be settled, because in step 2
- * the answer becomes the REH's `--folder`, i.e. the root a server process is
- * pointed at:
- *
- *  - **Absolute.** A relative path is resolved against *main's* current working
- *    directory, which is whatever launched the app — Finder gives `/`. The root
- *    would then be a directory nobody named.
- *  - **Canonical.** `realpathSync` resolves every symlink, every `..` and the
- *    trailing slash. Without it a symlink is a second name for a tree, so the
- *    same project can be opened twice under two spellings — and a later
- *    per-project refcount, cache key or storage path keyed on the string would
- *    count them as two, which is the shared-REH lease of §5.4 pointed at the
- *    wrong number.
- *  - **A directory that exists.** `realpathSync` already refuses a path that
- *    does not, and the `stat` refuses a file. A surface rooted at a file would
- *    fail later, further in, in the workbench's own startup.
- *
- * What bounds *which* directories are openable is not here and cannot be: it is
- * the chooser above it, one dialog per root, and the grant that dialog mints. A
- * further product rule — a durable set of projects the person has adopted — is
- * ProjectService's, which is why the second arm of `WorkbenchTarget` exists.
- */
-export function approveProjectRoot(proposed: string): string {
-  if (!isAbsolute(proposed)) {
-    throw new Error(`A workbench project root must be an absolute path: ${proposed}`)
-  }
-
-  let canonical: string
-  try {
-    canonical = realpathSync(proposed)
-  } catch {
-    // Deliberately not the OS error: it distinguishes "no such directory" from
-    // "no permission to look", which answers a question the renderer did not
-    // earn the right to ask.
-    throw new Error(`No such workbench project root: ${proposed}`)
-  }
-
-  if (!statSync(canonical).isDirectory()) {
-    throw new Error(`A workbench project root must be a directory: ${proposed}`)
-  }
-  return canonical
 }
 
 /**

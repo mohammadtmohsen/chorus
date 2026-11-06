@@ -160,6 +160,7 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   trafficPanels: {},
   projectTerminals: {},
   collapsedBrowsers: {},
+  collapsedWebsites: {},
   rowScroll: {},
   editorWidthFractions: {},
   webTabs: NO_WEB_TABS,
@@ -182,6 +183,7 @@ export function sliceOf(workspace: WorkspaceSnapshot, projectId: string): Projec
     trafficPanel: workspace.trafficPanels[projectId],
     projectTerminal: workspace.projectTerminals[projectId],
     browserCollapsed: workspace.collapsedBrowsers[projectId],
+    websiteCollapsed: workspace.collapsedWebsites[projectId],
     rowScroll: workspace.rowScroll[projectId],
     editorWidthFraction: workspace.editorWidthFractions[projectId],
   }
@@ -206,6 +208,7 @@ export function mergeSlice(
     ),
     projectTerminals: withEntry(workspace.projectTerminals, projectId, slice.projectTerminal),
     collapsedBrowsers: withEntry(workspace.collapsedBrowsers, projectId, slice.browserCollapsed),
+    collapsedWebsites: withEntry(workspace.collapsedWebsites, projectId, slice.websiteCollapsed),
     rowScroll: withEntry(workspace.rowScroll, projectId, slice.rowScroll),
     editorWidthFractions: withEntry(
       workspace.editorWidthFractions,
@@ -1163,6 +1166,11 @@ export function moveBox(
 ): ConversationArrangement {
   const box = arrangement.panes[boxId]
   if (box === undefined || boxId === targetPaneId || arrangement.layout === null) return arrangement
+  if (
+    arrangement.panes[targetPaneId] === undefined ||
+    !leafPaneIds(arrangement.layout).includes(targetPaneId)
+  )
+    return arrangement
   const lifted = normalizeTree({
     ...arrangement,
     panes: { ...arrangement.panes, [boxId]: { ...box, tabs: [] } },

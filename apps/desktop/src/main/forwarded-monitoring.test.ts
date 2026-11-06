@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import type { AgentAdapter, ProgressReport, TranscriptRequest } from '@chorus/agent-protocol'
 import { FakeAdapter, type FakeAgentSession } from '@chorus/orchestrator'
 import { Logger, type AgentId } from '@chorus/shared'
@@ -33,7 +34,11 @@ let parentSession: FakeAgentSession
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 const open = (adapter: FakeAdapter): ChorusRuntime =>
-  ChorusRuntime.open(directory, new Logger(), new Map<AgentId, AgentAdapter>([['claude', adapter]]))
+  ChorusRuntime.open(
+    testHostPorts(directory),
+    new Logger(),
+    new Map<AgentId, AgentAdapter>([['claude', adapter]])
+  )
 
 const sessionSaying = (adapter: FakeAdapter, text: string): FakeAgentSession => {
   const found = adapter.sessions.findLast(

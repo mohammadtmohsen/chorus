@@ -1,4 +1,5 @@
 import { flushSync } from 'react-dom'
+import { insideWebsiteSurface } from '../website-surface.js'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
   BOX_WIDTH,
@@ -6,7 +7,7 @@ import {
   PROJECT_TERMINAL_WIDTH,
   TRAFFIC_WIDTH,
 } from '../../../shared/workspace-layout.js'
-import { horizontalRowWheel } from '../workbench/viewport.js'
+import { horizontalRowWheel } from './viewport.js'
 import { clampEditorWidth, pushDivider } from './layout.js'
 
 const TAB_STRIPS = '.conversation-dock-tabs, .terminal-tabs'
@@ -22,6 +23,7 @@ function stripCanMove(strip: HTMLElement, delta: number): boolean {
 
 export function routeRowWheel(row: HTMLElement): () => void {
   const onWheel = (event: WheelEvent): void => {
+    if (insideWebsiteSurface(event.target)) return
     if (event.defaultPrevented) return
     const delta = horizontalRowWheel(event, row.clientWidth)
     if (delta === 0) return

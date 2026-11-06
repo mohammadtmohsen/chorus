@@ -1,3 +1,4 @@
+import type { WorkbenchGeometry } from '../host-views.js'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { WorkbenchRect } from '../../../shared/workbench-ipc.js'
@@ -56,10 +57,7 @@ const measure = (element: HTMLElement): WorkbenchRect => {
   }
 }
 
-export interface WorkbenchGeometry {
-  readonly rect: WorkbenchRect
-  readonly layoutWidth: number | undefined
-}
+export type { WorkbenchGeometry } from '../host-views.js'
 
 const sameGeometry = (left: WorkbenchGeometry, right: WorkbenchGeometry): boolean =>
   left.layoutWidth === right.layoutWidth &&
