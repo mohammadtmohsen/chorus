@@ -71,6 +71,7 @@ describe('open project persistence', () => {
         collapsedWebsites: {},
         rowScroll: {},
         editorWidthFractions: {},
+        consoleWidths: {},
         webTabs: NO_WEB_TABS,
       },
     })

@@ -3,6 +3,7 @@ import { insideWebsiteSurface } from '../website-surface.js'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
   BOX_WIDTH,
+  CONSOLE_WIDTH,
   EDITOR_WIDTH,
   PROJECT_TERMINAL_WIDTH,
   TRAFFIC_WIDTH,
@@ -104,9 +105,10 @@ export interface RowWidths {
   readonly boxes: number[]
   readonly traffic: number | null
   readonly terminal: number | null
+  readonly console: number | null
 }
 
-type RowItemKind = 'box' | 'traffic' | 'terminal' | 'fixed'
+type RowItemKind = 'box' | 'traffic' | 'terminal' | 'console' | 'fixed'
 
 interface RowItems {
   readonly kinds: readonly RowItemKind[]
@@ -119,6 +121,7 @@ const isSash = (element: Element): boolean => element.classList.contains('conver
 
 function rowItemKind(element: Element): RowItemKind {
   if (element.getAttribute('data-collapsed') === 'true') return 'fixed'
+  if (element.classList.contains('console-box')) return 'console'
   if (element.classList.contains('conversation-slot')) return 'box'
   if (element.classList.contains('traffic-box')) return 'traffic'
   if (element.classList.contains('project-terminal-box')) return 'terminal'
@@ -141,6 +144,7 @@ function rowItems(sash: HTMLElement): RowItems | null {
     if (kind === 'box') return BOX_WIDTH.min
     if (kind === 'traffic') return declaredMinimum(items[at], TRAFFIC_WIDTH.min)
     if (kind === 'terminal') return declaredMinimum(items[at], PROJECT_TERMINAL_WIDTH.min)
+    if (kind === 'console') return CONSOLE_WIDTH.min
     return frozen[at] ?? 0
   })
   const index = children.slice(0, children.indexOf(sash)).filter((child) => !isSash(child)).length
@@ -150,10 +154,12 @@ function rowItems(sash: HTMLElement): RowItems | null {
 function rowWidths(items: RowItems, pushed: readonly number[]): RowWidths {
   const trafficAt = items.kinds.indexOf('traffic')
   const terminalAt = items.kinds.indexOf('terminal')
+  const consoleAt = items.kinds.indexOf('console')
   return {
     boxes: pushed.filter((_, at) => items.kinds[at] === 'box'),
     traffic: trafficAt < 0 ? null : (pushed[trafficAt] ?? null),
     terminal: terminalAt < 0 ? null : (pushed[terminalAt] ?? null),
+    console: consoleAt < 0 ? null : (pushed[consoleAt] ?? null),
   }
 }
 

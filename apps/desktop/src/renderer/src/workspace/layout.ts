@@ -2,6 +2,7 @@ import type { WorkbenchRect } from '../../../shared/workbench-ipc.js'
 import { BrowserWebTabId } from '../../../shared/browser-ipc.js'
 import {
   BOX_WIDTH,
+  CONSOLE_WIDTH,
   EDITOR_WIDTH,
   MAIN_PROJECT_SHELL,
   NO_WEB_TABS,
@@ -163,6 +164,7 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   collapsedWebsites: {},
   rowScroll: {},
   editorWidthFractions: {},
+  consoleWidths: {},
   webTabs: NO_WEB_TABS,
 }
 
@@ -186,6 +188,7 @@ export function sliceOf(workspace: WorkspaceSnapshot, projectId: string): Projec
     websiteCollapsed: workspace.collapsedWebsites[projectId],
     rowScroll: workspace.rowScroll[projectId],
     editorWidthFraction: workspace.editorWidthFractions[projectId],
+    consoleWidth: workspace.consoleWidths[projectId],
   }
 }
 
@@ -215,6 +218,7 @@ export function mergeSlice(
       projectId,
       slice.editorWidthFraction
     ),
+    consoleWidths: withEntry(workspace.consoleWidths, projectId, slice.consoleWidth),
   }
 }
 
@@ -418,6 +422,12 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
           return fraction === undefined ? [] : [[projectId, fraction]]
         }
       )
+    ),
+    consoleWidths: Object.fromEntries(
+      Object.entries(workspace.consoleWidths).map(([projectId, width]) => [
+        projectId,
+        clampConsoleWidth(width),
+      ])
     ),
     /*
      * Clamped on the way through, per project. A snapshot edited by hand or
@@ -967,6 +977,11 @@ export function clampTrafficWidth(width: number): number {
   return Math.round(Math.max(TRAFFIC_WIDTH.min, width))
 }
 
+export function clampConsoleWidth(width: number): number {
+  if (!Number.isFinite(width)) return CONSOLE_WIDTH.default
+  return Math.round(Math.max(CONSOLE_WIDTH.min, width))
+}
+
 export function normalizeTrafficPanel(panel: TrafficPanelState): TrafficPanelState {
   return {
     ...panel,
@@ -1310,6 +1325,11 @@ export function reconcileWorkspace(
     ),
     editorWidthFractions: Object.fromEntries(
       Object.entries(workspace.editorWidthFractions).filter(([projectId]) =>
+        allowedProjects.has(projectId)
+      )
+    ),
+    consoleWidths: Object.fromEntries(
+      Object.entries(workspace.consoleWidths).filter(([projectId]) =>
         allowedProjects.has(projectId)
       )
     ),

@@ -37,6 +37,7 @@ import {
 } from './layout.js'
 import {
   useCollapsedBrowsers,
+  useConsoleWidth,
   useConversationGroups,
   useEditorWidthFraction,
   usePane,
@@ -287,6 +288,7 @@ export function EditorPane(
   const terminalWidth = terminalCollapsed
     ? COLLAPSED_TOOL_WIDTH
     : projectTerminalWidth(terminalPane)
+  const consoleWidth = useConsoleWidth(projectId)
   const browserCollapsed = projectId !== null && collapsedBrowsers[projectId] === true
   const websiteCollapsed = projectId !== null && collapsedWebsites[projectId] === true
   const trafficBodyId = useId()
@@ -304,6 +306,7 @@ export function EditorPane(
     setConversationWidths,
     resetProjectWidths,
     setEditorWidthFraction,
+    setConsoleWidth,
     setRowScroll,
     setTrafficWidth,
     setProjectTerminalWidth,
@@ -360,6 +363,7 @@ export function EditorPane(
     setConversationWidths(id, row.boxes)
     if (row.traffic !== null) setTrafficWidth(id, row.traffic)
     if (row.terminal !== null) setProjectTerminalWidth(id, row.terminal)
+    if (row.console !== null) setConsoleWidth(id, row.console)
   }
   const pushRow = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (projectId === null) return
@@ -732,10 +736,18 @@ export function EditorPane(
               <>
                 {rowSash}
                 <section
-                  className="browser-box"
+                  className={
+                    capabilities.streamedBrowser ? 'browser-box console-box' : 'browser-box'
+                  }
                   data-collapsed={browserCollapsed}
                   style={{
-                    flex: `0 0 ${String(browserCollapsed ? COLLAPSED_BROWSER_WIDTH : rowWidth)}px`,
+                    flex: `0 0 ${String(
+                      browserCollapsed
+                        ? COLLAPSED_BROWSER_WIDTH
+                        : capabilities.streamedBrowser
+                          ? consoleWidth
+                          : rowWidth
+                    )}px`,
                   }}
                 >
                   {pane.tabs.map((id) => (
