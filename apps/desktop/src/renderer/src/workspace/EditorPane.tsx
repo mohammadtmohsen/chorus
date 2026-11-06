@@ -11,6 +11,7 @@ import {
 import type { SessionInfo } from '../Session.js'
 import { BrowserPanel } from '../BrowserPanel.js'
 import { BrowserScreencast } from '../BrowserScreencast.js'
+import type { BrowserResponse } from '../../../shared/browser-ipc.js'
 import { ProjectTerminalPane } from '../ProjectTerminalPane.js'
 import { TrafficPanel, type TrafficTerminalOption } from '../TrafficPanel.js'
 import type { WorkbenchGeometry } from '../host-views.js'
@@ -188,17 +189,20 @@ export function EditorPane(
   const collapsedBrowsers = useCollapsedBrowsers()
   const collapsedWebsites = useWorkspaceStore((state) => state.collapsedWebsites)
   const [browserLinks, setBrowserLinks] = useState<
-    Record<string, { id: string | null; revision: number }>
+    Record<string, { attachment: BrowserResponse<'browser:attach'> | null; revision: number }>
   >({})
-  const reportBrowserId = useCallback((id: string, browserId: string | null): void => {
-    setBrowserLinks((current) => ({
-      ...current,
-      [id]: {
-        id: browserId,
-        revision: (current[id]?.revision ?? 0) + (browserId === null ? 0 : 1),
-      },
-    }))
-  }, [])
+  const reportBrowserAttached = useCallback(
+    (id: string, attachment: BrowserResponse<'browser:attach'> | null): void => {
+      setBrowserLinks((current) => ({
+        ...current,
+        [id]: {
+          attachment,
+          revision: (current[id]?.revision ?? 0) + (attachment === null ? 0 : 1),
+        },
+      }))
+    },
+    []
+  )
   const hasPane = pane !== undefined
   useLayoutEffect(() => {
     const element = content.current
@@ -744,7 +748,10 @@ export function EditorPane(
                       markTouched={markRowTouched}
                       onReveal={revealInRow}
                       {...(capabilities.streamedBrowser
-                        ? { onBrowserId: reportBrowserId, onRevealWebsite: revealWebsite }
+                        ? {
+                            onBrowserAttached: reportBrowserAttached,
+                            onRevealWebsite: revealWebsite,
+                          }
                         : {})}
                       onToggleCollapsed={() => {
                         flushSync(() => {
@@ -771,10 +778,13 @@ export function EditorPane(
                   {pane.tabs.map((id) => (
                     <BrowserScreencast
                       key={`${id}:${String(browserLinks[id]?.revision ?? 0)}`}
-                      browserId={browserLinks[id]?.id ?? null}
+                      attachment={browserLinks[id]?.attachment ?? null}
                       selected={id === projectId && !webShowing}
                       collapsed={collapsedWebsites[id] === true}
                       row={scroller}
+                      onReveal={() => {
+                        revealWebsite(id)
+                      }}
                       onToggleCollapsed={() => {
                         markRowTouched(id)
                         flushSync(() => {

@@ -1072,6 +1072,8 @@
     "toggle": "Console",
     "toggleLabel": "Show or hide this page's Console",
     "title": "Console",
+    "expand": "Expand Console",
+    "collapse": "Shrink Console to 100px",
     "levels": "Show levels",
     "level": {
       "error": "Errors",
@@ -1362,7 +1364,8 @@
     "surface": "Website page",
     "expand": "Expand website",
     "collapse": "Collapse website",
-    "empty": "Enter an address in the Browser box to load a page here.",
+    "empty": "Enter an address above to load a page here.",
+    "loading": "Loading page…",
     "dialog": {
       "alert": "Message from the page",
       "confirm": "The page asks you to confirm",

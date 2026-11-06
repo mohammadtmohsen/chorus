@@ -2,17 +2,21 @@ import { Fragment, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useBrowserScreencast } from './useBrowserScreencast.js'
+import { BrowserToolbar } from './BrowserToolbar.js'
+import type { BrowserResponse } from '../../shared/browser-ipc.js'
 import { nextEnabled, placeEditor, WEBSITE_SURFACE_ATTRIBUTE } from './website-surface.js'
 
 export function BrowserScreencast(props: {
-  readonly browserId: string | null
+  readonly attachment: BrowserResponse<'browser:attach'> | null
   readonly selected: boolean
   readonly collapsed: boolean
   readonly row: RefObject<HTMLElement | null>
   readonly onToggleCollapsed: () => void
+  readonly onReveal: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const view = useBrowserScreencast(props.browserId, props.selected && !props.collapsed, props.row)
+  const browserId = props.attachment?.browserId ?? null
+  const view = useBrowserScreencast(props.attachment, props.selected && !props.collapsed, props.row)
   const menuId = useId()
   const menu = useRef<HTMLUListElement | null>(null)
   const promptInput = useRef<HTMLInputElement | null>(null)
@@ -108,25 +112,25 @@ export function BrowserScreencast(props: {
 
   const choose = (index: number): void => {
     const prompt = view.select
-    if (prompt === null || props.browserId === null || selectToken.current !== prompt.token) return
+    if (prompt === null || browserId === null || selectToken.current !== prompt.token) return
     if (index !== -1 && (prompt.options[index] === undefined || prompt.options[index].disabled))
       return
     selectToken.current = null
     view.setSelect(null)
     void window.chorus
-      .chooseBrowserSelect({ browserId: props.browserId, token: prompt.token, index })
+      .chooseBrowserSelect({ browserId: browserId, token: prompt.token, index })
       .catch(() => undefined)
     restoreEditor()
   }
 
   const reply = (accept: boolean): void => {
     const prompt = view.dialog
-    if (prompt === null || props.browserId === null || dialogToken.current !== prompt.token) return
+    if (prompt === null || browserId === null || dialogToken.current !== prompt.token) return
     dialogToken.current = null
     view.setDialog(null)
     void window.chorus
       .answerBrowserDialog({
-        browserId: props.browserId,
+        browserId: browserId,
         token: prompt.token,
         accept,
         ...(prompt.type === 'prompt' && accept ? { text: answer } : {}),
@@ -137,17 +141,37 @@ export function BrowserScreencast(props: {
   return (
     <div className="website-panel" hidden={!props.selected} data-collapsed={props.collapsed}>
       <header className="website-header">
-        <span className="website-title">{t('website.title')}</span>
-        <button
-          type="button"
-          className="website-collapse"
-          aria-expanded={!props.collapsed}
-          aria-label={props.collapsed ? t('website.expand') : t('website.collapse')}
-          title={props.collapsed ? t('website.expand') : t('website.collapse')}
-          onClick={props.onToggleCollapsed}
-        >
-          <span aria-hidden="true">{props.collapsed ? '▸' : '◂'}</span>
-        </button>
+        <div className="website-heading">
+          <span className="website-title">
+            {view.state !== null && view.state.title !== '' ? view.state.title : t('website.title')}
+          </span>
+          <button
+            type="button"
+            className="website-collapse"
+            aria-expanded={!props.collapsed}
+            aria-label={props.collapsed ? t('website.expand') : t('website.collapse')}
+            title={props.collapsed ? t('website.expand') : t('website.collapse')}
+            onClick={props.onToggleCollapsed}
+          >
+            <span aria-hidden="true">{props.collapsed ? '▸' : '◂'}</span>
+          </button>
+        </div>
+        {!props.collapsed && (
+          <BrowserToolbar
+            browserId={browserId}
+            currentBrowserId={view.currentBrowserId}
+            state={view.state}
+            favorites={view.favorites}
+            settings={view.settings}
+            notice={view.notice}
+            native={false}
+            showLoadError={false}
+            onState={view.setState}
+            onFavorites={view.setFavorites}
+            onNotice={view.setNotice}
+            onReveal={props.onReveal}
+          />
+        )}
       </header>
       <div className="website-stage" {...{ [WEBSITE_SURFACE_ATTRIBUTE]: '' }}>
         <div
@@ -186,8 +210,11 @@ export function BrowserScreencast(props: {
             }}
             onBlur={view.releaseHeld}
           />
-          {view.frame === null ? (
-            <p className="website-placeholder">{t('website.empty')}</p>
+          {view.state?.error != null || view.frame === null ? (
+            <p className="website-placeholder" role="status">
+              {view.state?.error?.description ??
+                t(view.state?.url != null ? 'website.loading' : 'website.empty')}
+            </p>
           ) : (
             <img className="website-frame" src={view.frame.url} alt="" draggable={false} />
           )}

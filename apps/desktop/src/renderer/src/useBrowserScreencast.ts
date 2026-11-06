@@ -5,6 +5,9 @@ import type {
   BrowserRequest,
   BrowserSelectPrompt,
   BrowserDialogPrompt,
+  BrowserResponse,
+  BrowserState,
+  BrowserFavorite,
 } from '../../shared/browser-ipc.js'
 import {
   buttonOf,
@@ -34,10 +37,17 @@ interface QueuedInput {
 }
 
 export function useBrowserScreencast(
-  browserId: string | null,
+  attachment: BrowserResponse<'browser:attach'> | null,
   selected: boolean,
   row: RefObject<HTMLElement | null>
 ) {
+  const browserId = attachment?.browserId ?? null
+  const currentBrowserId = useRef(browserId)
+  const [state, setState] = useState<BrowserState | null>(attachment?.state ?? null)
+  const [favorites, setFavorites] = useState<readonly BrowserFavorite[]>(
+    attachment?.favorites ?? []
+  )
+  const [notice, setNotice] = useState<string | null>(null)
   const surface = useRef<HTMLDivElement | null>(null)
   const editor = useRef<HTMLTextAreaElement | null>(null)
   const [instance] = useState(() => crypto.randomUUID())
@@ -63,6 +73,13 @@ export function useBrowserScreencast(
   const visible = selected && intersecting
 
   useLayoutEffect(() => {
+    currentBrowserId.current = browserId
+    return () => {
+      currentBrowserId.current = null
+    }
+  }, [browserId])
+
+  useLayoutEffect(() => {
     shownFrame.current = frame
     if (frame !== null) void window.chorus.ackBrowserFrame(frame.receipt).catch(() => undefined)
   }, [frame])
@@ -80,7 +97,10 @@ export function useBrowserScreencast(
     setFrame(null)
     setSelect(null)
     setDialog(null)
-  }, [browserId, cancelDecode])
+    setState(attachment?.state ?? null)
+    setFavorites(attachment?.favorites ?? [])
+    setNotice(null)
+  }, [attachment, cancelDecode])
 
   useEffect(() => {
     const node = surface.current
@@ -161,13 +181,17 @@ export function useBrowserScreencast(
         setDialog((previous) =>
           previous?.token === pushed.dialog?.token ? previous : pushed.dialog
         )
-      else if (pushed.kind === 'state' && !pushed.state.live) {
-        cancelDecode()
-        live.current = false
-        shownFrame.current = null
-        setFrame(null)
-        setSelect(null)
-        setDialog(null)
+      else if (pushed.kind === 'favorites') setFavorites(pushed.favorites)
+      else if (pushed.kind === 'state') {
+        setState(pushed.state)
+        if (!pushed.state.live) {
+          cancelDecode()
+          live.current = false
+          shownFrame.current = null
+          setFrame(null)
+          setSelect(null)
+          setDialog(null)
+        }
       }
     })
   }, [browserId, cancelDecode])
@@ -509,6 +533,14 @@ export function useBrowserScreencast(
   }
 
   return {
+    currentBrowserId,
+    state,
+    setState,
+    favorites,
+    setFavorites,
+    settings: attachment?.settings ?? 'ready',
+    notice,
+    setNotice,
     surface,
     editor,
     frame,
