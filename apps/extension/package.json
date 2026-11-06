@@ -12,9 +12,6 @@
   "extensionKind": [
     "ui"
   ],
-  "enabledApiProposals": [
-    "browser"
-  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false
@@ -60,10 +57,6 @@
       {
         "command": "chorus.markdownPreview",
         "title": "%command.markdownPreview%"
-      },
-      {
-        "command": "chorus.enableBrowserTools",
-        "title": "%command.enableBrowserTools%"
       },
       {
         "command": "chorus.revealConversation",
@@ -259,7 +252,6 @@
     "@vitejs/plugin-react": "^6.0.5",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.25.12",
-    "jsonc-parser": "3.3.1",
     "postcss": "^8.5.6",
     "vite": "^8.2.0",
     "zod": "^4.4.3"

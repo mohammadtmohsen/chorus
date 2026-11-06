@@ -3,10 +3,6 @@ export interface AdoptedProject {
   readonly created: boolean
 }
 
-export function requestBrowserTools(): void {
-  window.dispatchEvent(new Event('chorus:enable-browser'))
-}
-
 const listeners = new Set<(project: AdoptedProject) => void>()
 const pending: AdoptedProject[] = []
 

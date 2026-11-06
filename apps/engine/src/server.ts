@@ -424,9 +424,6 @@ export async function serveEngine(
             Promise.resolve(host.diagnostic(message.projectId, message.params))
           )
           break
-        case 'browserEvent':
-          browserSources.receive(current, message.event)
-          break
         case 'completionConfigured':
           answer(current, message.id, () =>
             Promise.resolve({ configured: completion.configured() })

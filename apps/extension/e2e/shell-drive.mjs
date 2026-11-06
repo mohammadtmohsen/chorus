@@ -65,7 +65,6 @@ try {
     folder: workspace,
     userDataDir,
     extensionsDir,
-    enableProposedApi: 'mohammadtmohsen.chorus',
   }))
   await driver.workbench()
   await driver.command('Chorus: Open')
@@ -465,7 +464,6 @@ try {
     folder: workspace,
     userDataDir,
     extensionsDir,
-    enableProposedApi: 'mohammadtmohsen.chorus',
   }))
   await driver.workbench()
   await driver.command('Chorus: Open')

@@ -1,25 +1,23 @@
 # Chorus for VS Code
 
-The whole of Chorus in one VS Code tab: projects, chats with several agents at once, split and
-forwarded chats, approvals, notes, terminals, Run and HTTP Traffic. VS Code provides the editor,
-Git, the debugger, extensions, Remote-SSH and the browser.
+The whole of Chorus in VS Code's secondary side bar: projects, chats with several agents at once,
+split and forwarded chats, approvals, notes, terminals, Run and HTTP Traffic. VS Code provides the
+editor, Git, the debugger, extensions and Remote-SSH. Chorus runs its own browser, shared by the
+Console and website box for each project.
 
 It drives the `claude` and `codex` CLIs you already have installed and signed in. It does not
 replace them, and it does not send your account through anyone's server.
 
 ## Install
 
-Chorus is a private VSIX on GitHub Releases, not on the Marketplace, because its browser tools use a
-VS Code API that is still marked as proposed.
+Chorus is a private VSIX on GitHub Releases. Download the VSIX for your machine, then install it:
 
-1. Download the VSIX for your machine, then install it:
+```bash
+code --install-extension chorus-<version>-darwin-arm64.vsix
+```
 
-   ```bash
-   code --install-extension chorus-<version>-darwin-arm64.vsix
-   ```
-
-2. Run **Chorus: Enable Browser Tools** once, then quit VS Code completely and open it again.
-   Everything except the browser tools works without this step.
+To show websites, install Google Chrome, Chromium or Microsoft Edge. Chorus uses its own browser
+profile, with one sign-in shared across projects.
 
 A VSIX does not update itself. To update, install the newer VSIX the same way.
 
@@ -35,16 +33,16 @@ whatever folder VS Code opened.
 
 ## How it fits into VS Code
 
-| In Chorus                | In VS Code                                                                                                        |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| The file you have open   | Your chats see it only if it is inside that chat's project. A file from another project never reaches them        |
-| An agent's proposed edit | A native diff. Approved edits land in the live buffer, unsaved and undoable                                       |
-| Waiting on you           | A notification with **Allow** and **Deny**, a badge on the Chorus icon, and the status bar                        |
-| A project's Browser box  | The page opens in VS Code's browser tab. The Console stays in Chorus, and agents read that project's console only |
-| Terminals and Run        | These stay inside the project in Chorus. VS Code's own terminal is still there for everything else                |
-| Remote projects          | Open a Remote-SSH window. Agents run on this machine, in a local folder you pick. The editor is remote            |
+| In Chorus                | In VS Code                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| The file you have open   | Your chats see it only if it is inside that chat's project. A file from another project never reaches them |
+| An agent's proposed edit | A native diff. Approved edits land in the live buffer, unsaved and undoable                                |
+| Waiting on you           | A notification with **Allow** and **Deny**, a badge on the Chorus icon, and the status bar                 |
+| A project's Browser box  | The page appears in its website box. The Console and agents use that same page in Chorus's browser         |
+| Terminals and Run        | These stay inside the project in Chorus. VS Code's own terminal is still there for everything else         |
+| Remote projects          | Open a Remote-SSH window. Agents run on this machine, in a local folder you pick. The editor is remote     |
 
-While the Chorus tab has focus, its shortcuts work as they do in the desktop app. VS Code does not also
+While the Chorus side bar has focus, its shortcuts work as they do in the desktop app. VS Code does not also
 act on them.
 
 Chats keep running if you reload the window or close it. The engine stops by itself five minutes after

@@ -10,7 +10,6 @@ await build({
   platform: 'node',
   format: 'cjs',
   target: 'node24',
-  alias: { 'jsonc-parser': 'jsonc-parser/lib/esm/main.js' },
   external: ['vscode'],
 })
 mkdirSync(resolve(root, 'dist'), { recursive: true })

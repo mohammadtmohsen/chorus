@@ -24,17 +24,9 @@ describe('messages that lose an undefined field in JSON', () => {
     expect(ShellHostMessage.safeParse(push).success).toBe(true)
   })
 
-  it('keeps a host call and a browser event with no params', () => {
+  it('keeps a host call with no params', () => {
     expect(
       ServerMessage.safeParse(serialized({ kind: 'hostCall', id: 'a', method: 'b' })).success
-    ).toBe(true)
-    expect(
-      ClientMessage.safeParse(
-        serialized({
-          kind: 'browserEvent',
-          event: { kind: 'cdp', tabId: 't', projectId: 'p', generation: 0, method: 'm' },
-        })
-      ).success
     ).toBe(true)
   })
 })

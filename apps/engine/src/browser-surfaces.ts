@@ -25,7 +25,6 @@ import {
 } from '../../desktop/src/shared/browser-ipc.js'
 import messages from '../../desktop/src/renderer/src/i18n/en.json'
 import type { EnginePeer } from './peers.js'
-import type { BrowserHostEvent } from './browser-protocol.js'
 import { ChromeProcess, findChrome } from './chrome-process.js'
 import { ChromeBrowserSource, ChromePage } from './chrome-browser-source.js'
 import { BrowserStreams } from './browser-streams.js'
@@ -1175,10 +1174,6 @@ export class EngineBrowsers {
       this.clearPages(record)
       this.unavailable(record, false)
     }
-  }
-
-  receive(_owner: EnginePeer, _event: BrowserHostEvent): void {
-    return
   }
 
   private push(record: ProjectBrowser, push: BrowserPush): void {

@@ -130,9 +130,6 @@ const reportFocus = (): void => {
 }
 
 installThemeMirror()
-window.addEventListener('chorus:enable-browser', () => {
-  vscode.postMessage({ kind: 'enableBrowser' })
-})
 const status = document.createElement('div')
 status.className = 'chorus-host-status'
 status.setAttribute('role', 'status')

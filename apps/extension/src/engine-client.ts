@@ -330,10 +330,7 @@ export class EngineClient {
     })
   }
   notify(
-    message: Extract<
-      ClientMessage,
-      { kind: 'editorContext' | 'browserEvent' | 'completionCancel' | 'secret' }
-    >
+    message: Extract<ClientMessage, { kind: 'editorContext' | 'completionCancel' | 'secret' }>
   ): void {
     if (this.socket !== null && !this.socket.destroyed) this.socket.write(encodeFrame(message))
   }

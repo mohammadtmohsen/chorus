@@ -5,7 +5,6 @@
   "command.shellKey": "Chorus: Handle Shell Shortcut",
   "command.sendDiagnostic": "Send Problem to Chorus",
   "command.markdownPreview": "Chorus: Open Markdown Preview",
-  "command.enableBrowserTools": "Chorus: Enable Browser Tools",
   "view.container": "Chorus",
   "view.attention": "Waiting on you",
   "view.attention.empty": "Nothing is waiting on you.\n[Open Chorus](command:chorus.open)\n[Add a Project](command:chorus.addProject)",

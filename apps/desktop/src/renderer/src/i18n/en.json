@@ -1374,15 +1374,10 @@
     }
   },
   "extension": {
-    "browserUnavailable": "The VS Code browser is unavailable. Reopen the page to try again.",
-    "browserProposalMissing": "Enable Browser Tools to use the VS Code browser with Chorus. Your chats and projects keep working.",
-    "enableBrowser": "Enable Browser Tools",
-    "browserTabHelp": "The page opens in a VS Code browser tab. Its Console appears here.",
+    "browserUnavailable": "The browser is unavailable. Reopen the page to try again.",
     "browserMissing": "Chorus needs Google Chrome, Chromium or Microsoft Edge to show websites. Install one, then press Reload.",
     "browserStopped": "The browser stopped. Press Reload to start it again.",
     "browserWebsiteHelp": "The page shows in the website box. Its Console appears here.",
-    "browserEnabled": "Browser Tools are enabled. Quit VS Code completely, then open it again to use them. Reload Window does not reload runtime arguments.",
-    "browserArgumentsFailed": "Chorus could not update VS Code's runtime arguments.",
     "editor": {
       "outsideProject": "This file is outside the Chorus project.",
       "untrusted": "Trust this workspace before sharing editor content.",
@@ -1431,7 +1426,6 @@
     "status": "Chorus",
     "ready": "Chorus is ready",
     "channelRefused": "This operation is not available in this Chorus host.",
-    "missingBrowser": "Enable the VS Code browser proposal to use the Chorus browser.",
     "addProject": "Add to Chorus as Project",
     "reconnecting": "Reconnecting to Chorus…",
     "attention": {

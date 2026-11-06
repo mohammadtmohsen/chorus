@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { diagnosticParams } from '@chorus/ide-protocol/protocol'
 import { WorkbenchContext } from '../../desktop/src/shared/workbench-ipc.js'
-import { BrowserHostEvent } from './browser-protocol.js'
 
 export const PROTOCOL_VERSION = 2
 export const MAX_FRAME_BYTES = 64 * 1024 * 1024
@@ -119,7 +118,6 @@ export const ClientMessage = z.discriminatedUnion('kind', [
     projectId: z.string(),
     params: diagnosticParams,
   }),
-  z.object({ kind: z.literal('browserEvent'), event: BrowserHostEvent }),
   z.object({
     kind: z.literal('completion'),
     id: z.string(),
@@ -162,7 +160,6 @@ export type ServerMessage = z.infer<typeof ServerMessage>
 export const WebviewMessage = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('ready') }),
   z.object({ kind: z.literal('restart') }),
-  z.object({ kind: z.literal('enableBrowser') }),
   z.object({
     kind: z.literal('dropFiles'),
     id: z.string(),

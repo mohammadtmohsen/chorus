@@ -3,12 +3,11 @@ import type { SubmitEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   BROWSER_RECT_MAX,
-  BROWSER_PROPOSAL_MISSING_CODE,
   BROWSER_MISSING_CODE,
   BROWSER_STOPPED_CODE,
 } from '../../shared/browser-ipc.js'
 import { useHostCapabilities } from './host-context.js'
-import { onHostReconnected, requestBrowserTools } from './host-actions.js'
+import { onHostReconnected } from './host-actions.js'
 import type {
   BrowserAction,
   BrowserFailure,
@@ -440,21 +439,7 @@ export function BrowserPanel(props: {
   const ready = browserId !== null && state !== null
 
   const placeholder = ((): React.ReactNode => {
-    if (!native)
-      return (
-        <>
-          <p>
-            {state?.error?.code === BROWSER_PROPOSAL_MISSING_CODE
-              ? t('extension.browserProposalMissing')
-              : (state?.error?.description ?? t('extension.browserWebsiteHelp'))}
-          </p>
-          {state?.error?.code === BROWSER_PROPOSAL_MISSING_CODE && (
-            <button type="button" className="browser-button" onClick={requestBrowserTools}>
-              {t('extension.enableBrowser')}
-            </button>
-          )}
-        </>
-      )
+    if (!native) return <p>{state?.error?.description ?? t('extension.browserWebsiteHelp')}</p>
     if (attachFailed) {
       return (
         <>

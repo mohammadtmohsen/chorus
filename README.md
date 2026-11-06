@@ -16,7 +16,8 @@ pnpm app:install
 ## VS Code
 
 Chorus also runs as a full VS Code extension: every project, chat, split, note, terminal and Traffic
-view in one tab, with VS Code providing the editor, Git, debugger and browser. See
+view in its secondary side bar, with VS Code providing the editor, Git and debugger. Websites run in
+Chorus's own browser and appear inside each project's website box. See
 [apps/extension/README.md](apps/extension/README.md). The desktop app below keeps working, and the two
 are the same code.
 

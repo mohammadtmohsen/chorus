@@ -4,7 +4,6 @@ import { WEB_TABS_MAX } from './workspace-layout.js'
 export const BROWSER_FRAME_CHANNEL = 'browser:frame'
 export const BROWSER_FRAME_MAX = 1_500_000
 export const BROWSER_ID_MAX = 128
-export const BROWSER_PROPOSAL_MISSING_CODE = -1_000_001
 export const BROWSER_MISSING_CODE = -201
 export const BROWSER_STOPPED_CODE = -202
 export const BROWSER_PROJECT_ID_MAX = 256

@@ -39,14 +39,12 @@ import {
   normalizedPath,
   relativePath,
 } from './editor/resources.js'
-import { BrowserHost } from './browser/index.js'
 import {
   EditorPlace,
   EditorEditRequest,
   EditorAskDiffRequest,
 } from '../../engine/src/editor-protocol.js'
 import { registerInlineCompletions } from './completion/index.js'
-import { enableBrowserArguments } from './browser-arguments.js'
 
 const TEXT = messages.extension
 const SHELL_VIEW_ID = 'chorus.workspace'
@@ -90,7 +88,6 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
   private readonly engineDirectory: string
   private projects: EditorProject[] = []
   private readonly editor: EditorIntegration
-  private browserHost: BrowserHost | null = null
   private refreshing: Promise<void> | null = null
   private readonly attention: AttentionCenter
   private attentionCount = 0
@@ -210,11 +207,9 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         dispose: this.client.onState((state, activity) => {
           this.engineState(state, activity)
           if (state === 'connected' || state === 'restart-required') {
-            void this.refreshProjects()
-              .then(() => this.getBrowser().restore())
-              .catch((error: unknown) => {
-                this.output.appendLine(String(error))
-              })
+            void this.refreshProjects().catch((error: unknown) => {
+              this.output.appendLine(String(error))
+            })
           }
         }),
       }
@@ -286,19 +281,6 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     } catch (error) {
       this.failure(error)
     }
-  }
-  private getBrowser(): BrowserHost {
-    this.browserHost ??= new BrowserHost({
-      workspaceState: this.context.workspaceState,
-      focusedProject: () => this.focusedProjectId,
-      emit: (event) => {
-        this.client.notify({ kind: 'browserEvent', event })
-      },
-      log: (message) => {
-        this.output.appendLine(message)
-      },
-    })
-    return this.browserHost
   }
   private refreshProjects(): Promise<void> {
     this.refreshing ??= this.client
@@ -464,10 +446,6 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
       return
     }
     const message = parsed.data
-    if (message.kind === 'enableBrowser') {
-      await this.enableBrowserTools()
-      return
-    }
     if (message.kind === 'restart') {
       await this.restart()
       return
@@ -619,30 +597,6 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
       }
     } finally {
       this.revealingExplorer = false
-    }
-  }
-
-  async enableBrowserTools(): Promise<void> {
-    try {
-      await vscode.commands.executeCommand('workbench.action.configureRuntimeArguments')
-      const document = vscode.window.activeTextEditor?.document
-      if (!document?.uri.path.endsWith('/argv.json')) throw new Error('runtime-arguments-not-open')
-      const current = document.getText()
-      const next = enableBrowserArguments(current)
-      if (next !== current) {
-        const edit = new vscode.WorkspaceEdit()
-        edit.replace(
-          document.uri,
-          new vscode.Range(document.positionAt(0), document.positionAt(current.length)),
-          next
-        )
-        if (!(await vscode.workspace.applyEdit(edit)) || !(await document.save()))
-          throw new Error('runtime-arguments-not-saved')
-      }
-      void vscode.window.showInformationMessage(TEXT.browserEnabled)
-    } catch (error) {
-      this.output.appendLine(String(error))
-      void vscode.window.showErrorMessage(TEXT.browserArgumentsFailed)
     }
   }
 
@@ -965,36 +919,6 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         paths: (picked ?? []).filter((uri) => uri.scheme === 'file').map((uri) => uri.fsPath),
       }
     }
-    if (method === 'browser.available') return this.getBrowser().available
-    if (method.startsWith('browser.')) {
-      const browser = this.getBrowser()
-      if (method === 'browser.open') {
-        const request = z
-          .object({
-            projectId: z.string().nullable(),
-            url: z.string(),
-            browserId: z.string().optional(),
-          })
-          .parse(params)
-        return await browser.open(request.projectId, request.url, request.browserId)
-      }
-      const tabId = z.string().parse(params['tabId'])
-      if (method === 'browser.navigate')
-        return await browser.navigate(tabId, z.string().parse(params['url']))
-      if (method === 'browser.close') return await browser.close(tabId)
-      if (method === 'browser.focus') return await browser.focus(tabId)
-      if (method === 'browser.action')
-        return await browser.action(
-          tabId,
-          z.enum(['back', 'forward', 'reload', 'stop']).parse(params['action'])
-        )
-      if (method === 'browser.cdp')
-        return await browser.cdp(
-          tabId,
-          z.string().parse(params['method']),
-          z.record(z.string(), z.unknown()).parse(params['params'])
-        )
-    }
     switch (method) {
       case 'secret': {
         const { id, value } = z.object({ id: SecretId, value: z.string().nullable() }).parse(params)
@@ -1079,7 +1003,6 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     this.ready = false
     this.resetExplorerFocus()
     this.queue.clear()
-    this.browserHost?.dispose()
     this.client.dispose()
     for (const disposable of this.viewDisposables.splice(0)) disposable.dispose()
     for (const disposable of this.disposables) disposable.dispose()
@@ -1115,7 +1038,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         shell.revealConversation(room)
       }
     ),
-    vscode.commands.registerCommand('chorus.enableBrowserTools', () => shell.enableBrowserTools()),
     vscode.commands.registerCommand('chorus.sendDiagnostic', () => shell.sendDiagnostic()),
     vscode.commands.registerCommand('chorus.markdownPreview', (uri?: vscode.Uri) =>
       shell.openMarkdownPreview(uri)

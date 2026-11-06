@@ -480,8 +480,6 @@ export async function launchVSCode({
   developmentPath,
   extensionsDir,
   userDataDir,
-  enableProposedApi,
-  runtimeArguments,
   settings = {},
   env = {},
   args = [],
@@ -493,8 +491,6 @@ export async function launchVSCode({
   const extensions = extensionsDir ?? join(root, 'extensions')
   mkdirSync(join(dataDir, 'User'), { recursive: true })
   mkdirSync(extensions, { recursive: true })
-  if (runtimeArguments !== undefined)
-    writeFileSync(join(portable, 'argv.json'), JSON.stringify(runtimeArguments))
   const settingsPath = join(dataDir, 'User', 'settings.json')
   if (!existsSync(settingsPath) || Object.keys(settings).length > 0) {
     writeFileSync(settingsPath, JSON.stringify({ ...DEFAULT_SETTINGS, ...settings }, null, 2))
@@ -507,7 +503,6 @@ export async function launchVSCode({
     '--skip-release-notes',
     '--new-window',
     ...(developmentPath === undefined ? [] : [`--extensionDevelopmentPath=${developmentPath}`]),
-    ...(enableProposedApi === undefined ? [] : [`--enable-proposed-api=${enableProposedApi}`]),
     ...args,
     ...(folder === undefined ? [] : [folder]),
   ]

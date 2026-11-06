@@ -22,7 +22,7 @@ const NO_REQUEST_CALLS = [
 ]
 export async function integrationHarness(
   name,
-  { proposal = true, folder, args = [], settings = {}, preinstall = [], runtimeArguments } = {}
+  { folder, args = [], settings = {}, preinstall = [] } = {}
 ) {
   mkdirSync(OUTPUT, { recursive: true })
   const root = realpathSync(mkdtempSync(join(OUTPUT, `${name}-`)))
@@ -106,8 +106,6 @@ export async function integrationHarness(
       developmentPath: join(import.meta.dirname, 'fixture'),
       userDataDir,
       extensionsDir,
-      ...(proposal ? { enableProposedApi: 'mohammadtmohsen.chorus' } : {}),
-      ...(runtimeArguments === undefined ? {} : { runtimeArguments }),
       env,
     }))
     await driver.workbench()
