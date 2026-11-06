@@ -47,6 +47,8 @@ export const EDITOR_WIDTH = { defaultOffset: 500, min: 500, maxFraction: 1 } as 
 
 export const BOX_WIDTH = { default: 500, min: 500 } as const
 
+export const CONSOLE_WIDTH = { default: 500, min: 500 } as const
+
 export const TRAFFIC_WIDTH = { default: 700, min: 500 } as const
 
 export const PROJECT_TERMINAL_WIDTH = { default: 500, min: 480, run: 480, slot: 320 } as const
@@ -275,8 +277,10 @@ export const WorkspaceSnapshot = z.object({
   trafficPanels: z.record(z.string(), TrafficPanelState).default({}),
   projectTerminals: z.record(z.string(), ProjectTerminalPaneState).default({}),
   collapsedBrowsers: z.record(z.string(), z.boolean()).default({}),
+  collapsedWebsites: z.record(z.string(), z.boolean()).default({}),
   rowScroll: z.record(z.string(), z.number()).default({}),
   editorWidthFractions: z.record(z.string(), z.number()).default({}),
+  consoleWidths: z.record(z.string(), z.number()).default({}),
   webTabs: WebTabsState.default(NO_WEB_TABS),
 })
 export type WorkspaceSnapshot = z.infer<typeof WorkspaceSnapshot>
@@ -289,7 +293,9 @@ export const ProjectLayoutSlice = z.object({
   trafficPanel: TrafficPanelState.optional(),
   projectTerminal: ProjectTerminalPaneState.optional(),
   browserCollapsed: z.boolean().optional(),
+  websiteCollapsed: z.boolean().optional(),
   rowScroll: z.number().optional(),
   editorWidthFraction: z.number().optional(),
+  consoleWidth: z.number().optional(),
 })
 export type ProjectLayoutSlice = z.infer<typeof ProjectLayoutSlice>

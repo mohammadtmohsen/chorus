@@ -15,7 +15,13 @@ pnpm app:install
 
 ## VS Code
 
-Chorus can follow the file and lines you have selected in VS Code, so a question can carry
+Chorus also runs as a full VS Code extension: every project, chat, split, note, terminal and Traffic
+view in its secondary side bar, with VS Code providing the editor, Git and debugger. Websites run in
+Chorus's own browser and appear inside each project's website box. See
+[apps/extension/README.md](apps/extension/README.md). The desktop app below keeps working, and the two
+are the same code.
+
+The desktop app can also follow the file and lines you have selected in VS Code, so a question can carry
 an exact reference instead of a description. Open **Settings → Install VS Code Extension**
 once, then open the same project folder in VS Code — the ⧉ button beside a conversation's
 path does that for you.

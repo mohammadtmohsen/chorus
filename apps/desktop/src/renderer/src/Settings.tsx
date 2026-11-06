@@ -1,3 +1,4 @@
+import { useHostCapabilities } from './host-context.js'
 import type { AgentId } from '@chorus/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -270,6 +271,7 @@ function Accounts(): React.JSX.Element | null {
  * machine decides", which is what everyone had before this shipped.
  */
 function Appearance(): React.JSX.Element {
+  const capabilities = useHostCapabilities()
   const { t } = useTranslation()
   const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system')
   const [notifications, setNotifications] = useState(true)
@@ -291,24 +293,26 @@ function Appearance(): React.JSX.Element {
 
   return (
     <>
-      <fieldset className="settings-appearance">
-        <legend>{t('settings.appearanceHeading')}</legend>
-        <label>
-          <span>{t('settings.appearance')}</span>
-          <select
-            value={theme}
-            onChange={(e) => {
-              const next = e.target.value as 'system' | 'light' | 'dark'
-              setTheme(next)
-              void window.chorus.writeSettings({ theme: next })
-            }}
-          >
-            <option value="system">{t('settings.appearanceSystem')}</option>
-            <option value="light">{t('settings.appearanceLight')}</option>
-            <option value="dark">{t('settings.appearanceDark')}</option>
-          </select>
-        </label>
-      </fieldset>
+      {capabilities.ownTheme && (
+        <fieldset className="settings-appearance">
+          <legend>{t('settings.appearanceHeading')}</legend>
+          <label>
+            <span>{t('settings.appearance')}</span>
+            <select
+              value={theme}
+              onChange={(e) => {
+                const next = e.target.value as 'system' | 'light' | 'dark'
+                setTheme(next)
+                void window.chorus.writeSettings({ theme: next })
+              }}
+            >
+              <option value="system">{t('settings.appearanceSystem')}</option>
+              <option value="light">{t('settings.appearanceLight')}</option>
+              <option value="dark">{t('settings.appearanceDark')}</option>
+            </select>
+          </label>
+        </fieldset>
+      )}
       <fieldset className="settings-notifications">
         <legend>{t('settings.notificationsHeading')}</legend>
         <label>

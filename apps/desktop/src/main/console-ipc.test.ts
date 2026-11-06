@@ -1,3 +1,4 @@
+import { electronIpcRegistrar, electronShellClient } from './electron-shell-client.js'
 import { EventEmitter } from 'node:events'
 import type { WebContents } from 'electron'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -90,9 +91,12 @@ beforeEach(() => {
 })
 
 function open(role: ShellRole): { readonly shell: FakeShell; readonly ipc: ConsoleIpc } {
-  const ipc = new ConsoleIpc({ consoles, isAdopted: (projectId) => projectId === PROJECT })
+  const ipc = new ConsoleIpc(
+    { consoles, isAdopted: (projectId) => projectId === PROJECT },
+    electronIpcRegistrar
+  )
   const shell = new FakeShell(1)
-  ipc.registerShell(shell as unknown as WebContents, role)
+  ipc.registerShell(electronShellClient(shell as unknown as WebContents), role)
   return { shell, ipc }
 }
 

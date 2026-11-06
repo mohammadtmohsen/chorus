@@ -267,6 +267,8 @@ function receive(push: BrowserPush): void {
       break
     case 'favorites':
     case 'row-wheel':
+    case 'select':
+    case 'dialog':
       break
   }
 }

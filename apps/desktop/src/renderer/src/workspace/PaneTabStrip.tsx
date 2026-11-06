@@ -1,3 +1,4 @@
+import { useHostCapabilities } from '../host-context.js'
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -52,6 +53,7 @@ export function PaneTabStrip(
    * everywhere else, and a fix that landed on only one of them would be the
    * thing that makes them drift.
    */
+  const capabilities = useHostCapabilities()
   const [renaming, setRenaming] = useState<{ id: string; width: number } | null>(null)
 
   /* A strip that scrolls can hold the active tab off screen. */
@@ -296,7 +298,7 @@ export function PaneTabStrip(
           ]
         })}
       </div>
-      {props.webTabsPaneId === props.paneId && <WebTabStrip />}
+      {capabilities.nativeBrowserViews && props.webTabsPaneId === props.paneId && <WebTabStrip />}
     </div>
   )
 }

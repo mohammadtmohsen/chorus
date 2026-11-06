@@ -1,3 +1,5 @@
+import { electronBrowserPort, electronBrowserDownloads } from './electron-browser-port.js'
+import { electronIpcRegistrar, electronShellClient } from './electron-shell-client.js'
 import type { WebContents } from 'electron'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BROWSER_PUSH_CHANNEL, type BrowserPush, type BrowserState } from '../shared/browser-ipc.js'
@@ -103,7 +105,14 @@ beforeEach(() => {
   reopen.mockClear()
   downloadList.mockClear()
   downloadAct.mockClear()
-  ipc = new BrowserIpc({ surfaces, downloads, isAdopted: (projectId) => projectId === 'adopted' })
+  ipc = new BrowserIpc(
+    {
+      surfaces: electronBrowserPort(surfaces),
+      downloads: electronBrowserDownloads(downloads),
+      isAdopted: (projectId) => projectId === 'adopted',
+    },
+    electronIpcRegistrar
+  )
 })
 
 describe('browser IPC authorization', () => {
@@ -116,7 +125,7 @@ describe('browser IPC authorization', () => {
 
   it('refuses a registered shell speaking from a sub-frame', async () => {
     const shell = fakeShell(1)
-    ipc.registerShell(contentsOf(shell), { kind: 'main' })
+    ipc.registerShell(electronShellClient(contentsOf(shell)), { kind: 'main' })
     await expect(invoke('browser:attach', shell, { projectId: 'adopted' }, {})).rejects.toThrow(
       'not available'
     )
@@ -124,7 +133,7 @@ describe('browser IPC authorization', () => {
 
   it('lets the main shell attach adopted projects only', async () => {
     const shell = fakeShell(1)
-    ipc.registerShell(contentsOf(shell), { kind: 'main' })
+    ipc.registerShell(electronShellClient(contentsOf(shell)), { kind: 'main' })
     await expect(invoke('browser:attach', shell, { projectId: 'adopted' })).resolves.toMatchObject({
       browserId: 'browser-adopted',
     })
@@ -135,7 +144,10 @@ describe('browser IPC authorization', () => {
 
   it('keeps a detached shell to its own project', async () => {
     const shell = fakeShell(2)
-    ipc.registerShell(contentsOf(shell), { kind: 'detached', projectId: 'own' })
+    ipc.registerShell(electronShellClient(contentsOf(shell)), {
+      kind: 'detached',
+      projectId: 'own',
+    })
     await expect(invoke('browser:attach', shell, { projectId: 'own' })).resolves.toMatchObject({
       browserId: 'browser-own',
     })
@@ -147,8 +159,11 @@ describe('browser IPC authorization', () => {
   it('admits web tabs only in the main shell', async () => {
     const main = fakeShell(1)
     const detached = fakeShell(2)
-    ipc.registerShell(contentsOf(main), { kind: 'main' })
-    ipc.registerShell(contentsOf(detached), { kind: 'detached', projectId: 'own' })
+    ipc.registerShell(electronShellClient(contentsOf(main)), { kind: 'main' })
+    ipc.registerShell(electronShellClient(contentsOf(detached)), {
+      kind: 'detached',
+      projectId: 'own',
+    })
     await expect(invoke('browser:attach', main, { webTabId: 'tab-1' })).resolves.toMatchObject({
       browserId: 'web-tab-1',
     })
@@ -163,8 +178,11 @@ describe('browser IPC authorization', () => {
   it('accepts readiness only from the registered main frame of the main window', async () => {
     const main = fakeShell(1)
     const detached = fakeShell(2)
-    ipc.registerShell(contentsOf(main), { kind: 'main' })
-    ipc.registerShell(contentsOf(detached), { kind: 'detached', projectId: 'own' })
+    ipc.registerShell(electronShellClient(contentsOf(main)), { kind: 'main' })
+    ipc.registerShell(electronShellClient(contentsOf(detached)), {
+      kind: 'detached',
+      projectId: 'own',
+    })
     await expect(invoke('browser:webReady', main, {})).resolves.toEqual({ ok: true })
     expect(webReady).toHaveBeenCalledWith(main)
     await expect(invoke('browser:webReady', detached, {})).rejects.toThrow('main window')
@@ -178,7 +196,7 @@ describe('browser IPC authorization', () => {
 
   it('routes the five new handlers through their bounded contracts', async () => {
     const shell = fakeShell(1)
-    ipc.registerShell(contentsOf(shell), { kind: 'main' })
+    ipc.registerShell(electronShellClient(contentsOf(shell)), { kind: 'main' })
     await expect(
       invoke('browser:find', shell, { browserId: 'b1', text: 'query', forward: true, start: true })
     ).resolves.toEqual({ failure: null })
@@ -212,7 +230,7 @@ describe('browser IPC authorization', () => {
 
   it('rejects malformed requests before they reach the browser', async () => {
     const shell = fakeShell(1)
-    ipc.registerShell(contentsOf(shell), { kind: 'main' })
+    ipc.registerShell(electronShellClient(contentsOf(shell)), { kind: 'main' })
     await expect(invoke('browser:attach', shell, { projectId: '' })).rejects.toThrow(
       'Invalid request'
     )
@@ -224,8 +242,8 @@ describe('browser IPC authorization', () => {
 
   it('releases a shell and its browsers together', async () => {
     const shell = fakeShell(1)
-    ipc.registerShell(contentsOf(shell), { kind: 'main' })
-    ipc.releaseShell(contentsOf(shell))
+    ipc.registerShell(electronShellClient(contentsOf(shell)), { kind: 'main' })
+    ipc.releaseShell(electronShellClient(contentsOf(shell)))
     expect(closeOwner).toHaveBeenCalledWith(shell)
     await expect(invoke('browser:attach', shell, { projectId: 'adopted' })).rejects.toThrow(
       'not available'
@@ -237,7 +255,7 @@ describe('browser pushes', () => {
   it('reach only registered shells and only when they satisfy the contract', () => {
     const shell = fakeShell(1)
     const stranger = fakeShell(2)
-    ipc.registerShell(contentsOf(shell), { kind: 'main' })
+    ipc.registerShell(electronShellClient(contentsOf(shell)), { kind: 'main' })
     const state: BrowserPush = { kind: 'state', browserId: 'b1', state: EMPTY_STATE }
     const leaky = {
       kind: 'prompt',
@@ -251,9 +269,9 @@ describe('browser pushes', () => {
         password: 'secret',
       },
     } as unknown as BrowserPush
-    ipc.deliver(contentsOf(shell), state)
-    ipc.deliver(contentsOf(shell), leaky)
-    ipc.deliver(contentsOf(stranger), state)
+    ipc.deliver(electronShellClient(contentsOf(shell)), state)
+    ipc.deliver(electronShellClient(contentsOf(shell)), leaky)
+    ipc.deliver(electronShellClient(contentsOf(stranger)), state)
     expect(shell.send).toHaveBeenCalledTimes(1)
     expect(shell.send).toHaveBeenCalledWith(BROWSER_PUSH_CHANNEL, state)
     expect(stranger.send).not.toHaveBeenCalled()

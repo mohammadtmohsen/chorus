@@ -1,5 +1,6 @@
+import type { PaneWorkbenchProps } from '../host-views.js'
 import { useState } from 'react'
-import { WorkbenchFrame, type WorkbenchGeometry } from '../workbench/WorkbenchFrame.js'
+import { WorkbenchFrame } from '../workbench/WorkbenchFrame.js'
 
 /**
  * One project's workbench, mounted for **every** tab in the pane rather than
@@ -28,15 +29,7 @@ import { WorkbenchFrame, type WorkbenchGeometry } from '../workbench/WorkbenchFr
  * background surface that refused used to write its message into whatever
  * project happened to be on screen.
  */
-export function PaneWorkbench(props: {
-  readonly projectId: string
-  readonly active: boolean
-  readonly projectRoot: string
-  readonly geometry: (host: HTMLElement) => WorkbenchGeometry | null
-  readonly onActivityBar: (projectId: string, width: number) => void
-  readonly onRevealRow: (projectId: string) => void
-  readonly onScrollRow: (projectId: string, delta: number) => void
-}): React.JSX.Element {
+export function PaneWorkbench(props: PaneWorkbenchProps): React.JSX.Element {
   const [failure, setFailure] = useState<string | null>(null)
   return (
     /*

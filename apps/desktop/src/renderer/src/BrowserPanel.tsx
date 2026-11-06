@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { SubmitEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BROWSER_RECT_MAX } from '../../shared/browser-ipc.js'
+import { useHostCapabilities } from './host-context.js'
+import { onHostReconnected } from './host-actions.js'
 import type {
-  BrowserAction,
   BrowserFailure,
   BrowserFavorite,
   BrowserPasswordPrompt,
@@ -12,12 +12,14 @@ import type {
   BrowserRect,
   BrowserSettingsStatus,
   BrowserState,
+  BrowserResponse,
 } from '../../shared/browser-ipc.js'
 import { BrowserPasswords as PasswordControls } from './BrowserPasswords.js'
 import { ConsolePanel } from './ConsolePanel.js'
+import { BrowserToolbar } from './BrowserToolbar.js'
 import { browserViewport } from './workspace/layout.js'
 import { useWorkbenchStill } from './workspace/overlay.js'
-import { horizontalRowWheel } from './workbench/viewport.js'
+import { horizontalRowWheel } from './workspace/viewport.js'
 
 interface Geometry {
   readonly rect: BrowserRect
@@ -46,24 +48,6 @@ function sameGeometry(left: Geometry | null, right: Geometry): boolean {
   )
 }
 
-function badgeLetter(favorite: BrowserFavorite): string {
-  try {
-    const host = new URL(favorite.url).hostname.replace(/^www\./, '')
-    return (host[0] ?? '?').toUpperCase()
-  } catch {
-    return '?'
-  }
-}
-
-function badgeName(favorite: BrowserFavorite): string {
-  if (favorite.title !== '') return favorite.title
-  try {
-    return new URL(favorite.url).host
-  } catch {
-    return favorite.url
-  }
-}
-
 function rowNeighbor(item: Element | null, direction: -1 | 1): Element | null {
   const step = (from: Element): Element | null =>
     direction < 0 ? from.previousElementSibling : from.nextElementSibling
@@ -79,11 +63,29 @@ export function BrowserPanel(props: {
   readonly scroller: React.RefObject<HTMLDivElement | null>
   readonly markTouched: (projectId: string) => void
   readonly onReveal: (box: Element | null) => void
+  readonly onBrowserAttached?: (
+    projectId: string,
+    attachment: BrowserResponse<'browser:attach'> | null
+  ) => void
+  readonly onRevealWebsite?: (projectId: string) => void
   readonly onToggleCollapsed: () => void
 }): React.JSX.Element {
-  const { projectId, active, collapsed, scroller, markTouched, onReveal, onToggleCollapsed } = props
+  const {
+    projectId,
+    active,
+    collapsed,
+    scroller,
+    markTouched,
+    onReveal,
+    onToggleCollapsed,
+    onBrowserAttached,
+    onRevealWebsite,
+  } = props
   const visible = active && !collapsed
   const { t } = useTranslation()
+  const capabilities = useHostCapabilities()
+  const native = capabilities.nativeBrowserViews
+  const streamed = capabilities.streamedBrowser
   const root = useRef<HTMLDivElement>(null)
   const body = useRef<HTMLDivElement>(null)
   const bodyId = useId()
@@ -94,25 +96,29 @@ export function BrowserPanel(props: {
   const lastOrigin = useRef<BrowserPoint>(HIDDEN_ORIGIN)
   const frame = useRef<number | null>(null)
   const revealAfterExpand = useRef(false)
-  const rowTarget = useRef({ active: visible, scroller, projectId, markTouched })
+  const rowTarget = useRef({ active: visible, scroller, projectId, markTouched, onRevealWebsite })
   const [attempt, setAttempt] = useState(0)
   const [browserId, setBrowserId] = useState<string | null>(null)
   const [attachFailed, setAttachFailed] = useState(false)
   const [state, admitState] = useState<BrowserState | null>(null)
   const [favorites, setFavorites] = useState<readonly BrowserFavorite[]>([])
   const [settings, setSettings] = useState<BrowserSettingsStatus>('ready')
-  const [address, setAddress] = useState('')
-  const [editing, setEditing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [prompt, setPrompt] = useState<BrowserPasswordPrompt | null>(null)
   const [passwords, setPasswords] = useState<BrowserPasswords | null>(null)
   const [passwordButtonHost, setPasswordButtonHost] = useState<HTMLSpanElement | null>(null)
-  const [consoleOpen, setConsoleOpen] = useState(false)
+  const [consoleOpen, setConsoleOpen] = useState(!native)
   const overlayStill = useWorkbenchStill(browserId)
 
   useLayoutEffect(() => {
-    rowTarget.current = { active: visible, scroller, projectId, markTouched }
-  }, [visible, scroller, projectId, markTouched])
+    rowTarget.current = { active: visible, scroller, projectId, markTouched, onRevealWebsite }
+  }, [visible, scroller, projectId, markTouched, onRevealWebsite])
+
+  useEffect(() => {
+    return onHostReconnected(() => {
+      setAttempt((current) => current + 1)
+    })
+  }, [])
 
   useEffect(() => {
     let current = true
@@ -142,9 +148,14 @@ export function BrowserPanel(props: {
           row.scrollLeft += delta
           break
         }
+        case 'command':
+          if (push.command === 'reveal') rowTarget.current.onRevealWebsite?.(projectId)
+          break
+        case 'select':
+        case 'dialog':
+          break
         case 'found':
         case 'tab-open':
-        case 'command':
         case 'downloads':
           break
       }
@@ -161,6 +172,7 @@ export function BrowserPanel(props: {
         revision.current = 0
         lastSent.current = null
         setBrowserId(reply.browserId)
+        onBrowserAttached?.(projectId, reply)
         admitState(reply.state)
         setFavorites(reply.favorites)
         setSettings(reply.settings)
@@ -172,11 +184,12 @@ export function BrowserPanel(props: {
     return () => {
       current = false
       unsubscribe()
+      onBrowserAttached?.(projectId, null)
       if (attached === null) return
       if (idRef.current === attached) idRef.current = null
       window.chorus.detachBrowser({ browserId: attached }).catch(() => undefined)
     }
-  }, [projectId, attempt, admitState])
+  }, [projectId, attempt, admitState, onBrowserAttached])
 
   const send = useCallback((geometry: Geometry) => {
     const id = idRef.current
@@ -210,7 +223,7 @@ export function BrowserPanel(props: {
   }, [measure])
 
   useEffect(() => {
-    if (!visible || browserId === null) return undefined
+    if (!native || !visible || browserId === null) return undefined
     const row = scroller.current
     const panel = root.current
     const region = body.current
@@ -248,9 +261,10 @@ export function BrowserPanel(props: {
         fullyVisible: false,
       })
     }
-  }, [visible, browserId, scroller, schedule, send])
+  }, [native, visible, browserId, scroller, schedule, send])
 
   useLayoutEffect(() => {
+    if (!native) return
     if (!visible) {
       if (frame.current !== null) {
         window.cancelAnimationFrame(frame.current)
@@ -276,7 +290,8 @@ export function BrowserPanel(props: {
   }
 
   const reveal = (): void => {
-    onReveal(root.current?.parentElement ?? null)
+    if (capabilities.streamedBrowser && onRevealWebsite !== undefined) onRevealWebsite(projectId)
+    else onReveal(root.current?.parentElement ?? null)
     schedule()
   }
 
@@ -304,102 +319,14 @@ export function BrowserPanel(props: {
     onReveal(rowNeighbor(root.current?.parentElement ?? null, direction))
   }
 
-  const act = (action: BrowserAction): void => {
-    const id = idRef.current
-    if (id === null) return
-    window.chorus
-      .actOnBrowser({ browserId: id, action })
-      .then((reply) => {
-        if (idRef.current !== id) return
-        admitState(reply.state)
-        report(reply.failure)
-      })
-      .catch(() => {
-        if (idRef.current === id) report('failed')
-      })
-  }
-
-  const navigate = (event: SubmitEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    const id = idRef.current
-    const target = (editing ? address : (state?.url ?? '')).trim()
-    if (id === null || target === '') return
-    window.chorus
-      .navigateBrowser({ browserId: id, address: target })
-      .then((reply) => {
-        if (idRef.current !== id) return
-        admitState(reply.state)
-        report(reply.failure)
-        if (reply.failure !== null) return
-        setEditing(false)
-        reveal()
-      })
-      .catch(() => {
-        if (idRef.current === id) report('failed')
-      })
-  }
-
-  const escapeAddress = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
-    if (event.key !== 'Escape') return
-    setEditing(false)
-    event.currentTarget.blur()
-  }
-
-  const addFavorite = (): void => {
-    const id = idRef.current
-    if (id === null) return
-    window.chorus
-      .addBrowserFavorite({ browserId: id })
-      .then((reply) => {
-        if (idRef.current !== id) return
-        setFavorites(reply.favorites)
-        if (reply.failure === 'limit') setNotice(t('browser.favoriteLimit'))
-        else report(reply.failure)
-      })
-      .catch(() => {
-        if (idRef.current === id) report('failed')
-      })
-  }
-
-  const openFavorite = (favoriteId: string): void => {
-    const id = idRef.current
-    if (id === null) return
-    window.chorus
-      .openBrowserFavorite({ browserId: id, favoriteId })
-      .then((reply) => {
-        if (idRef.current !== id) return
-        admitState(reply.state)
-        report(reply.failure)
-        if (reply.failure === null) reveal()
-      })
-      .catch(() => {
-        if (idRef.current === id) report('failed')
-      })
-  }
-
-  const removeFavorite = (favoriteId: string): void => {
-    const id = idRef.current
-    if (id === null) return
-    window.chorus
-      .removeBrowserFavorite({ browserId: id, favoriteId })
-      .then((reply) => {
-        if (idRef.current !== id) return
-        setFavorites(reply.favorites)
-        report(reply.failure)
-      })
-      .catch(() => {
-        if (idRef.current === id) report('failed')
-      })
-  }
-
   const live = state?.live === true
-  const loading = state?.status === 'loading'
   const still = live ? overlayStill : null
   const url = state?.url ?? null
   const loadError = state?.error ?? null
   const ready = browserId !== null && state !== null
 
   const placeholder = ((): React.ReactNode => {
+    if (!native) return <p>{state?.error?.description ?? t('extension.browserWebsiteHelp')}</p>
     if (attachFailed) {
       return (
         <>
@@ -446,7 +373,13 @@ export function BrowserPanel(props: {
   })()
 
   return (
-    <div className="browser-panel" ref={root} hidden={!active}>
+    <div
+      className="browser-panel"
+      data-native-browser={native}
+      data-streamed-browser={streamed}
+      ref={root}
+      hidden={!active}
+    >
       <div className="conversation-dock">
         <div className="conversation-dock-tabs">
           <div className="conversation-dock-tab" data-active="true">
@@ -455,7 +388,11 @@ export function BrowserPanel(props: {
               style={{ paddingRight: collapsed ? 0 : undefined }}
             >
               <span className="conversation-dock-tab-title">
-                {state !== null && state.title !== '' ? state.title : t('browser.tabTitle')}
+                {streamed
+                  ? t('console.title')
+                  : state !== null && state.title !== ''
+                    ? state.title
+                    : t('browser.tabTitle')}
               </span>
             </span>
           </div>
@@ -465,8 +402,16 @@ export function BrowserPanel(props: {
           className="conversation-dock-toggle"
           aria-expanded={!collapsed}
           aria-controls={bodyId}
-          aria-label={collapsed ? t('browser.expand') : t('browser.collapse')}
-          title={collapsed ? t('browser.expand') : t('browser.collapse')}
+          aria-label={
+            collapsed
+              ? t(streamed ? 'console.expand' : 'browser.expand')
+              : t(streamed ? 'console.collapse' : 'browser.collapse')
+          }
+          title={
+            collapsed
+              ? t(streamed ? 'console.expand' : 'browser.expand')
+              : t(streamed ? 'console.collapse' : 'browser.collapse')
+          }
           onClick={() => {
             revealAfterExpand.current = collapsed
             markTouched(projectId)
@@ -482,249 +427,73 @@ export function BrowserPanel(props: {
         hidden={collapsed}
         style={{ display: collapsed ? 'none' : undefined }}
       >
-        <div className="browser-toolbar">
-          <button
-            type="button"
-            className="browser-button"
-            aria-label={t('browser.previousPane')}
-            title={t('browser.previousPane')}
-            onClick={() => {
-              showNeighbor(-1)
-            }}
-          >
-            ‹
-          </button>
-          <button
-            type="button"
-            className="browser-button"
-            aria-label={t('browser.back')}
-            title={t('browser.back')}
-            disabled={state?.canGoBack !== true}
-            onClick={() => {
-              act('back')
-            }}
-          >
-            ←
-          </button>
-          <button
-            type="button"
-            className="browser-button"
-            aria-label={t('browser.forward')}
-            title={t('browser.forward')}
-            disabled={state?.canGoForward !== true}
-            onClick={() => {
-              act('forward')
-            }}
-          >
-            →
-          </button>
-          <button
-            type="button"
-            className="browser-button"
-            aria-label={loading ? t('browser.stop') : t('browser.reload')}
-            title={loading ? t('browser.stop') : t('browser.reload')}
-            disabled={!live}
-            onClick={() => {
-              act(loading ? 'stop' : 'reload')
-            }}
-          >
-            {loading ? '×' : '↻'}
-          </button>
-          <form className="browser-address" onSubmit={navigate}>
-            <input
-              className="browser-address-input"
-              type="text"
-              inputMode="url"
-              spellCheck={false}
-              autoComplete="off"
-              maxLength={8192}
-              aria-label={t('browser.address')}
-              placeholder={t('browser.addressPlaceholder')}
-              disabled={!ready}
-              value={editing ? address : (url ?? '')}
-              onFocus={() => {
-                setAddress(url ?? '')
-                setEditing(true)
+        {!streamed && (
+          <>
+            <BrowserToolbar
+              browserId={browserId}
+              currentBrowserId={idRef}
+              state={state}
+              favorites={favorites}
+              settings={settings}
+              notice={notice}
+              native={native}
+              consoleOpen={consoleOpen}
+              onState={admitState}
+              onFavorites={setFavorites}
+              onNotice={setNotice}
+              onReveal={reveal}
+              onNeighbor={showNeighbor}
+              {...(native
+                ? { onShowBrowser: showBrowser, onPasswordButtonHost: setPasswordButtonHost }
+                : {})}
+              onToggleConsole={() => {
+                setConsoleOpen((open) => !open)
               }}
-              onBlur={() => {
-                setEditing(false)
-              }}
-              onChange={(event) => {
-                setAddress(event.target.value)
-                setEditing(true)
-              }}
-              onKeyDown={escapeAddress}
             />
-          </form>
-          <button
-            type="button"
-            className="browser-button"
-            aria-label={t('browser.addFavorite')}
-            title={t('browser.addFavorite')}
-            disabled={!ready || url === null}
-            onClick={addFavorite}
-          >
-            ☆
-          </button>
-          <span className="browser-password-button" ref={setPasswordButtonHost} />
-          <button
-            type="button"
-            className="browser-button"
-            aria-label={t('browser.external')}
-            title={t('browser.external')}
-            disabled={url === null}
-            onClick={() => {
-              act('external')
-            }}
-          >
-            ↗
-          </button>
-          <button
-            type="button"
-            className="browser-button browser-button--text"
-            aria-label={t('browser.devtools')}
-            title={t('browser.devtools')}
-            disabled={!live}
-            onClick={() => {
-              act('devtools')
-            }}
-          >
-            {t('browser.devtoolsShort')}
-          </button>
-          <button
-            type="button"
-            className="browser-button browser-button--text"
-            aria-label={t('console.toggleLabel')}
-            title={t('console.toggleLabel')}
-            aria-pressed={consoleOpen}
-            disabled={!ready}
-            onClick={() => {
-              setConsoleOpen((open) => !open)
-            }}
-          >
-            {t('console.toggle')}
-          </button>
-          <button
-            type="button"
-            className="browser-button browser-button--text"
-            aria-label={t('browser.reveal')}
-            title={t('browser.reveal')}
-            onClick={showBrowser}
-          >
-            {t('browser.revealShort')}
-          </button>
-          <button
-            type="button"
-            className="browser-button"
-            aria-label={t('browser.nextPane')}
-            title={t('browser.nextPane')}
-            onClick={() => {
-              showNeighbor(1)
-            }}
-          >
-            ›
-          </button>
-        </div>
-        {favorites.length > 0 && (
-          <div className="browser-favorites" role="group" aria-label={t('browser.favorites')}>
-            {favorites.map((favorite) => {
-              const name = badgeName(favorite)
-              return (
-                <span className="browser-favorite" key={favorite.id}>
-                  <button
-                    type="button"
-                    className="browser-favorite-open"
-                    title={favorite.url}
-                    aria-label={t('browser.openFavorite', { name })}
-                    onClick={() => {
-                      openFavorite(favorite.id)
-                    }}
-                  >
-                    {favorite.icon !== null ? (
-                      <img className="browser-favorite-icon" src={favorite.icon} alt="" />
-                    ) : (
-                      <span className="browser-favorite-letter" aria-hidden="true">
-                        {badgeLetter(favorite)}
-                      </span>
-                    )}
-                    <span className="browser-favorite-label">{name}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="browser-favorite-remove"
-                    aria-label={t('browser.removeFavorite', { name })}
-                    title={t('browser.removeFavorite', { name })}
-                    onClick={() => {
-                      removeFavorite(favorite.id)
-                    }}
-                  >
-                    ×
-                  </button>
-                </span>
-              )
-            })}
-          </div>
-        )}
-        {(notice !== null || settings !== 'ready' || loadError !== null) && (
-          <div className="browser-notice" role="status">
-            {settings === 'corrupt' && <span>{t('browser.settingsCorrupt')}</span>}
-            {settings === 'unreadable' && <span>{t('browser.settingsUnreadable')}</span>}
-            {loadError !== null && (
-              <span>
-                {t('browser.loadFailed', {
-                  description: loadError.description,
-                  code: loadError.code,
-                })}
-              </span>
+            {native && (
+              <PasswordControls
+                browserId={browserId}
+                state={state}
+                prompt={prompt}
+                passwords={passwords}
+                buttonHost={passwordButtonHost}
+                onPrompt={(candidateId) => {
+                  setPrompt((current) => (current?.candidateId === candidateId ? null : current))
+                }}
+              />
             )}
-            {notice !== null && (
-              <>
-                <span>{notice}</span>
+            <div
+              className="browser-body"
+              ref={body}
+              style={
+                !native && consoleOpen && loadError === null
+                  ? { flex: 'none', minHeight: 0, height: 0, overflow: 'hidden' }
+                  : undefined
+              }
+            >
+              {still !== null ? (
                 <button
                   type="button"
-                  className="browser-button browser-button--text"
-                  onClick={() => {
-                    setNotice(null)
-                  }}
+                  className="browser-still"
+                  aria-label={t('browser.reveal')}
+                  title={t('browser.reveal')}
+                  onClick={reveal}
                 >
-                  {t('browser.dismissNotice')}
+                  <img
+                    className="workbench-still"
+                    src={still}
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                  />
                 </button>
-              </>
-            )}
-          </div>
+              ) : (
+                <div className="browser-placeholder">{placeholder}</div>
+              )}
+            </div>
+          </>
         )}
-        <PasswordControls
-          browserId={browserId}
-          state={state}
-          prompt={prompt}
-          passwords={passwords}
-          buttonHost={passwordButtonHost}
-          onPrompt={(candidateId) => {
-            setPrompt((current) => (current?.candidateId === candidateId ? null : current))
-          }}
-        />
-        <div className="browser-body" ref={body}>
-          {still !== null ? (
-            <button
-              type="button"
-              className="browser-still"
-              aria-label={t('browser.reveal')}
-              title={t('browser.reveal')}
-              onClick={reveal}
-            >
-              <img
-                className="workbench-still"
-                src={still}
-                alt=""
-                aria-hidden="true"
-                draggable={false}
-              />
-            </button>
-          ) : (
-            <div className="browser-placeholder">{placeholder}</div>
-          )}
-        </div>
-        {consoleOpen && (
+        {(streamed || consoleOpen) && (
           <ConsolePanel projectId={projectId} browserId={browserId} active={visible} />
         )}
       </div>

@@ -503,15 +503,28 @@ try {
         return row === undefined ? 'no row node' : row.outerHTML.slice(0, 400)
       })()`)
     )
-    /*
-     * **Nothing is clicked here any more, and that is the change under test.**
-     *
-     * The first call selects itself as it arrives, so the inspector is already
-     * describing one. The click this used to make would now land on that same
-     * selected row — and clicking the selected row closes it — leaving this
-     * check and every one below it describing an empty box. That is the failure
-     * the shape of this edit avoids, not a tidiness.
-     */
+    await wait(3_000)
+    const untouched = JSON.parse(
+      await app.evaluate(`JSON.stringify((() => {
+        const box = document.querySelector('.traffic-inspector')
+        return {
+          empty: box === null ? null : box.classList.contains('traffic-inspector--empty'),
+          selected: document.querySelectorAll('.traffic-row-button[aria-pressed="true"]').length
+        }
+      })())`)
+    )
+    say('the inspector, untouched', untouched)
+    check(
+      'nothing is selected until a call is clicked',
+      untouched.empty === true && untouched.selected === 0,
+      `${String(untouched.selected)} selected, empty ${String(untouched.empty)}`
+    )
+
+    await app.evaluate(`(() => {
+      const row = [...document.querySelectorAll('.traffic-row-button')].at(-1)
+      if (row !== undefined) row.click()
+      return true
+    })()`)
     await wait(3_000)
     const inspector = JSON.parse(
       await app.evaluate(`JSON.stringify((() => {
@@ -525,9 +538,9 @@ try {
         }
       })())`)
     )
-    say('the inspector, untouched', inspector)
+    say('the inspector, after the click', inspector)
     check(
-      'the inspector is already showing the first call, with nothing clicked',
+      'clicking a call shows it in the inspector',
       inspector.present &&
         inspector.empty === false &&
         inspector.selected === 1 &&
@@ -2054,14 +2067,7 @@ try {
       const row = [...document.querySelectorAll('.traffic-row-button')]
         .find((node) => (node.innerText || '').includes('/gz'))
       if (row === undefined) return 'the gzipped request is not listed'
-      /*
-       * Clicked only if it is not already the selection. The clear above empties
-       * the rows, which re-arms the auto-selection for the next call — and the
-       * next call is this one, so /gz arrives already selected. Clicking a
-       * selected row closes it, so the plain click this used to make would
-       * deselect the very row the next four checks describe.
-       */
-      if (row.getAttribute('aria-pressed') !== 'true') row.click()
+      row.click()
       return 'showing the gzipped request'
     })()`)
     await wait(2_000)

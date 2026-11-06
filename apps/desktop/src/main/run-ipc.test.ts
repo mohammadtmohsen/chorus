@@ -1,3 +1,4 @@
+import { electronIpcRegistrar, electronShellClient } from './electron-shell-client.js'
 import { describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import { LOCAL_HOST, type RunCommands } from '@chorus/event-store'
@@ -116,33 +117,36 @@ function build(platform: NodeJS.Platform = 'darwin'): Harness {
     calls.push(`${name} ${projectId}`)
     return Promise.resolve(IDLE)
   }
-  const ipc = new RunIpc({
-    runner: {
-      run: (projectId, commandId) => answer(`run:${commandId ?? 'default'}`, projectId),
-      restart: (projectId) => answer('restart', projectId),
-      stop: (projectId) => answer('stop', projectId),
-      stopRecording: (projectId) => answer('stopRecording', projectId),
-      snapshot: () => IDLE,
-      subscribe: (next) => {
-        listener = next
-        return () => {
-          listener = () => undefined
-        }
+  const ipc = new RunIpc(
+    {
+      runner: {
+        run: (projectId, commandId) => answer(`run:${commandId ?? 'default'}`, projectId),
+        restart: (projectId) => answer('restart', projectId),
+        stop: (projectId) => answer('stop', projectId),
+        stopRecording: (projectId) => answer('stopRecording', projectId),
+        snapshot: () => IDLE,
+        subscribe: (next) => {
+          listener = next
+          return () => {
+            listener = () => undefined
+          }
+        },
       },
+      project: (projectId) => projects.get(projectId) ?? null,
+      isAdopted: (projectId) => projects.has(projectId),
+      setCommands: (projectId, commands) => {
+        saved.push([projectId, commands])
+        const current = projects.get(projectId)
+        if (current !== undefined) projects.set(projectId, { ...current, runCommands: commands })
+      },
+      detect: (root) => {
+        detected.push(root)
+        return Promise.resolve(SCRIPTS)
+      },
+      platform,
     },
-    project: (projectId) => projects.get(projectId) ?? null,
-    isAdopted: (projectId) => projects.has(projectId),
-    setCommands: (projectId, commands) => {
-      saved.push([projectId, commands])
-      const current = projects.get(projectId)
-      if (current !== undefined) projects.set(projectId, { ...current, runCommands: commands })
-    },
-    detect: (root) => {
-      detected.push(root)
-      return Promise.resolve(SCRIPTS)
-    },
-    platform,
-  })
+    electronIpcRegistrar
+  )
   return {
     ipc,
     projects,
@@ -154,7 +158,7 @@ function build(platform: NodeJS.Platform = 'darwin'): Harness {
     },
     shell: (id, role) => {
       const made = sender(id)
-      ipc.registerShell(made as unknown as WebContents, role)
+      ipc.registerShell(electronShellClient(made as unknown as WebContents), role)
       return made
     },
   }
@@ -207,7 +211,7 @@ describe('who may ask', () => {
   it('forgets a released shell and every handler once closed', async () => {
     const { ipc, shell } = build()
     const main = shell(1, { kind: 'main' })
-    ipc.releaseShell(main as unknown as WebContents)
+    ipc.releaseShell(electronShellClient(main as unknown as WebContents))
     await expect(call('run:state', eventFrom(main), { projectId: 'p1' })).rejects.toThrow()
     ipc.close()
     expect(handlers.size).toBe(0)

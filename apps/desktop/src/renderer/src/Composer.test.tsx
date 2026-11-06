@@ -27,6 +27,8 @@ const setAnswerStyle = vi.fn((_request: { conversationId: string; on?: boolean }
 
 beforeAll(() => {
   vi.stubGlobal('ResizeObserver', FakeObserver)
+  const dom = globalThis as typeof globalThis & { jsdom: { window: Window } }
+  vi.stubGlobal('localStorage', dom.jsdom.window.localStorage)
 })
 
 describe('Discussion mode', () => {
@@ -125,7 +127,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  localStorage.clear()
+  window.localStorage.clear()
   sendMessage.mockClear()
   setAnswerStyle.mockClear()
   Object.assign(window, {

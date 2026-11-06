@@ -24,6 +24,7 @@ import {
 } from '../../../shared/workspace-layout.js'
 import {
   activateTab,
+  clampConsoleWidth,
   clampEditorWidthFraction,
   clampProjectTerminalWidth,
   clampSidebarWidth,
@@ -336,12 +337,14 @@ export interface WorkspaceActions {
   adoptConversation: (projectId: string, conversationId: string) => void
   replaceConversation: (projectId: string, previousId: string, nextId: string) => boolean
   setEditorWidthFraction: (projectId: string, fraction: number) => void
+  setConsoleWidth: (projectId: string, width: number) => void
   setTrafficWidth: (projectId: string, width: number) => void
   setTrafficHiddenPathPrefix: (projectId: string, hiddenPathPrefix: string) => void
   setProjectTerminalWidth: (projectId: string, width: number) => void
   setTrafficCollapsed: (projectId: string, collapsed: boolean) => void
   setProjectTerminalCollapsed: (projectId: string, collapsed: boolean) => void
   setBrowserCollapsed: (projectId: string, collapsed: boolean) => void
+  setWebsiteCollapsed: (projectId: string, collapsed: boolean) => void
   addProjectShell: (projectId: string) => string
   removeProjectShell: (projectId: string, id: string) => void
   setRowScroll: (projectId: string, left: number) => void
@@ -495,8 +498,10 @@ function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
     trafficPanels: state.trafficPanels,
     projectTerminals: state.projectTerminals,
     collapsedBrowsers: state.collapsedBrowsers,
+    collapsedWebsites: state.collapsedWebsites,
     rowScroll: state.rowScroll,
     editorWidthFractions: state.editorWidthFractions,
+    consoleWidths: state.consoleWidths,
     terminals: state.terminals,
     globalTerminal: state.globalTerminal,
     webTabs: state.webTabs,
@@ -1075,6 +1080,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           editorWidthFractions: { ...state.editorWidthFractions, [projectId]: fraction },
         }))
       },
+      setConsoleWidth: (projectId, value) => {
+        const width = clampConsoleWidth(value)
+        if (get().consoleWidths[projectId] === width) return
+        set((state) => ({ consoleWidths: { ...state.consoleWidths, [projectId]: width } }))
+      },
       setTrafficWidth: (projectId, width) => {
         set((state) => {
           const current = state.trafficPanels[projectId] ?? CLOSED_TRAFFIC
@@ -1130,6 +1140,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       setBrowserCollapsed: (projectId, collapsed) => {
         set((state) => ({
           collapsedBrowsers: { ...state.collapsedBrowsers, [projectId]: collapsed },
+        }))
+      },
+      setWebsiteCollapsed: (projectId, collapsed) => {
+        set((state) => ({
+          collapsedWebsites: { ...state.collapsedWebsites, [projectId]: collapsed },
         }))
       },
       addProjectShell: (projectId) => {
@@ -1190,6 +1205,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             conversationGroups: editArrangement(state, projectId, resetBoxes),
             editorWidthFractions: Object.fromEntries(
               Object.entries(state.editorWidthFractions).filter(([id]) => id !== projectId)
+            ),
+            consoleWidths: Object.fromEntries(
+              Object.entries(state.consoleWidths).filter(([id]) => id !== projectId)
             ),
             trafficPanels: {
               ...state.trafficPanels,

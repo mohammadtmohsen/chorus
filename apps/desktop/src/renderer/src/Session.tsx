@@ -3,6 +3,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from 'react-i18next'
 import type { Attachment } from './Attachments.js'
 import { NOTE_IMAGE_DRAG_TYPE, noteImageUrls } from './attach.js'
+import { droppedUris, hasUriDrop } from './drop-uris.js'
+import { diagnosticStaging } from './diagnostic-staging.js'
+import { resolveDropUris } from './host-resources.js'
 import { formatDiagnosticBlock } from './editor-context.js'
 import { fitCard, type AsidePurpose } from './aside.js'
 import { Composer, type ComposerHandle, type ComposerState } from './Composer.js'
@@ -1136,8 +1139,7 @@ export function Session(props: {
    */
   useEffect(
     () =>
-      window.chorus.onDiagnostic((diagnostic) => {
-        if (diagnostic.conversationId !== conversationId) return
+      diagnosticStaging.subscribe(conversationId, (diagnostic) => {
         /*
          * `insert` rather than `withEditorContext`, and the difference is where
          * it lands: editor context is prepended because it qualifies whatever
@@ -2153,6 +2155,7 @@ export function Session(props: {
         // from outside the app, and remains scoped to the composer.
         if (
           e.dataTransfer.types.includes('Files') ||
+          hasUriDrop(e.dataTransfer.types) ||
           e.dataTransfer.types.includes(NOTE_IMAGE_DRAG_TYPE)
         ) {
           e.preventDefault()
@@ -2166,6 +2169,14 @@ export function Session(props: {
       }}
       onDrop={(e) => {
         setFileOver(false)
+        const uris = droppedUris(e.dataTransfer)
+        if (uris.length > 0) {
+          e.preventDefault()
+          void resolveDropUris(uris)
+            .then((paths) => composer.current?.addPaths(paths))
+            .catch(() => undefined)
+          return
+        }
         if (e.dataTransfer.files.length > 0) {
           e.preventDefault()
           void composer.current?.attach([...e.dataTransfer.files])

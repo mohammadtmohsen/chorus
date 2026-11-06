@@ -7,7 +7,8 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/out/**',
-      '**/build/**',
+      '**/build/**/*',
+      '!apps/extension/build/**',
       '**/coverage/**',
       '**/node_modules/**',
       // Spike harnesses kept beside their plan as evidence. They drive a live
@@ -156,7 +157,7 @@ export default tseslint.config(
      a socket. They are outside the type-aware graph for the same reason config
      files are, and they print — that is their whole output. */
   {
-    files: ['apps/desktop/e2e/**/*.mjs'],
+    files: ['apps/desktop/e2e/**/*.mjs', 'apps/extension/e2e/**/*.mjs'],
     languageOptions: {
       parserOptions: { projectService: false, project: null },
       /* Node, plus the web globals it now ships. Listed rather than pulled from
@@ -189,6 +190,8 @@ export default tseslint.config(
       '**/*.config.{js,mjs,ts,mts}',
       '**/*.setup.ts',
       'apps/vscode-extension/esbuild.mjs',
+      'apps/engine/*.mjs',
+      'apps/extension/*.mjs',
       'apps/vscode-extension/package.mjs',
       'apps/vscode-extension/zip.mjs',
       /*

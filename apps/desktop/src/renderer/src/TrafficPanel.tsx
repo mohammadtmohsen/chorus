@@ -27,6 +27,7 @@ import {
 import { TrafficEndpoint } from './TrafficEndpoint.js'
 import { TrafficRequestInspector } from './TrafficRequestInspector.js'
 import { filterRows, isPending, pathOf, statusClassOf } from './traffic-filter.js'
+import { onHostReconnected } from './host-actions.js'
 import {
   applySnapshot,
   EMPTY_TRAFFIC,
@@ -194,6 +195,7 @@ export function TrafficPanel(props: {
    */
   const fields = useId()
   const [stream, setStream] = useState<TrafficStream>(EMPTY_TRAFFIC)
+  const [reconnect, setReconnect] = useState(0)
   const [capture, setCapture] = useState<TrafficState>(idle)
   const [legacy, setLegacy] = useState<TrafficLegacy | null>(null)
   const [portDraft, setPortDraft] = useState(String(DEFAULT_TRAFFIC_PORT))
@@ -248,7 +250,6 @@ export function TrafficPanel(props: {
   const filtered = filterRows(stream.rows, search)
   const shown = filtered.slice(-callLimit)
   const newestSeq = shown.at(-1)?.seq ?? null
-  const newestRequestSeq = shown.findLast((row) => row.source === 'http')?.seq ?? null
   const currentProcess = props.run?.process
   const runToken = currentProcess && 'token' in currentProcess ? currentProcess.token : null
   const runIsBusy = runBusy(props.run ?? null)
@@ -273,8 +274,8 @@ export function TrafficPanel(props: {
   }, [projectId, advertisedHost])
 
   useEffect(() => {
-    setSelectedSeq(stream.projectId === projectId ? newestRequestSeq : null)
-  }, [projectId, stream.projectId, stream.captureId, newestRequestSeq])
+    setSelectedSeq(null)
+  }, [projectId, stream.projectId, stream.captureId])
 
   useEffect(() => {
     setupSession.current += 1
@@ -304,6 +305,12 @@ export function TrafficPanel(props: {
     if (list === null || collapsed || stream.projectId !== projectId) return
     list.scrollTop = list.scrollHeight
   }, [newestSeq, callLimit, search, projectId, stream.projectId, stream.captureId, collapsed])
+
+  useEffect(() => {
+    return onHostReconnected(() => {
+      setReconnect((current) => current + 1)
+    })
+  }, [])
 
   useEffect(() => {
     let attachment: TrafficAttachment | null = null
@@ -342,10 +349,12 @@ export function TrafficPanel(props: {
       .attachTraffic({ projectId })
       .then((opened) => {
         if (cancelled) {
-          void window.chorus.detachTraffic({
-            projectId,
-            subscriptionId: opened.subscriptionId,
-          })
+          void window.chorus
+            .detachTraffic({
+              projectId,
+              subscriptionId: opened.subscriptionId,
+            })
+            .catch(() => undefined)
           return
         }
         attachment = {
@@ -385,10 +394,12 @@ export function TrafficPanel(props: {
       cancelled = true
       stopListening()
       if (attachment !== null) {
-        void window.chorus.detachTraffic({ projectId, subscriptionId: attachment.subscriptionId })
+        void window.chorus
+          .detachTraffic({ projectId, subscriptionId: attachment.subscriptionId })
+          .catch(() => undefined)
       }
     }
-  }, [projectId])
+  }, [projectId, reconnect])
 
   useEffect(() => {
     setPortDraft(String(capture.wantedPort ?? DEFAULT_TRAFFIC_PORT))

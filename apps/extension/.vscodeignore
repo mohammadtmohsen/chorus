@@ -1,0 +1,6 @@
+src/**
+e2e/**
+build/**
+*.ts
+*.mjs
+tsconfig.json

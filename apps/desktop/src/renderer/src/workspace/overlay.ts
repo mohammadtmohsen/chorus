@@ -1,3 +1,4 @@
+import { useHostCapabilities } from '../host-context.js'
 import { useEffect } from 'react'
 import { createSignal, useSignal } from './signal.js'
 
@@ -170,23 +171,27 @@ function show(): void {
  * nothing is hidden. Mount-gated overlays (`{open && <Dialog />}`) can omit it.
  */
 export function useShellOverlay(active = true): void {
+  const capabilities = useHostCapabilities()
+  const nativeViews = capabilities.embeddedEditor || capabilities.nativeBrowserViews
   useEffect(() => {
     if (!active) return undefined
     depth += 1
     if (depth === 1) {
       overlayActive.set(true)
-      hide()
-      startHeartbeat()
+      if (nativeViews) {
+        hide()
+        startHeartbeat()
+      }
     }
     return () => {
       depth -= 1
       if (depth === 0) {
         overlayActive.set(false)
         stopHeartbeat()
-        show()
+        if (nativeViews) show()
       }
     }
-  }, [active])
+  }, [active, nativeViews])
 }
 
 export function useShellOverlayActive(): boolean {

@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import type { AgentAdapter } from '@chorus/agent-protocol'
 import { FakeAdapter } from '@chorus/orchestrator'
 import { Logger, type AgentId } from '@chorus/shared'
@@ -28,7 +29,7 @@ beforeEach(() => {
   spawnRequested.mockClear()
   quit = null
   runtime = ChorusRuntime.open(
-    mkdtempSync(join(tmpdir(), 'chorus-shells-')),
+    testHostPorts(mkdtempSync(join(tmpdir(), 'chorus-shells-'))),
     new Logger(),
     new Map<AgentId, AgentAdapter>([
       ['claude', new FakeAdapter({ id: 'claude' })],
@@ -44,6 +45,7 @@ afterEach(async () => {
     process.env[PROFILING] = profiling
   }
   await (quit ?? runtime.close())
+  vi.restoreAllMocks()
 })
 
 const shell = (projectId: string): TerminalRef => ({ scope: 'shell', projectId, id: 'main' })
@@ -115,5 +117,41 @@ describe('project shells while teardown is still under way', () => {
     expect(await attach).toBeNull()
     expect(spawnRequested).not.toHaveBeenCalled()
     await quit
+  })
+})
+
+describe('project shell Traffic preparation', () => {
+  it('waits for preparation before opening a shell', async () => {
+    const projectId = localProject('chorus-shells-prepare-')
+    const registry = runtime.trafficRegistry()
+    const prepare = registry.prepare.bind(registry)
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const preparing = vi.spyOn(registry, 'prepare').mockImplementation(async (id) => {
+      await gate
+      return await prepare(id)
+    })
+    const opening = runtime.attachTerminal(shell(projectId)).catch((error: unknown) => error)
+    expect(preparing).toHaveBeenCalledExactlyOnceWith(projectId)
+    expect(spawnRequested).not.toHaveBeenCalled()
+    release()
+    expect(await opening).toEqual(new Error('a native shell was about to spawn'))
+    expect(spawnRequested).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs preparation failure and still tries to open the shell', async () => {
+    const projectId = localProject('chorus-shells-prepare-failure-')
+    vi.spyOn(runtime.trafficRegistry(), 'prepare').mockRejectedValue(new Error('listener failed'))
+    const warn = vi.spyOn(runtime.log, 'warn')
+    await expect(runtime.attachTerminal(shell(projectId))).rejects.toThrow(
+      'a native shell was about to spawn'
+    )
+    expect(warn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ projectId, message: 'listener failed' })
+    )
+    expect(spawnRequested).toHaveBeenCalledTimes(1)
   })
 })

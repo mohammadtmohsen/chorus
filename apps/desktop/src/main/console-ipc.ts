@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import type { IpcRegistrar, ShellClient, ShellRequest } from './shell-client.js'
 import type { z } from 'zod'
 import {
   CONSOLE_CHANNELS,
@@ -28,13 +28,13 @@ interface Deps {
 }
 
 interface Shell {
-  readonly webContents: WebContents
+  readonly webContents: ShellClient
   readonly role: ShellRole
 }
 
 interface Subscription {
   readonly id: string
-  readonly webContents: WebContents
+  readonly webContents: ShellClient
   readonly projectId: string
   pending: ConsolePush[]
   pendingBytes: number
@@ -43,13 +43,16 @@ interface Subscription {
 
 export class ConsoleIpc {
   private readonly deps: Deps
-  private readonly shells = new Map<number, Shell>()
-  private readonly watched = new WeakSet<WebContents>()
+  private readonly shells = new Map<string, Shell>()
+  private readonly watched = new WeakSet<ShellClient>()
   private readonly subscriptions = new Map<string, Subscription>()
-  private readonly byDocument = new Map<number, Map<string, string>>()
+  private readonly byDocument = new Map<string, Map<string, string>>()
   private readonly stop: () => void
 
-  constructor(deps: Deps) {
+  constructor(
+    deps: Deps,
+    private readonly registrar: IpcRegistrar
+  ) {
     this.deps = deps
     const contract = CONSOLE_CONTRACT
     this.handle('console:subscribe', contract['console:subscribe'], (event, request, role) =>
@@ -90,23 +93,23 @@ export class ConsoleIpc {
     })
   }
 
-  registerShell(webContents: WebContents, role: ShellRole): void {
+  registerShell(webContents: ShellClient, role: ShellRole): void {
     this.shells.set(webContents.id, { webContents, role })
     if (this.watched.has(webContents)) return
     this.watched.add(webContents)
-    webContents.on('did-start-navigation', (details) => {
-      if (details.isMainFrame && !details.isSameDocument) this.revoke(webContents.id)
+    webContents.onGone(() => {
+      this.revoke(webContents.id)
     })
   }
 
-  releaseShell(webContents: WebContents): void {
+  releaseShell(webContents: ShellClient): void {
     this.shells.delete(webContents.id)
     this.revoke(webContents.id)
   }
 
   close(): void {
     this.stop()
-    for (const channel of CONSOLE_CHANNELS) ipcMain.removeHandler(channel)
+    for (const channel of CONSOLE_CHANNELS) this.registrar.removeHandler(channel)
     this.shells.clear()
     this.subscriptions.clear()
     this.byDocument.clear()
@@ -116,12 +119,12 @@ export class ConsoleIpc {
     channel: ConsoleChannel,
     contract: { readonly request: Q; readonly response: R },
     handler: (
-      event: IpcMainInvokeEvent,
+      event: ShellRequest,
       request: z.output<Q>,
       role: ShellRole
     ) => Promise<z.output<R>> | z.output<R>
   ): void {
-    ipcMain.handle(channel, async (event: IpcMainInvokeEvent, raw: unknown) => {
+    this.registrar.handle(channel, async (event: ShellRequest, raw: unknown) => {
       const role = this.role(event)
       if (role === null) throw new Error('The console is not available to this document')
       const parsed = contract.request.safeParse(raw)
@@ -138,7 +141,7 @@ export class ConsoleIpc {
   }
 
   private subscribe(
-    event: IpcMainInvokeEvent,
+    event: ShellRequest,
     role: ShellRole,
     projectId: string
   ): ConsoleResponse<'console:subscribe'> {
@@ -166,7 +169,7 @@ export class ConsoleIpc {
   }
 
   private unsubscribe(
-    event: IpcMainInvokeEvent,
+    event: ShellRequest,
     subscriptionId: string
   ): ConsoleResponse<'console:unsubscribe'> {
     const subscription = this.own(event, subscriptionId)
@@ -174,7 +177,7 @@ export class ConsoleIpc {
     return { ok: true }
   }
 
-  private ack(event: IpcMainInvokeEvent, subscriptionId: string): ConsoleResponse<'console:ack'> {
+  private ack(event: ShellRequest, subscriptionId: string): ConsoleResponse<'console:ack'> {
     const subscription = this.own(event, subscriptionId)
     if (subscription === null) return { ok: true }
     subscription.outstanding = false
@@ -183,7 +186,7 @@ export class ConsoleIpc {
   }
 
   private resync(
-    event: IpcMainInvokeEvent,
+    event: ShellRequest,
     role: ShellRole,
     subscriptionId: string
   ): ConsoleResponse<'console:snapshot'> {
@@ -234,7 +237,7 @@ export class ConsoleIpc {
   }
 
   private enqueue(subscription: Subscription, push: ConsolePush): void {
-    if (subscription.webContents.isDestroyed()) {
+    if (subscription.webContents.isGone()) {
       this.drop(subscription)
       return
     }
@@ -260,7 +263,7 @@ export class ConsoleIpc {
 
   private flush(subscription: Subscription): void {
     if (subscription.outstanding || subscription.pending.length === 0) return
-    if (subscription.webContents.isDestroyed()) {
+    if (subscription.webContents.isGone()) {
       this.drop(subscription)
       return
     }
@@ -281,21 +284,21 @@ export class ConsoleIpc {
     if (projects?.size === 0) this.byDocument.delete(document)
   }
 
-  private revoke(document: number): void {
+  private revoke(document: string): void {
     const projects = this.byDocument.get(document)
     if (projects === undefined) return
     this.byDocument.delete(document)
     for (const subscriptionId of projects.values()) this.subscriptions.delete(subscriptionId)
   }
 
-  private own(event: IpcMainInvokeEvent, subscriptionId: string): Subscription | null {
+  private own(event: ShellRequest, subscriptionId: string): Subscription | null {
     const subscription = this.subscriptions.get(subscriptionId)
     if (subscription?.webContents !== event.sender) return null
     return subscription
   }
 
-  private role(event: IpcMainInvokeEvent): ShellRole | null {
-    if (event.senderFrame !== event.sender.mainFrame) return null
+  private role(event: ShellRequest): ShellRole | null {
+    if (!event.isMainFrame) return null
     const shell = this.shells.get(event.sender.id)
     return shell?.webContents === event.sender ? shell.role : null
   }

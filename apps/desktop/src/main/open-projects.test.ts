@@ -68,8 +68,10 @@ describe('open project persistence', () => {
         trafficPanels: {},
         projectTerminals: {},
         collapsedBrowsers: {},
+        collapsedWebsites: {},
         rowScroll: {},
         editorWidthFractions: {},
+        consoleWidths: {},
         webTabs: NO_WEB_TABS,
       },
     })

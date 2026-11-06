@@ -1,3 +1,4 @@
+import { hostStorage } from './host-storage.js'
 import {
   forwardRef,
   useCallback,
@@ -212,7 +213,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const [messageMode, setMessageMode] = useState<'work' | 'discussion'>(() => {
       if (props.initial?.mode !== undefined) return props.initial.mode
       try {
-        return localStorage.getItem(`chorus:message-mode:${conversationId}`) === 'discussion'
+        return hostStorage.getItem(`chorus:message-mode:${conversationId}`) === 'discussion'
           ? 'discussion'
           : 'work'
       } catch {
@@ -221,7 +222,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     })
     useEffect(() => {
       try {
-        localStorage.setItem(`chorus:message-mode:${conversationId}`, messageMode)
+        hostStorage.setItem(`chorus:message-mode:${conversationId}`, messageMode)
       } catch {
         return
       }
@@ -1018,6 +1019,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
              */
             heading: t(snapshot.editor === 'workbench' ? 'ide.headingWorkbench' : 'ide.heading'),
             unsaved: t('ide.unsaved'),
+            preview: t('ide.preview'),
             version: version === null ? '' : t(version.key, version.params),
           }
         )

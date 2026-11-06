@@ -1,3 +1,4 @@
+import { useHostCapabilities } from '../host-context.js'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { PointerEvent as ReactPointerEvent } from 'react'
@@ -84,6 +85,7 @@ export interface QuickRailProps {
 }
 
 export function QuickRail(props: QuickRailProps): React.JSX.Element {
+  const capabilities = useHostCapabilities()
   const { t } = useTranslation()
   countRender('QuickRail')
   /*
@@ -309,19 +311,21 @@ export function QuickRail(props: QuickRailProps): React.JSX.Element {
       */}
       <ul className="quick-rail-group quick-rail-group--foot">
         <RailUsage />
-        <li>
-          <button
-            type="button"
-            className="rail-item"
-            data-rail-terminal
-            aria-pressed={props.terminalOpen}
-            aria-label={props.terminalOpen ? t('terminal.closeGlobal') : t('terminal.openGlobal')}
-            title={props.terminalOpen ? t('terminal.closeGlobal') : t('terminal.openGlobal')}
-            onClick={props.onToggleTerminal}
-          >
-            <TerminalIcon />
-          </button>
-        </li>
+        {capabilities.globalTerminal && (
+          <li>
+            <button
+              type="button"
+              className="rail-item"
+              data-rail-terminal
+              aria-pressed={props.terminalOpen}
+              aria-label={props.terminalOpen ? t('terminal.closeGlobal') : t('terminal.openGlobal')}
+              title={props.terminalOpen ? t('terminal.closeGlobal') : t('terminal.openGlobal')}
+              onClick={props.onToggleTerminal}
+            >
+              <TerminalIcon />
+            </button>
+          </li>
+        )}
         <li>
           <button
             type="button"

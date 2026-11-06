@@ -14,6 +14,7 @@ import { isAgentId, type AgentId } from '@chorus/shared'
 import { withBackgroundWork, type SessionRowState } from './session-row.js'
 import {
   CLOSED_TERMINAL_PANEL,
+  CONSOLE_WIDTH,
   type ConversationArrangement,
   type ProjectTerminalPaneState,
   type TerminalPanelState,
@@ -74,12 +75,14 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     adoptConversation,
     replaceConversation,
     setEditorWidthFraction,
+    setConsoleWidth,
     setTrafficWidth,
     setTrafficHiddenPathPrefix,
     setProjectTerminalWidth,
     setTrafficCollapsed,
     setProjectTerminalCollapsed,
     setBrowserCollapsed,
+    setWebsiteCollapsed,
     addProjectShell,
     removeProjectShell,
     setRowScroll,
@@ -141,12 +144,14 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     adoptConversation,
     replaceConversation,
     setEditorWidthFraction,
+    setConsoleWidth,
     setTrafficWidth,
     setTrafficHiddenPathPrefix,
     setProjectTerminalWidth,
     setTrafficCollapsed,
     setProjectTerminalCollapsed,
     setBrowserCollapsed,
+    setWebsiteCollapsed,
     addProjectShell,
     removeProjectShell,
     setRowScroll,
@@ -289,6 +294,14 @@ export function useCollapsedBrowsers(): Readonly<Record<string, boolean>> {
 export function useEditorWidthFraction(projectId: string | null): number | undefined {
   return useWorkspaceStore((state) =>
     projectId === null ? undefined : state.editorWidthFractions[projectId]
+  )
+}
+
+export function useConsoleWidth(projectId: string | null): number {
+  return useWorkspaceStore((state) =>
+    projectId === null
+      ? CONSOLE_WIDTH.default
+      : (state.consoleWidths[projectId] ?? CONSOLE_WIDTH.default)
   )
 }
 

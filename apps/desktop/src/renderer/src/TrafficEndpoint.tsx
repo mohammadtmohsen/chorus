@@ -82,7 +82,6 @@ export function TrafficEndpoint(props: { readonly label: string }): React.JSX.El
             minWidth: Math.max(0, box.width - leftInset - rightInset),
             backgroundColor,
             color: style.color,
-            cursor: style.cursor,
             fontFamily: style.fontFamily,
             fontSize: style.fontSize,
             fontStyle: style.fontStyle,
@@ -107,8 +106,6 @@ export function TrafficEndpoint(props: { readonly label: string }): React.JSX.El
             role="tooltip"
             className="traffic-url traffic-endpoint-tooltip"
             style={anchor}
-            onPointerEnter={hold}
-            onPointerLeave={leave}
           >
             {props.label}
           </div>,

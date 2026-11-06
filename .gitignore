@@ -4,6 +4,7 @@ out/
 build/
 # …except electron-builder's buildResources, which is source, not output.
 !apps/desktop/build/
+!apps/extension/build/
 .turbo/
 coverage/
 *.tsbuildinfo

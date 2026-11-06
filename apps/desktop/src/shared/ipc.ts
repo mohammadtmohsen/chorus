@@ -1,3 +1,4 @@
+import { HostCapabilities } from './host-capabilities.js'
 import {
   ActorSchema,
   AgentIdSchema,
@@ -60,6 +61,7 @@ export const AgentProbeResult = z.object({
 export type AgentProbeResult = z.infer<typeof AgentProbeResult>
 
 export const AppInfo = z.object({
+  capabilities: HostCapabilities,
   appVersion: z.string(),
   electronVersion: z.string(),
   nodeVersion: z.string(),
@@ -360,6 +362,7 @@ export const IdeSnapshotResult = z.discriminatedUnion('outcome', [
     isDirty: z.boolean(),
     languageId: z.string(),
     text: z.string(),
+    preview: z.literal(true).optional(),
     /**
      * The editor's model version for this file — Phase 6e.
      *
@@ -2395,11 +2398,17 @@ export const ConversationNotePush = z
 export type ConversationNotePush = z.infer<typeof ConversationNotePush>
 
 export const CONVERSATION_NOTE_JOURNAL_CHANNEL = 'conversation:noteJournal'
+export const CONVERSATION_NOTE_JOURNAL_PUSH_CHANNEL = 'conversation:noteJournalChanged'
 
 export const CONVERSATION_NOTE_JOURNAL_MAX_LENGTH = CONVERSATION_NOTE_MAX_LENGTH * 6 + 1_024
 
 const NoteJournalConversation = z.string().min(1).max(128)
 const NoteJournalRaw = z.string().max(CONVERSATION_NOTE_JOURNAL_MAX_LENGTH).nullable()
+
+export const ConversationNoteJournalPush = z
+  .object({ conversationId: NoteJournalConversation })
+  .strict()
+export type ConversationNoteJournalPush = z.infer<typeof ConversationNoteJournalPush>
 
 export const ConversationNoteJournalRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('read'), conversationId: NoteJournalConversation }).strict(),
@@ -2595,6 +2604,9 @@ export interface ChorusApi
   readonly setConversationNoteView: (
     request: IpcRequest<'conversation:setNoteView'>
   ) => Promise<IpcResponse<'conversation:setNoteView'>>
+  readonly prepareConversationNoteJournal: (request: {
+    readonly conversationId: string
+  }) => Promise<void>
   readonly readConversationNoteJournal: (request: {
     readonly conversationId: string
   }) => ConversationNoteJournalResponse
@@ -2642,6 +2654,9 @@ export interface ChorusApi
   readonly onContextUsage: (listener: (usage: ContextUsagePush) => void) => () => void
   readonly onTasks: (listener: (tasks: TasksPush) => void) => () => void
   readonly onConversationNote: (listener: (push: ConversationNotePush) => void) => () => void
+  readonly onConversationNoteJournal: (
+    listener: (push: ConversationNoteJournalPush) => void
+  ) => () => void
   readonly onActivity: (listener: (activity: ActivityPush) => void) => () => void
   readonly onAttention: (listener: (attention: AttentionPush) => void) => () => void
   readonly onRevealConversation: (listener: (reveal: RevealPush) => void) => () => void

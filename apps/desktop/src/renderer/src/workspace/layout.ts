@@ -2,6 +2,7 @@ import type { WorkbenchRect } from '../../../shared/workbench-ipc.js'
 import { BrowserWebTabId } from '../../../shared/browser-ipc.js'
 import {
   BOX_WIDTH,
+  CONSOLE_WIDTH,
   EDITOR_WIDTH,
   MAIN_PROJECT_SHELL,
   NO_WEB_TABS,
@@ -160,8 +161,10 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   trafficPanels: {},
   projectTerminals: {},
   collapsedBrowsers: {},
+  collapsedWebsites: {},
   rowScroll: {},
   editorWidthFractions: {},
+  consoleWidths: {},
   webTabs: NO_WEB_TABS,
 }
 
@@ -182,8 +185,10 @@ export function sliceOf(workspace: WorkspaceSnapshot, projectId: string): Projec
     trafficPanel: workspace.trafficPanels[projectId],
     projectTerminal: workspace.projectTerminals[projectId],
     browserCollapsed: workspace.collapsedBrowsers[projectId],
+    websiteCollapsed: workspace.collapsedWebsites[projectId],
     rowScroll: workspace.rowScroll[projectId],
     editorWidthFraction: workspace.editorWidthFractions[projectId],
+    consoleWidth: workspace.consoleWidths[projectId],
   }
 }
 
@@ -206,12 +211,14 @@ export function mergeSlice(
     ),
     projectTerminals: withEntry(workspace.projectTerminals, projectId, slice.projectTerminal),
     collapsedBrowsers: withEntry(workspace.collapsedBrowsers, projectId, slice.browserCollapsed),
+    collapsedWebsites: withEntry(workspace.collapsedWebsites, projectId, slice.websiteCollapsed),
     rowScroll: withEntry(workspace.rowScroll, projectId, slice.rowScroll),
     editorWidthFractions: withEntry(
       workspace.editorWidthFractions,
       projectId,
       slice.editorWidthFraction
     ),
+    consoleWidths: withEntry(workspace.consoleWidths, projectId, slice.consoleWidth),
   }
 }
 
@@ -415,6 +422,12 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
           return fraction === undefined ? [] : [[projectId, fraction]]
         }
       )
+    ),
+    consoleWidths: Object.fromEntries(
+      Object.entries(workspace.consoleWidths).map(([projectId, width]) => [
+        projectId,
+        clampConsoleWidth(width),
+      ])
     ),
     /*
      * Clamped on the way through, per project. A snapshot edited by hand or
@@ -964,6 +977,11 @@ export function clampTrafficWidth(width: number): number {
   return Math.round(Math.max(TRAFFIC_WIDTH.min, width))
 }
 
+export function clampConsoleWidth(width: number): number {
+  if (!Number.isFinite(width)) return CONSOLE_WIDTH.default
+  return Math.round(Math.max(CONSOLE_WIDTH.min, width))
+}
+
 export function normalizeTrafficPanel(panel: TrafficPanelState): TrafficPanelState {
   return {
     ...panel,
@@ -1163,6 +1181,11 @@ export function moveBox(
 ): ConversationArrangement {
   const box = arrangement.panes[boxId]
   if (box === undefined || boxId === targetPaneId || arrangement.layout === null) return arrangement
+  if (
+    arrangement.panes[targetPaneId] === undefined ||
+    !leafPaneIds(arrangement.layout).includes(targetPaneId)
+  )
+    return arrangement
   const lifted = normalizeTree({
     ...arrangement,
     panes: { ...arrangement.panes, [boxId]: { ...box, tabs: [] } },
@@ -1302,6 +1325,11 @@ export function reconcileWorkspace(
     ),
     editorWidthFractions: Object.fromEntries(
       Object.entries(workspace.editorWidthFractions).filter(([projectId]) =>
+        allowedProjects.has(projectId)
+      )
+    ),
+    consoleWidths: Object.fromEntries(
+      Object.entries(workspace.consoleWidths).filter(([projectId]) =>
         allowedProjects.has(projectId)
       )
     ),

@@ -217,6 +217,12 @@ packages/workspace        path helpers and `parseDiff`. **Not** a git UI any mor
 apps/desktop/src/main     Electron main: runtime, IPC, windows, terminal.ts,
                           workbench-surface.ts (the views), workbench-host.ts (the REH),
                           project-service.ts (the registry over event-store)
+apps/engine               the VS Code extension's long-lived process: the real ChorusRuntime
+                          and IPC handlers over an authenticated socket. Imports apps/desktop/src
+apps/extension            the VS Code host: relay, ports over VS Code APIs, one webview running
+                          the real renderer. PARITY in src/parity.ts classifies every ChorusApi
+                          method, so a new one does not compile until it is decided. Live drivers
+                          are in e2e/. Plan: docs/plans/80-chorus-vscode-extension.md
 apps/desktop/src/renderer transcript reduction, the project shell, and
                           `renderer/src/workbench/` — the Code-OSS entry, services
                           and the surface frame

@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, parse } from 'node:path'
 import {
   migrate,
   NoLegacyTrafficError,
@@ -47,6 +47,12 @@ beforeEach(() => {
 })
 
 describe('adopt', () => {
+  it('names a filesystem-root project with its canonical root', () => {
+    const root = parse(realpathSync(process.cwd())).root
+    const { project } = service.adopt(root)
+    expect(project.name).toBe(realpathSync(root))
+  })
+
   it('names a project after its folder', () => {
     const { project, created } = service.adopt(dir('alpha'))
     expect(created).toBe(true)

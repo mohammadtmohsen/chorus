@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import type { IpcRegistrar, ShellClient, ShellRequest } from './shell-client.js'
 import type { TrafficSourceShape } from '../shared/ipc.js'
 import {
   TRAFFIC_CHANNELS,
@@ -54,7 +54,7 @@ type TrafficAction =
 
 interface Subscription {
   readonly id: string
-  readonly webContents: WebContents
+  readonly webContents: ShellClient
   readonly projectId: string
   pending: TrafficPush[]
   pendingBytes: number
@@ -71,16 +71,19 @@ interface Deps {
 
 export class TrafficIpc {
   private readonly shells = new Map<
-    number,
-    { readonly webContents: WebContents; readonly role: ShellRole }
+    string,
+    { readonly webContents: ShellClient; readonly role: ShellRole }
   >()
   private readonly subscriptions = new Map<string, Subscription>()
-  private readonly byDocument = new Map<number, Map<string, string>>()
+  private readonly byDocument = new Map<string, Map<string, string>>()
   private readonly live = new Set<string>()
   private readonly deps: Deps
   private readonly detach: () => void
 
-  constructor(deps: Deps) {
+  constructor(
+    deps: Deps,
+    private readonly registrar: IpcRegistrar
+  ) {
     this.deps = deps
     for (const channel of TRAFFIC_CHANNELS) this.register(channel)
     this.detach = deps.registry.subscribe((push) => {
@@ -89,11 +92,11 @@ export class TrafficIpc {
     })
   }
 
-  registerShell(webContents: WebContents, role: ShellRole): void {
+  registerShell(webContents: ShellClient, role: ShellRole): void {
     this.shells.set(webContents.id, { webContents, role })
   }
 
-  releaseShell(webContents: WebContents): void {
+  releaseShell(webContents: ShellClient): void {
     const id = webContents.id
     this.shells.delete(id)
     const projects = this.byDocument.get(id)
@@ -104,14 +107,14 @@ export class TrafficIpc {
 
   close(): void {
     this.detach()
-    for (const channel of TRAFFIC_CHANNELS) ipcMain.removeHandler(channel)
+    for (const channel of TRAFFIC_CHANNELS) this.registrar.removeHandler(channel)
     this.shells.clear()
     this.subscriptions.clear()
     this.byDocument.clear()
   }
 
   private register(channel: TrafficChannel): void {
-    ipcMain.handle(channel, async (event: IpcMainInvokeEvent, raw: unknown) => {
+    this.registrar.handle(channel, async (event: ShellRequest, raw: unknown) => {
       const parsed = TRAFFIC_CONTRACT[channel].request.safeParse(raw)
       if (!parsed.success) {
         throw new Error(`Invalid request on "${channel}": ${parsed.error.message}`)
@@ -127,7 +130,7 @@ export class TrafficIpc {
 
   private run(
     channel: TrafficChannel,
-    event: IpcMainInvokeEvent,
+    event: ShellRequest,
     request: TrafficRequest<TrafficChannel>
   ): unknown {
     const role = this.role(event)
@@ -209,11 +212,7 @@ export class TrafficIpc {
     return change === 'start' ? registry.start(projectId) : registry.stop(projectId)
   }
 
-  private attach(
-    event: IpcMainInvokeEvent,
-    role: ShellRole,
-    request: { projectId: string }
-  ): unknown {
+  private attach(event: ShellRequest, role: ShellRole, request: { projectId: string }): unknown {
     if (!this.mayInspect(role, request.projectId)) {
       throw new Error('That project is not this shell’s to inspect')
     }
@@ -248,10 +247,7 @@ export class TrafficIpc {
     }
   }
 
-  private detachSubscription(
-    event: IpcMainInvokeEvent,
-    request: { subscriptionId: string }
-  ): unknown {
+  private detachSubscription(event: ShellRequest, request: { subscriptionId: string }): unknown {
     const subscription = this.own(event, request.subscriptionId)
     if (subscription === null) return { ok: true }
     this.subscriptions.delete(subscription.id)
@@ -263,10 +259,7 @@ export class TrafficIpc {
     return { ok: true }
   }
 
-  private ack(
-    event: IpcMainInvokeEvent,
-    request: { subscriptionId: string; seq: number }
-  ): unknown {
+  private ack(event: ShellRequest, request: { subscriptionId: string; seq: number }): unknown {
     const subscription = this.own(event, request.subscriptionId)
     if (subscription === null) return { ok: true }
     subscription.outstanding = false
@@ -313,7 +306,7 @@ export class TrafficIpc {
   }
 
   private async readBody(
-    event: IpcMainInvokeEvent,
+    event: ShellRequest,
     role: ShellRole,
     request: TrafficBodyReadRequest
   ): Promise<TrafficReadResult> {
@@ -376,7 +369,7 @@ export class TrafficIpc {
     if (capturing) this.live.add(projectId)
     else this.live.delete(projectId)
     for (const shell of this.shells.values()) {
-      if (shell.webContents.isDestroyed()) continue
+      if (shell.webContents.isGone()) continue
       shell.webContents.send(TRAFFIC_LIVE_PUSH_CHANNEL, { projectIds: this.liveFor(shell.role) })
     }
   }
@@ -420,7 +413,7 @@ export class TrafficIpc {
 
   private flush(subscription: Subscription): void {
     if (subscription.outstanding || subscription.pending.length === 0) return
-    if (subscription.webContents.isDestroyed()) {
+    if (subscription.webContents.isGone()) {
       this.subscriptions.delete(subscription.id)
       return
     }
@@ -437,15 +430,15 @@ export class TrafficIpc {
     subscription.webContents.send(TRAFFIC_PUSH_CHANNEL, head)
   }
 
-  private own(event: IpcMainInvokeEvent, subscriptionId: string): Subscription | null {
+  private own(event: ShellRequest, subscriptionId: string): Subscription | null {
     const subscription = this.subscriptions.get(subscriptionId)
     if (subscription === undefined) return null
     if (subscription.webContents.id !== event.sender.id) return null
     return subscription
   }
 
-  private role(event: IpcMainInvokeEvent): ShellRole | null {
-    if (event.senderFrame !== event.sender.mainFrame) return null
+  private role(event: ShellRequest): ShellRole | null {
+    if (!event.isMainFrame) return null
     return this.shells.get(event.sender.id)?.role ?? null
   }
 

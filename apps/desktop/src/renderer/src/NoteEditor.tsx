@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { Extension, InputRule, Node, mergeAttributes } from '@tiptap/core'
 import type { Editor, JSONContent } from '@tiptap/core'
 import { Placeholder } from '@tiptap/extensions'
-import Image from '@tiptap/extension-image'
 import { Color } from '@tiptap/extension-color'
 import { TextStyle } from '@tiptap/extension-text-style'
 import { DragHandle } from '@tiptap/extension-drag-handle-react'
@@ -11,6 +10,8 @@ import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { NOTE_IMAGE_DRAG_TYPE, NOTE_IMAGE_URL_PREFIX } from './attach.js'
 import { NoteImageDialog } from './NoteImageDialog.js'
+import { NoteImage } from './note-image.js'
+import { resolveNoteImageUrl } from './host-resources.js'
 import { useShellOverlay } from './workspace/overlay.js'
 
 /**
@@ -587,7 +588,7 @@ export function NoteEditor(props: NoteEditorProps): React.JSX.Element {
        * pasting HTML that already had one — and admitting it would put the bytes
        * back in the note's database row.
        */
-      Image.configure({ allowBase64: false }),
+      NoteImage.configure({ allowBase64: false }),
       /*
        * `TextStyle` is the span `Color` writes into, and it has to be listed —
        * `Color` is a set of commands over someone else's mark rather than a mark
@@ -1120,7 +1121,7 @@ export function NoteEditor(props: NoteEditorProps): React.JSX.Element {
           const target = event.target
           if (!(target instanceof HTMLImageElement)) return
           event.preventDefault()
-          setZoomed(target.src)
+          setZoomed(target.dataset['noteImageSource'] ?? target.src)
         }}
         onPointerUp={(event) => {
           readSelection(event)
@@ -1296,7 +1297,7 @@ export function NoteEditor(props: NoteEditorProps): React.JSX.Element {
             returnFocus()
           }}
         >
-          <img src={zoomed} alt="" />
+          <img src={resolveNoteImageUrl(zoomed)} alt="" />
         </button>
       )}
       {imageDialog !== null && (

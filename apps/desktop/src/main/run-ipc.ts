@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import type { IpcRegistrar, ShellClient, ShellRequest } from './shell-client.js'
 import {
   RUN_CHANNELS,
   RUN_CONTRACT,
@@ -27,13 +27,16 @@ export interface RunIpcDeps {
 
 export class RunIpc {
   private readonly shells = new Map<
-    number,
-    { readonly webContents: WebContents; readonly role: ShellRole }
+    string,
+    { readonly webContents: ShellClient; readonly role: ShellRole }
   >()
   private readonly deps: RunIpcDeps
   private readonly unsubscribe: () => void
 
-  constructor(deps: RunIpcDeps) {
+  constructor(
+    deps: RunIpcDeps,
+    private readonly registrar: IpcRegistrar
+  ) {
     this.deps = deps
     for (const channel of RUN_CHANNELS) this.register(channel)
     this.unsubscribe = deps.runner.subscribe((change) => {
@@ -41,22 +44,22 @@ export class RunIpc {
     })
   }
 
-  registerShell(webContents: WebContents, role: ShellRole): void {
+  registerShell(webContents: ShellClient, role: ShellRole): void {
     this.shells.set(webContents.id, { webContents, role })
   }
 
-  releaseShell(webContents: WebContents): void {
+  releaseShell(webContents: ShellClient): void {
     this.shells.delete(webContents.id)
   }
 
   close(): void {
     this.unsubscribe()
-    for (const channel of RUN_CHANNELS) ipcMain.removeHandler(channel)
+    for (const channel of RUN_CHANNELS) this.registrar.removeHandler(channel)
     this.shells.clear()
   }
 
   private register(channel: RunChannel): void {
-    ipcMain.handle(channel, async (event: IpcMainInvokeEvent, raw: unknown) => {
+    this.registrar.handle(channel, async (event: ShellRequest, raw: unknown) => {
       const parsed = RUN_CONTRACT[channel].request.safeParse(raw)
       if (!parsed.success) {
         throw new Error(`Invalid request on "${channel}": ${parsed.error.message}`)
@@ -72,7 +75,7 @@ export class RunIpc {
 
   private handle(
     channel: RunChannel,
-    event: IpcMainInvokeEvent,
+    event: ShellRequest,
     request: RunRequest<RunChannel>
   ): unknown {
     const role = this.role(event)
@@ -127,13 +130,13 @@ export class RunIpc {
   private announce(projectId: string): void {
     const push: RunPush = { projectId, ...this.stateOf(projectId) }
     for (const shell of this.shells.values()) {
-      if (shell.webContents.isDestroyed() || !this.mayInspect(shell.role, projectId)) continue
+      if (shell.webContents.isGone() || !this.mayInspect(shell.role, projectId)) continue
       shell.webContents.send(RUN_PUSH_CHANNEL, push)
     }
   }
 
-  private role(event: IpcMainInvokeEvent): ShellRole | null {
-    if (event.senderFrame !== event.sender.mainFrame) return null
+  private role(event: ShellRequest): ShellRole | null {
+    if (!event.isMainFrame) return null
     return this.shells.get(event.sender.id)?.role ?? null
   }
 

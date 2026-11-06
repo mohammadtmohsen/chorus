@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import type { AgentAdapter, AgentSession, HealthStatus, SessionOpts } from '@chorus/agent-protocol'
 import { FakeAdapter } from '@chorus/orchestrator'
 import { Logger, newApprovalId, type AgentId } from '@chorus/shared'
@@ -93,7 +94,7 @@ let running = false
 
 const boot = (deferRestoredAgents: boolean): void => {
   runtime = ChorusRuntime.open(
-    dataPath,
+    testHostPorts(dataPath),
     silent,
     new Map<AgentId, AgentAdapter>([
       ['claude', claude],

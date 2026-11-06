@@ -1,5 +1,9 @@
+import { useShellOverlay } from './overlay.js'
+import { useToastWindow } from '../useToastWindow.js'
+import { HostContext } from '../host-context.js'
+import { DESKTOP_CAPABILITIES } from '../../../shared/host-capabilities.js'
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationArrangement } from '../../../shared/workspace-layout.js'
@@ -299,4 +303,65 @@ describe('a project row losing the column to the left of a chat', () => {
     expect(typed.selectionStart).toBe(4)
     expect(typed.selectionEnd).toBe(10)
   })
+})
+
+it('starts the extension row at its first chat without an editor prefix', () => {
+  const settings = props([session('source'), session('replacement')])
+  const view = render(
+    <HostContext.Provider
+      value={{
+        capabilities: { ...DESKTOP_CAPABILITIES, embeddedEditor: false, nativeBrowserViews: false },
+        views: { PaneWorkbench: null, Probe: null },
+      }}
+    >
+      <EditorPane {...settings} />
+    </HostContext.Provider>
+  )
+  expect(view.container.querySelector('.workspace-pane-workbench')).toBeNull()
+  expect(view.container.querySelector('.workspace-pane-gutter')).toBeNull()
+  expect(view.container.querySelector('[data-editor-resize]')).toBeNull()
+  expect(view.container.querySelector('.browser-box')).not.toBeNull()
+  const row = view.container.querySelector<HTMLElement>('.conversation-scroller')
+  expect(row?.scrollLeft).toBe(0)
+})
+
+it('keeps overlays and toast popups inside a host without native views', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'chorus')
+  const visible = vi.fn(() => Promise.resolve({ stills: [] }))
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  Object.defineProperty(window, 'chorus', {
+    configurable: true,
+    value: { setWorkbenchVisible: visible },
+  })
+  const hook = renderHook(
+    () => {
+      useShellOverlay(true)
+      return useToastWindow(true, () => undefined)
+    },
+    {
+      wrapper: ({ children }) => (
+        <HostContext.Provider
+          value={{
+            capabilities: {
+              ...DESKTOP_CAPABILITIES,
+              embeddedEditor: false,
+              nativeBrowserViews: false,
+            },
+            views: { PaneWorkbench: null, Probe: null },
+          }}
+        >
+          {children}
+        </HostContext.Provider>
+      ),
+    }
+  )
+  try {
+    expect(open).not.toHaveBeenCalled()
+    expect(visible).not.toHaveBeenCalled()
+  } finally {
+    hook.unmount()
+    open.mockRestore()
+    if (descriptor === undefined) Reflect.deleteProperty(window, 'chorus')
+    else Object.defineProperty(window, 'chorus', descriptor)
+  }
 })

@@ -377,11 +377,27 @@ export const WORKBENCH_CONTEXT_CHANNEL = 'workbench:context'
  */
 export const WORKBENCH_SNAPSHOT_CHANNEL = 'workbench:snapshot'
 export const WORKBENCH_SNAPSHOT_RESULT_CHANNEL = 'workbench:snapshot:result'
+export const WORKBENCH_PREVIEW_SELECTION_CHANNEL = 'workbench:preview-selection'
+
+export const PreviewSelection = z
+  .object({
+    source: z.string().min(1),
+    text: z.string(),
+    startLine: z.number().int().min(1),
+    endLine: z.number().int().min(1),
+  })
+  .strict()
+export type PreviewSelection = z.infer<typeof PreviewSelection>
+
+export type WorkbenchSnapshot = WorkbenchContext & {
+  readonly text: string
+  readonly preview?: true
+}
 
 export interface WorkbenchSnapshotResult {
   readonly requestId: string
   /** Null when the surface could not read an editor at all. */
-  readonly snapshot: (WorkbenchContext & { readonly text: string }) | null
+  readonly snapshot: WorkbenchSnapshot | null
 }
 
 /**
@@ -969,6 +985,7 @@ export interface ChorusWorkbenchApi {
    * be the wrong trade for a value that changes on every keystroke.
    */
   readonly reportContext: (context: WorkbenchContext) => void
+  readonly readPreviewSelection: (frameName: string) => Promise<PreviewSelection | null>
   /**
    * Answers main's edit requests for the life of the document.
    *
@@ -978,9 +995,7 @@ export interface ChorusWorkbenchApi {
    * outside this document and validating it is the handler's job.
    */
   /** Answers main's request for what the editor is showing, with its text. */
-  readonly onSnapshotRequest: (
-    handler: () => Promise<(WorkbenchContext & { text: string }) | null>
-  ) => void
+  readonly onSnapshotRequest: (handler: () => Promise<WorkbenchSnapshot | null>) => void
   readonly onEditRequest: (handler: (request: unknown) => Promise<WorkbenchEditResult>) => void
   /** Shows, replaces or closes the proposed-edit diff. */
   readonly onAskDiffRequest: (

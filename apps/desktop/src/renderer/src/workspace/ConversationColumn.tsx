@@ -71,6 +71,7 @@ export function ConversationColumn(props: {
     <div
       className="conversation-column"
       data-group={props.group.id}
+      data-project={props.projectId}
       data-focused={props.focused}
       data-drop={
         drop === null

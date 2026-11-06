@@ -12,7 +12,12 @@ import {
 } from './editor-context.js'
 
 /** The working-tree case: no version to qualify, so the label is empty. */
-const labels = { heading: 'VS Code context', unsaved: 'unsaved buffer', version: '' }
+const labels = {
+  heading: 'VS Code context',
+  unsaved: 'unsaved buffer',
+  version: '',
+  preview: 'from the rendered preview; lines are the enclosing block',
+}
 
 function block(overrides: Partial<EditorBlock> = {}): EditorBlock {
   return {
@@ -288,12 +293,34 @@ describe('an embedded editor block', () => {
     languageId: 'javascript',
     provenance: { kind: 'worktree' } as const,
   }
-  const labels = { heading: 'Editor context', unsaved: 'unsaved buffer', version: '' }
+  const labels = {
+    heading: 'Editor context',
+    unsaved: 'unsaved buffer',
+    version: '',
+    preview: 'from the rendered preview; lines are the enclosing block',
+  }
 
   it('quotes the selection even for a clean worktree file', () => {
     const out = formatContextBlock({ ...block, editor: 'workbench' }, labels)
     expect(out).toContain('const a = 1')
     expect(out).toContain('const b = 2')
+  })
+
+  it('labels and quotes selected rendered Markdown', () => {
+    const out = formatContextBlock(
+      {
+        ...block,
+        relativePath: 'docs/readme.md',
+        languageId: 'markdown',
+        text: 'Rendered title',
+        editor: 'workbench',
+        preview: true,
+      },
+      labels
+    )
+    expect(out).toBe(
+      'Editor context: `docs/readme.md:13-24` (from the rendered preview; lines are the enclosing block)\n\n```markdown\nRendered title\n```'
+    )
   })
 
   /*

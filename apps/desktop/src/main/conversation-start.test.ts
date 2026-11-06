@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import { FakeAdapter, FakeAgentSession } from '@chorus/orchestrator'
 import type { AgentAdapter, AgentSession, SessionOpts } from '@chorus/agent-protocol'
 import { Logger, type AgentId } from '@chorus/shared'
@@ -79,7 +80,7 @@ beforeEach(() => {
   claude = new GatedAdapter({ id: 'claude' })
   codex = new GatedAdapter({ id: 'codex' })
   runtime = ChorusRuntime.open(
-    dataPath,
+    testHostPorts(dataPath),
     silent,
     new Map<AgentId, AgentAdapter>([
       ['claude', claude],
@@ -907,7 +908,7 @@ describe('confirmed chat and project closure', () => {
     claude = new GatedAdapter({ id: 'claude' })
     codex = new GatedAdapter({ id: 'codex' })
     runtime = ChorusRuntime.open(
-      dataPath,
+      testHostPorts(dataPath),
       silent,
       new Map<AgentId, AgentAdapter>([
         ['claude', claude],

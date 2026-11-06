@@ -65,6 +65,11 @@ jobs:
         run: |
           ROOT=$(node -p "require('./package.json').version")
           APP=$(node -p "require('./apps/desktop/package.json').version")
+          EXTENSION=$(node -p "require('./apps/extension/package.json').version")
+          if [ "$ROOT" != "$EXTENSION" ]; then
+            echo "::error::package.json says $ROOT, apps/extension/package.json says $EXTENSION"
+            exit 1
+          fi
           if [ "$ROOT" != "$APP" ]; then
             echo "::error::package.json says $ROOT, apps/desktop says $APP"
             exit 1
@@ -236,10 +241,64 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  vsix:
+    name: VS Code extension (${{ matrix.target }})
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: windows-latest
+            target: win32-x64
+          - os: ubuntu-latest
+            target: linux-x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.source_sha }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Package
+        run: pnpm --filter @chorus/extension run package
+      - name: Checksum
+        shell: bash
+        run: |
+          cd apps/extension/dist
+          name="chorus-${{ needs.gate.outputs.version }}-${{ matrix.target }}.vsix"
+          if [ ! -f "$name" ]; then
+            echo "::error::no artifact named $name"
+            ls -la
+            exit 1
+          fi
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$name" > "$name.sha256"
+          else
+            shasum -a 256 "$name" > "$name.sha256"
+          fi
+          cat "$name.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chorus-${{ needs.gate.outputs.version }}-${{ matrix.target }}.vsix
+          path: |
+            apps/extension/dist/chorus-${{ needs.gate.outputs.version }}-${{ matrix.target }}.vsix
+            apps/extension/dist/chorus-${{ needs.gate.outputs.version }}-${{ matrix.target }}.vsix.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish the release
     if: inputs.publish_to != ''
-    needs: [gate, build]
+    needs: [gate, build, vsix]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -328,8 +387,9 @@ jobs:
             gh release view "$TAG" --json assets --jq "[.assets[] | select(.name|endswith(\"$1\"))] | length"
           }
           DMG=$(count .dmg); EXE=$(count .exe); APPIMAGE=$(count .AppImage); DEB=$(count .deb)
-          echo "found $DMG .dmg, $EXE .exe, $APPIMAGE .AppImage, $DEB .deb"
-          if [ "$DMG" -ne 2 ] || [ "$EXE" -ne 1 ] || [ "$APPIMAGE" -ne 1 ] || [ "$DEB" -ne 1 ]; then
-            echo "::error::expected 2 .dmg (arm64, x64), 1 .exe, 1 .AppImage and 1 .deb"
+          VSIX=$(count .vsix)
+          echo "found $DMG .dmg, $EXE .exe, $APPIMAGE .AppImage, $DEB .deb, $VSIX .vsix"
+          if [ "$DMG" -ne 2 ] || [ "$EXE" -ne 1 ] || [ "$APPIMAGE" -ne 1 ] || [ "$DEB" -ne 1 ] || [ "$VSIX" -ne 4 ]; then
+            echo "::error::expected 2 .dmg (arm64, x64), 1 .exe, 1 .AppImage, 1 .deb and 4 .vsix"
             exit 1
           fi

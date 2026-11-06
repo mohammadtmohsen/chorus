@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IpcRequest, IpcResponse } from '../../shared/ipc.js'
 import type { WindowRole } from '../../shared/detached-window-ipc.js'
 import type { SessionInfo } from './Session.js'
@@ -191,8 +191,17 @@ const answerStart = async (conversationId: string, outcome: Outcome) => {
   await settle()
 }
 
+beforeAll(() => {
+  const dom = globalThis as typeof globalThis & { jsdom: { window: Window } }
+  vi.stubGlobal('localStorage', dom.jsdom.window.localStorage)
+})
+
+afterAll(() => {
+  vi.unstubAllGlobals()
+})
+
 beforeEach(() => {
-  localStorage.clear()
+  window.localStorage.clear()
   begins.length = 0
   awaits.clear()
   reads.length = 0
@@ -323,7 +332,7 @@ describe('opening a chat', () => {
 
   it('carries a forwarded chat and leaves its source open', async () => {
     const source: SessionInfo = begun('s1')
-    localStorage.setItem('chorus:message-mode:s1', 'discussion')
+    window.localStorage.setItem('chorus:message-mode:s1', 'discussion')
     const h = harness({ kind: 'main' }, [source])
     h.startIn('p1', { continueFrom: 's1', objective: 'Fix API retries', sourceEventIds: ['e7'] })
 
@@ -336,7 +345,7 @@ describe('opening a chat', () => {
     })
     await answerBegin(0, 'c1')
     expect(h.session('c1')).not.toHaveProperty('initialDraft')
-    expect(localStorage.getItem('chorus:message-mode:c1')).toBe('discussion')
+    expect(window.localStorage.getItem('chorus:message-mode:c1')).toBe('discussion')
     expect(store.adoptConversation).toHaveBeenCalledWith('p1', 'c1')
     await answerStart('c1', ready('c1', ['claude']))
     expect(h.finishEnd).not.toHaveBeenCalled()

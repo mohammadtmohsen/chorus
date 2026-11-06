@@ -1,3 +1,4 @@
+import { testHostPorts } from './test-host-ports.js'
 import type { AgentAdapter, BrowserConsoleAccess } from '@chorus/agent-protocol'
 import { FakeAdapter } from '@chorus/orchestrator'
 import { Logger, type AgentId } from '@chorus/shared'
@@ -54,7 +55,7 @@ beforeEach(async () => {
   disposed = []
   adapter = new FakeAdapter({ id: 'claude' })
   runtime = ChorusRuntime.open(
-    mkdtempSync(join(tmpdir(), 'chorus-browser-console-')),
+    testHostPorts(mkdtempSync(join(tmpdir(), 'chorus-browser-console-'))),
     new Logger(),
     new Map<AgentId, AgentAdapter>([['claude', adapter]])
   )
