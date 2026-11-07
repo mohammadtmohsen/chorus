@@ -8,5 +8,7 @@
   "view.container": "Chorus",
   "view.attention": "Waiting on you",
   "view.attention.empty": "Nothing is waiting on you.\n[Open Chorus](command:chorus.open)\n[Add a Project](command:chorus.addProject)",
-  "command.revealConversation": "Chorus: Show Conversation"
+  "command.revealConversation": "Chorus: Show Conversation",
+  "command.continuousRow.enable": "Chorus: Turn On Continuous Row",
+  "command.continuousRow.disable": "Chorus: Turn Off Continuous Row"
 }

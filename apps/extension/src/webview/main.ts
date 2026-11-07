@@ -19,6 +19,17 @@ import { PERSON_PACED_CHANNELS } from '../../../engine/src/protocol.js'
 import { ShellHostMessage } from '../shared/webview-protocol.js'
 import { installThemeMirror } from './theme.js'
 import { EXTENSION_CAPABILITIES } from '../../../desktop/src/shared/host-capabilities.js'
+import {
+  firstRegisteredPane,
+  registeredRow,
+  scrollRegisteredRow,
+} from '../../../desktop/src/renderer/src/workspace/row-drag.js'
+import {
+  CONTINUOUS_ROW,
+  readPageMessage,
+  slideStrip,
+  type RowMessage,
+} from '../continuous-row/protocol.js'
 
 interface VsCodeApi {
   postMessage(message: unknown): void
@@ -129,6 +140,79 @@ const reportFocus = (): void => {
   vscode.postMessage(report)
 }
 
+const rowSession = Math.floor(Math.random() * 2 ** 31)
+let pageSpoke = false
+let pageMirror = { page: 0, extra: 0 }
+let sentPageSeq = 0
+let appliedRowSeq = 0
+let reportedRow = ''
+const toPage = (message: RowMessage): void => {
+  window.top?.postMessage(message, '*')
+}
+const stripPaneId = (): string | null =>
+  useWorkspaceStore.getState().focusedPaneId ?? firstRegisteredPane()
+const stripRow = (): { generation: number; row: number; rowMax: number } => {
+  const paneId = stripPaneId()
+  const current = paneId === null ? null : registeredRow(paneId)
+  return current === null
+    ? { generation: 0, row: 0, rowMax: 0 }
+    : { generation: current.registration, row: current.row, rowMax: current.rowMax }
+}
+const reportRow = (force: boolean): void => {
+  if (!pageSpoke) return
+  const snapshot = stripRow()
+  const identity = `${String(snapshot.generation)}:${String(snapshot.rowMax)}`
+  if (!force && identity === reportedRow) return
+  reportedRow = identity
+  toPage({
+    source: CONTINUOUS_ROW,
+    kind: 'row',
+    session: rowSession,
+    ...snapshot,
+    applied: appliedRowSeq,
+  })
+}
+const slidePageTo = (page: number): void => {
+  sentPageSeq += 1
+  pageMirror = { ...pageMirror, page }
+  toPage({ source: CONTINUOUS_ROW, kind: 'page-target', seq: sentPageSeq, page })
+}
+const slideFromRow = (paneId: string, delta: number): boolean => {
+  if (!pageSpoke || paneId !== stripPaneId()) return false
+  const current = registeredRow(paneId)
+  if (current === null) return false
+  const strip = { ...pageMirror, row: current.row, rowMax: current.rowMax }
+  const next = slideStrip(strip, delta)
+  if (next.row !== strip.row) scrollRegisteredRow(paneId, next.row)
+  if (next.page !== strip.page) slidePageTo(next.page)
+  return true
+}
+window.addEventListener('message', (event: MessageEvent<unknown>) => {
+  if (event.source !== window.top) return
+  const message = readPageMessage(event.data)
+  if (message === null) return
+  if (!pageSpoke) {
+    pageSpoke = true
+    document.documentElement.classList.add('continuous-row')
+    reportRow(true)
+  }
+  if (message.kind === 'page') {
+    pageMirror =
+      message.applied >= sentPageSeq
+        ? { page: message.page, extra: message.extra }
+        : { ...pageMirror, extra: message.extra }
+    document.body.style.setProperty('--continuous-row-inset', `${String(message.inset)}px`)
+    return
+  }
+  appliedRowSeq = message.seq
+  const paneId = stripPaneId()
+  if (paneId !== null && registeredRow(paneId)?.registration === message.generation) {
+    scrollRegisteredRow(paneId, message.row)
+  }
+  reportRow(true)
+})
+toPage({ source: CONTINUOUS_ROW, kind: 'hello', session: rowSession })
+
 installThemeMirror()
 const status = document.createElement('div')
 status.className = 'chorus-host-status'
@@ -214,6 +298,12 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
           ? `${message.imageBase}/${filename}`
           : ''
       },
+      continuousRow: {
+        wheel: slideFromRow,
+        rowMoved: (paneId) => {
+          reportRow(paneId === stripPaneId())
+        },
+      },
     })
     const api = createChorusApi({
       invoke: (channel, outgoing) => request({ kind: 'invoke', channel, request: outgoing }),
@@ -251,6 +341,9 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
       },
     })
     useWorkspaceStore.subscribe(reportFocus)
+    useWorkspaceStore.subscribe(() => {
+      reportRow(false)
+    })
     window.addEventListener('focus', reportFocus)
     reportFocus()
   }

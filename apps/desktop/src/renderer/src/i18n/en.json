@@ -1424,6 +1424,17 @@
     "channelRefused": "This operation is not available in this Chorus host.",
     "addProject": "Add to Chorus as Project",
     "reconnecting": "Reconnecting to Chorus…",
+    "continuousRow": {
+      "enabled": "Continuous row is on. Reload the window to start it. VS Code will then say its installation is corrupt; choose Don't Show Again.",
+      "disabled": "Continuous row is off. Reload the window to finish.",
+      "restored": "VS Code was updated, so Chorus put the continuous row back. Reload the window to use it.",
+      "failed": "Chorus could not change VS Code's files: {{reason}}",
+      "busy": "Another VS Code window is changing the continuous row. Try again in a moment.",
+      "unexpectedShape": "This VS Code's workbench file is not in the shape Chorus expects, so it was left alone.",
+      "reload": "Reload Window",
+      "relaunch": "Continuous row changed VS Code's own files. Quit and reopen VS Code to finish: swipes over VS Code's built-in browser need a full restart, not a window reload.",
+      "quit": "Quit VS Code"
+    },
     "attention": {
       "badgeTooltip": "Conversations waiting on you",
       "approvalOne": "1 approval",

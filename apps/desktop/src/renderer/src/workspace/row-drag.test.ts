@@ -1,8 +1,11 @@
 /** @vitest-environment jsdom */
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { configureHostResources } from '../host-resources.js'
 import {
+  registeredRow,
   routeRowWheel,
+  scrollRegisteredRow,
   startEditorResize,
   startRowPush,
   stepEditorResize,
@@ -395,7 +398,7 @@ describe('swiping along the row', () => {
   it('moves the row for a sideways swipe or Shift-wheel over a chat, and leaves the rest local', () => {
     const transcript = document.createElement('div')
     const scroller = row(transcript)
-    const stop = routeRowWheel(scroller)
+    const stop = routeRowWheel(scroller, 'pane-1', () => undefined)
 
     expect(swipe(transcript, { deltaX: 60, deltaY: 4 }).defaultPrevented).toBe(true)
     expect(swipe(transcript, { deltaY: 30, shiftKey: true }).defaultPrevented).toBe(true)
@@ -417,7 +420,7 @@ describe('swiping along the row', () => {
     panes.addEventListener('wheel', () => {
       reachedInside += 1
     })
-    const stop = routeRowWheel(scroller)
+    const stop = routeRowWheel(scroller, 'pane-1', () => undefined)
 
     swipe(request, { deltaX: 50 })
     swipe(code, { deltaX: 70 })
@@ -446,7 +449,7 @@ describe('swiping along the row', () => {
       tabs.addEventListener('wheel', () => {
         reachedInside += 1
       })
-      const stop = routeRowWheel(scroller)
+      const stop = routeRowWheel(scroller, 'pane-1', () => undefined)
 
       expect(swipe(tab, { deltaX: 40 }).defaultPrevented).toBe(true)
       expect(swipe(tab, { deltaY: 30, shiftKey: true }).defaultPrevented).toBe(true)
@@ -463,7 +466,7 @@ describe('swiping along the row', () => {
       const atStart = strip(300, 900, 0)
       const scroller = row(atEnd, atStart)
       scroller.scrollLeft = 500
-      const stop = routeRowWheel(scroller)
+      const stop = routeRowWheel(scroller, 'pane-1', () => undefined)
 
       expect(swipe(atEnd, { deltaX: 40 }).defaultPrevented).toBe(true)
       expect(swipe(atStart, { deltaX: -70 }).defaultPrevented).toBe(true)
@@ -477,7 +480,7 @@ describe('swiping along the row', () => {
     it('moves the row when every tab already fits', () => {
       const tabs = strip(400, 400, 0)
       const scroller = row(tabs)
-      const stop = routeRowWheel(scroller)
+      const stop = routeRowWheel(scroller, 'pane-1', () => undefined)
 
       swipe(tabs, { deltaX: 50 })
       swipe(tabs, { deltaY: 20, shiftKey: true })
@@ -490,7 +493,7 @@ describe('swiping along the row', () => {
     it('keeps vertical, Ctrl and Meta gestures local', () => {
       const tabs = strip(300, 900, 200)
       const scroller = row(tabs)
-      const stop = routeRowWheel(scroller)
+      const stop = routeRowWheel(scroller, 'pane-1', () => undefined)
 
       expect(swipe(tabs, { deltaY: 80 }).defaultPrevented).toBe(false)
       expect(swipe(tabs, { deltaX: 60, ctrlKey: true }).defaultPrevented).toBe(false)
@@ -505,9 +508,67 @@ describe('swiping along the row', () => {
   it('stops routing once it is cleaned up', () => {
     const transcript = document.createElement('div')
     const scroller = row(transcript)
-    routeRowWheel(scroller)()
+    routeRowWheel(scroller, 'pane-1', () => undefined)()
 
     expect(swipe(transcript, { deltaX: 60 }).defaultPrevented).toBe(false)
     expect(scroller.scrollLeft).toBe(0)
+  })
+
+  describe('the continuous row bridge', () => {
+    afterEach(() => {
+      configureHostResources()
+    })
+
+    it('hands a row swipe to the bridge when it takes it, and scrolls the row when it does not', () => {
+      const taken: number[] = []
+      let accept = true
+      configureHostResources({
+        noteImageUrl: (url) => url,
+        continuousRow: {
+          wheel: (_paneId, delta) => {
+            taken.push(delta)
+            return accept
+          },
+          rowMoved: () => undefined,
+        },
+      })
+      const transcript = document.createElement('div')
+      const scroller = row(transcript)
+      const stop = routeRowWheel(scroller, 'pane-1', () => undefined)
+
+      expect(swipe(transcript, { deltaX: 80 }).defaultPrevented).toBe(true)
+      expect(taken).toEqual([80])
+      expect(scroller.scrollLeft).toBe(0)
+
+      accept = false
+      swipe(transcript, { deltaX: 80 })
+      expect(scroller.scrollLeft).toBe(80)
+      stop()
+    })
+
+    it('marks the project touched before a scroll that arrives from the page', () => {
+      const scroller = row(document.createElement('div'))
+      let touched = 0
+      const stop = routeRowWheel(scroller, 'pane-1', () => {
+        touched += 1
+      })
+
+      scrollRegisteredRow('pane-1', 120)
+      expect(touched).toBe(1)
+      expect(scroller.scrollLeft).toBe(120)
+      expect(registeredRow('pane-1')?.row).toBe(120)
+
+      stop()
+      expect(registeredRow('pane-1')).toBeNull()
+    })
+
+    it('gives every registration a new number, so a target for an old row can be told apart', () => {
+      const first = routeRowWheel(row(), 'pane-1', () => undefined)
+      const before = registeredRow('pane-1')?.registration
+      first()
+      const second = routeRowWheel(row(), 'pane-1', () => undefined)
+      expect(registeredRow('pane-1')?.registration).not.toBe(before)
+      second()
+    })
   })
 })

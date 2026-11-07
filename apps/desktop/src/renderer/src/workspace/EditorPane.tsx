@@ -223,10 +223,6 @@ export function EditorPane(
       window.removeEventListener('resize', measureWidth)
     }
   }, [hasPane])
-  useEffect(() => {
-    const row = scroller.current
-    return row === null ? undefined : routeRowWheel(row)
-  }, [hasPane])
   const editorFraction = useEditorWidthFraction(projectId)
   const editorCapacity = embeddedEditor ? clampEditorWidth(windowWidth, windowWidth) : 0
   const barWidth =
@@ -293,6 +289,13 @@ export function EditorPane(
   const websiteCollapsed = projectId !== null && collapsedWebsites[projectId] === true
   const trafficBodyId = useId()
   const markRowTouched = useRowScroll(scroller, projectId, run !== null, hasPane, rowOrigin)
+  useEffect(() => {
+    const row = scroller.current
+    if (row === null) return undefined
+    return routeRowWheel(row, props.paneId, () => {
+      if (projectId !== null) markRowTouched(projectId)
+    })
+  }, [hasPane, props.paneId, projectId, markRowTouched])
   const widths = arrangement === undefined ? [] : columnWidths(arrangement)
   const focusedConversationGroupId = arrangement?.focusedPaneId ?? null
   const activeConversationId =

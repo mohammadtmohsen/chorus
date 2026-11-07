@@ -254,6 +254,7 @@ function copyMetadata(manifest, staging) {
   ]) {
     Reflect.deleteProperty(packagedManifest, key)
   }
+  packagedManifest.scripts = { 'vscode:uninstall': manifest.scripts['vscode:uninstall'] }
   packagedManifest.dependencies = Object.fromEntries(
     nativePackages.map((name) => [
       name,
@@ -311,6 +312,8 @@ const name = manifest.name === '@chorus/extension' ? 'chorus' : manifest.name
 const output = join(outputRoot, `${name}-${manifest.version}-${platform.vsix}.vsix`)
 try {
   copyBundle(extensionRoot, 'extension.cjs', staging)
+  copyBundle(extensionRoot, 'continuous-row.js', staging)
+  copyBundle(extensionRoot, 'uninstall.cjs', staging)
   copyBundle(engineRoot, 'engine.cjs', staging)
   copyPayload(
     join(outputRoot, 'webview'),
