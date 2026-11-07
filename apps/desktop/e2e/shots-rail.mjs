@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureBuilt, launch, wait } from './harness.mjs'
-import { existingDescriptors, FakeIde, waitForDescriptor } from './fake-ide.mjs'
 
 /**
  * Screenshots of the workspace as it is actually built.
@@ -155,9 +154,7 @@ try {
   await setup.stop()
 }
 
-const before = existingDescriptors()
 const app = await launch({ userData: setup.dataPath })
-let ide = null
 try {
   await app.until(`document.querySelectorAll('.pane').length > 0`)
   await app.until(
@@ -274,38 +271,6 @@ try {
     )
   }
 
-  /*
-   * Only now the editor selection, and with an answer ready for Send.
-   *
-   * `onSnapshot` is what a real VS Code window replies with when Chorus asks at
-   * Send time; without it the fake window refuses and the composer says so.
-   */
-  const descriptor = await waitForDescriptor(before)
-  ide = await FakeIde.connect(descriptor)
-  const roots = await ide.awaitRoots()
-  const root = roots.find((candidate) => candidate.endsWith(project.split('/').pop()))
-  ide.onSnapshot((asked) => ({
-    outcome: 'ok',
-    snapshot: {
-      source: 'current',
-      filePath: join(asked, 'src/payments.ts'),
-      fileUrl: `file://${join(asked, 'src/payments.ts')}`,
-      languageId: 'typescript',
-      documentVersion: 1,
-      isDirty: false,
-      provenance: { kind: 'worktree' },
-      selection: {
-        start: { line: 41, character: 0 },
-        end: { line: 67, character: 4 },
-        isEmpty: false,
-        selectedBytes: 22,
-        text: 'export const rate = 1\n',
-      },
-    },
-  }))
-  ide.report(root, { file: join(root, 'src/payments.ts'), startLine: 41, endLine: 67 })
-  await app.until(`!!document.querySelector('.ide-pill')`, { timeout: 20_000 })
-
   /* Long enough for both providers to answer, so the account column is real. */
   await wait(8_000)
   await app.settle()
@@ -327,7 +292,6 @@ try {
       paneBody: box('[data-pane-content]'),
       terminal: box('.terminal-panel--session'),
       composer: box('.composer', left),
-      pill: box('.ide-pill', left),
     }
   })()`)
   console.log(`geometry: ${JSON.stringify(geometry, null, 2)}`)
@@ -455,7 +419,6 @@ try {
 
   console.log(`\n${String(shots.length)} screenshots written to ${OUT}`)
 } finally {
-  ide?.close()
   await app.viewport()
   await app.quit()
 }

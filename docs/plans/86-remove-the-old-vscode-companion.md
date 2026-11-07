@@ -2,15 +2,22 @@
 
 ## Status
 
-| Unit           | Result                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scope          | `apps/vscode-extension/` and everything in the desktop app that exists only to install or talk to it, plus the unreachable "Open in VS Code" |
-| Implementation | Done 2026-11-07; the folder was deleted by hand and `pnpm install` updated the lockfile                                                      |
-| Verification   | Check 1 passed: `pnpm check` exit 0, 20/20 typecheck tasks, 4783 tests passed and 4 skipped. Checks 2–7 not run                              |
-| Decided        | 2026-11-07: "Open in VS Code" goes; the `code -g` fallback in `ide:openFile` stays                                                           |
+| Unit           | Result                                                                                                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope          | `apps/vscode-extension/` and everything in the desktop app that exists only to install or talk to it, plus the unreachable "Open in VS Code"                                                                                                 |
+| Implementation | Done 2026-11-07; the folder was deleted by hand and `pnpm install` updated the lockfile                                                                                                                                                      |
+| Verification   | 1 passed (`pnpm check`). 3 and 4 passed (`preview-selection-drive.mjs`, agent turn skipped: ALL HELD). 5 passed (`editor-drive.mjs`, 12/12). 6 passed (`pnpm package`, no VSIX in the bundle). 7 passed. 2 not run: no driver opens Settings |
+| Decided        | 2026-11-07: "Open in VS Code" goes; the `code -g` fallback in `ide:openFile` stays                                                                                                                                                           |
 
 ## Corrections found while implementing
 
+- **The e2e suite still drove the bridge** (found after the merge, before running checks 2–7).
+  `apps/desktop/e2e/fake-ide.mjs` was a pretend VS Code that dialled the deleted socket. Four specs
+  existed only for that path and are gone: a problem sent from the editor, following the editor for
+  its own project, a merge-request selection's version, and Send asking the editor again. The
+  terminal spec lost its closing pill check, and `shots-rail.mjs` no longer stages an editor
+  selection. `fake-ide.mjs` is deleted. `pnpm check` cannot see any of this, because the e2e suite
+  is not part of it.
 - **`apps/extension` still imported two source files from the old folder.** Plan 80 said the
   companion's editor-context and diagnostics code "moves to `extension/`", but it was imported
   across instead (`editor/index.ts`, `membership.ts`, `diagnostics.ts` and its test). Deleting the

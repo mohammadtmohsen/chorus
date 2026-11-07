@@ -2,7 +2,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launch, wait } from './harness.mjs'
-import { existingDescriptors, FakeIde, waitForDescriptor } from './fake-ide.mjs'
 
 /**
  * What each spec is here to catch.
@@ -1780,18 +1779,11 @@ export const specs = [
      * Everything here is a claim the plan makes about the composite review state
      * and nothing else checked: that the session panel mounts inside its own
      * pane between that session's transcript and its composer, that it stops at
-     * the pane divider so a split neighbour keeps its full height, that the
-     * global panel opens and closes without touching it, and that the owning
-     * composer still shows which VS Code selection will be sent with a message.
-     *
-     * The last of those is why the fake IDE is here: collapsing the drawer must
-     * not be able to take the path with it, and a terminal appearing between the
-     * transcript and the composer must not either.
+     * the pane divider so a split neighbour keeps its full height, and that the
+     * global panel opens and closes without touching it.
      */
     async run(assert) {
-      const before = existingDescriptors()
       const app = await launch()
-      let ide = null
       try {
         const [first] = await twoSessions(app)
 
@@ -1845,7 +1837,6 @@ export const specs = [
                   terminal: box(group.querySelector('.terminal-panel')),
                   terminalHead: box(group.querySelector('.terminal-head')),
                   composer: box(group.querySelector('.composer')),
-                  pill: group.querySelector('.ide-pill-what')?.textContent ?? null,
                   /*
                    * The header is a tab-shaped card, not a strip across the pane:
                    * rounded at the top, square at the bottom where it meets the
@@ -2006,35 +1997,7 @@ export const specs = [
           afterGlobal.global === 0 && afterGlobal.session === 1,
           'closing the global one leaves the session terminal open'
         )
-
-        /*
-         * The composer still says which selection will be sent. The pill is
-         * beneath the terminal now, which is exactly why it is checked here.
-         */
-        const descriptor = await waitForDescriptor(before)
-        ide = await FakeIde.connect(descriptor)
-        const roots = await ide.awaitRoots()
-        const root = roots.find((candidate) => candidate.endsWith(project.split('/').pop()))
-        assert(
-          root !== undefined,
-          `Chorus published the owning session's root, got ${roots.join()}`
-        )
-        ide.report(root, { file: join(root, 'src/a.ts'), startLine: 11, endLine: 13 })
-        await app.until(`!!document.querySelector('.ide-pill')`, {
-          timeout: 20_000,
-          label: 'the pill appears',
-        })
-        await app.settle()
-
-        const withPill = await geometry()
-        const owning = withPill.panes.find((p) => p.conversationId === first)
-        assert(
-          owning?.pill === 'src/a.ts:12-14',
-          `the owning composer still names the file and lines, got ${String(owning?.pill)}`
-        )
-        assert(withPill.session === 1, 'and the session terminal is still the only one of its kind')
       } finally {
-        ide?.close()
         await app.quit()
       }
     },
@@ -2768,288 +2731,6 @@ export const specs = [
           'no database errors on the way out'
         )
       } finally {
-        await app.quit()
-      }
-    },
-  },
-
-  {
-    name: 'a problem sent from the editor lands in the composer, unsent',
-    /*
-     * Protocol 3's whole reason, end to end: a frame the *extension* initiates,
-     * carrying source Chorus never asked for, routed by main to the conversation
-     * whose project it belongs to, and staged rather than sent.
-     *
-     * The staging is the part worth a spec. Everything else in this feature is a
-     * unit test away, but "it reached a draft and did not become a turn" is a
-     * claim about three processes agreeing.
-     */
-    async run(assert) {
-      const before = existingDescriptors()
-      const app = await launch()
-      let ide = null
-      try {
-        await started(app)
-
-        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-diag-'))
-        mkdirSync(join(project, 'src'), { recursive: true })
-        writeFileSync(join(project, 'src/rate.ts'), 'const a = 1\n')
-
-        const conversationId = await app.evaluate(
-          `document.querySelector('.pane').dataset.conversation`
-        )
-        await app.evaluate(
-          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
-        )
-
-        const descriptor = await waitForDescriptor(before)
-        ide = await FakeIde.connect(descriptor)
-        const roots = await ide.awaitRoots()
-        const root = roots[0]
-        assert(typeof root === 'string', 'Chorus published its root')
-
-        ide.sendDiagnostic(root, { file: join(root, 'src/rate.ts') })
-
-        await app.until(
-          `document.querySelector('.composer textarea').value.includes('src/rate.ts')`,
-          { timeout: 15_000, label: 'the problem reached the composer' }
-        )
-        const draft = await app.evaluate(`document.querySelector('.composer textarea').value`)
-
-        assert(
-          draft.includes('src/rate.ts:55'),
-          `the reference is one-based: ${draft.slice(0, 80)}`
-        )
-        assert(
-          draft.includes('> Existing memoization could not be preserved'),
-          'the message is quoted, not pasted as an instruction'
-        )
-        assert(
-          draft.includes('react-compiler(memoization)'),
-          'and says which tool objected, and to what'
-        )
-        assert(
-          draft.includes('const providerTypeSelected = useMemo('),
-          'the offending code came with it'
-        )
-        assert(!draft.includes(root), 'and the absolute path did not')
-
-        /*
-         * The point of staging. A gesture in another application must not spend
-         * a turn here — so nothing may have been sent, which is what the absence
-         * of a Stop button and of any agent row says.
-         */
-        const sent = await app.evaluate(`(() => ({
-          stop: document.querySelectorAll('.send--stop').length,
-          said: document.querySelectorAll('.entry--user[data-kind="message"]').length,
-        }))()`)
-        assert(sent.stop === 0, 'no turn was started')
-        assert(sent.said === 0, 'and nothing was said in the conversation')
-
-        // A root Chorus never asked about is dropped in main, not staged.
-        ide.sendDiagnostic('/somewhere/else', { file: '/somewhere/else/src/x.ts' })
-        await wait(1_000)
-        const after = await app.evaluate(`document.querySelector('.composer textarea').value`)
-        assert(after === draft, 'a diagnostic for an unknown root changes nothing')
-      } finally {
-        ide?.close()
-        await app.quit()
-      }
-    },
-  },
-  {
-    name: 'follows the editor for its own project, and only that one',
-    /*
-     * The whole path, end to end: descriptor discovery, the token handshake,
-     * root filtering, and the pill. Everything until now was unit-level, and a
-     * unit test cannot tell you the socket is actually reachable from a
-     * packaged main process.
-     */
-    async run(assert) {
-      const before = existingDescriptors()
-      const app = await launch()
-      let ide = null
-      try {
-        await started(app)
-
-        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-proj-'))
-        mkdirSync(join(project, 'src'), { recursive: true })
-        writeFileSync(join(project, 'src/a.ts'), 'const a = 1\n')
-
-        const conversationId = await app.evaluate(
-          `document.querySelector('.pane').dataset.conversation`
-        )
-        await app.evaluate(
-          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
-        )
-
-        const descriptor = await waitForDescriptor(before)
-        assert(typeof descriptor.token === 'string', 'the descriptor carries a token')
-        ide = await FakeIde.connect(descriptor)
-
-        const roots = await ide.awaitRoots()
-        // The root arrives canonicalized: on macOS the temp dir is reached
-        // through /var, which is a symlink to /private/var.
-        assert(roots.length === 1, 'Chorus published exactly one root')
-        const root = roots[0]
-
-        ide.report(root, { file: join(root, 'src/a.ts'), startLine: 11, endLine: 13 })
-        await app.until(`!!document.querySelector('.ide-pill')`, { label: 'the pill appears' })
-        const shown = await app.evaluate(`document.querySelector('.ide-pill-what').textContent`)
-        assert(shown === 'src/a.ts:12-14', `the pill names the file and lines, got ${shown}`)
-
-        // A file from somewhere else must not reach this pane, even as a name.
-        const other = mkdtempSync(join(tmpdir(), 'chorus-e2e-other-'))
-        writeFileSync(join(other, 'secret.ts'), 'const s = 1\n')
-        ide.report(root, { file: join(other, 'secret.ts') })
-        await wait(600)
-        const after = await app.evaluate(
-          `document.querySelector('.ide-pill-what')?.textContent ?? ''`
-        )
-        assert(!after.includes('secret'), `no foreign path reaches the pane, got ${after}`)
-      } finally {
-        ide?.close()
-        await app.quit()
-      }
-    },
-  },
-
-  {
-    name: 'a merge request selection says which version it is',
-    /*
-     * Protocol 2, through the real socket. A `gl-review` document is a real
-     * text editor whose *content* is a committed blob, so `src/a.ts:12-14` on
-     * its own points an agent at lines that have moved. The pill has to say so,
-     * and `cached` has to be visible too — it travelled on the wire since the
-     * feature shipped and was dropped on the way to the renderer until now.
-     *
-     * The fake IDE sends what a real window would send after `resolveDocument`
-     * parsed the URI; what this proves is the half a unit test cannot — that
-     * the frame survives the socket, the broker, and the IPC boundary with its
-     * provenance intact.
-     */
-    async run(assert) {
-      const before = existingDescriptors()
-      const app = await launch()
-      let ide = null
-      try {
-        await started(app)
-
-        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-mr-'))
-        mkdirSync(join(project, 'src'), { recursive: true })
-        writeFileSync(join(project, 'src/a.ts'), 'const a = 1\n')
-
-        const conversationId = await app.evaluate(
-          `document.querySelector('.pane').dataset.conversation`
-        )
-        await app.evaluate(
-          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
-        )
-
-        const descriptor = await waitForDescriptor(before)
-        ide = await FakeIde.connect(descriptor)
-        const [root] = await ide.awaitRoots(project)
-
-        ide.report(root, {
-          file: join(root, 'src/a.ts'),
-          startLine: 11,
-          endLine: 13,
-          source: 'cached',
-          provenance: { kind: 'review', commit: 'a1b2c3d4e5f6' },
-        })
-        await app.until(`!!document.querySelector('.ide-pill-mark')`, {
-          label: 'the version marker appears',
-        })
-
-        const shown = await app.evaluate(`document.querySelector('.ide-pill-what').textContent`)
-        assert(shown === 'src/a.ts:12-14', `the pill still names the file and lines, got ${shown}`)
-
-        const mark = await app.evaluate(`document.querySelector('.ide-pill-mark').textContent`)
-        // The short sha, and never `!456`: the number a human sees is `iid`,
-        // which the review URI does not carry.
-        assert(mark.includes('a1b2c3d'), `the marker names the commit, got ${mark}`)
-        assert(!mark.includes('a1b2c3d4e5f6'), `the marker is shortened, got ${mark}`)
-        assert(mark.includes('remembered'), `a cached selection says so, got ${mark}`)
-      } finally {
-        ide?.close()
-        await app.quit()
-      }
-    },
-  },
-
-  {
-    name: 'Send asks the editor again rather than trusting the pill',
-    /*
-     * The pill is debounced, so it can be a few hundred milliseconds behind.
-     * Attaching the lines the user *was* looking at is worse than attaching
-     * none, and only a live round trip can prove the fresh ones win.
-     */
-    async run(assert) {
-      const before = existingDescriptors()
-      const app = await launch()
-      let ide = null
-      try {
-        await started(app)
-        const project = mkdtempSync(join(tmpdir(), 'chorus-e2e-fresh-'))
-        mkdirSync(join(project, 'src'), { recursive: true })
-        writeFileSync(join(project, 'src/b.ts'), 'const b = 2\n')
-
-        const conversationId = await app.evaluate(
-          `document.querySelector('.pane').dataset.conversation`
-        )
-        await app.evaluate(
-          `window.chorus.setProjectDirectory({ conversationId: ${JSON.stringify(conversationId)}, cwd: ${JSON.stringify(project)} }).then(() => true)`
-        )
-
-        const descriptor = await waitForDescriptor(before)
-        ide = await FakeIde.connect(descriptor)
-        const [root] = await ide.awaitRoots(project)
-
-        // The pill says lines 1-3 ...
-        ide.report(root, { file: join(root, 'src/b.ts'), startLine: 0, endLine: 2 })
-        await app.until(`!!document.querySelector('.ide-pill')`, { label: 'the pill appears' })
-
-        // ... and by the time Send runs, the selection has moved to 40-41 and
-        // the buffer is unsaved.
-        ide.onSnapshot(() => ({
-          outcome: 'ok',
-          snapshot: {
-            source: 'current',
-            filePath: join(root, 'src/b.ts'),
-            fileUrl: `file://${join(root, 'src/b.ts')}`,
-            languageId: 'typescript',
-            documentVersion: 2,
-            isDirty: true,
-            provenance: { kind: 'worktree' },
-            selection: {
-              start: { line: 39, character: 0 },
-              end: { line: 40, character: 3 },
-              isEmpty: false,
-              selectedBytes: 7,
-              text: '  x = 1',
-            },
-          },
-        }))
-
-        const result = await app.evaluate(
-          `window.chorus.ideSnapshot({ conversationId: ${JSON.stringify(conversationId)} })`
-        )
-        assert(result.outcome === 'ok', `the snapshot came back, got ${result.outcome}`)
-        assert(
-          result.startLine === 40 && result.endLine === 41,
-          'the fresh range wins over the pill'
-        )
-        assert(result.relativePath === 'src/b.ts', 'the path is relative to the project')
-        assert(result.text === '  x = 1', 'the text is exact, indentation included')
-        assert(result.isDirty === true, 'an unsaved buffer is reported as one')
-
-        // The one place a token or a path may never end up.
-        const diagnostics = await app.evaluate(`window.chorus.readDiagnostics()`)
-        const dumped = JSON.stringify(diagnostics)
-        assert(!dumped.includes(descriptor.token), 'the token is absent from diagnostics')
-        assert(!dumped.includes('x = 1'), 'no selected source text is in diagnostics')
-      } finally {
-        ide?.close()
         await app.quit()
       }
     },
