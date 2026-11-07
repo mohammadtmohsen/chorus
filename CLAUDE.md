@@ -1,4 +1,4 @@
-# Chorus Workbench
+# Chorus
 
 ## Before anything: rule zero in `~/.claude/CLAUDE.md`
 
@@ -13,11 +13,9 @@ keeps being wrong.
 A local-first **development environment**: a real Code-OSS workbench with coding
 agents in the same window. Electron + React, pnpm workspaces, Turbo.
 
-**This repository is not `chorus`.** It was split off from it on 2026-08-29.
-`mohammadtmohsen/chorus` remains the chat-based product and is still maintained;
-this one is the IDE. They share `agent-protocol`, the two adapters,
-`orchestrator`, `event-store` and `shared` **by copy**, which is a known cost —
-see "The other repo" below before fixing anything in those packages.
+**This is the only Chorus repository.** It was `chorus-workbench` until
+2026-11-07, when the chat-based `chorus`, `chorus-core` and `chorus-extension`
+were retired and deleted. Nothing here has a copy elsewhere to keep in step.
 
 ### The unit is a Project
 
@@ -112,7 +110,7 @@ happens to be in a working tree, which is the bug described in step 4.
    ten-minute build. Never tag around a red gate.
 5. **Commit** as `chore(release): X.Y.Z`, touching only the changelog and the
    two `package.json` files.
-6. **Tag and push**: `git tag -a vX.Y.Z -m "Chorus Workbench X.Y.Z"`, then push `main` and
+6. **Tag and push**: `git tag -a vX.Y.Z -m "Chorus X.Y.Z"`, then push `main` and
    the tag separately. Pushing the tag does not start GitHub Actions.
 7. **Dispatch the release**: `gh workflow run release.yml --ref main -f publish_to=vX.Y.Z`.
    The workflow checks out that existing tag and builds every installer from
@@ -254,22 +252,6 @@ Three consequences that bite, in the order they will bite you:
   remote extension host under a refcount lease, with one `--extensions-dir`. So
   installing an extension in one project installs it for all of them; C-063 on
   BOARD.md is that, and it is a real product gap rather than a bug.
-
-### The other repo
-
-`agent-protocol`, `adapter-claude`, `adapter-codex`, `orchestrator`, `event-store`
-and `shared` exist in `mohammadtmohsen/chorus` too, as copies. They _will_ drift.
-
-Add the sibling as a remote rather than reimplementing a fix twice:
-
-```bash
-git remote add chorus https://github.com/mohammadtmohsen/chorus.git
-git fetch chorus && git cherry-pick <sha>
-```
-
-**Never copy whole files between the two.** That is the same rule the worktree
-trap below states, for the same reason: the diff you would read to decide what is
-safe is the thing that misleads you.
 
 ### The second native module
 
