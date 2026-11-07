@@ -3,7 +3,7 @@ import { basename, dirname, join } from 'node:path'
 import * as vscode from 'vscode'
 import { hasRoot } from '@chorus/ide-protocol/paths'
 import type { DiagnosticSeverity } from '@chorus/ide-protocol/protocol'
-import { SelectionCache } from '../../../vscode-extension/src/editor-context.js'
+import { SelectionCache } from './editor-context.js'
 import type { WorkbenchPlace } from '../../../desktop/src/main/project-root.js'
 import type {
   WorkbenchAskDiffRequest,

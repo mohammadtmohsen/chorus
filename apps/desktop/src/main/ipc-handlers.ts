@@ -4,7 +4,7 @@ import {
   type StoredEvent,
   type TranscriptState,
 } from '@chorus/event-store'
-import { MAX_SELECTED_BYTES, toDisplayRange, type EditorMetadata } from '@chorus/ide-protocol'
+import { MAX_SELECTED_BYTES } from '@chorus/ide-protocol'
 import { buildDiagnostics, type AgentId } from '@chorus/shared'
 import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -15,7 +15,6 @@ import {
   CONVERSATION_NOTE_PUSH_CHANNEL,
   ConversationNoteJournalRequest,
   ConversationNoteJournalResponse,
-  DIAGNOSTIC_PUSH_CHANNEL,
   EVENTS_PUSH_CHANNEL,
   IDE_PUSH_CHANNEL,
   IPC_CONTRACT,
@@ -24,7 +23,6 @@ import {
   SETTINGS_PUSH_CHANNEL,
   TASKS_PUSH_CHANNEL,
   TERMINAL_PUSH_CHANNEL,
-  type IdeContextPush,
   type IpcChannel,
   type IpcRequest,
   type IpcResponse,
@@ -41,23 +39,12 @@ import type { IpcHost, ShellDelivery, WorkbenchContextReport, WorkbenchEvents } 
  * is main's one place for that assumption. Importing the raw rule here would be
  * a second.
  */
-import {
-  isWithin,
-  projectRelativePath,
-  remoteProjectRoot,
-  type CanonicalRoot,
-} from '@chorus/workspace'
+import { isWithin, remoteProjectRoot } from '@chorus/workspace'
 import { PROJECT_CLOSED_PUSH_CHANNEL } from '../shared/detached-window-ipc.js'
 import type { TaskBundle } from '../shared/task-progress.js'
 import type { WorkspaceSnapshot } from '../shared/workspace-layout.js'
 import { completeFiles } from './files.js'
-import type { IdeBridge } from './ide-bridge.js'
-import {
-  extensionStatus,
-  installBundledExtension,
-  openFileInEditor,
-  openProjectInEditor,
-} from './ide-extension.js'
+import { openFileInEditor } from './ide-extension.js'
 import { installSkill, listPlugins } from './plugins.js'
 import { canonicalPath } from './real-path.js'
 import type { ChorusRuntime } from './runtime.js'
@@ -67,52 +54,6 @@ import { previewFile, stashFile } from './stash.js'
 export type IpcHandlers = { [C in IpcChannel]: (request: never) => Promise<IpcResponse<C>> }
 
 const OK = { ok: true } as const
-
-/**
- * The bridge, if it started. Held here rather than threaded through
- * `buildHandlers` because editor context is optional: every other handler must
- * work identically whether or not VS Code is involved.
- */
-let ideBridge: IdeBridge | null = null
-
-export function attachIdeBridge(bridge: IdeBridge | null): void {
-  ideBridge = bridge
-}
-
-/**
- * The VSIX shipped with this build, and the `code` CLI to install it with.
- *
- * Resolved per call rather than cached: `code` can be installed while Chorus is
- * running, and a user who follows the "Shell Command: Install 'code'" hint
- * should not have to restart the app for the button to appear.
- */
-
-/**
- * What the renderer is allowed to see about an editor.
- *
- * The absolute path is dropped here and never sent: a pane shows a path
- * relative to its own project, so it cannot display — or leak into a
- * screenshot — where the project sits on disk. This is also the boundary where
- * VS Code's zero-based lines become the one-based numbers a human reads.
- */
-function toPushFile(root: CanonicalRoot, editor: EditorMetadata): IdeContextPush['file'] {
-  const relativePath = projectRelativePath(root, editor.filePath)
-  if (relativePath === null) return null
-  const range = toDisplayRange(editor.selection)
-  return {
-    relativePath,
-    startLine: range.startLine,
-    endLine: range.endLine,
-    isEmpty: editor.selection.isEmpty,
-    isDirty: editor.isDirty,
-    languageId: editor.languageId,
-    selectedBytes: editor.selection.selectedBytes,
-    // Both are about *which* selection this is rather than where it lives, so
-    // neither discloses anything the relative path did not already.
-    provenance: editor.provenance,
-    source: editor.source,
-  }
-}
 
 /**
  * Splits `src/foo.ts:42:7` into the file and where in it to land.
@@ -856,13 +797,6 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
      * the composer can explain instead of throwing, because the caller's job is
      * to keep the draft, not to handle an exception on a path taken constantly.
      */
-    'ide:extensionStatus': () => extensionStatus(ports.extensionDeps()),
-
-    'ide:installExtension': () => installBundledExtension(ports.extensionDeps()),
-
-    'ide:openProject': (request: { conversationId: string }) =>
-      openProjectInEditor(runtime.agentDirectory(request.conversationId), ports.extensionDeps()),
-
     /*
      * Resolved and contained here, never trusted from the renderer.
      *
@@ -950,23 +884,12 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
     },
 
     'ide:snapshot': async (request: { conversationId: string }) => {
-      const cwd = runtime.agentDirectory(request.conversationId)
-
-      /*
-       * The embedded editor first, and the external bridge only if there is none.
-       *
-       * "The editor owns what the editor owns" — the workbench in this window is
-       * the one the person is actually looking at, and losing to a VS Code that
-       * may not even be open would be the wrong way round. The external bridge
-       * stays as the fallback until Phase 8 deletes it.
-       */
       /*
        * Asked of the surface, not read from the retained push.
        *
        * The push is debounced and drives the pill; the composer's own comment
        * says sending what the pill said would attach the wrong lines, which is
-       * worse than attaching none. This is the same pull the external bridge
-       * does, one process over — and it is the only path that carries the
+       * worse than attaching none. It is the only path that carries the
        * selected **text**, which the push omits by design.
        */
       const embedded = await ports.editor.snapshot(runtime.editorPlace(request.conversationId))
@@ -978,7 +901,7 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
        * One line ends that.
        */
       runtime.log.info('editor snapshot', {
-        source: embedded === undefined ? 'external-bridge' : 'workbench',
+        source: embedded === undefined ? 'none' : 'workbench',
         path: embedded?.relativePath ?? null,
         lines:
           embedded === null || embedded === undefined
@@ -996,9 +919,8 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
           return { outcome: 'unavailable', reason: 'unmatched' } as const
         }
         /*
-         * The same cap the external bridge enforces, and enforced here rather
-         * than trusted from the surface: a truncated selection can mean
-         * something different from what it was cut out of.
+         * Enforced here rather than trusted from the surface: a truncated
+         * selection can mean something different from what it was cut out of.
          */
         if (embedded.selectedBytes > MAX_SELECTED_BYTES) {
           return { outcome: 'tooLarge', selectedBytes: embedded.selectedBytes } as const
@@ -1029,33 +951,7 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
         } as const
       }
 
-      const bridge = ideBridge
-      if (bridge === null) return { outcome: 'unavailable', reason: 'unavailable' } as const
-
-      const root = bridge.rootFor(cwd)
-      const result = await bridge.requestSnapshot(root)
-      if (result.outcome !== 'ok') return result
-
-      const { snapshot } = result
-      const relativePath = projectRelativePath(root, snapshot.filePath)
-      // Re-checked after the answer came back, closing the race between the
-      // live metadata and Send.
-      if (relativePath === null) return { outcome: 'unavailable', reason: 'unmatched' } as const
-
-      const range = toDisplayRange(snapshot.selection)
-      return {
-        outcome: 'ok',
-        relativePath,
-        startLine: range.startLine,
-        endLine: range.endLine,
-        isEmpty: snapshot.selection.isEmpty,
-        isDirty: snapshot.isDirty,
-        languageId: snapshot.languageId,
-        text: snapshot.selection.text,
-        // What decides whether the agent is told to read the file or told that
-        // reading it would show something else.
-        provenance: snapshot.provenance,
-      } as const
+      return { outcome: 'unavailable', reason: 'unavailable' } as const
     },
 
     /*
@@ -1339,11 +1235,9 @@ export function forwardTerminalToRenderer(
  * cannot receive this no matter what the surface said, because the surface never
  * said which project it was.
  *
- * The payload is the same `IdeContextPush` the external bridge produces, so the
- * renderer, the composer pill and the disclosure controls need no second shape —
- * §5.2's "rework, not rewrite" in one line. `provenance` is `worktree` because an
- * embedded editor is looking at the working tree by construction; the external
- * bridge could be looking at a ref or a review, and this cannot.
+ * The payload is an `IdeContextPush`, so the renderer, the composer pill and the
+ * disclosure controls need no second shape — §5.2's "rework, not rewrite" in one
+ * line.
  *
  * **Held, never logged.** No `ChorusEventPayload` exists for any of this and none
  * may be added: a cursor position read back a week later is worse than none.
@@ -1402,10 +1296,9 @@ export function forwardWorkbenchContextToRenderer(
     if (conversations.length === 0) return
 
     /*
-     * A report with no file is `unmatched`, not `ready`. The external bridge
-     * makes the same correction a few lines below, and for the same reason: a
-     * status claiming readiness beside an absent file is the one combination a
-     * consumer cannot render honestly.
+     * A report with no file is `unmatched`, not `ready`: a status claiming
+     * readiness beside an absent file is the one combination a consumer cannot
+     * render honestly.
      */
     const file =
       context.relativePath === null || context.startLine === null || context.endLine === null
@@ -1421,11 +1314,9 @@ export function forwardWorkbenchContextToRenderer(
             /* As reported by the surface — see the snapshot path above. */
             provenance: context.provenance,
             /*
-             * Always `current`. The external bridge can be reporting a selection
-             * it remembered from before the editor lost focus; this fires from
-             * the editor's own events, so there is nothing cached to report and
-             * claiming otherwise would make the pill say `cached` about a live
-             * cursor.
+             * Always `current`. This fires from the editor's own events, so
+             * there is nothing cached to report and claiming otherwise would
+             * make the pill say `cached` about a live cursor.
              */
             source: 'current' as const,
           }
@@ -1463,9 +1354,7 @@ export function forwardWorkbenchContextToRenderer(
   }
   /*
    * When a project's last surface goes, its held context goes with it and the
-   * conversations are told the embedded editor has nothing — which is what lets
-   * the external bridge become visible again, since the shell prefers a
-   * workbench push only while one exists.
+   * conversations are told the embedded editor has nothing.
    */
   ports.setSurfaceGoneSink((place) => {
     lastWorkbenchContext.delete(placeKey(place.host, place.root))
@@ -1500,101 +1389,6 @@ export function forwardWorkbenchContextToRenderer(
     ports.setSurfaceGoneSink(null)
     ports.setContextSink(null)
   }
-}
-
-/**
- * Push each open conversation's editor context to the renderer.
- *
- * Scoped per conversation on this side of the boundary: a pane is sent its own
- * project's state and nothing else, so a renderer bug cannot show one project's
- * file in another's composer.
- */
-export function forwardIdeContextToRenderer(
-  runtime: ChorusRuntime,
-  bridge: IdeBridge,
-  ports: ShellDelivery
-): () => void {
-  const push = (): void => {
-    const payloads: IdeContextPush[] = runtime
-      .openConversations()
-      .map(({ conversationId, cwd }) => {
-        const root = bridge.rootFor(cwd)
-        const context = bridge.contextFor(root)
-        const file = context.editor === null ? null : toPushFile(root, context.editor)
-        // A file that fails the relative-path check is not this project's, so the
-        // status must not claim otherwise.
-        const status = context.status === 'ready' && file === null ? 'unmatched' : context.status
-        return { conversationId, editor: 'external' as const, status, file }
-      })
-
-    for (const window of ports.clients()) {
-      if (window.isGone()) continue
-      for (const payload of payloads) window.send(IDE_PUSH_CHANNEL, payload)
-    }
-  }
-
-  const unsubscribeBridge = bridge.subscribe(push)
-  // Also on runtime events: a conversation that opens or moves needs its first
-  // push without waiting for the editor to change.
-  const unsubscribeRuntime = runtime.subscribe(push)
-  push()
-  return () => {
-    unsubscribeBridge()
-    unsubscribeRuntime()
-  }
-}
-
-/**
- * Sends a problem from VS Code to the conversation whose project it belongs to.
- *
- * **Routing is main's, not the extension's.** The extension knows a root; only
- * main knows which conversations are open on it. A root with no conversation is
- * dropped here rather than guessed at — a compiler error landing in a
- * conversation about something else is worse than one landing nowhere, and the
- * person who pressed the button is told by VS Code either way.
- *
- * Every conversation on that root is sent to, which is the honest reading of
- * "this project": two panes on one repository are both looking at the file, and
- * choosing between them from main — which cannot see which pane has focus —
- * would be a guess dressed as a decision. The renderer stages it in each; a
- * draft is not a turn.
- *
- * The absolute path is dropped and the range becomes one-based here, exactly as
- * `toPushFile` does, so a pane never holds where the project sits on disk.
- */
-export function forwardDiagnosticsToRenderer(
-  runtime: ChorusRuntime,
-  bridge: IdeBridge,
-  ports: ShellDelivery
-): () => void {
-  return bridge.onDiagnostic((params) => {
-    const targets = runtime
-      .openConversations()
-      .filter(({ cwd }) => String(bridge.rootFor(cwd)) === params.root)
-
-    for (const { conversationId, cwd } of targets) {
-      const relativePath = projectRelativePath(bridge.rootFor(cwd), params.filePath)
-      // Re-checked after the extension already filtered, for the reason
-      // `ide:snapshot` re-checks: main is the security boundary.
-      if (relativePath === null) continue
-      const range = toDisplayRange({ start: params.range.start, end: params.range.end })
-      const payload = {
-        conversationId,
-        relativePath,
-        languageId: params.languageId,
-        severity: params.severity,
-        ...(params.source === undefined ? {} : { source: params.source }),
-        ...(params.code === undefined ? {} : { code: params.code }),
-        message: params.message,
-        startLine: range.startLine,
-        endLine: range.endLine,
-        text: params.text,
-      }
-      for (const window of ports.clients()) {
-        if (!window.isGone()) window.send(DIAGNOSTIC_PUSH_CHANNEL, payload)
-      }
-    }
-  })
 }
 
 export function forwardEventsToRenderer(runtime: ChorusRuntime, ports: ShellDelivery): () => void {

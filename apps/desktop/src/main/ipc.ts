@@ -6,15 +6,10 @@ import {
   type IpcChannel,
 } from '../shared/ipc.js'
 import { desktopIpcHost } from './desktop-ipc-host.js'
-import type { IdeBridge } from './ide-bridge.js'
 import * as handlers from './ipc-handlers.js'
 import type { ChorusRuntime } from './runtime.js'
 import { isShellSender } from './shell-windows.js'
-export {
-  answerConversationNoteJournal,
-  attachIdeBridge,
-  splitFileLocation,
-} from './ipc-handlers.js'
+export { answerConversationNoteJournal, splitFileLocation } from './ipc-handlers.js'
 
 export function buildHandlers(
   runtime: ChorusRuntime,
@@ -111,23 +106,5 @@ export const forwardEventsToRenderer = (
 ): ReturnType<typeof handlers.forwardEventsToRenderer> =>
   handlers.forwardEventsToRenderer(
     runtime,
-    desktopIpcHost(() => null)
-  )
-export const forwardIdeContextToRenderer = (
-  runtime: ChorusRuntime,
-  bridge: IdeBridge
-): ReturnType<typeof handlers.forwardIdeContextToRenderer> =>
-  handlers.forwardIdeContextToRenderer(
-    runtime,
-    bridge,
-    desktopIpcHost(() => null)
-  )
-export const forwardDiagnosticsToRenderer = (
-  runtime: ChorusRuntime,
-  bridge: IdeBridge
-): ReturnType<typeof handlers.forwardDiagnosticsToRenderer> =>
-  handlers.forwardDiagnosticsToRenderer(
-    runtime,
-    bridge,
     desktopIpcHost(() => null)
   )

@@ -2425,7 +2425,7 @@ signal it asks on is not a single sample of `busy`.
 
 ### C-035 · A notebook cell is a document the editor context cannot name
 
-`resolveDocument` (`apps/vscode-extension/src/document-identity.ts`) now parses
+`resolveDocument` (`packages/ide-protocol/src/document-identity.ts`) now parses
 `file:`, `git:` and `gl-review:` and refuses everything else, on purpose: a
 scheme nobody has read yields a wrong path rather than none, and main's
 re-validation turns a wrong path into a silent `unmatched`.
@@ -2446,7 +2446,11 @@ already had.
 or the refusal is written down as permanent with the reason, so the next person
 does not rediscover it as a gap.
 
-### C-036 · The extension speaks English, and the app's rule says it must not
+### C-036 · ~~The extension speaks English, and the app's rule says it must not~~ — **closed 2026-11-07, moot**
+
+**Closed:** plan 86 deleted `apps/vscode-extension`, so the strings below no longer
+ship anywhere. `apps/extension` is a different extension and this entry does not
+cover it.
 
 "No hardcoded user-facing strings — `i18n/en.json`" is a renderer convention that
 `apps/vscode-extension` has never followed. Its manifest strings go through
@@ -2620,6 +2624,11 @@ security-patch obligation that nothing here needs today.
 selection pills and "follows the editor for its own project" specs exercise. The
 want behind the question — reach VS Code's power — is already partly answered
 without becoming VS Code.
+
+**Update 2026-11-07:** that bridge is gone. Plan 86 deleted `ide-bridge.ts`, the
+`chorus-vscode` companion and its bundled `.vsix`, as Phase 8 of the workbench plan
+asked. Chorus now reaches VS Code from the other side, as `apps/extension` running
+inside it. The decision itself stands.
 
 **Reopens if two or more of these become roadmap requirements**, rather than
 individually:

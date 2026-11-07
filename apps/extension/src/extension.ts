@@ -45,6 +45,14 @@ import {
   EditorAskDiffRequest,
 } from '../../engine/src/editor-protocol.js'
 import { registerInlineCompletions } from './completion/index.js'
+import {
+  WorkbenchBusyError,
+  WorkbenchShapeError,
+  restorePatch,
+  setPatch,
+  stateFolder,
+  type PatchTarget,
+} from './continuous-row/patch.js'
 
 const TEXT = messages.extension
 const SHELL_VIEW_ID = 'chorus.workspace'
@@ -1011,6 +1019,62 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
   }
 }
 
+const patchTarget = (context: vscode.ExtensionContext): PatchTarget => ({
+  appRoot: vscode.env.appRoot,
+  bundled: vscode.Uri.joinPath(context.extensionUri, 'dist', 'continuous-row.js').fsPath,
+  stateFolder: stateFolder(),
+})
+
+const patchFailure = (error: unknown): string =>
+  error instanceof WorkbenchShapeError
+    ? TEXT.continuousRow.unexpectedShape
+    : error instanceof WorkbenchBusyError
+      ? TEXT.continuousRow.busy
+      : TEXT.continuousRow.failed.replaceAll(
+          '{{reason}}',
+          error instanceof Error ? error.message : String(error)
+        )
+
+async function offerReload(message: string): Promise<void> {
+  const choice = await vscode.window.showInformationMessage(message, TEXT.continuousRow.reload)
+  if (choice === TEXT.continuousRow.reload) {
+    await vscode.commands.executeCommand('workbench.action.reloadWindow')
+  }
+}
+
+async function offerRelaunch(): Promise<void> {
+  const choice = await vscode.window.showInformationMessage(
+    TEXT.continuousRow.relaunch,
+    TEXT.continuousRow.quit
+  )
+  if (choice === TEXT.continuousRow.quit) {
+    await vscode.commands.executeCommand('workbench.action.quit')
+  }
+}
+
+async function setContinuousRow(context: vscode.ExtensionContext, on: boolean): Promise<void> {
+  let relaunch: boolean
+  try {
+    relaunch = await setPatch(patchTarget(context), on)
+  } catch (error) {
+    void vscode.window.showErrorMessage(patchFailure(error))
+    return
+  }
+  if (relaunch) await offerRelaunch()
+  else await offerReload(on ? TEXT.continuousRow.enabled : TEXT.continuousRow.disabled)
+}
+
+async function restoreContinuousRow(context: vscode.ExtensionContext): Promise<void> {
+  try {
+    const restored = await restorePatch(patchTarget(context))
+    if (restored.relaunch) await offerRelaunch()
+    else if (restored.outcome === 'restored') await offerReload(TEXT.continuousRow.restored)
+    else if (restored.outcome === 'removed') await offerReload(TEXT.continuousRow.disabled)
+  } catch (error) {
+    void vscode.window.showErrorMessage(patchFailure(error))
+  }
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const secrets = Object.fromEntries(
     await Promise.all(
@@ -1053,6 +1117,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     ),
     vscode.commands.registerCommand('chorus.shellKey', () => undefined),
+    vscode.commands.registerCommand('chorus.continuousRow.enable', () =>
+      setContinuousRow(context, true)
+    ),
+    vscode.commands.registerCommand('chorus.continuousRow.disable', () =>
+      setContinuousRow(context, false)
+    ),
     vscode.window.registerWebviewPanelSerializer('chorus.shell', {
       deserializeWebviewPanel(panel) {
         panel.dispose()
@@ -1062,4 +1132,5 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   )
   void shell.startIfUsed()
+  void restoreContinuousRow(context)
 }

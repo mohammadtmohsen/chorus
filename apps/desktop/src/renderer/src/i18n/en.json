@@ -454,25 +454,11 @@
       "tooLarge": "That selection is too large to send. Select less, or exclude the editor context.",
       "unavailable": "Could not read the editor selection ({{reason}}). Your message was not sent."
     },
-    "openProject": "Open this project in VS Code",
     "openError": {
       "cli-missing": "VS Code's `code` command is not on your PATH. In VS Code, run \"Shell Command: Install 'code' command in PATH\".",
       "open-failed": "VS Code could not open that.",
       "unknown": "VS Code could not open that.",
       "outside-project": "{{path}} is outside this session's folder ({{project}}), so Chorus will not open it."
-    },
-    "extension": {
-      "title": "VS Code extension",
-      "install": "Install VS Code Extension",
-      "update": "Update VS Code Extension",
-      "installed": "Installed, version {{version}}.",
-      "missing": "VS Code's `code` command is not on your PATH, so Chorus cannot install the extension for you.",
-      "none": "Not installed. Chorus can install the bundled version for you.",
-      "outdated": "Version {{installed}} is installed; this build ships {{bundled}}.",
-      "working": "Installing…",
-      "done": "Installed. Reload the VS Code window to start using it.",
-      "failed": "Install failed ({{reason}}).",
-      "unavailable": "This build of Chorus does not ship the extension."
     },
     "diagnostic": {
       "heading": "VS Code problem"
@@ -1438,6 +1424,17 @@
     "channelRefused": "This operation is not available in this Chorus host.",
     "addProject": "Add to Chorus as Project",
     "reconnecting": "Reconnecting to Chorus…",
+    "continuousRow": {
+      "enabled": "Continuous row is on. Reload the window to start it. VS Code will then say its installation is corrupt; choose Don't Show Again.",
+      "disabled": "Continuous row is off. Reload the window to finish.",
+      "restored": "VS Code was updated, so Chorus put the continuous row back. Reload the window to use it.",
+      "failed": "Chorus could not change VS Code's files: {{reason}}",
+      "busy": "Another VS Code window is changing the continuous row. Try again in a moment.",
+      "unexpectedShape": "This VS Code's workbench file is not in the shape Chorus expects, so it was left alone.",
+      "reload": "Reload Window",
+      "relaunch": "Continuous row changed VS Code's own files. Quit and reopen VS Code to finish: swipes over VS Code's built-in browser need a full restart, not a window reload.",
+      "quit": "Quit VS Code"
+    },
     "attention": {
       "badgeTooltip": "Conversations waiting on you",
       "approvalOne": "1 approval",

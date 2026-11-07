@@ -1,5 +1,13 @@
 # Status — Chorus becomes the development environment
 
+## 2026-11-07 · Phase 8, in part — the companion removed
+
+Plan 86 (`docs/plans/86-remove-the-old-vscode-companion.md`) deleted the external VS Code
+descriptor, socket and installer code, the `chorus-vscode` companion, its bundled `.vsix`, the
+Settings health box, and the unreachable "Open in VS Code". It kept the `code -g` fallback in
+`ide:openFile` on purpose: it is what a transcript file link does when a project's Editor switch is
+off. Phase 8's exit criterion "no requirement for the `code` CLI" is therefore unmet by choice.
+
 ## 2026-08-29 · Phase 6 built, and eleven rounds of finding out why it did not work
 
 **Phase 6d and 6e are built for Claude, and the editor context they depend on took

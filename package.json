@@ -24,7 +24,7 @@
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run workbench:check && pnpm run test",
     "clean": "turbo run clean && node scripts/rm.mjs node_modules",
     "e2e": "turbo run build --filter=@chorus/desktop^... && pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e",
-    "package": "pnpm run build && pnpm --filter chorus-vscode run package && pnpm --filter @chorus/desktop run package",
+    "package": "pnpm run build && pnpm --filter @chorus/desktop run package",
     "app:install": "turbo run build --filter=@chorus/desktop^... && pnpm --filter @chorus/desktop run app:install",
     "verify:package": "pnpm package && pnpm --filter @chorus/desktop run verify:package",
     "verify:package:windows": "pnpm package && pnpm --filter @chorus/desktop run verify:package:windows",

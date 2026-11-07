@@ -189,11 +189,8 @@ export default tseslint.config(
     files: [
       '**/*.config.{js,mjs,ts,mts}',
       '**/*.setup.ts',
-      'apps/vscode-extension/esbuild.mjs',
       'apps/engine/*.mjs',
       'apps/extension/*.mjs',
-      'apps/vscode-extension/package.mjs',
-      'apps/vscode-extension/zip.mjs',
       /*
        * The workbench fixture, and it belongs here for a stronger reason than
        * the build scripts above: it is deliberately plain CommonJS with no
@@ -208,6 +205,7 @@ export default tseslint.config(
        */
       'apps/workbench-fixture/extension.js',
       'apps/workbench-fixture/package.mjs',
+      'apps/workbench-fixture/zip.mjs',
       'scripts/**/*.mjs',
     ],
     languageOptions: {

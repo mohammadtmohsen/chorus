@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { DiagnosticDocument } from '../../../vscode-extension/src/diagnostic-pick.js'
+import type { DiagnosticDocument } from './diagnostic-pick.js'
 import type { EditorProject } from './types.js'
 import { projectDiagnostic } from './diagnostics.js'
 import { diagnosticParams } from '@chorus/ide-protocol/protocol'

@@ -30,7 +30,8 @@
     "build": "node build.mjs && vite build && node stage-development.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "package": "node package.mjs"
+    "package": "node package.mjs",
+    "vscode:uninstall": "node ./dist/uninstall.cjs"
   },
   "contributes": {
     "commands": [
@@ -61,6 +62,14 @@
       {
         "command": "chorus.revealConversation",
         "title": "%command.revealConversation%"
+      },
+      {
+        "command": "chorus.continuousRow.enable",
+        "title": "%command.continuousRow.enable%"
+      },
+      {
+        "command": "chorus.continuousRow.disable",
+        "title": "%command.continuousRow.disable%"
       }
     ],
     "menus": {

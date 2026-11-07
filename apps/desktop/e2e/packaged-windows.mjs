@@ -112,23 +112,6 @@ function checkNativeFiles(check) {
   }
 }
 
-/**
- * The VSIX, which lives beside the asar rather than inside it.
- *
- * `code --install-extension` needs a real path it can open and an asar is not a
- * directory. Checked here because a missing VSIX makes the editor integration
- * quietly unavailable rather than broken — the pill reports "not running" and
- * nothing says why.
- */
-function checkVsix(check) {
-  const resources = join(UNPACKED_ROOT, 'resources')
-  check(existsSync(join(resources, 'chorus-vscode.vsix')), 'the VS Code extension shipped')
-  check(
-    existsSync(join(resources, 'chorus-vscode.vsix.version')),
-    'the extension version file shipped, so Settings can compare'
-  )
-}
-
 async function main() {
   if (!existsSync(BUNDLE)) {
     console.error(`no packaged app at ${BUNDLE}\n  run: pnpm package`)
@@ -144,7 +127,6 @@ async function main() {
   // Before the app boots: a bad bundle should say so in milliseconds rather
   // than after a three-minute agent handshake.
   checkNativeFiles(check)
-  checkVsix(check)
 
   const app = await launch({ executable: BUNDLE })
   try {

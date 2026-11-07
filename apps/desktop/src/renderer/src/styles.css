@@ -8761,6 +8761,27 @@ input::placeholder {
   padding: var(--rail-top) calc(var(--step) * 2) calc(var(--step) * 2) 0;
 }
 
+html.continuous-row {
+  background: var(--ground);
+}
+
+html.continuous-row body {
+  margin-left: var(--continuous-row-inset, 0px);
+}
+
+html.continuous-row .sheet-backdrop,
+html.continuous-row .note-zoom {
+  left: var(--continuous-row-inset, 0px);
+}
+
+html.continuous-row .zoom-badge {
+  left: calc((100% + var(--continuous-row-inset, 0px)) / 2);
+}
+
+html.continuous-row .global-note {
+  max-width: calc(90vw - var(--continuous-row-inset, 0px));
+}
+
 /*
  * The session list scrolls, so none of it may be a drag region.
  *

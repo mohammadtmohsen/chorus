@@ -8,6 +8,7 @@ import {
   PROJECT_TERMINAL_WIDTH,
   TRAFFIC_WIDTH,
 } from '../../../shared/workspace-layout.js'
+import { continuousRowBridge } from '../host-resources.js'
 import { horizontalRowWheel } from './viewport.js'
 import { clampEditorWidth, pushDivider } from './layout.js'
 
@@ -22,21 +23,97 @@ function stripCanMove(strip: HTMLElement, delta: number): boolean {
   return delta < 0 ? strip.scrollLeft >= 1 : strip.scrollLeft <= end - 1
 }
 
-export function routeRowWheel(row: HTMLElement): () => void {
+interface RegisteredRow {
+  readonly element: HTMLElement
+  readonly registration: number
+  readonly touch: () => void
+}
+
+export interface RowPosition {
+  readonly registration: number
+  readonly row: number
+  readonly rowMax: number
+}
+
+const rowsByPane = new Map<string, RegisteredRow>()
+let registrations = 0
+
+export function registeredRow(paneId: string): RowPosition | null {
+  const entry = rowsByPane.get(paneId)
+  if (entry === undefined) return null
+  return {
+    registration: entry.registration,
+    row: entry.element.scrollLeft,
+    rowMax: Math.max(0, entry.element.scrollWidth - entry.element.clientWidth),
+  }
+}
+
+export function firstRegisteredPane(): string | null {
+  for (const paneId of rowsByPane.keys()) return paneId
+  return null
+}
+
+export function scrollRegisteredRow(paneId: string, left: number): void {
+  const entry = rowsByPane.get(paneId)
+  if (entry === undefined) return
+  entry.touch()
+  entry.element.scrollLeft = left
+}
+
+function watchRowBounds(row: HTMLElement, changed: () => void): () => void {
+  if (typeof ResizeObserver === 'undefined' || typeof MutationObserver === 'undefined') {
+    return () => undefined
+  }
+  const sized = new ResizeObserver(changed)
+  const observeAll = (): void => {
+    sized.observe(row)
+    for (const child of row.children) sized.observe(child)
+  }
+  observeAll()
+  const added = new MutationObserver(() => {
+    observeAll()
+    changed()
+  })
+  added.observe(row, { childList: true })
+  return () => {
+    sized.disconnect()
+    added.disconnect()
+  }
+}
+
+export function routeRowWheel(row: HTMLElement, paneId: string, touch: () => void): () => void {
+  registrations += 1
+  const entry: RegisteredRow = { element: row, registration: registrations, touch }
   const onWheel = (event: WheelEvent): void => {
     if (event.shiftKey && insideWebsiteSurface(event.target)) return
     if (event.defaultPrevented) return
     const delta = horizontalRowWheel(event, row.clientWidth)
     if (delta === 0) return
     const strip = tabStripAt(event.target)
-    const scrolled = strip !== null && stripCanMove(strip, delta) ? strip : row
     event.preventDefault()
     event.stopPropagation()
-    scrolled.scrollLeft += delta
+    if (strip !== null && stripCanMove(strip, delta)) {
+      strip.scrollLeft += delta
+      return
+    }
+    if (continuousRowBridge()?.wheel(paneId, delta) === true) return
+    row.scrollLeft += delta
   }
+  const onScroll = (): void => {
+    continuousRowBridge()?.rowMoved(paneId)
+  }
+  rowsByPane.set(paneId, entry)
+  const stopWatching =
+    continuousRowBridge() === undefined ? () => undefined : watchRowBounds(row, onScroll)
+  continuousRowBridge()?.rowMoved(paneId)
   row.addEventListener('wheel', onWheel, { capture: true, passive: false })
+  row.addEventListener('scroll', onScroll, { passive: true })
   return () => {
+    if (rowsByPane.get(paneId) === entry) rowsByPane.delete(paneId)
+    stopWatching()
     row.removeEventListener('wheel', onWheel, { capture: true })
+    row.removeEventListener('scroll', onScroll)
+    continuousRowBridge()?.rowMoved(paneId)
   }
 }
 
