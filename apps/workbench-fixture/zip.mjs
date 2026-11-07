@@ -16,8 +16,7 @@ import { deflateRawSync } from 'node:zlib'
  * machines building the same tree produced the same bytes. That property is
  * kept here by construction: there are no extra fields, and every entry is
  * stamped with a fixed DOS timestamp rather than the file's mtime. A VSIX whose
- * bytes change with the clock defeats checksum verification for a release, and
- * `chorus-vscode.vsix.version` beside it is the only version anyone reads.
+ * bytes change with the clock defeats checksum verification.
  *
  * The chosen stamp is 1980-01-01 00:00:00, which is the DOS epoch and the
  * smallest legal value.

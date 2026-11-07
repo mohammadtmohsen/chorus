@@ -20,7 +20,7 @@ import {
 /*
  * The two Node-free subpaths, never `@chorus/ide-protocol` itself.
  *
- * The barrel re-exports `endpoint.js`, which imports `node:path`. This module is
+ * The barrel used to re-export `endpoint.js`, which imported `node:path`. This module is
  * browser code, and Vite answers an unresolvable built-in with an *empty object*
  * rather than an error — so the import succeeded, `posix` was `undefined`, and
  * every `git:` and `gl-review:` document threw `TypeError` from inside a VS Code

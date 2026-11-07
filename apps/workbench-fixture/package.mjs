@@ -1,10 +1,10 @@
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { zip } from '../vscode-extension/zip.mjs'
+import { zip } from './zip.mjs'
 
 /**
- * Packs the fixture into a VSIX, reusing `vscode-extension/zip.mjs`.
+ * Packs the fixture into a VSIX, using `zip.mjs` beside it.
  *
  * **Reused rather than reimplemented, and rather than adding `vsce`.** That file
  * already writes a deterministic Open Packaging Convention archive and carries

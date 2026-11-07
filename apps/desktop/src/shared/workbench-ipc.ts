@@ -3,7 +3,7 @@ import { z } from 'zod'
  * The `/protocol` subpath, never the package's barrel.
  *
  * This file is `shared/`, so it is compiled into main *and* into both renderer
- * bundles. The barrel re-exports `endpoint.js`, which imports `node:path` — and
+ * bundles. The barrel used to re-export `endpoint.js`, which imported `node:path` — and
  * a bundler asked to resolve that for browser code substitutes an empty object
  * rather than failing, so the breakage surfaces as a `TypeError` at some later
  * call site instead of at build time. `paths.ts` records what that cost. The

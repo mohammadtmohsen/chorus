@@ -1959,34 +1959,6 @@ export const IPC_CONTRACT = {
    * crosses into Chorus, and it happens because the user pressed a button.
    */
   /**
-   * Whether the companion extension is installed and current.
-   *
-   * Answered even when VS Code is absent: the renderer needs to know the
-   * difference between "no `code` command" and "not installed yet" in order to
-   * offer the right thing, or nothing at all.
-   */
-  'ide:extensionStatus': {
-    request: z.object({}),
-    response: z.object({
-      cliAvailable: z.boolean(),
-      installedVersion: z.string().nullable(),
-      bundledVersion: z.string().nullable(),
-      need: z.enum(['none', 'install', 'update']),
-    }),
-  },
-
-  'ide:installExtension': {
-    request: z.object({}),
-    response: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
-  },
-
-  /** Open this conversation's folder in VS Code. */
-  'ide:openProject': {
-    request: z.object({ conversationId: z.string() }),
-    response: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
-  },
-
-  /**
    * Open one file from this conversation, in this project's own editor.
    *
    * **The request names a conversation and a path, never a directory.** Main
@@ -2003,8 +1975,8 @@ export const IPC_CONTRACT = {
    * takes, so the request shape did not have to grow to carry it;
    * `splitFileLocation` in `main/ipc.ts` is the one place it is taken apart.
    *
-   * `reason` mirrors `ide:openProject`'s: `cli-missing`, `open-failed`, plus
-   * `outside-project` for a path that failed containment. A workbench that
+   * `reason` is `cli-missing`, `open-failed`, or `outside-project` for a path
+   * that failed containment. A workbench that
    * refused — no such file, an editor that would not open it — reports
    * `open-failed`, which is what it is from the clicker's side.
    */
@@ -2733,11 +2705,6 @@ export interface ChorusApi
   readonly readDiagnostics: () => Promise<IpcResponse<'diagnostics:read'>>
   readonly exportDiagnostics: () => Promise<IpcResponse<'diagnostics:export'>>
   /** Fires when a conversation's repository moves. Carries no diff — see the channel. */
-  readonly ideExtensionStatus: () => Promise<IpcResponse<'ide:extensionStatus'>>
-  readonly ideInstallExtension: () => Promise<IpcResponse<'ide:installExtension'>>
-  readonly ideOpenProject: (
-    request: IpcRequest<'ide:openProject'>
-  ) => Promise<IpcResponse<'ide:openProject'>>
   readonly ideOpenFile: (
     request: IpcRequest<'ide:openFile'>
   ) => Promise<IpcResponse<'ide:openFile'>>

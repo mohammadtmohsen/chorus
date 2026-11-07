@@ -2,7 +2,6 @@ import { electronBrowserSource, electronBrowserSourceOf } from './electron-brows
 import { electronBrowserPort, electronBrowserDownloads } from './electron-browser-port.js'
 import { electronIpcRegistrar, electronShellClient } from './electron-shell-client.js'
 import { mkdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, session, type WebContents } from 'electron'
@@ -15,17 +14,13 @@ import {
   registerDetachedWindowHandlers,
   type DetachedWindowDeps,
 } from './detached-windows.js'
-import { IdeBridge } from './ide-bridge.js'
 import {
-  attachIdeBridge,
   forwardEventsToRenderer,
-  forwardIdeContextToRenderer,
   forwardContextUsageToRenderer,
   forwardTasksToRenderer,
   forwardConversationNotesToRenderer,
   forwardActivityToRenderer,
   forwardAttentionToRenderer,
-  forwardDiagnosticsToRenderer,
   forwardTerminalToRenderer,
   forwardLimitsToRenderer,
   forwardWorkbenchContextToRenderer,
@@ -207,7 +202,6 @@ function createWindow(role: ShellWindowRole): BrowserWindow {
 }
 
 let runtime: ChorusRuntime | null = null
-let ideBridge: IdeBridge | null = null
 let mainWindow: BrowserWindow | null = null
 /**
  * Held at module scope so shutdown can say what it failed to stop.
@@ -421,12 +415,6 @@ void app.whenReady().then(async () => {
   setHandoffExpiredSink((projectRoot) => {
     handOffExpired(detachedDeps, projectRoot)
   })
-  /*
-   * Phase 6 slice 6c. Beside the other forwarders and taking no bridge: the
-   * embedded workbench reports through main's own surface channel, so unlike
-   * `forwardIdeContextToRenderer` there is no external process to be attached
-   * first — this works whether or not VS Code is installed.
-   */
   forwardWorkbenchContextToRenderer(runtime)
   forwardLimitsToRenderer(runtime)
   forwardContextUsageToRenderer(runtime)
@@ -576,36 +564,6 @@ void app.whenReady().then(async () => {
   forwardEventsToRenderer(runtime)
 
   /*
-   * The VS Code bridge. Chorus listens and the extension dials in, so this has
-   * to be up before any window connects — but a failure here must not stop the
-   * app: editor context is additive, and Chorus without it is exactly the app
-   * it was before.
-   */
-  const started = runtime
-  try {
-    const bridge = await IdeBridge.start({
-      runtimeDir: tmpdir(),
-      pid: process.pid,
-      chorusVersion: app.getVersion(),
-      log,
-    })
-    ideBridge = bridge
-    attachIdeBridge(bridge)
-    forwardIdeContextToRenderer(started, bridge)
-    forwardDiagnosticsToRenderer(started, bridge)
-    const syncRoots = (): void => {
-      bridge.setRoots(started.openConversations().map((c) => c.cwd))
-    }
-    syncRoots()
-    // Resynced from the event stream rather than from each call site, so a
-    // conversation that starts, closes, restarts or moves cannot be the one
-    // that was forgotten. `setRoots` ignores an unchanged set.
-    started.subscribe(syncRoots)
-  } catch (error) {
-    log.error('ide bridge failed to start', error)
-  }
-
-  /*
    * Before the window, not after — otherwise the app paints in the OS
    * appearance and snaps to the chosen one, a flash on every launch for anyone
    * whose choice differs from their system.
@@ -742,9 +700,7 @@ app.on('window-all-closed', () => {
  */
 async function shutDownEverything(): Promise<void> {
   const closing = runtime
-  const bridge = ideBridge
   runtime = null
-  ideBridge = null
   runIpc?.close()
   runIpc = null
   stopConversationNotes?.()
@@ -807,11 +763,7 @@ async function shutDownEverything(): Promise<void> {
   await step(surfacesClosed, 'the workbench surfaces did not close cleanly')
   await step(flushWorkbenchStorageWrites(), 'the workbench storage did not flush cleanly')
 
-  // The bridge closes first: it unlinks its socket and descriptor, and anything
-  // waiting on a snapshot is settled rather than left hanging behind the
-  // runtime's own shutdown.
   await step(browserClosed, 'the browser did not close cleanly')
-  await step(Promise.resolve(bridge?.close()), 'the ide bridge did not close cleanly')
   await step(Promise.resolve(closing?.close()), 'the event store did not close cleanly')
 
   const result = await workbenchStopped.catch((error: unknown) => {

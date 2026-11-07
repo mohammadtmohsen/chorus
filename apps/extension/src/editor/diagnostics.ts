@@ -3,11 +3,7 @@ import {
   MAX_DIAGNOSTIC_TEXT,
   type DiagnosticParams,
 } from '@chorus/ide-protocol/protocol'
-import {
-  diagnosticAt,
-  type DiagnosticDocument,
-  type Refusal,
-} from '../../../vscode-extension/src/diagnostic-pick.js'
+import { diagnosticAt, type DiagnosticDocument, type Refusal } from './diagnostic-pick.js'
 import type { EditorProject } from './types.js'
 import type { DocumentLocation } from './resources.js'
 import { deepestProject } from './membership.js'

@@ -340,8 +340,6 @@ export class EngineHost implements IpcHost {
     return {
       findCode: () => Promise.resolve(null),
       exec: () => Promise.reject(new Error('editor-unavailable')),
-      vsixPath: () => null,
-      bundledVersion: () => null,
     }
   }
   invalidateCompletionCredential(): void {

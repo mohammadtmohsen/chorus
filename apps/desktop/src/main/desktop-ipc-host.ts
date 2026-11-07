@@ -8,7 +8,7 @@ import { focusedShellWindow, shellWindows } from './shell-windows.js'
 import { detachedWindowOf, raise } from './detached-windows.js'
 import { probeAgents } from './agent-probe.js'
 import { checkTypesafeKey } from './typesafe.js'
-import { defaultDeps, readBundledVersion, resolveVsix } from './ide-extension.js'
+import { defaultDeps } from './ide-extension.js'
 import { invalidateCompletionCredential } from './completion-client.js'
 import { applyTheme } from './theme.js'
 import { copyNoteImageTo, fetchNoteImage, pickNoteImage, saveNoteImage } from './note-images.js'
@@ -88,15 +88,7 @@ export function desktopIpcHost(mainWindow: () => BrowserWindow | null): IpcHost 
     checkTypesafeKey,
     checkRemoteHost: (host) =>
       checkRemoteHost(new SshRemoteHost(remoteProjectHost(host)), REMOTE_CHECK_DEADLINE_MS),
-    extensionDeps: () => {
-      const vsix = (): string | null =>
-        resolveVsix({
-          packaged: app.isPackaged,
-          resourcesPath: process.resourcesPath,
-          appPath: app.getAppPath(),
-        })
-      return defaultDeps({ vsixPath: vsix, bundledVersion: () => readBundledVersion(vsix()) })
-    },
+    extensionDeps: () => defaultDeps(),
     invalidateCompletionCredential,
     applyTheme,
     images: { copyNoteImageTo, fetchNoteImage, pickNoteImage, saveNoteImage },

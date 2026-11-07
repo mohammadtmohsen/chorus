@@ -8,8 +8,8 @@ import { join } from 'node:path'
  *
  * The e2e suite drives the built output through `npx electron`, which shares
  * almost everything with the shipped app but not the parts that only exist once
- * electron-builder has run: the asar, the unpacked native module, the bundled
- * VSIX in `Contents/Resources`, and the ad-hoc signature over all of it. This is
+ * electron-builder has run: the asar, the unpacked native module, and the ad-hoc
+ * signature over all of it. This is
  * what a double-click actually gets.
  */
 
@@ -95,11 +95,6 @@ check(answered === true, 'native sqlite loaded — the event log answers')
 const probes = await evaluate(`window.chorus.probeAgents()`)
 const found = probes.filter((p) => p.installed).map((p) => p.id)
 check(found.length > 0, `agents were found: ${found.join(',')}`)
-
-// The one thing only a packaged build can prove: the VSIX really is inside
-// `Contents/Resources`, and main can find it there.
-const ext = await evaluate(`window.chorus.ideExtensionStatus()`)
-check(ext.bundledVersion === '0.5.0', `the bundled extension is present, at ${ext.bundledVersion}`)
 
 const masthead = await evaluate(
   `Math.round(document.querySelector('.masthead')?.getBoundingClientRect().height ?? 0)`

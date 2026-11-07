@@ -1,5 +1,5 @@
 import { MAX_SELECTED_BYTES, toDisplayRange, utf8ByteLength } from '@chorus/ide-protocol/protocol'
-import type { EditorLike } from '../../../vscode-extension/src/editor-context.js'
+import type { EditorLike } from './editor-context.js'
 import type { WorkbenchPlace } from '../../../desktop/src/main/project-root.js'
 import type {
   WorkbenchContext,
