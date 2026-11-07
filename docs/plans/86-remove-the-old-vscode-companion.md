@@ -2,12 +2,12 @@
 
 ## Status
 
-| Unit           | Result                                                                                                                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scope          | `apps/vscode-extension/` and everything in the desktop app that exists only to install or talk to it, plus the unreachable "Open in VS Code"                                                                                                 |
-| Implementation | Done 2026-11-07; the folder was deleted by hand and `pnpm install` updated the lockfile                                                                                                                                                      |
-| Verification   | 1 passed (`pnpm check`). 3 and 4 passed (`preview-selection-drive.mjs`, agent turn skipped: ALL HELD). 5 passed (`editor-drive.mjs`, 12/12). 6 passed (`pnpm package`, no VSIX in the bundle). 7 passed. 2 not run: no driver opens Settings |
-| Decided        | 2026-11-07: "Open in VS Code" goes; the `code -g` fallback in `ide:openFile` stays                                                                                                                                                           |
+| Unit           | Result                                                                                                                                                                                                                                                                             |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope          | `apps/vscode-extension/` and everything in the desktop app that exists only to install or talk to it, plus the unreachable "Open in VS Code"                                                                                                                                       |
+| Implementation | Done 2026-11-07; the folder was deleted by hand and `pnpm install` updated the lockfile                                                                                                                                                                                            |
+| Verification   | 1 passed (`pnpm check`). 3 and 4 passed (`preview-selection-drive.mjs`, agent turn skipped: ALL HELD). 5 passed (`editor-drive.mjs`, 12/12). 6 passed (`pnpm package`, no VSIX in the bundle). 7 passed. 2 passed by hand in `pnpm dev`: Settings has no VS Code extension section |
+| Decided        | 2026-11-07: "Open in VS Code" goes; the `code -g` fallback in `ide:openFile` stays                                                                                                                                                                                                 |
 
 ## Corrections found while implementing
 
