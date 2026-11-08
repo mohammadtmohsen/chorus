@@ -4,12 +4,14 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import { useTranslation } from 'react-i18next'
 import {
   BOX_WIDTH,
+  DEVTOOLS_WIDTH,
   EDITOR_WIDTH,
   TRAFFIC_WIDTH,
   type WorkspaceLayoutNode,
 } from '../../../shared/workspace-layout.js'
 import type { SessionInfo } from '../Session.js'
 import { BrowserPanel } from '../BrowserPanel.js'
+import { DevtoolsPanel } from '../DevtoolsPanel.js'
 import { BrowserScreencast } from '../BrowserScreencast.js'
 import type { BrowserResponse } from '../../../shared/browser-ipc.js'
 import { ProjectTerminalPane } from '../ProjectTerminalPane.js'
@@ -39,6 +41,7 @@ import {
   useCollapsedBrowsers,
   useConsoleWidth,
   useConversationGroups,
+  useDevtoolsPanel,
   useEditorWidthFraction,
   usePane,
   useProjectRun,
@@ -186,6 +189,7 @@ export function EditorPane(
   const scroller = useRef<HTMLDivElement>(null)
   const trafficBox = useRef<HTMLElement>(null)
   const terminalBox = useRef<HTMLElement>(null)
+  const devtoolsBox = useRef<HTMLElement>(null)
   const websiteBox = useRef<HTMLElement>(null)
   const [runHost, setRunHost] = useState<HTMLDivElement | null>(null)
   const activityBar = useRef<HTMLDivElement>(null)
@@ -195,6 +199,7 @@ export function EditorPane(
   const [activityBars, setActivityBars] = useState<Readonly<Record<string, number>>>({})
   const collapsedBrowsers = useCollapsedBrowsers()
   const collapsedWebsites = useWorkspaceStore((state) => state.collapsedWebsites)
+  const devtoolsPanels = useWorkspaceStore((state) => state.devtoolsPanels)
   const [browserLinks, setBrowserLinks] = useState<
     Record<string, { attachment: BrowserResponse<'browser:attach'> | null; revision: number }>
   >({})
@@ -280,10 +285,12 @@ export function EditorPane(
   const trafficLive = useTrafficLive(projectId)
   const run = useProjectRun(projectId)
   const terminalPane = useProjectTerminalPane(projectId)
+  const devtools = useDevtoolsPanel(projectId)
   const terminalShown = run?.available === true
   const terminalMinimum = projectTerminalMinimum(terminalPane.shells.length)
   const trafficCollapsed = traffic.collapsed === true
   const terminalCollapsed = terminalPane.collapsed === true
+  const devtoolsCollapsed = devtools.collapsed
   const trafficWidth = trafficCollapsed
     ? COLLAPSED_TOOL_WIDTH
     : Math.max(traffic.width, TRAFFIC_WIDTH.min)
@@ -291,6 +298,9 @@ export function EditorPane(
     ? COLLAPSED_TOOL_WIDTH
     : projectTerminalWidth(terminalPane)
   const consoleWidth = useConsoleWidth(projectId)
+  const devtoolsWidth = devtoolsCollapsed
+    ? COLLAPSED_TOOL_WIDTH
+    : Math.max(devtools.width, DEVTOOLS_WIDTH.min)
   const browserCollapsed = projectId !== null && collapsedBrowsers[projectId] === true
   const websiteCollapsed = projectId !== null && collapsedWebsites[projectId] === true
   const trafficBodyId = useId()
@@ -316,6 +326,8 @@ export function EditorPane(
     resetProjectWidths,
     setEditorWidthFraction,
     setConsoleWidth,
+    setDevtoolsWidth,
+    setDevtoolsCollapsed,
     setRowScroll,
     setTrafficWidth,
     setProjectTerminalWidth,
@@ -327,6 +339,14 @@ export function EditorPane(
     removeProjectShell,
   } = useWorkspaceActions()
   const commitLayout = props.onCommitLayout
+  const setDevtools = (id: string, collapsed: boolean): void => {
+    markRowTouched(id)
+    flushSync(() => {
+      setDevtoolsCollapsed(id, collapsed)
+    })
+    if (!collapsed && id === projectId) revealInRow(devtoolsBox.current)
+    commitLayout()
+  }
   const revealWebsite = (id: string): void => {
     if (!capabilities.streamedBrowser || id !== projectId) return
     markRowTouched(id)
@@ -373,6 +393,7 @@ export function EditorPane(
     if (row.traffic !== null) setTrafficWidth(id, row.traffic)
     if (row.terminal !== null) setProjectTerminalWidth(id, row.terminal)
     if (row.console !== null) setConsoleWidth(id, row.console)
+    if (row.devtools !== null) setDevtoolsWidth(id, row.devtools)
   }
   const pushRow = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (projectId === null) return
@@ -743,6 +764,32 @@ export function EditorPane(
                 )}
               </>
             )}
+            {projectId !== null && capabilities.nativeBrowserViews && (
+              <>
+                {rowSash}
+                <section
+                  className="devtools-box"
+                  ref={devtoolsBox}
+                  data-collapsed={devtoolsCollapsed}
+                  data-min-width={DEVTOOLS_WIDTH.min}
+                  style={{ flex: `0 0 ${String(devtoolsWidth)}px` }}
+                >
+                  {pane.tabs.map((id) => (
+                    <DevtoolsPanel
+                      key={id}
+                      projectId={id}
+                      browserId={browserLinks[id]?.attachment?.browserId ?? null}
+                      active={id === projectId && !webShowing}
+                      collapsed={devtoolsPanels[id]?.collapsed === true}
+                      scroller={scroller}
+                      onCollapse={(collapsed) => {
+                        setDevtools(id, collapsed)
+                      }}
+                    />
+                  ))}
+                </section>
+              </>
+            )}
             {projectId !== null && (
               <>
                 {rowSash}
@@ -770,9 +817,9 @@ export function EditorPane(
                       scroller={scroller}
                       markTouched={markRowTouched}
                       onReveal={revealInRow}
+                      onBrowserAttached={reportBrowserAttached}
                       {...(capabilities.streamedBrowser
                         ? {
-                            onBrowserAttached: reportBrowserAttached,
                             onRevealWebsite: revealWebsite,
                           }
                         : {})}

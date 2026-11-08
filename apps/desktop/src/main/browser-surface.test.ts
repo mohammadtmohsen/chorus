@@ -39,6 +39,7 @@ interface FakeBounds {
 }
 
 interface FakeParticipant {
+  readonly id: string
   readonly view: {
     setVisible: (visible: boolean) => void
     getVisible: () => boolean
@@ -137,27 +138,33 @@ vi.mock('electron', () => ({
   },
   shell: { openExternal: () => Promise.resolve() },
   WebContentsView: class {
-    constructor(options: {
-      readonly webPreferences?: { readonly backgroundThrottling: boolean }
-      readonly webContents?: WebContents
-    }) {
+    readonly primary: boolean
+    constructor(
+      options: {
+        readonly webPreferences?: { readonly backgroundThrottling: boolean }
+        readonly webContents?: WebContents
+      } = {}
+    ) {
+      this.primary = options.webPreferences !== undefined || options.webContents !== undefined
       if (options.webContents !== undefined) {
         this.webContents = options.webContents as unknown as typeof this.webContents
       }
-      harness.contents = this.webContents
-      harness.throttled = options.webPreferences?.backgroundThrottling ?? true
+      if (this.primary) {
+        harness.contents = this.webContents
+        harness.throttled = options.webPreferences?.backgroundThrottling ?? true
+      }
     }
     visible = true
     readonly webContents = {
       isDestroyed: () => false,
       close: () => {
-        harness.closes += 1
+        if (this.primary) harness.closes += 1
       },
       on: (event: string, listener: Listener) => {
-        harness.events.set(event, listener)
+        if (this.primary) harness.events.set(event, listener)
       },
       once: (event: string, listener: Listener) => {
-        harness.events.set(event, listener)
+        if (this.primary) harness.events.set(event, listener)
       },
       ipc: {
         on: (channel: string, listener: Listener) => {
@@ -204,11 +211,16 @@ vi.mock('electron', () => ({
         harness.log.push('download')
       },
       isDevToolsOpened: () => harness.devtools,
+      devToolsWebContents: null as WebContents | null,
+      setDevToolsWebContents: (contents: WebContents) => {
+        this.webContents.devToolsWebContents = contents
+      },
       openDevTools: (options: { readonly mode: string }) => {
         harness.devtools = true
         harness.devtoolsModes.push(options.mode)
       },
       closeDevTools: () => {
+        this.webContents.devToolsWebContents = null
         harness.devtools = false
         harness.devtoolsCloses += 1
       },
@@ -249,14 +261,14 @@ vi.mock('electron', () => ({
     bounds: FakeBounds = { x: 0, y: 0, width: 0, height: 0 }
     readonly setBounds = (bounds: FakeBounds): void => {
       this.bounds = { ...bounds }
-      harness.log.push('bounds')
+      if (this.primary) harness.log.push('bounds')
     }
     getBounds(): FakeBounds {
       return this.bounds
     }
     setVisible(visible: boolean): void {
       this.visible = visible
-      harness.log.push(`visible:${String(visible)}`)
+      if (this.primary) harness.log.push(`visible:${String(visible)}`)
     }
     getVisible(): boolean {
       return this.visible
@@ -272,7 +284,7 @@ vi.mock('./workbench-surface.js', () => ({
     participant.view.setVisible(participant.shown())
   },
   registerOverlayParticipant: (participant: FakeParticipant) => {
-    harness.participants.push(participant)
+    if (!participant.id.endsWith(':devtools')) harness.participants.push(participant)
     participant.view.setVisible(participant.shown())
     return () => undefined
   },

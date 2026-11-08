@@ -193,8 +193,8 @@ describe('dragging a row divider', () => {
     release(divider)
 
     expect(applied).toEqual([
-      { boxes: [560, 500], traffic: null, terminal: null, console: null },
-      { boxes: [500, 500], traffic: null, terminal: null, console: null },
+      { boxes: [560, 500], traffic: null, terminal: null, console: null, devtools: null },
+      { boxes: [500, 500], traffic: null, terminal: null, console: null, devtools: null },
     ])
     expect(commits).toBe(1)
   })
@@ -220,7 +220,9 @@ describe('dragging a row divider', () => {
     moveTo(divider, 260)
     release(divider)
 
-    expect(applied).toEqual([{ boxes: [500], traffic: 540, terminal: null, console: null }])
+    expect(applied).toEqual([
+      { boxes: [500], traffic: 540, terminal: null, console: null, devtools: null },
+    ])
   })
 })
 
@@ -248,7 +250,9 @@ describe('the run terminal pane in the row', () => {
     moveTo(divider, 260)
     release(divider)
 
-    expect(applied).toEqual([{ boxes: [500], traffic: 500, terminal: 680, console: null }])
+    expect(applied).toEqual([
+      { boxes: [500], traffic: 500, terminal: 680, console: null, devtools: null },
+    ])
   })
 
   it('reports the terminal width it left alone while Traffic grows', () => {
@@ -274,7 +278,9 @@ describe('the run terminal pane in the row', () => {
       }
     )
 
-    expect(applied).toEqual([{ boxes: [], traffic: 840, terminal: 640, console: null }])
+    expect(applied).toEqual([
+      { boxes: [], traffic: 840, terminal: 640, console: null, devtools: null },
+    ])
   })
 
   it.each([
@@ -298,7 +304,9 @@ describe('the run terminal pane in the row', () => {
     moveTo(divider, 500)
     release(divider)
 
-    expect(applied).toEqual([{ boxes: [box], traffic: 800, terminal, console: null }])
+    expect(applied).toEqual([
+      { boxes: [box], traffic: 800, terminal, console: null, devtools: null },
+    ])
   })
 })
 
@@ -340,8 +348,8 @@ describe('nudging a row divider from the keyboard', () => {
     stepRow(left.event, apply)
 
     expect(applied).toEqual([
-      { boxes: [708], traffic: 800, terminal: null, console: null },
-      { boxes: [660], traffic: 800, terminal: null, console: null },
+      { boxes: [708], traffic: 800, terminal: null, console: null, devtools: null },
+      { boxes: [660], traffic: 800, terminal: null, console: null, devtools: null },
     ])
     expect(right.prevented()).toBe(true)
     expect(left.prevented()).toBe(true)
@@ -362,7 +370,9 @@ describe('nudging a row divider from the keyboard', () => {
       applied.push(widths)
     })
 
-    expect(applied).toEqual([{ boxes: [500], traffic: 540, terminal: null, console: null }])
+    expect(applied).toEqual([
+      { boxes: [500], traffic: 540, terminal: null, console: null, devtools: null },
+    ])
   })
 
   it('leaves every other key to the page', () => {

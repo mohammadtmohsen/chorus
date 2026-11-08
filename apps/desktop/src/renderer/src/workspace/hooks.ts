@@ -16,6 +16,7 @@ import {
   CLOSED_TERMINAL_PANEL,
   CONSOLE_WIDTH,
   type ConversationArrangement,
+  type DevtoolsPanelState,
   type ProjectTerminalPaneState,
   type TerminalPanelState,
   type TrafficPanelState,
@@ -23,7 +24,13 @@ import {
   type WorkspacePane,
   type WebTabsState,
 } from '../../../shared/workspace-layout.js'
-import { CLOSED_TRAFFIC, DEFAULT_PROJECT_TERMINAL, leafPaneIds, tabLocation } from './layout.js'
+import {
+  CLOSED_TRAFFIC,
+  DEFAULT_DEVTOOLS,
+  DEFAULT_PROJECT_TERMINAL,
+  leafPaneIds,
+  tabLocation,
+} from './layout.js'
 import {
   useWorkspaceStore,
   pulseWorking,
@@ -76,6 +83,8 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     replaceConversation,
     setEditorWidthFraction,
     setConsoleWidth,
+    setDevtoolsWidth,
+    setDevtoolsCollapsed,
     setTrafficWidth,
     setTrafficHiddenPathPrefix,
     setProjectTerminalWidth,
@@ -146,6 +155,8 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     replaceConversation,
     setEditorWidthFraction,
     setConsoleWidth,
+    setDevtoolsWidth,
+    setDevtoolsCollapsed,
     setTrafficWidth,
     setTrafficHiddenPathPrefix,
     setProjectTerminalWidth,
@@ -286,6 +297,12 @@ export function useSidebarWidth(): number {
 export function useTrafficPanel(projectId: string | null): TrafficPanelState {
   return useWorkspaceStore((state) =>
     projectId === null ? CLOSED_TRAFFIC : (state.trafficPanels[projectId] ?? CLOSED_TRAFFIC)
+  )
+}
+
+export function useDevtoolsPanel(projectId: string | null): DevtoolsPanelState {
+  return useWorkspaceStore((state) =>
+    projectId === null ? DEFAULT_DEVTOOLS : (state.devtoolsPanels[projectId] ?? DEFAULT_DEVTOOLS)
   )
 }
 

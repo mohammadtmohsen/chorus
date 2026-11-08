@@ -1062,6 +1062,12 @@
       "failed": "That did not work. Try again."
     }
   },
+  "devtools": {
+    "title": "DevTools",
+    "expand": "Expand DevTools",
+    "collapse": "Shrink DevTools to 100px",
+    "empty": "DevTools shows here once this Browser has a page open."
+  },
   "console": {
     "toggle": "Console",
     "toggleLabel": "Show or hide this page's Console",

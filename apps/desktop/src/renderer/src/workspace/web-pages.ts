@@ -266,6 +266,7 @@ function receive(push: BrowserPush): void {
       runWebCommand(push.command)
       break
     case 'favorites':
+    case 'devtools':
     case 'row-wheel':
     case 'select':
     case 'dialog':

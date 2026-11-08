@@ -229,6 +229,7 @@ export class EngineBrowsers {
       },
       reopen: () => ({ reopened: null }),
       geometry: (_owner, request) => ({ revision: request.revision, still: null }),
+      devtoolsGeometry: (_owner, request) => ({ revision: request.revision }),
       addFavorite: async (owner, id) => {
         const record = this.viewed(owner, id)
         if (record.state.url === null) return { favorites: [], failure: 'not-loaded' }

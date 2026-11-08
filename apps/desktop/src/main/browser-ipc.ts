@@ -130,6 +130,11 @@ export class BrowserIpc {
     this.handle('browser:geometry', BROWSER_CONTRACT['browser:geometry'], (owner, request) =>
       surfaces.geometry(owner, request)
     )
+    this.handle(
+      'browser:devtoolsGeometry',
+      BROWSER_CONTRACT['browser:devtoolsGeometry'],
+      (owner, request) => surfaces.devtoolsGeometry(owner, request)
+    )
     this.handle('browser:favoriteAdd', BROWSER_CONTRACT['browser:favoriteAdd'], (owner, request) =>
       surfaces.addFavorite(owner, request.browserId)
     )
