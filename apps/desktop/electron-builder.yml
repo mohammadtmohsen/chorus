@@ -94,6 +94,10 @@ extraResources:
   # measured on 2026-08-29 with `bf9c054` as the 316.5 MB baseline.
   - from: build/reh/workbench-server.tar.gz
     to: workbench-server.tar.gz
+  - from: ../engine/dist/runtime
+    to: engine
+  - from: ../engine/dist/runtime/node_modules
+    to: engine/node_modules
 
 # Both ship N-API prebuilds, so nothing is compiled at pack time — but a .node
 # cannot be dlopen'd from inside an asar, so they must stay outside it.

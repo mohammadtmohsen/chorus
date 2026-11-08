@@ -33,8 +33,7 @@ await build({
   define: {
     'import.meta.url': '__chorus_import_meta_url',
     __CHORUS_APP_VERSION__: JSON.stringify(
-      JSON.parse(readFileSync(resolve(import.meta.dirname, '../extension/package.json'), 'utf8'))
-        .version
+      JSON.parse(readFileSync(resolve(import.meta.dirname, '../../package.json'), 'utf8')).version
     ),
   },
   banner: {

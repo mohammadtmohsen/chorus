@@ -18,10 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 const extensionRoot = dirname(fileURLToPath(import.meta.url))
 const root = resolve(extensionRoot, '../..')
-const engineRoot = join(root, 'apps', 'engine')
 const outputRoot = join(extensionRoot, 'dist')
-const nativePackages = ['better-sqlite3', 'node-pty']
-const buildOnlyDependencies = new Set(['nan', 'node-addon-api', 'prebuild-install'])
 const legalFilename = /^(?:licen[cs]e|copying|notice)(?:[._-]|$)|third[._-]?party.*notices?/i
 const metadataFilename = /^(?:readme|changelog)(?:\.|$)|^package\.nls(?:\.[^.]+)*\.json$/i
 const excludedDirectories = new Set(['node_modules', '.git', '.github', 'test', 'tests'])
@@ -69,19 +66,6 @@ function runtimeFile(path, directory) {
   return !/\.(?:map|pdb|ts|tsx)$|\.(?:test|spec)\.[cm]?js$|^testUtils\./i.test(basename(path))
 }
 
-function copyLegalFiles(sourceRoot, destinationRoot) {
-  function visit(directory) {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name)
-      if (entry.isDirectory() && !excludedDirectories.has(entry.name)) visit(path)
-      else if (entry.isFile() && legalFilename.test(entry.name)) {
-        copyPayload(path, join(destinationRoot, relative(sourceRoot, path)), sourceRoot)
-      }
-    }
-  }
-  visit(sourceRoot)
-}
-
 function packageRoot(name, from) {
   const require = createRequire(join(from, 'package.json'))
   let directory = dirname(require.resolve(name))
@@ -96,60 +80,6 @@ function packageRoot(name, from) {
   }
 }
 
-function copyRuntimeDependencies(source, destination, ancestors) {
-  const manifest = readJson(join(source, 'package.json'))
-  const dependencies = {}
-  for (const name of Object.keys(manifest.dependencies ?? {}).sort()) {
-    if (buildOnlyDependencies.has(name)) continue
-    if (name === 'electron' || name.startsWith('@chorus/')) {
-      throw new Error(`Unbundled workspace or Electron dependency: ${name}`)
-    }
-    const dependencyRoot = packageRoot(name, source)
-    dependencies[name] = readJson(join(dependencyRoot, 'package.json')).version
-    if (ancestors.has(dependencyRoot)) continue
-    const target = join(destination, 'node_modules', name)
-    copyPayload(dependencyRoot, target, dependencyRoot, runtimeFile)
-    copyRuntimeDependencies(dependencyRoot, target, new Set([...ancestors, dependencyRoot]))
-  }
-  const packagedManifest = { ...manifest, dependencies }
-  for (const key of ['scripts', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
-    Reflect.deleteProperty(packagedManifest, key)
-  }
-  writeFileSync(join(destination, 'package.json'), `${JSON.stringify(packagedManifest, null, 2)}\n`)
-}
-
-function copyNativePackage(name, staging, platform) {
-  const source = packageRoot(name, engineRoot)
-  const target = join(staging, 'node_modules', name)
-  for (const entry of ['package.json', 'lib']) {
-    copyPayload(join(source, entry), join(target, entry), source, runtimeFile)
-  }
-  copyLegalFiles(source, target)
-  if (name === 'better-sqlite3') {
-    const binding = `${platform.sqlite}.node`
-    copyPayload(join(source, 'prebuilds', binding), join(target, 'prebuilds', binding), source)
-  } else {
-    const prebuilt = join('prebuilds', platform.native)
-    const prebuild = existsSync(join(source, prebuilt)) ? prebuilt : join('build', 'Release')
-    copyPayload(join(source, prebuild), join(target, prebuild), source, runtimeFile)
-    if (process.platform !== 'win32') {
-      const helper = join(target, prebuild, 'spawn-helper')
-      if (existsSync(helper)) chmodSync(helper, statSync(helper).mode | 0o111)
-    } else {
-      const conpty = join(source, 'third_party', 'conpty')
-      if (existsSync(conpty)) {
-        for (const version of readdirSync(conpty).sort()) {
-          const path = join('third_party', 'conpty', version, `win10-${process.arch}`)
-          if (existsSync(join(source, path))) {
-            copyPayload(join(source, path), join(target, path), source, runtimeFile)
-          }
-        }
-      }
-    }
-  }
-  copyRuntimeDependencies(source, target, new Set([source]))
-}
-
 function currentPlatform() {
   if (!['darwin', 'linux', 'win32'].includes(process.platform)) {
     throw new Error(`Unsupported package platform: ${process.platform}`)
@@ -160,8 +90,6 @@ function currentPlatform() {
   const musl =
     process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime
   return {
-    native: `${process.platform}-${process.arch}`,
-    sqlite: `${musl ? 'linuxmusl' : process.platform}-${process.arch}`,
     vsix: `${musl ? 'alpine' : process.platform}-${process.arch}`,
   }
 }
@@ -245,6 +173,7 @@ function copyMetadata(manifest, staging) {
   }
   for (const key of [
     'scripts',
+    'dependencies',
     'devDependencies',
     'optionalDependencies',
     'peerDependencies',
@@ -255,17 +184,11 @@ function copyMetadata(manifest, staging) {
     Reflect.deleteProperty(packagedManifest, key)
   }
   packagedManifest.scripts = { 'vscode:uninstall': manifest.scripts['vscode:uninstall'] }
-  packagedManifest.dependencies = Object.fromEntries(
-    nativePackages.map((name) => [
-      name,
-      readJson(join(packageRoot(name, engineRoot), 'package.json')).version,
-    ])
-  )
   writeFileSync(join(staging, 'package.json'), `${JSON.stringify(packagedManifest, null, 2)}\n`)
 }
 
 function build() {
-  const args = ['--filter', '@chorus/engine...', '--filter', '@chorus/extension...', 'run', 'build']
+  const args = ['--filter', '@chorus/extension...', '--filter', '!@chorus/engine', 'run', 'build']
   const pnpmScript = process.env.npm_execpath
   if (pnpmScript) {
     execFileSync(process.execPath, [pnpmScript, ...args], { cwd: root, stdio: 'inherit' })
@@ -285,7 +208,7 @@ function packageVsix(staging, platform, output) {
       resolveWithin(source, bin),
       'package',
       '--no-yarn',
-      '--dependencies',
+      '--no-dependencies',
       '--allow-missing-repository',
       '--target',
       platform.vsix,
@@ -314,7 +237,6 @@ try {
   copyBundle(extensionRoot, 'extension.cjs', staging)
   copyBundle(extensionRoot, 'continuous-row.js', staging)
   copyBundle(extensionRoot, 'uninstall.cjs', staging)
-  copyBundle(engineRoot, 'engine.cjs', staging)
   copyPayload(
     join(outputRoot, 'webview'),
     join(staging, 'dist', 'webview'),
@@ -322,7 +244,6 @@ try {
     runtimeFile
   )
   copyMetadata(manifest, staging)
-  for (const name of nativePackages) copyNativePackage(name, staging, platform)
   packageVsix(staging, platform, output)
   process.stdout.write(`${output}\n`)
 } finally {

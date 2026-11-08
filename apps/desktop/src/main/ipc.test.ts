@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { IPC_CONTRACT } from '../shared/ipc.js'
+import type { IpcHost } from './ipc-host.js'
 import type { ChorusRuntime } from './runtime.js'
 
 const showOpenDialog = vi.fn()
@@ -53,8 +54,49 @@ vi.mock('electron', () => ({
 
 vi.mock('./detached-windows.js', () => ({ raise: vi.fn(), detachedWindowOf: vi.fn() }))
 
-const { answerConversationNoteJournal, buildHandlers } = await import('./ipc.js')
+const { answerConversationNoteJournal, buildHandlers } = await import('./ipc-handlers.js')
+const { app, dialog } = await import('electron')
+const { EngineHost } = await import('../../../engine/src/host.js')
+const { PeerRegistry } = await import('../../../engine/src/peers.js')
+const { agentKeyIsSet, clearAgentKey, readAgentKey, writeAgentKey } =
+  await import('./agent-secrets.js')
+const { showDesktopNotification } = await import('./desktop-ipc-host.js')
+const { electronShellClient } = await import('./electron-shell-client.js')
+const windowHelpers = await import('./shell-windows.js')
+const { applyTheme } = await import('./theme.js')
+const workbench = await import('./workbench-surface.js')
 const { detachedWindowOf, raise } = await import('./detached-windows.js')
+
+function testHost(mainWindow: () => BrowserWindow | null): IpcHost {
+  const userData = app.getPath('userData')
+  return Object.assign(new EngineHost(userData, new PeerRegistry()), {
+    getPath: (name: 'userData' | 'desktop') => app.getPath(name),
+    secrets: {
+      read: (id) => readAgentKey(userData, id),
+      isSet: (id) => agentKeyIsSet(userData, id),
+      write: (id, value) => {
+        writeAgentKey(userData, id, value)
+      },
+      clear: (id) => {
+        clearAgentKey(userData, id)
+      },
+    } satisfies IpcHost['secrets'],
+    clients: () =>
+      windowHelpers
+        .shellWindows()
+        .filter((window) => !window.isDestroyed())
+        .map((window) => electronShellClient(window.webContents)),
+    notify: (request: Parameters<IpcHost['notify']>[0]) => {
+      showDesktopNotification(request, () => detachedWindowOf(request.projectId) ?? mainWindow())
+    },
+    pickDirectory: (options: Parameters<IpcHost['pickDirectory']>[0]) =>
+      dialog.showOpenDialog(options),
+    prepareProjectClose: workbench.prepareWorkbenchProjectClose,
+    closeProject: workbench.closeWorkbenchProject,
+    reveal: workbench.requestWorkbenchReveal,
+    applyTheme,
+  })
+}
 
 /**
  * Which paths a transcript row may open, decided in main.
@@ -68,7 +110,10 @@ describe('ide:openFile', () => {
   const open = async (cwd: string, path: string) => {
     const runtime = { agentDirectory: () => cwd } as unknown as ChorusRuntime
     return (await (
-      buildHandlers(runtime, () => null)['ide:openFile'] as (r: unknown) => Promise<unknown>
+      buildHandlers(
+        runtime,
+        testHost(() => null)
+      )['ide:openFile'] as (r: unknown) => Promise<unknown>
     )({
       conversationId: 'c1',
       path,
@@ -112,7 +157,10 @@ describe('ide:openFile', () => {
       },
     } as unknown as ChorusRuntime
     const result = await (
-      buildHandlers(runtime, () => null)['ide:openFile'] as (r: unknown) => Promise<unknown>
+      buildHandlers(
+        runtime,
+        testHost(() => null)
+      )['ide:openFile'] as (r: unknown) => Promise<unknown>
     )({ conversationId: 'c1', path: '/p/a/rate.ts' })
     expect(result).toMatchObject({ ok: false, reason: 'outside-project' })
   })
@@ -165,7 +213,10 @@ describe('conversation:start', () => {
     const startConversation = vi.fn((_options: Record<string, unknown>) => Promise.resolve(started))
     const runtime = { startConversation } as unknown as ChorusRuntime
     await (
-      buildHandlers(runtime, () => null)['conversation:start'] as (r: unknown) => Promise<unknown>
+      buildHandlers(
+        runtime,
+        testHost(() => null)
+      )['conversation:start'] as (r: unknown) => Promise<unknown>
     )(request)
     return startConversation
   }
@@ -229,7 +280,10 @@ describe('conversation:begin and conversation:awaitStart', () => {
 
   type Channel = 'conversation:begin' | 'conversation:awaitStart'
   const handler = (runtime: unknown, channel: Channel) => {
-    const handlers = buildHandlers(runtime as ChorusRuntime, () => null)
+    const handlers = buildHandlers(
+      runtime as ChorusRuntime,
+      testHost(() => null)
+    )
     return handlers[channel] as (r: unknown) => Promise<unknown>
   }
 
@@ -279,10 +333,10 @@ describe('the channels that could move a conversation', () => {
    * currently asks for it.
    */
   it('are not registered at all', () => {
-    const handlers = buildHandlers({} as unknown as ChorusRuntime, () => null) as Record<
-      string,
-      unknown
-    >
+    const handlers = buildHandlers(
+      {} as unknown as ChorusRuntime,
+      testHost(() => null)
+    ) as Record<string, unknown>
     expect(handlers['conversation:setCwd']).toBeUndefined()
     expect(handlers['conversation:chooseCwd']).toBeUndefined()
   })
@@ -300,7 +354,11 @@ describe('the channels that could move a conversation', () => {
 describe('the DeepSeek key', () => {
   const KEY = 'sk-do-not-echo-this-anywhere'
 
-  const handlers = () => buildHandlers({} as unknown as ChorusRuntime, () => null)
+  const handlers = () =>
+    buildHandlers(
+      {} as unknown as ChorusRuntime,
+      testHost(() => null)
+    )
   const write = async (patch: unknown): Promise<Record<string, unknown>> =>
     (handlers()['settings:write'] as unknown as (r: unknown) => Promise<Record<string, unknown>>)(
       patch
@@ -345,9 +403,10 @@ describe('the DeepSeek key', () => {
 
 describe('settings:write and the per-agent maps', () => {
   const write = async (patch: unknown): Promise<{ models: Record<string, string> }> => {
-    const handler = buildHandlers({} as unknown as ChorusRuntime, () => null)[
-      'settings:write'
-    ] as unknown as (r: unknown) => Promise<{ models: Record<string, string> }>
+    const handler = buildHandlers(
+      {} as unknown as ChorusRuntime,
+      testHost(() => null)
+    )['settings:write'] as unknown as (r: unknown) => Promise<{ models: Record<string, string> }>
     return handler(patch)
   }
 
@@ -450,9 +509,10 @@ describe('conversation:transcript', () => {
 
   const read = async (runtime: ChorusRuntime, request: unknown) =>
     (await (
-      buildHandlers(runtime, () => null)['conversation:transcript'] as (
-        r: unknown
-      ) => Promise<unknown>
+      buildHandlers(
+        runtime,
+        testHost(() => null)
+      )['conversation:transcript'] as (r: unknown) => Promise<unknown>
     )(request)) as { events: { seq: number }[]; throughSeq: number }
 
   it('reports the log position from before the read, not after', async () => {
@@ -609,9 +669,10 @@ describe('task:bindAssignment', () => {
         return outcomes[outcome]
       },
     } as unknown as ChorusRuntime
-    const handler = buildHandlers(runtime, () => null)['task:bindAssignment'] as (
-      r: unknown
-    ) => Promise<unknown>
+    const handler = buildHandlers(
+      runtime,
+      testHost(() => null)
+    )['task:bindAssignment'] as (r: unknown) => Promise<unknown>
     const result = await handler({ conversationId: 'child-1', taskId: 'task-b' })
     return { asked, result }
   }
@@ -655,9 +716,10 @@ describe('project:adoptRemote', () => {
     showOpenDialog.mockReset()
     const adoptRemote = vi.fn(() => ({ project: adopted, created: true }))
     const runtime = { projects: { adoptRemote } } as unknown as ChorusRuntime
-    const adopt = buildHandlers(runtime, () => null)['project:adoptRemote'] as (
-      r: unknown
-    ) => Promise<unknown>
+    const adopt = buildHandlers(
+      runtime,
+      testHost(() => null)
+    )['project:adoptRemote'] as (r: unknown) => Promise<unknown>
     return { adoptRemote, adopt }
   }
 
@@ -700,7 +762,10 @@ describe('project:adoptRemote', () => {
 
 describe('project:checkRemoteHost', () => {
   it('refuses the host string itself before any ssh runs', async () => {
-    const handlers = buildHandlers({} as unknown as ChorusRuntime, () => null)
+    const handlers = buildHandlers(
+      {} as unknown as ChorusRuntime,
+      testHost(() => null)
+    )
     const check = handlers['project:checkRemoteHost'] as (r: unknown) => Promise<unknown>
     await expect(check({ host: '' })).rejects.toThrow('Not a usable remote host')
     await expect(check({ host: '-oProxyCommand=x' })).rejects.toThrow('Not a usable remote host')
@@ -712,16 +777,18 @@ describe('app:notify', () => {
   const fakeDetached = { id: 'detached' } as unknown as BrowserWindow
 
   const write = async (patch: unknown): Promise<void> => {
-    const handler = buildHandlers({} as unknown as ChorusRuntime, () => null)[
-      'settings:write'
-    ] as unknown as (r: unknown) => Promise<unknown>
+    const handler = buildHandlers(
+      {} as unknown as ChorusRuntime,
+      testHost(() => null)
+    )['settings:write'] as unknown as (r: unknown) => Promise<unknown>
     await handler(patch)
   }
 
   const notify = async (request: unknown): Promise<unknown> => {
-    const handler = buildHandlers({} as unknown as ChorusRuntime, () => fakeMain)[
-      'app:notify'
-    ] as unknown as (r: unknown) => Promise<unknown>
+    const handler = buildHandlers(
+      {} as unknown as ChorusRuntime,
+      testHost(() => fakeMain)
+    )['app:notify'] as unknown as (r: unknown) => Promise<unknown>
     return handler(request)
   }
 
@@ -884,9 +951,10 @@ describe('project:close', () => {
       closeProject,
     } as unknown as ChorusRuntime
     try {
-      const handler = buildHandlers(runtime, () => null)['project:close'] as (
-        request: unknown
-      ) => Promise<unknown>
+      const handler = buildHandlers(
+        runtime,
+        testHost(() => null)
+      )['project:close'] as (request: unknown) => Promise<unknown>
       const closing = handler({ projectId: 'p1' })
       expect(prepareEditor).toHaveBeenCalledWith(target)
       expect(closeProject).not.toHaveBeenCalled()
@@ -934,9 +1002,10 @@ describe('project:close', () => {
       },
     } as unknown as ChorusRuntime
     try {
-      const handler = buildHandlers(runtime, () => null)['project:close'] as (
-        request: unknown
-      ) => Promise<unknown>
+      const handler = buildHandlers(
+        runtime,
+        testHost(() => null)
+      )['project:close'] as (request: unknown) => Promise<unknown>
       const closing = handler({ projectId: 'p1' })
       const failed = expect(closing).rejects.toThrow('An agent is still running')
       await Promise.resolve()

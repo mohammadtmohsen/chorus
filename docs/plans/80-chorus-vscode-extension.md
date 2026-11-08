@@ -850,6 +850,9 @@ runtime's version as well. The engine also breaks the old 1 MB frame limit, beca
 The engine's data lives in the extension's `globalStorageUri`, separate from the desktop's `chorus.v2.db`. **It starts empty**, by the
 user's decision, and it never opens the desktop's files.
 
+**Superseded on 2026-11-08 by `docs/plans/87-one-install-one-database.md`:** the engine now ships inside Chorus.app, runs on the
+desktop's data directory and database, and serves both the desktop app and the extension.
+
 ### NEW: `apps/extension/package.json`
 
 ```json
@@ -1053,7 +1056,8 @@ flowchart TD
 - Browser downloads, saved passwords and swipe navigation, by the user's decision. Passwords come back only if missed.
 - The Marketplace. Private VSIX on GitHub Releases, by the user's decision.
 - Retiring Chorus Workbench or the `chorus` chat product. That is a separate decision after parity is shown.
-- Sharing one live database between the desktop and the extension. One writer per file.
+- Sharing one live database between the desktop and the extension. One writer per file. Superseded on 2026-11-08 by plan 87:
+  both apps now share one database through one engine, which is still its only writer.
 - Agents running on the remote machine. VS Code's more usual model, and a possible later mode; not today's behaviour.
 - Cursor, Windsurf or VSCodium support. Route 1 is VS Code's own API; the rest may work but is not a target.
 - Web or `vscode.dev`. Agents need local processes.

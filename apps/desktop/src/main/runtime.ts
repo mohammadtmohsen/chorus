@@ -164,7 +164,7 @@ import {
 import { LineCarries } from './log-lines.js'
 import { ProjectRunner, runAvailable } from './project-run.js'
 import { projectReader } from './project-read.js'
-import type { BrowserConsoles } from './browser-console.js'
+import type { ConsoleReadRequest, ConsoleRunRequest } from './browser-console.js'
 import { resolveShell } from './shell.js'
 import { AdbReverse, readRememberedDevices, writeRememberedDevices } from './adb-reverse.js'
 import { LogcatService } from './logcat.js'
@@ -193,6 +193,12 @@ import {
   hasTranscript,
   type ContextWindow,
 } from './context-budget.js'
+
+export interface ProjectConsoles {
+  read(projectId: string, request: ConsoleReadRequest): string | Promise<string>
+  run(projectId: string, request: ConsoleRunRequest): Promise<string>
+  dispose(projectId: string): void
+}
 
 /**
  * Wires the domain to real agents inside the main process.
@@ -1097,7 +1103,7 @@ export class ChorusRuntime {
   })
   private readonly traffic: ProjectTrafficRegistry
   private readonly runner: ProjectRunner
-  private browserConsoles: BrowserConsoles | null = null
+  private browserConsoles: ProjectConsoles | null = null
   /**
    * Partial lines, one per terminal — see `LineCarries`.
    *
@@ -5045,7 +5051,7 @@ export class ChorusRuntime {
     }
   }
 
-  attachBrowserConsoles(consoles: BrowserConsoles): void {
+  attachBrowserConsoles(consoles: ProjectConsoles): void {
     this.browserConsoles = consoles
   }
 
@@ -5063,11 +5069,11 @@ export class ChorusRuntime {
     }
   }
 
-  private readBrowserConsole(
+  private async readBrowserConsole(
     projectId: string,
     conversationId: string,
     request: BrowserConsoleRead
-  ): string {
+  ): Promise<string> {
     const consoles = this.browserConsoles
     if (consoles === null) throw new Error(mainT('browserConsole.unavailable'))
     const refusal = this.consoleRefusal(projectId, conversationId)

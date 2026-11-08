@@ -1,10 +1,11 @@
 import { electronBrowserSource, electronBrowserSourceOf } from './electron-browser-source.js'
 import { electronBrowserPort, electronBrowserDownloads } from './electron-browser-port.js'
 import { electronIpcRegistrar, electronShellClient } from './electron-shell-client.js'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, session, type WebContents } from 'electron'
+import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
 import {
   attachDetachedWindowListeners,
   closeEveryDetachedWindow,
@@ -14,20 +15,32 @@ import {
   registerDetachedWindowHandlers,
   type DetachedWindowDeps,
 } from './detached-windows.js'
+import { registerIpcHandlers } from './ipc.js'
+import { EngineClient, type EngineState } from '../../../engine/src/client.js'
 import {
-  forwardEventsToRenderer,
-  forwardContextUsageToRenderer,
-  forwardTasksToRenderer,
-  forwardConversationNotesToRenderer,
-  forwardActivityToRenderer,
-  forwardAttentionToRenderer,
-  forwardTerminalToRenderer,
-  forwardLimitsToRenderer,
-  forwardWorkbenchContextToRenderer,
-  registerIpcHandlers,
-} from './ipc.js'
-import { TrafficIpc } from './traffic-ipc.js'
-import { RunIpc } from './run-ipc.js'
+  compareVersions,
+  desktopDataDirectory,
+  readEngineInstall,
+  readRuntimeManifest,
+  writeEngineInstall,
+} from '../../../engine/src/descriptor.js'
+import { DESKTOP_WORKSPACE_KEY, desktopClientDirectory } from '../../../engine/src/state.js'
+import { readAgentKeys } from './agent-secrets.js'
+import { answerEngineHostCall, configureDesktopHostCalls } from './desktop-host-ports.js'
+import {
+  ENGINE_STATUS_CHANNEL,
+  ENGINE_UPDATE_CHANNEL,
+  EngineUpdate,
+  EVENTS_PUSH_CHANNEL,
+  EventsPush,
+  IPC_CONTRACT,
+  SHELL_PRESENCE_CHANNEL,
+  ShellPresence,
+} from '../shared/ipc.js'
+import type { WindowRole } from '../shared/detached-window-ipc.js'
+import type { WorkbenchContextReport } from './ipc-host.js'
+import type { WorkbenchPlace } from './project-root.js'
+import type { WorkbenchTerminalEnv } from '../shared/workbench-ipc.js'
 import { BrowserIpc } from './browser-ipc.js'
 import { BrowserConsoles } from './browser-console.js'
 import { ConsoleIpc } from './console-ipc.js'
@@ -35,9 +48,8 @@ import { BrowserDownloads } from './browser-downloads.js'
 import { BrowserSettingsStore } from './browser-settings.js'
 import { BROWSER_PARTITION, BrowserSurfaces, isBrowserPage } from './browser-surface.js'
 import { BrowserVault } from './browser-vault.js'
-import { registerShellWindow } from './shell-windows.js'
+import { isShellSender, registerShellWindow } from './shell-windows.js'
 import { registerToastWindow, registerToastWindowHandlers } from './toast-windows.js'
-import { detectScripts } from './project-scripts.js'
 import { createLogger } from './logging.js'
 import { registerNoteImageScheme, serveNoteImages } from './note-images.js'
 import { createQuitGate } from './quit-gate.js'
@@ -47,10 +59,7 @@ import { flushWorkbenchStorageWrites } from './workbench-storage.js'
 import { readOpenProjects } from './open-projects.js'
 import { applyTheme } from './theme.js'
 import { applyScale, currentScale } from './scale.js'
-import { reapOrphanedChildren } from './reap.js'
 import { isReparentMode, runReparentCheck } from './reparent-check.js'
-import { ChorusRuntime } from './runtime.js'
-import { desktopHostPorts } from './desktop-host-ports.js'
 import { applyContentSecurityPolicy, lockDownNavigation } from './security.js'
 import { reapedOrphanedServers, setWorkbenchHostLog, stopWorkbenchHost } from './workbench-host.js'
 import { setCompletionLog } from './completion-client.js'
@@ -61,26 +70,224 @@ import {
   setDetachedAccessPredicate,
   setHandoffExpiredSink,
   setWorkbenchTerminalEnvSource,
+  setWorkbenchContextSink,
+  setWorkbenchSurfaceGoneSink,
 } from './workbench-surface.js'
 import { adoptShellPath } from './which.js'
 
 const devServerUrl = process.env['ELECTRON_RENDERER_URL']
 
-/**
- * The traffic registrar, alive for as long as the app is.
- *
- * Null until the runtime exists, which is why every use of it is guarded: a
- * window is created before the runtime is ready in exactly one case — a second
- * launch handing its argument to the first — and that window has no traffic to
- * register until it does.
- */
-let trafficIpc: TrafficIpc | null = null
-let runIpc: RunIpc | null = null
 let browserIpc: BrowserIpc | null = null
 let browserConsoles: BrowserConsoles | null = null
 let consoleIpc: ConsoleIpc | null = null
 let browserDownloads: BrowserDownloads | null = null
-let stopConversationNotes: (() => void) | null = null
+let browserSettings: BrowserSettingsStore | null = null
+const adoptedProjectIds = new Set<string>()
+const engineWindows = new Map<WebContents, EngineWindow>()
+const terminalPlaces = new Map<string, WorkbenchPlace>()
+const terminalEnvironment = new Map<string, WorkbenchTerminalEnv | null>()
+let projectRefresh: Promise<void> | null = null
+let projectRefreshRequested = false
+const projectRefreshPending = (): boolean => projectRefreshRequested
+
+interface EngineWindow {
+  readonly window: BrowserWindow
+  readonly role: WindowRole
+  readonly client: EngineClient
+  readonly contexts: Map<string, WorkbenchContextReport>
+  readonly clearedContexts: Map<string, WorkbenchContextReport>
+  presence: ShellPresence
+  lastSeq: number
+  state: EngineState
+  update: EngineUpdate | null
+}
+
+const placeKey = (place: WorkbenchPlace): string => `${place.host}\0${place.root}`
+
+function clientFor(sender: WebContents): EngineClient {
+  const entry = engineWindows.get(sender)
+  if (entry === undefined || sender.isDestroyed()) throw new Error('unknown-shell-window')
+  return entry.client
+}
+
+function activeClient(): EngineClient {
+  const main = [...engineWindows.values()].find((entry) => entry.role.kind === 'main')
+  const entry = main ?? engineWindows.values().next().value
+  if (entry === undefined) throw new Error('no-shell-window')
+  return entry.client
+}
+
+function deliver(entry: EngineWindow, channel: string, payload: unknown): void {
+  if (!entry.window.isDestroyed() && !entry.window.webContents.isDestroyed())
+    entry.window.webContents.send(channel, payload)
+}
+
+function publishPresence(entry: EngineWindow): void {
+  if (entry.window.isDestroyed() || entry.window.webContents.isDestroyed()) return
+  const visible = entry.window.isVisible() && entry.presence.visible
+  entry.client.focus(
+    entry.window.isFocused(),
+    entry.presence.projectIds,
+    entry.lastSeq,
+    entry.presence.focusedProjectId,
+    entry.window.isFocused() && visible && entry.presence.attentive,
+    visible
+  )
+}
+
+function refreshProjects(): Promise<void> {
+  projectRefreshRequested = true
+  projectRefresh ??= (async () => {
+    do {
+      projectRefreshRequested = false
+      const answer = IPC_CONTRACT['project:list'].response.parse(
+        await activeClient().invoke('project:list', {})
+      )
+      adoptedProjectIds.clear()
+      for (const project of answer.projects) adoptedProjectIds.add(project.id)
+      const workspace = readOpenProjects(desktopClientDirectory(app.getPath('userData'))).workspace
+      const webTabIds = new Set((workspace?.webTabs.tabs ?? []).map((tab) => tab.id))
+      const failure = await browserSettings?.prune(adoptedProjectIds, webTabIds)
+      if (failure !== undefined && failure !== null)
+        mainLog?.warn('browser settings were not pruned', { failure })
+    } while (projectRefreshPending())
+  })().finally(() => {
+    projectRefresh = null
+  })
+  return projectRefresh
+}
+
+async function environmentFor(
+  place: WorkbenchPlace,
+  ensure: boolean
+): Promise<WorkbenchTerminalEnv | null> {
+  terminalPlaces.set(placeKey(place), place)
+  const value = IPC_CONTRACT['workbench:terminalEnvFor'].response.parse(
+    await activeClient().invoke('workbench:terminalEnvFor', { place, ensure })
+  )
+  terminalEnvironment.set(placeKey(place), value)
+  return value
+}
+
+async function refreshTerminalEnv(): Promise<void> {
+  await Promise.all([...terminalPlaces.values()].map((place) => environmentFor(place, false)))
+}
+
+async function resolvePlace(projectId: string): Promise<WorkbenchPlace> {
+  const place = IPC_CONTRACT['workbench:target'].response.parse(
+    await activeClient().invoke('workbench:target', { projectId })
+  )
+  terminalPlaces.set(placeKey(place), place)
+  return place
+}
+
+function connectWindow(window: BrowserWindow, role: WindowRole): EngineWindow {
+  const userData = app.getPath('userData')
+  const client = new EngineClient({
+    dataDirectory: userData,
+    install: () => readEngineInstall(userData),
+    appVersion: app.getVersion(),
+    client: {
+      kind: 'desktop',
+      electronVersion: process.versions.electron,
+      chromeVersion: process.versions.chrome,
+    },
+    role,
+    clientId: randomUUID(),
+    workspaceKey: DESKTOP_WORKSPACE_KEY,
+    workspaceFolders: [],
+    trusted: true,
+    secrets: () => readAgentKeys(userData),
+  })
+  const entry: EngineWindow = {
+    window,
+    role,
+    client,
+    contexts: new Map(),
+    clearedContexts: new Map(),
+    presence: {
+      projectIds: role.kind === 'detached' ? [role.projectId] : [],
+      focusedProjectId: role.kind === 'detached' ? role.projectId : null,
+      attentive: false,
+      visible: true,
+    },
+    lastSeq: 0,
+    state: 'connecting',
+    update: null,
+  }
+  engineWindows.set(window.webContents, entry)
+  client.setHostHandler((method, params) => answerEngineHostCall(role, method, params))
+  client.onPush((channel, payload) => {
+    if (channel === EVENTS_PUSH_CHANNEL) {
+      const events = EventsPush.safeParse(payload)
+      if (events.success) {
+        for (const event of events.data) entry.lastSeq = Math.max(entry.lastSeq, event.seq)
+        publishPresence(entry)
+      }
+    }
+    if (channel === ENGINE_UPDATE_CHANNEL) {
+      const update = EngineUpdate.safeParse(payload)
+      if (update.success) entry.update = update.data
+    }
+    if (channel === 'projects:changed')
+      void refreshProjects().catch((error: unknown) => {
+        mainLog?.warn('projects could not be refreshed', { error: String(error) })
+      })
+    deliver(entry, channel, payload)
+  })
+  client.onState((state) => {
+    const changed = entry.state !== state
+    entry.state = state
+    deliver(entry, ENGINE_STATUS_CHANNEL, { state })
+    if (state === 'connected') entry.update = null
+    if (changed && (state === 'connected' || state === 'restart-required'))
+      void client
+        .connect()
+        .then(async () => {
+          publishPresence(entry)
+          for (const [key, report] of entry.clearedContexts)
+            if (![...engineWindows.values()].some((owner) => owner.contexts.has(key)))
+              client.notify({ kind: 'editorContext', report })
+          for (const report of entry.contexts.values())
+            client.notify({ kind: 'editorContext', report })
+          entry.clearedContexts.clear()
+          await refreshProjects()
+        })
+        .catch((error: unknown) => {
+          mainLog?.warn('engine window could not be refreshed', { error: String(error) })
+        })
+  })
+  window.on('focus', () => {
+    publishPresence(entry)
+  })
+  window.on('blur', () => {
+    publishPresence(entry)
+  })
+  window.on('show', () => {
+    publishPresence(entry)
+  })
+  window.on('hide', () => {
+    publishPresence(entry)
+  })
+  window.webContents.on('did-finish-load', () => {
+    deliver(entry, ENGINE_STATUS_CHANNEL, { state: entry.state })
+    if (entry.update !== null) deliver(entry, ENGINE_UPDATE_CHANNEL, entry.update)
+    publishPresence(entry)
+  })
+  window.webContents.once('destroyed', () => {
+    client.dispose()
+    engineWindows.delete(window.webContents)
+  })
+  void client.connect().catch((error: unknown) => {
+    mainLog?.warn('engine connection failed', { error: String(error) })
+    entry.state =
+      error instanceof Error && error.message === 'engine-client-outdated'
+        ? 'restart-required'
+        : 'stopped'
+    deliver(entry, ENGINE_STATUS_CHANNEL, { state: entry.state })
+  })
+  return entry
+}
 
 /** The shell's one document, named once so the load and the allowlist agree. */
 const SHELL_ENTRY_FILE = join(__dirname, '../renderer/index.html')
@@ -155,13 +362,10 @@ function createWindow(role: ShellWindowRole): BrowserWindow {
     role.kind === 'main'
       ? { kind: 'main' as const }
       : { kind: 'detached' as const, projectId: role.projectId }
-  trafficIpc?.registerShell(electronShellClient(window.webContents), shellRole)
-  runIpc?.registerShell(electronShellClient(window.webContents), shellRole)
+  connectWindow(window, shellRole)
   browserIpc?.registerShell(electronShellClient(window.webContents), shellRole)
   consoleIpc?.registerShell(electronShellClient(window.webContents), shellRole)
   window.webContents.on('destroyed', () => {
-    trafficIpc?.releaseShell(electronShellClient(window.webContents))
-    runIpc?.releaseShell(electronShellClient(window.webContents))
     browserIpc?.releaseShell(electronShellClient(window.webContents))
     consoleIpc?.releaseShell(electronShellClient(window.webContents))
   })
@@ -201,7 +405,6 @@ function createWindow(role: ShellWindowRole): BrowserWindow {
   return window
 }
 
-let runtime: ChorusRuntime | null = null
 let mainWindow: BrowserWindow | null = null
 /**
  * Held at module scope so shutdown can say what it failed to stop.
@@ -231,13 +434,6 @@ void app.whenReady().then(async () => {
   // that runs one. Awaited, so no session can start on the bare PATH.
   await adoptShellPath()
 
-  /*
-   * Backstop for agents orphaned by a previous crash.
-   *
-   * Measured: stdio-connected children already exit when Electron dies, so this
-   * normally finds nothing. It stays because that cleanup is incidental rather
-   * than guaranteed — see reap.ts.
-   */
   const log = createLogger(app.getPath('userData'))
   mainLog = log
   /*
@@ -289,14 +485,6 @@ void app.whenReady().then(async () => {
       else if (level === 'warning') log.warn(`renderer: ${message}`, fields)
       else log.info(`renderer: ${message}`, fields)
     })
-  })
-
-  void reapOrphanedChildren().then(({ killed, inspected, skipped }) => {
-    // Said once at startup rather than never: the backstop being unavailable is
-    // a fact about this platform, and a silent `killed: 0` reads as a clean
-    // machine. See `reap.ts` for why Windows has no strategy yet.
-    if (skipped) log.info('orphan backstop unavailable on this platform')
-    else if (killed > 0) log.warn('reaped orphaned agents', { killed, inspected })
   })
 
   /*
@@ -368,14 +556,46 @@ void app.whenReady().then(async () => {
       })
     })
 
-  // A local binding as well as the module one: the workbench resolver below is a
-  // closure, and the module `runtime` is nullable for the whole life of the app,
-  // so narrowing it here would not survive into the callback.
-  const opened = ChorusRuntime.open(desktopHostPorts(app.getPath('userData')), log, undefined, {
-    deferRestoredAgents: true,
+  const userData = app.getPath('userData')
+  const expectedData = desktopDataDirectory(!app.isPackaged)
+  if (process.env['CHORUS_USER_DATA'] === undefined && userData !== expectedData)
+    log.warn('desktop data directory differs from the engine default', {
+      actual: userData,
+      expected: expectedData,
+    })
+  const shipped = app.isPackaged
+    ? join(process.resourcesPath, 'engine')
+    : join(app.getAppPath(), '..', 'engine', 'dist', 'runtime')
+  const manifest = readRuntimeManifest(shipped)
+  const installed = readEngineInstall(userData)
+  const ours = manifest !== null && manifest.version === app.getVersion()
+  const ahead =
+    !app.isPackaged ||
+    installed === null ||
+    !existsSync(installed.shipped) ||
+    compareVersions(app.getVersion(), installed.version) > 0
+  if (ours && ahead)
+    writeEngineInstall(userData, {
+      version: app.getVersion(),
+      executable: process.execPath,
+      shipped,
+    })
+  registerIpcHandlers(clientFor)
+  ipcMain.on(SHELL_PRESENCE_CHANNEL, (event, raw: unknown) => {
+    if (!isShellSender(event)) return
+    const entry = engineWindows.get(event.sender)
+    const parsed = ShellPresence.safeParse(raw)
+    if (entry === undefined || !parsed.success) return
+    entry.presence =
+      entry.role.kind === 'main'
+        ? parsed.data
+        : {
+            ...parsed.data,
+            projectIds: [entry.role.projectId],
+            focusedProjectId: entry.role.projectId,
+          }
+    publishPresence(entry)
   })
-  runtime = opened
-  registerIpcHandlers(runtime, () => mainWindow)
   registerToastWindowHandlers()
   /*
    * Separate from `registerIpcHandlers` because these handlers need `event`.
@@ -383,16 +603,12 @@ void app.whenReady().then(async () => {
    * request, and a channel that is not registered fails at `invoke` with a
    * message about the channel rather than about the workbench.
    */
-  registerWorkbenchHandlers(
-    devServerUrl,
-    (projectId) => opened.projects.workbenchTarget(projectId),
-    (projectId) => {
-      opened.openProject(projectId)
-    }
-  )
+  registerWorkbenchHandlers(devServerUrl, resolvePlace, async (projectId) => {
+    await activeClient().invoke('workbench:projectOpened', { projectId })
+  })
   setWorkbenchTerminalEnvSource({
-    current: (place) => opened.terminalEnvFor(place),
-    ensure: (place) => opened.ensureTerminalEnv(place),
+    current: (place) => terminalEnvironment.get(placeKey(place)) ?? null,
+    ensure: (place) => environmentFor(place, true),
   })
   const detachedDeps: DetachedWindowDeps = {
     mainWindow: () => mainWindow,
@@ -401,8 +617,8 @@ void app.whenReady().then(async () => {
       attachDetachedWindowListeners(detachedDeps, projectId, window)
       return window
     },
-    resolvePlace: (projectId) => opened.projects.workbenchTarget(projectId),
-    runtime: opened,
+    resolvePlace,
+    clientFor,
   }
   registerDetachedWindowHandlers(detachedDeps)
   setDetachedAccessPredicate((caller, projectRoot) =>
@@ -415,69 +631,42 @@ void app.whenReady().then(async () => {
   setHandoffExpiredSink((projectRoot) => {
     handOffExpired(detachedDeps, projectRoot)
   })
-  forwardWorkbenchContextToRenderer(runtime)
-  forwardLimitsToRenderer(runtime)
-  forwardContextUsageToRenderer(runtime)
-  forwardTasksToRenderer(runtime)
-  stopConversationNotes?.()
-  stopConversationNotes = forwardConversationNotesToRenderer(runtime)
-  forwardActivityToRenderer(runtime)
-  forwardAttentionToRenderer(runtime)
-  forwardTerminalToRenderer(runtime)
-  /*
-   * The shell's own connection to its own saved state, resolved before anything
-   * can ask about it. `unreadable` is reported rather than thrown: a settings
-   * file somebody hand-edited is a recoverable state, and the panel is where it
-   * gets said out loud.
-   */
-  const savedTraffic = opened.syncLegacyTraffic()
-  if (savedTraffic.kind === 'unreadable') {
-    log.warn('the saved traffic connection could not be read', { reason: savedTraffic.reason })
-  }
-  trafficIpc = new TrafficIpc(
-    {
-      registry: opened.trafficRegistry(),
-      /*
-       * Adopted, not merely named. A project id that appears in a request is a
-       * claim; this is the registry answering whether the id is one it knows.
-       */
-      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
-      legacy: () => opened.legacyTraffic(),
-      decideLegacy: (keep) => {
-        opened.decideLegacyTraffic(keep)
+  setWorkbenchContextSink((report, owner) => {
+    const entry = engineWindows.get(owner)
+    if (entry === undefined) return
+    const key = placeKey({ host: report.host, root: report.projectRoot })
+    entry.contexts.set(key, report)
+    for (const window of engineWindows.values()) window.clearedContexts.delete(key)
+    entry.client.notify({ kind: 'editorContext', report })
+  })
+  setWorkbenchSurfaceGoneSink((place, owner) => {
+    const entry = engineWindows.get(owner)
+    if (entry === undefined) return
+    const key = placeKey(place)
+    entry.contexts.delete(key)
+    const report: WorkbenchContextReport = {
+      host: place.host,
+      projectRoot: place.root,
+      context: {
+        relativePath: null,
+        provenance: { kind: 'worktree' },
+        scheme: '',
+        editorTypeId: '',
+        reason: 'no-editor',
+        startLine: null,
+        endLine: null,
+        isEmpty: true,
+        isDirty: false,
+        languageId: '',
+        selectedBytes: 0,
+        version: null,
       },
-      capture: (projectId, change) => opened.projectRunner().captureOnly(projectId, change),
-    },
-    electronIpcRegistrar
-  )
-  runIpc = new RunIpc(
-    {
-      runner: opened.projectRunner(),
-      project: (projectId) => opened.projects.get(projectId),
-      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
-      setCommands: (projectId, commands) => {
-        opened.setRunCommands(projectId, commands)
-      },
-      detect: detectScripts,
-      platform: process.platform,
-    },
-    electronIpcRegistrar
-  )
-  const userData = app.getPath('userData')
-  const browserSettings = new BrowserSettingsStore(userData)
-  const webTabIds = new Set(
-    (readOpenProjects(userData).workspace?.webTabs.tabs ?? []).map((tab) => tab.id)
-  )
-  browserSettings
-    .prune(new Set(opened.projects.list().map((project) => project.id)), webTabIds)
-    .then((failure) => {
-      if (failure !== null) log.warn('browser settings were not pruned', { failure })
-    })
-    .catch((error: unknown) => {
-      log.warn('browser settings were not pruned', {
-        error: error instanceof Error ? error.message : String(error),
-      })
-    })
+    }
+    entry.clearedContexts.set(key, report)
+    entry.client.notify({ kind: 'editorContext', report })
+  })
+  const settings = new BrowserSettingsStore(userData)
+  browserSettings = settings
   const mainOwner = (): WebContents | null =>
     mainWindow === null || mainWindow.isDestroyed() ? null : mainWindow.webContents
   const consoles = new BrowserConsoles({
@@ -489,9 +678,8 @@ void app.whenReady().then(async () => {
     },
   })
   browserConsoles = consoles
-  opened.attachBrowserConsoles(consoles)
   const browserSurfaces = new BrowserSurfaces({
-    settings: browserSettings,
+    settings,
     vault: new BrowserVault(userData),
     preloadPath: join(__dirname, '../preload/browser.js'),
     mainOwner,
@@ -526,14 +714,14 @@ void app.whenReady().then(async () => {
     {
       surfaces: electronBrowserPort(browserSurfaces),
       downloads: electronBrowserDownloads(downloads),
-      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
+      isAdopted: (projectId) => adoptedProjectIds.has(projectId),
     },
     electronIpcRegistrar
   )
   consoleIpc = new ConsoleIpc(
     {
       consoles,
-      isAdopted: (projectId) => opened.projects.get(projectId) !== null,
+      isAdopted: (projectId) => adoptedProjectIds.has(projectId),
     },
     electronIpcRegistrar
   )
@@ -561,7 +749,18 @@ void app.whenReady().then(async () => {
     },
     process.platform
   )
-  forwardEventsToRenderer(runtime)
+  configureDesktopHostCalls({
+    windowFor: (role) =>
+      [...engineWindows.values()].find(
+        (entry) =>
+          !entry.window.isDestroyed() &&
+          entry.role.kind === role.kind &&
+          (role.kind === 'main' ||
+            (entry.role.kind === 'detached' && entry.role.projectId === role.projectId))
+      )?.window ?? null,
+    consoles: () => browserConsoles,
+    refreshTerminalEnv,
+  })
 
   /*
    * Before the window, not after — otherwise the app paints in the OS
@@ -688,8 +887,6 @@ app.on('open-url', (event, url) => {
 })
 
 app.on('window-all-closed', () => {
-  // Chorus supervises agent child processes; on macOS the app staying resident
-  // with no window would leave them running invisibly.
   app.quit()
 })
 
@@ -699,12 +896,11 @@ app.on('window-all-closed', () => {
  * reveal and `index.ts` cannot be unit tested.
  */
 async function shutDownEverything(): Promise<void> {
-  const closing = runtime
-  runtime = null
-  runIpc?.close()
-  runIpc = null
-  stopConversationNotes?.()
-  stopConversationNotes = null
+  for (const entry of engineWindows.values()) entry.client.dispose()
+  engineWindows.clear()
+  setWorkbenchContextSink(null)
+  setWorkbenchSurfaceGoneSink(null)
+  setWorkbenchTerminalEnvSource(null)
   browserDownloads?.dispose()
   browserDownloads = null
   consoleIpc?.close()
@@ -720,20 +916,6 @@ async function shutDownEverything(): Promise<void> {
    * deliberately does *not* stop the server, so without this a remote extension
    * host outlives the app holding a port, a project root and a lock on its own
    * extensions directory.
-   *
-   * **Started here and awaited below**, which is the shape the first version got
-   * wrong in both directions. It was synchronous, so it returned before the server
-   * had gone and the app exited out from under a process that was still alive —
-   * measured, twice. Simply awaiting it here instead would be the other mistake:
-   * the signal would not go out until the database had finished closing.
-   * Signalling first and collecting the result last gives the tree the whole of
-   * the rest of shutdown to die in, which is usually longer than it needs. It is
-   * also what makes a shutdown cut short by a forced quit (C-055) still have asked
-   * the server to go before it was interrupted.
-   *
-   * Called even when there is no runtime — a quit before `whenReady` finished has
-   * nothing to close but may still have a host starting, and `stopWorkbenchHost`
-   * is the thing that cancels it.
    */
   const workbenchStopped = stopWorkbenchHost()
 
@@ -764,7 +946,6 @@ async function shutDownEverything(): Promise<void> {
   await step(flushWorkbenchStorageWrites(), 'the workbench storage did not flush cleanly')
 
   await step(browserClosed, 'the browser did not close cleanly')
-  await step(Promise.resolve(closing?.close()), 'the event store did not close cleanly')
 
   const result = await workbenchStopped.catch((error: unknown) => {
     /*
@@ -803,22 +984,12 @@ const quitGate = createQuitGate(
   }
 )
 
-// Close sessions and the database before exit, so agent child processes are not
-// orphaned and WAL is checkpointed cleanly.
 app.on('before-quit', (event) => {
   quitGate.onBeforeQuit(event)
 })
 
 /*
  * `SIGTERM` and `SIGINT` join the **same** shutdown rather than getting their own.
- *
- * Electron's default handling of both is to terminate, so `before-quit` never ran
- * and none of the work above happened: no watch teardown, no surface teardown, no
- * database close, and — the one that was measured — no workbench-server shutdown,
- * leaving a 257 MB Node process holding a port after a `code=0` exit. A CI harness
- * that stops the app with `SIGTERM`, a shell `⌃C`, and `⌘Q` are three ways of
- * asking for the same thing, and answering them differently is how one of them
- * ends up being the path nobody tested.
  *
  * `app.quit()` rather than a bespoke sequence, so there is exactly one shutdown to
  * get right. It goes through `before-quit`, whose re-entrancy `quit-gate.ts` owns,

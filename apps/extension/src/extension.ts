@@ -9,6 +9,7 @@ import {
   AttentionRoom,
   WebviewMessage,
   SecretId,
+  OfferedSecret,
   type Hello,
   type EngineActivity,
 } from '../../engine/src/protocol.js'
@@ -23,7 +24,13 @@ import {
 import { BROWSER_FRAME_CHANNEL } from '../../desktop/src/shared/browser-ipc.js'
 import { RUN_CONTRACT } from '../../desktop/src/shared/run-ipc.js'
 import messages from '../../desktop/src/renderer/src/i18n/en.json'
-import { EngineClient, type EngineState } from './engine-client.js'
+import {
+  EngineClient,
+  type EngineClientErrorCode,
+  type EngineState,
+} from '../../engine/src/client.js'
+import { desktopDataDirectory, readEngineInstall } from '../../engine/src/descriptor.js'
+import type { SecretHostParams } from '../../engine/src/host.js'
 import { AttentionCenter } from './attention.js'
 import {
   SHELL_CHANNELS,
@@ -59,6 +66,19 @@ const SHELL_VIEW_ID = 'chorus.workspace'
 const SHELL_FOCUS_CONTEXT = 'chorus.shellFocused'
 const Adopted = IPC_CONTRACT['project:adopt'].response
 const ObjectParams = z.record(z.string(), z.unknown())
+const SecretRequest: z.ZodType<SecretHostParams> = OfferedSecret.extend({ id: SecretId })
+const decodeSecret = (stored: string | undefined): OfferedSecret | null => {
+  if (stored === undefined) return null
+  try {
+    const parsed = OfferedSecret.safeParse(JSON.parse(stored) as unknown)
+    if (parsed.success) return parsed.data
+  } catch {
+    return null
+  }
+  return null
+}
+const storedSecret = (stored: string | undefined): OfferedSecret =>
+  decodeSecret(stored) ?? { value: stored ?? null, revision: 0 }
 interface RestartRun {
   readonly projectId: string
   readonly commandId: string
@@ -101,11 +121,17 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
   private attentionCount = 0
   private engineConnected = true
   private restarting = false
+  private secretWrites: Promise<void> = Promise.resolve()
+  private readonly secretEchoes = new Map<SecretId, string>()
+  private updateShown = false
+  private lastEngineState: EngineState | null = null
+  private readonly appVersion: string
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    secrets: Hello['secrets']
+    private readonly secrets: Hello['secrets']
   ) {
+    this.appVersion = z.object({ version: z.string() }).parse(context.extension.packageJSON).version
     const workspaceFolders = (vscode.workspace.workspaceFolders ?? []).map((folder) =>
       folder.uri.toString()
     )
@@ -116,18 +142,24 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
       )
       .digest('hex')
     const clientId = randomUUID()
-    const directory = join(context.globalStorageUri.fsPath, 'engine')
+    const override = process.env['CHORUS_ENGINE_DATA']
+    const directory =
+      override !== undefined && override !== ''
+        ? override
+        : desktopDataDirectory(context.extensionMode !== vscode.ExtensionMode.Production)
     this.engineDirectory = directory
     this.images = vscode.Uri.file(join(directory, 'note-images'))
     this.client = new EngineClient({
       dataDirectory: directory,
-      engineMain: context.asAbsolutePath('dist/engine.cjs'),
-      executable: process.execPath,
+      install: () => readEngineInstall(directory),
+      appVersion: this.appVersion,
+      client: { kind: 'vscode' },
+      role: { kind: 'main' },
       clientId,
       workspaceKey,
       workspaceFolders,
       trusted: vscode.workspace.isTrusted,
-      secrets,
+      secrets: () => this.offeredSecrets(),
     })
     this.client.setHostHandler((method, params) => this.hostCall(method, params))
     this.editor = new EditorIntegration({
@@ -191,6 +223,15 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     this.disposables.push(
       {
         dispose: this.client.onPush((channel, payload) => {
+          if (channel === 'engine:update') {
+            const message = this.engineProblem() ?? messages.notice.engineRestartRequired
+            this.status.tooltip = message
+            this.post({ kind: 'state', state: 'restart-required' })
+            if (!this.updateShown) {
+              this.updateShown = true
+              void vscode.window.showWarningMessage(message)
+            }
+          }
           if (channel === ATTENTION_ROOMS_CHANNEL) {
             const rooms = z.array(AttentionRoom).safeParse(payload)
             if (rooms.success) this.attention.update(rooms.data)
@@ -203,7 +244,8 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
               return
             }
           }
-          if (channel === 'conversations:changed') void this.refreshProjects()
+          if (channel === 'conversations:changed' || channel === 'projects:changed')
+            void this.refreshProjects()
           if (channel === EVENTS_PUSH_CHANNEL && this.view?.visible !== true) {
             this.needsReplay = true
             return
@@ -212,9 +254,11 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         }),
       },
       {
-        dispose: this.client.onState((state, activity) => {
-          this.engineState(state, activity)
-          if (state === 'connected' || state === 'restart-required') {
+        dispose: this.client.onState((state, activity, errorCode) => {
+          const changed = state !== this.lastEngineState
+          this.lastEngineState = state
+          this.engineState(state, activity, errorCode)
+          if (changed && (state === 'connected' || state === 'restart-required')) {
             void this.refreshProjects().catch((error: unknown) => {
               this.output.appendLine(String(error))
             })
@@ -255,17 +299,68 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         this.focus()
       }),
       context.secrets.onDidChange(({ key }) => {
-        void this.secretChanged(key)
+        this.secretChanged(key)
       })
     )
   }
 
-  private async secretChanged(key: string): Promise<void> {
+  private offeredSecrets(): Hello['secrets'] {
+    return { ...this.secrets }
+  }
+
+  private serializeSecret<T>(write: () => Promise<T>): Promise<T> {
+    const pending = this.secretWrites.then(write)
+    this.secretWrites = pending.then(
+      () => undefined,
+      (error: unknown) => {
+        this.output.appendLine(String(error))
+      }
+    )
+    return pending
+  }
+
+  private async storeSecret(id: SecretId, offered: OfferedSecret): Promise<void> {
+    const encoded = JSON.stringify(offered)
+    const key = `chorus.${id}`
+    if ((await this.context.secrets.get(key)) === encoded) {
+      this.secretEchoes.set(id, encoded)
+      this.secrets[id] = offered
+      return
+    }
+    const previous = this.secretEchoes.get(id)
+    this.secretEchoes.set(id, encoded)
+    try {
+      await this.context.secrets.store(key, encoded)
+      this.secrets[id] = offered
+    } catch (error) {
+      if (previous === undefined) this.secretEchoes.delete(id)
+      else this.secretEchoes.set(id, previous)
+      throw error
+    }
+  }
+
+  private secretChanged(key: string): void {
     const id = SecretId.safeParse(key.replace(/^chorus\./, ''))
     if (!key.startsWith('chorus.') || !id.success) return
-    const value = (await this.context.secrets.get(key)) ?? null
-    this.client.options.secrets[id.data] = value
-    this.client.notify({ kind: 'secret', secretId: id.data, value })
+    void this.serializeSecret(async () => {
+      const raw = await this.context.secrets.get(key)
+      if (raw !== undefined && this.secretEchoes.get(id.data) === raw) return
+      const encoded = decodeSecret(raw)
+      if (encoded !== null) {
+        const known = this.secrets[id.data]
+        if (encoded.revision === known.revision && encoded.value === known.value) return
+        if (encoded.revision >= known.revision) this.secrets[id.data] = encoded
+        this.client.notify({ kind: 'secret', secretId: id.data, ...encoded })
+        return
+      }
+      const offered = storedSecret(raw)
+      const next = {
+        value: offered.value,
+        revision: Math.max(Date.now(), this.secrets[id.data].revision + 1, offered.revision + 1),
+      }
+      await this.storeSecret(id.data, next)
+      this.client.notify({ kind: 'secret', secretId: id.data, ...next })
+    })
   }
 
   revealConversation(room: { readonly projectId: string; readonly conversationId: string }): void {
@@ -644,16 +739,36 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     )
   }
 
-  private engineState(state: EngineState, activity?: EngineActivity): void {
+  private engineProblem(errorCode?: EngineClientErrorCode): string | null {
+    if (errorCode === 'not-installed') return TEXT.engineNotInstalled
+    const install = readEngineInstall(this.engineDirectory)
+    if (install !== null && install.version !== this.appVersion)
+      return TEXT.engineVersionMismatch
+        .replace('{{extension}}', this.appVersion)
+        .replace('{{app}}', install.version)
+    return null
+  }
+
+  private engineState(
+    state: EngineState,
+    activity?: EngineActivity,
+    errorCode?: EngineClientErrorCode
+  ): void {
     this.post({ kind: 'state', state, ...(activity === undefined ? {} : { activity }) })
     this.engineConnected = state === 'connected'
     this.paintStatus()
+    const problem = this.engineProblem(errorCode)
     this.status.tooltip =
-      state === 'restart-required'
-        ? TEXT.engineRestartRequired
+      problem ??
+      (state === 'restart-required'
+        ? messages.notice.engineRestartRequired
         : state === 'stopped'
           ? TEXT.engineStopped
-          : TEXT.open
+          : TEXT.open)
+    if (problem !== null && !this.warningShown && !this.restarting) {
+      this.warningShown = true
+      void vscode.window.showErrorMessage(problem)
+    }
     if (
       (state === 'stopped' || state === 'reconnecting') &&
       !this.warningShown &&
@@ -664,13 +779,26 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
         if (choice === TEXT.restart) void this.restart()
       })
     }
-    if (state === 'connected') this.warningShown = false
+    if (state === 'connected' && problem === null) {
+      this.warningShown = false
+      this.updateShown = false
+    }
   }
   private failure(error: unknown): void {
     this.output.appendLine(
       error instanceof Error ? (error.stack ?? error.message) : TEXT.engineFailed
     )
     this.post({ kind: 'state', state: 'stopped' })
+    const problem = this.engineProblem(
+      error instanceof Error && error.message === 'not-installed' ? 'not-installed' : undefined
+    )
+    if (problem !== null) {
+      if (!this.warningShown) {
+        this.warningShown = true
+        void vscode.window.showErrorMessage(problem)
+      }
+      return
+    }
     void vscode.window.showErrorMessage(TEXT.engineFailed, TEXT.retry).then((choice) => {
       if (choice === TEXT.retry)
         void this.client.connect().catch((next: unknown) => {
@@ -690,7 +818,7 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     )
   }
   private restartReason(activity: EngineActivity): string {
-    if (!activity.busy) return TEXT.engineRestartRequired
+    if (!activity.busy) return messages.notice.engineRestartRequired
     if (!this.otherRestartWork(activity) && activity.runs.length === 0)
       return TEXT.engineRestartTerminalBusy
     return TEXT.engineRestartBusy
@@ -929,11 +1057,12 @@ class ChorusShell implements vscode.Disposable, vscode.WebviewViewProvider {
     }
     switch (method) {
       case 'secret': {
-        const { id, value } = z.object({ id: SecretId, value: z.string().nullable() }).parse(params)
-        if (value === null) await this.context.secrets.delete(`chorus.${id}`)
-        else await this.context.secrets.store(`chorus.${id}`, value)
-        this.client.options.secrets[id] = value
-        return true
+        const { id, value, revision } = SecretRequest.parse(params)
+        return await this.serializeSecret(async () => {
+          if (revision < this.secrets[id].revision) return this.secrets[id].revision
+          await this.storeSecret(id, { value, revision })
+          return revision
+        })
       }
       case 'pickDirectory': {
         const { title } = z.object({ title: z.string() }).parse(params)
@@ -1079,7 +1208,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const secrets = Object.fromEntries(
     await Promise.all(
       SecretId.options.map(
-        async (id) => [id, (await context.secrets.get(`chorus.${id}`)) ?? null] as const
+        async (id) => [id, storedSecret(await context.secrets.get(`chorus.${id}`))] as const
       )
     )
   ) as Hello['secrets']

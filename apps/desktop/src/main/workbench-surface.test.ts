@@ -597,7 +597,7 @@ describe('what main will open, and what it refuses', () => {
     surface.registerWorkbenchHandlers(undefined, (projectId) => {
       const root = adopted.get(projectId)
       if (root === undefined) throw new Error(`No project with id ${projectId}`)
-      return { host: LOCAL_HOST, root }
+      return Promise.resolve({ host: LOCAL_HOST, root })
     })
 
     try {
@@ -803,7 +803,7 @@ describe('a surface changing hands', () => {
 
   async function withRegistry(run: () => Promise<void>): Promise<void> {
     surface.registerWorkbenchHandlers(undefined, (projectId) => {
-      if (projectId === 'a') return { host: LOCAL_HOST, root: ROOT_A }
+      if (projectId === 'a') return Promise.resolve({ host: LOCAL_HOST, root: ROOT_A })
       throw new Error(`No project with id ${projectId}`)
     })
     try {
@@ -924,10 +924,12 @@ describe('a surface changing hands', () => {
   })
 
   it('lets only the host a surface left claim its handoff, when roots match', async () => {
-    surface.registerWorkbenchHandlers(undefined, (projectId) => ({
-      host: projectId === 'remote' ? 'officepc' : LOCAL_HOST,
-      root: ROOT_A,
-    }))
+    surface.registerWorkbenchHandlers(undefined, (projectId) =>
+      Promise.resolve({
+        host: projectId === 'remote' ? 'officepc' : LOCAL_HOST,
+        root: ROOT_A,
+      })
+    )
     try {
       const destination = new FakeWebContents()
       const remote = await surface.openSurface(shell as never, { projectId: 'remote' }, undefined)
@@ -952,7 +954,9 @@ describe('a surface changing hands', () => {
   })
 
   it('keeps a local grant when a remote surface at the same root is handed off', async () => {
-    surface.registerWorkbenchHandlers(undefined, () => ({ host: 'officepc', root: ROOT_A }))
+    surface.registerWorkbenchHandlers(undefined, () =>
+      Promise.resolve({ host: 'officepc', root: ROOT_A })
+    )
     try {
       const grant = await grantFor(shell, ROOT_A)
       await surface.openSurface(shell as never, { projectId: 'remote' }, undefined)
@@ -1198,7 +1202,9 @@ describe('the shared server lease', () => {
   })
 
   it('opens a remote project through its tunnel, as a folder path the URI accepts', async () => {
-    surface.registerWorkbenchHandlers(undefined, () => ({ host: 'officepc', root: 'C:/api' }))
+    surface.registerWorkbenchHandlers(undefined, () =>
+      Promise.resolve({ host: 'officepc', root: 'C:/api' })
+    )
     try {
       const viewId = await surface.openSurface(shell as never, { projectId: 'remote' }, undefined)
       const view = lastView()
@@ -1250,7 +1256,7 @@ describe('the shared server lease', () => {
 
   it('fails a project close whose release failed, and releases again on retry', async () => {
     const place = { host: 'officepc', root: 'C:/retry' }
-    surface.registerWorkbenchHandlers(undefined, () => place)
+    surface.registerWorkbenchHandlers(undefined, () => Promise.resolve(place))
     try {
       const viewId = await surface.openSurface(shell as never, { projectId: 'remote' }, undefined)
       const view = lastView()
@@ -1272,10 +1278,12 @@ describe('the shared server lease', () => {
   })
 
   it('gives a local Windows root the leading slash, not only a remote one', async () => {
-    surface.registerWorkbenchHandlers(undefined, () => ({
-      host: LOCAL_HOST,
-      root: 'C:\\Users\\me\\project',
-    }))
+    surface.registerWorkbenchHandlers(undefined, () =>
+      Promise.resolve({
+        host: LOCAL_HOST,
+        root: 'C:\\Users\\me\\project',
+      })
+    )
     try {
       await surface.openSurface(shell as never, { projectId: 'local-windows' }, undefined)
       const view = lastView()
@@ -1289,7 +1297,9 @@ describe('the shared server lease', () => {
   })
 
   it('sends an agent edit to the editor on its host, and never to a local project at that root', async () => {
-    surface.registerWorkbenchHandlers(undefined, () => ({ host: 'officepc', root: 'C:/api' }))
+    surface.registerWorkbenchHandlers(undefined, () =>
+      Promise.resolve({ host: 'officepc', root: 'C:/api' })
+    )
     try {
       const viewId = await surface.openSurface(shell as never, { projectId: 'remote' }, undefined)
       const view = lastView()
@@ -1353,10 +1363,14 @@ describe('the shared server lease', () => {
      * before the destroyed check was ever reached, so the test passed its
      * assertion for the wrong reason and proved nothing about the lease.
      */
-    shell.destroyed = true
+    acquireWorkbenchRuntime.mockImplementationOnce((_root: string) => {
+      shell.destroyed = true
+      return Promise.resolve(RUNTIME)
+    })
     await expect(surface.openSurface(shell as never, { grant }, undefined)).rejects.toThrow(
       /needs a window/
     )
+    expect(acquireWorkbenchRuntime).toHaveBeenCalledWith(ROOT_B)
     expect(releaseWorkbenchRuntime).toHaveBeenCalledWith(ROOT_B)
   })
 })
@@ -1660,7 +1674,7 @@ describe('the activity bar a surface reports', () => {
 
   it('answers the read for the owner, and for the window the surface is handed to', async () => {
     surface.registerWorkbenchHandlers(undefined, (projectId) => {
-      if (projectId === 'a') return { host: LOCAL_HOST, root: ROOT_A }
+      if (projectId === 'a') return Promise.resolve({ host: LOCAL_HOST, root: ROOT_A })
       throw new Error(`No project with id ${projectId}`)
     })
     try {
@@ -1916,7 +1930,7 @@ describe('reopening a closed project from its editor', () => {
     surface.registerWorkbenchHandlers(
       undefined,
       (projectId) => {
-        if (projectId === 'a') return place
+        if (projectId === 'a') return Promise.resolve(place)
         throw new Error(`No project with id ${projectId}`)
       },
       openProject

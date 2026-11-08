@@ -11,7 +11,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/fix-spawn-helper.mjs",
-    "dev": "node scripts/fix-spawn-helper.mjs && pnpm --filter @chorus/desktop dev",
+    "dev": "node scripts/fix-spawn-helper.mjs && turbo run build --filter=@chorus/engine && pnpm --filter @chorus/desktop dev",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",
@@ -25,7 +25,7 @@
     "clean": "turbo run clean && node scripts/rm.mjs node_modules",
     "e2e": "turbo run build --filter=@chorus/desktop^... && pnpm --filter @chorus/desktop run build && pnpm --filter @chorus/desktop run e2e",
     "package": "pnpm run build && pnpm --filter @chorus/desktop run package",
-    "app:install": "turbo run build --filter=@chorus/desktop^... && pnpm --filter @chorus/desktop run app:install",
+    "app:install": "turbo run build --filter=@chorus/desktop^... --filter=@chorus/engine --filter=@chorus/extension... && pnpm --filter @chorus/extension run package --skip-build && pnpm --filter @chorus/desktop run app:install",
     "verify:package": "pnpm package && pnpm --filter @chorus/desktop run verify:package",
     "verify:package:windows": "pnpm package && pnpm --filter @chorus/desktop run verify:package:windows",
     "workbench:manifest": "node scripts/workbench-manifest.mjs",
