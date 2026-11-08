@@ -1,0 +1,17 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/desktop/src/**",
+        "$TURBO_ROOT$/apps/desktop/build/no-node-builtins.mts",
+        "$TURBO_ROOT$/apps/desktop/package.json",
+        "$TURBO_ROOT$/apps/desktop/tsconfig.json",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/pnpm-lock.yaml"
+      ]
+    }
+  }
+}
