@@ -267,6 +267,7 @@ function receive(push: BrowserPush): void {
       break
     case 'favorites':
     case 'devtools':
+    case 'devtools-row-wheel':
     case 'row-wheel':
     case 'select':
     case 'dialog':

@@ -156,6 +156,7 @@ export function BrowserPanel(props: {
           break
         case 'found':
         case 'devtools':
+        case 'devtools-row-wheel':
         case 'tab-open':
         case 'downloads':
           break

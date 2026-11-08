@@ -682,6 +682,7 @@ void app.whenReady().then(async () => {
     settings,
     vault: new BrowserVault(userData),
     preloadPath: join(__dirname, '../preload/browser.js'),
+    devtoolsPreloadPath: join(__dirname, '../preload/devtools.js'),
     mainOwner,
     downloads: {
       expect: (contents) => {

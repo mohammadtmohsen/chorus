@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { BrowserRect } from '../../shared/browser-ipc.js'
 import { browserViewport } from './workspace/layout.js'
 import { useWorkbenchStill } from './workspace/overlay.js'
+import { horizontalRowWheel } from './workspace/viewport.js'
 
 interface Geometry {
   readonly rect: BrowserRect
@@ -28,28 +29,39 @@ export function DevtoolsPanel(props: {
   readonly active: boolean
   readonly collapsed: boolean
   readonly scroller: React.RefObject<HTMLDivElement | null>
+  readonly markTouched: (projectId: string) => void
   readonly onCollapse: (collapsed: boolean) => void
 }): React.JSX.Element {
-  const { projectId, browserId, active, collapsed, scroller, onCollapse } = props
+  const { projectId, browserId, active, collapsed, scroller, markTouched, onCollapse } = props
   const { t } = useTranslation()
   const root = useRef<HTMLDivElement>(null)
   const body = useRef<HTMLDivElement>(null)
   const bodyId = useId()
-  const current = useRef({ collapsed, onCollapse })
+  const current = useRef({ projectId, active, collapsed, scroller, markTouched, onCollapse })
   const revision = useRef({ browserId, value: 0 })
   const visible = active && !collapsed
   const still = useWorkbenchStill(browserId === null ? null : `${browserId}:devtools`)
 
   useLayoutEffect(() => {
-    current.current = { collapsed, onCollapse }
-  }, [collapsed, onCollapse])
+    current.current = { projectId, active, collapsed, scroller, markTouched, onCollapse }
+  }, [projectId, active, collapsed, scroller, markTouched, onCollapse])
 
   useEffect(() => {
     if (browserId === null) return undefined
     return window.chorus.onBrowser((push) => {
-      if (push.kind !== 'devtools' || push.browserId !== browserId) return
+      if (push.browserId !== browserId) return
       const target = current.current
-      target.onCollapse(push.action === 'show' ? false : !target.collapsed)
+      if (push.kind === 'devtools') {
+        target.onCollapse(push.action === 'show' ? false : !target.collapsed)
+        return
+      }
+      if (push.kind !== 'devtools-row-wheel') return
+      const row = target.scroller.current
+      if (!target.active || target.collapsed || row === null) return
+      const delta = horizontalRowWheel(push.wheel, row.clientWidth)
+      if (delta === 0) return
+      target.markTouched(target.projectId)
+      row.scrollLeft += delta
     })
   }, [browserId])
 

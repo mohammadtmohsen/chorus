@@ -141,11 +141,13 @@ vi.mock('electron', () => ({
     readonly primary: boolean
     constructor(
       options: {
-        readonly webPreferences?: { readonly backgroundThrottling: boolean }
+        readonly webPreferences?: { readonly backgroundThrottling?: boolean }
         readonly webContents?: WebContents
       } = {}
     ) {
-      this.primary = options.webPreferences !== undefined || options.webContents !== undefined
+      this.primary =
+        options.webPreferences?.backgroundThrottling !== undefined ||
+        options.webContents !== undefined
       if (options.webContents !== undefined) {
         this.webContents = options.webContents as unknown as typeof this.webContents
       }
@@ -335,6 +337,7 @@ function surfacesAfter(wait: Promise<void>, read: Read = READ): BrowserSurfaces 
     settings,
     vault,
     preloadPath: 'browser.js',
+    devtoolsPreloadPath: 'devtools.js',
     mainOwner: () => null,
     downloads: { expect: () => undefined },
     deliver: () => undefined,
@@ -561,6 +564,7 @@ function webSurfaces(
     settings,
     vault: { flush: () => Promise.resolve() } as unknown as BrowserVault,
     preloadPath: 'browser.js',
+    devtoolsPreloadPath: 'devtools.js',
     mainOwner: () => mainOwner,
     downloads: { expect: expectDownload },
     deliver: (owner, push) => {
@@ -1313,6 +1317,7 @@ async function openPage(options: PageOptions = {}): Promise<Page> {
     settings,
     vault,
     preloadPath: 'browser.js',
+    devtoolsPreloadPath: 'devtools.js',
     mainOwner: () => null,
     downloads: { expect: () => undefined },
     deliver: (owner, push) => {

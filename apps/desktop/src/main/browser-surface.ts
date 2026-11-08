@@ -19,6 +19,7 @@ import {
 } from 'electron'
 import {
   BROWSER_CLOSED_MAX,
+  BROWSER_DEVTOOLS_ROW_WHEEL_CHANNEL,
   BROWSER_ERROR_MAX,
   BROWSER_PAGE_CANDIDATE_CHANNEL,
   BROWSER_PAGE_FILL_CHANNEL,
@@ -122,6 +123,7 @@ export interface BrowserSurfaceDeps {
   readonly settings: BrowserSettingsStore
   readonly vault: BrowserVault
   readonly preloadPath: string
+  readonly devtoolsPreloadPath: string
   readonly mainOwner: () => WebContents | null
   readonly downloads: { readonly expect: (contents: WebContents) => void }
   readonly deliver: (owner: WebContents, push: BrowserPush) => void
@@ -1041,7 +1043,27 @@ export class BrowserSurfaces {
     const contents = this.contents(record)
     const parent = BrowserWindow.fromWebContents(record.owner)
     if (contents === null || parent === null || parent.isDestroyed()) return
-    const view = new WebContentsView()
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: this.deps.devtoolsPreloadPath,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
+    view.webContents.ipc.on(BROWSER_DEVTOOLS_ROW_WHEEL_CHANNEL, (event, payload: unknown) => {
+      if (record.closed || record.devtools?.view !== view) return
+      const url = event.senderFrame?.url
+      if (url === undefined) return
+      try {
+        if (new URL(url).protocol !== 'devtools:') return
+      } catch {
+        return
+      }
+      const parsed = BrowserPageRowWheel.safeParse(payload)
+      if (!parsed.success) return
+      this.push(record, { kind: 'devtools-row-wheel', browserId: record.id, wheel: parsed.data })
+    })
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     view.setVisible(false)
     parent.contentView.addChildView(view)
