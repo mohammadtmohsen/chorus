@@ -174,6 +174,7 @@ export const PARITY: Record<keyof ChorusApi, Parity> = {
   setAppNoteSize: 'engine',
   setBadge: 'port',
   setBrowserGeometry: 'vscode',
+  setBrowserDevtoolsGeometry: 'waived',
   setConversationNoteText: 'engine',
   setConversationNoteView: 'engine',
   setKeptNote: 'engine',

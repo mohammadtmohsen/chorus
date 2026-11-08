@@ -25,6 +25,7 @@ export type BrowserSurfacePort = WithShellOwner<
     | 'close'
     | 'reopen'
     | 'geometry'
+    | 'devtoolsGeometry'
     | 'addFavorite'
     | 'removeFavorite'
     | 'openFavorite'

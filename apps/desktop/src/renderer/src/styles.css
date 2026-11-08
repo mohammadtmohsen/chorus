@@ -12862,6 +12862,7 @@ html.continuous-row .global-note {
 }
 
 .traffic-box,
+.devtools-box,
 .project-terminal-box {
   flex: 0 0 auto;
   min-width: 0;
@@ -12871,16 +12872,19 @@ html.continuous-row .global-note {
 }
 
 .traffic-box .conversation-dock-tab,
+.devtools-box .conversation-dock-tab,
 .project-terminal-box .conversation-dock-tab {
   cursor: default;
 }
 
 .traffic-box[data-collapsed='true'] .conversation-dock-tab-main,
+.devtools-box[data-collapsed='true'] .conversation-dock-tab-main,
 .project-terminal-box[data-collapsed='true'] .conversation-dock-tab-main {
   padding: 0;
 }
 
 .traffic-box .conversation-body[hidden],
+.devtools-box .conversation-body[hidden],
 .project-terminal-box .conversation-body[hidden] {
   display: none;
 }
@@ -13101,7 +13105,8 @@ html.continuous-row .global-note {
   cursor: default;
 }
 
-.browser-panel {
+.browser-panel,
+.devtools-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -13113,7 +13118,8 @@ html.continuous-row .global-note {
   display: none;
 }
 
-.browser-panel[hidden] {
+.browser-panel[hidden],
+.devtools-panel[hidden] {
   display: none;
 }
 
@@ -13293,7 +13299,8 @@ html.continuous-row .global-note {
   font-size: 11px;
 }
 
-.browser-body {
+.browser-body,
+.devtools-body {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;

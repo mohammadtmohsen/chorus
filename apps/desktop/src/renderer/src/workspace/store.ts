@@ -17,6 +17,7 @@ import type {
 // reads its keys off the schema so the list cannot drift from the shape.
 import {
   CLOSED_TERMINAL_PANEL,
+  DEVTOOLS_WIDTH,
   PROJECT_TERMINAL_WIDTH,
   TRAFFIC_WIDTH,
   WEB_TABS_MAX,
@@ -25,11 +26,13 @@ import {
 import {
   activateTab,
   clampConsoleWidth,
+  clampDevtoolsWidth,
   clampEditorWidthFraction,
   clampProjectTerminalWidth,
   clampSidebarWidth,
   clampTrafficWidth,
   CLOSED_TRAFFIC,
+  DEFAULT_DEVTOOLS,
   DEFAULT_PROJECT_TERMINAL,
   closePane,
   closeTab,
@@ -340,6 +343,8 @@ export interface WorkspaceActions {
   replaceConversation: (projectId: string, previousId: string, nextId: string) => boolean
   setEditorWidthFraction: (projectId: string, fraction: number) => void
   setConsoleWidth: (projectId: string, width: number) => void
+  setDevtoolsWidth: (projectId: string, width: number) => void
+  setDevtoolsCollapsed: (projectId: string, collapsed: boolean) => void
   setTrafficWidth: (projectId: string, width: number) => void
   setTrafficHiddenPathPrefix: (projectId: string, hiddenPathPrefix: string) => void
   setProjectTerminalWidth: (projectId: string, width: number) => void
@@ -498,6 +503,7 @@ function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
     sidebarWidth: state.sidebarWidth,
     conversationGroups: state.conversationGroups,
     trafficPanels: state.trafficPanels,
+    devtoolsPanels: state.devtoolsPanels,
     projectTerminals: state.projectTerminals,
     collapsedBrowsers: state.collapsedBrowsers,
     collapsedWebsites: state.collapsedWebsites,
@@ -1095,6 +1101,25 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         if (get().consoleWidths[projectId] === width) return
         set((state) => ({ consoleWidths: { ...state.consoleWidths, [projectId]: width } }))
       },
+      setDevtoolsWidth: (projectId, value) => {
+        set((state) => {
+          const current = state.devtoolsPanels[projectId] ?? DEFAULT_DEVTOOLS
+          const width = clampDevtoolsWidth(value)
+          if (current.width === width) return state
+          return {
+            devtoolsPanels: { ...state.devtoolsPanels, [projectId]: { ...current, width } },
+          }
+        })
+      },
+      setDevtoolsCollapsed: (projectId, collapsed) => {
+        set((state) => {
+          const current = state.devtoolsPanels[projectId] ?? DEFAULT_DEVTOOLS
+          if (current.collapsed === collapsed) return state
+          return {
+            devtoolsPanels: { ...state.devtoolsPanels, [projectId]: { ...current, collapsed } },
+          }
+        })
+      },
       setTrafficWidth: (projectId, width) => {
         set((state) => {
           const current = state.trafficPanels[projectId] ?? CLOSED_TRAFFIC
@@ -1211,6 +1236,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set((state) => {
           const traffic = state.trafficPanels[projectId] ?? CLOSED_TRAFFIC
           const terminal = state.projectTerminals[projectId] ?? DEFAULT_PROJECT_TERMINAL
+          const devtools = state.devtoolsPanels[projectId] ?? DEFAULT_DEVTOOLS
           return {
             conversationGroups: editArrangement(state, projectId, resetBoxes),
             editorWidthFractions: Object.fromEntries(
@@ -1222,6 +1248,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             trafficPanels: {
               ...state.trafficPanels,
               [projectId]: { ...traffic, width: TRAFFIC_WIDTH.default, widthCustomized: false },
+            },
+            devtoolsPanels: {
+              ...state.devtoolsPanels,
+              [projectId]: { ...devtools, width: DEVTOOLS_WIDTH.default },
             },
             projectTerminals: {
               ...state.projectTerminals,

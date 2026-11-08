@@ -16,6 +16,8 @@ export function electronBrowserPort(surfaces: BrowserSurfaces): BrowserSurfacePo
     close: (owner, ...args) => surfaces.close(electronContents(owner), ...args),
     reopen: (owner, ...args) => surfaces.reopen(electronContents(owner), ...args),
     geometry: (owner, ...args) => surfaces.geometry(electronContents(owner), ...args),
+    devtoolsGeometry: (owner, ...args) =>
+      surfaces.devtoolsGeometry(electronContents(owner), ...args),
     addFavorite: (owner, ...args) => surfaces.addFavorite(electronContents(owner), ...args),
     removeFavorite: (owner, ...args) => surfaces.removeFavorite(electronContents(owner), ...args),
     openFavorite: (owner, ...args) => surfaces.openFavorite(electronContents(owner), ...args),

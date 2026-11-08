@@ -331,6 +331,7 @@ export function createChorusApi(transport: ShellTransport): ChorusApi {
     readBrowserDownloads: () => invokeBrowser('browser:downloads')({}),
     actOnBrowserDownload: invokeBrowser('browser:download'),
     setBrowserGeometry: invokeBrowser('browser:geometry'),
+    setBrowserDevtoolsGeometry: invokeBrowser('browser:devtoolsGeometry'),
     addBrowserFavorite: invokeBrowser('browser:favoriteAdd'),
     removeBrowserFavorite: invokeBrowser('browser:favoriteRemove'),
     openBrowserFavorite: invokeBrowser('browser:favoriteOpen'),

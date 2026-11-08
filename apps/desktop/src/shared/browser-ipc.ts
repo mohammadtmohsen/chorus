@@ -254,6 +254,12 @@ export const BrowserGeometryRequest = BrowserTarget.extend({
   fullyVisible: z.boolean(),
 }).strict()
 
+export const BrowserDevtoolsGeometryRequest = BrowserTarget.extend({
+  revision: BrowserRevision,
+  rect: BrowserRect,
+  active: z.boolean(),
+}).strict()
+
 export const BrowserFavoriteRequest = BrowserTarget.extend({ favoriteId: BrowserId }).strict()
 
 export const BrowserPasswordDecideRequest = BrowserTarget.extend({
@@ -461,6 +467,10 @@ export const BROWSER_CONTRACT = {
       })
       .strict(),
   },
+  'browser:devtoolsGeometry': {
+    request: BrowserDevtoolsGeometryRequest,
+    response: z.object({ revision: BrowserRevision }).strict(),
+  },
   'browser:favoriteAdd': {
     request: BrowserTarget,
     response: BrowserFavoritesResult,
@@ -555,6 +565,13 @@ export const BrowserDialogPrompt = z
 export type BrowserDialogPrompt = z.infer<typeof BrowserDialogPrompt>
 
 export const BrowserPush = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('devtools'),
+      browserId: BrowserId,
+      action: z.enum(['show', 'toggle']),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('select'),
@@ -743,6 +760,9 @@ export interface BrowserApi {
   readonly setBrowserGeometry: (
     request: BrowserRequest<'browser:geometry'>
   ) => Promise<BrowserResponse<'browser:geometry'>>
+  readonly setBrowserDevtoolsGeometry: (
+    request: BrowserRequest<'browser:devtoolsGeometry'>
+  ) => Promise<BrowserResponse<'browser:devtoolsGeometry'>>
   readonly addBrowserFavorite: (
     request: BrowserRequest<'browser:favoriteAdd'>
   ) => Promise<BrowserResponse<'browser:favoriteAdd'>>

@@ -28,6 +28,7 @@ describe('the extension accounts for every ChorusApi method', () => {
       'readBrowserDownloads',
       'readBrowserPasswords',
       'removeBrowserPassword',
+      'setBrowserDevtoolsGeometry',
     ])
   })
 })

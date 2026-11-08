@@ -179,6 +179,12 @@ interface ClosedWebTab {
   readonly settings: BrowserSettingsStatus
 }
 
+interface DevtoolsDock {
+  readonly view: WebContentsView
+  readonly participant: OverlayParticipant
+  readonly unregister: () => void
+}
+
 interface BrowserRecord {
   readonly id: string
   readonly owner: WebContents
@@ -188,6 +194,10 @@ interface BrowserRecord {
   view: WebContentsView | null
   participant: OverlayParticipant | null
   unregister: (() => void) | null
+  devtools: DevtoolsDock | null
+  devtoolsRect: BrowserRect | null
+  devtoolsRevision: number
+  devtoolsShown: boolean
   pendingUrl: string | null
   url: string | null
   revision: number
@@ -288,6 +298,7 @@ export class BrowserSurfaces {
     onScaleChange(() => {
       for (const record of this.records.values()) {
         if (record.live) this.place(record)
+        if (record.devtools !== null) this.placeDock(record)
       }
     })
   }
@@ -358,6 +369,10 @@ export class BrowserSurfaces {
       view: null,
       participant: null,
       unregister: null,
+      devtools: null,
+      devtoolsRect: null,
+      devtoolsRevision: 0,
+      devtoolsShown: false,
       pendingUrl: page.url,
       url: null,
       revision: 0,
@@ -469,6 +484,19 @@ export class BrowserSurfaces {
     return true
   }
 
+  routeFocusedDevtools(focused: WebContents | null): boolean {
+    if (focused === null || focused.isDestroyed()) return false
+    for (const record of this.records.values()) {
+      if (record.scope.kind !== 'project' || record.closed) continue
+      const contents = this.contents(record)
+      if (contents === null) continue
+      if (contents !== focused && record.devtools?.view.webContents !== focused) continue
+      this.push(record, { kind: 'devtools', browserId: record.id, action: 'toggle' })
+      return true
+    }
+    return false
+  }
+
   find(
     owner: WebContents,
     browserId: string,
@@ -532,7 +560,9 @@ export class BrowserSurfaces {
         contents.stop()
         break
       case 'devtools':
-        contents.openDevTools({ mode: 'detach' })
+        if (record.scope.kind === 'project') {
+          this.push(record, { kind: 'devtools', browserId: record.id, action: 'show' })
+        } else contents.openDevTools({ mode: 'detach' })
         break
       case 'focus':
         contents.focus()
@@ -579,6 +609,22 @@ export class BrowserSurfaces {
     if (revealed) this.probe(record)
     if (record.scope.kind === 'web' && (created || changed)) this.pushState(record)
     return Promise.resolve({ revision, still: null })
+  }
+
+  devtoolsGeometry(
+    owner: WebContents,
+    request: BrowserRequest<'browser:devtoolsGeometry'>
+  ): BrowserResponse<'browser:devtoolsGeometry'> {
+    const record = this.owned(owner, request.browserId)
+    if (request.revision <= record.devtoolsRevision) {
+      return { revision: record.devtoolsRevision }
+    }
+    record.devtoolsRevision = request.revision
+    record.devtoolsRect = request.rect
+    record.devtoolsShown = request.active
+    this.placeDock(record)
+    if (record.devtools !== null) applyParticipant(record.devtools.participant)
+    return { revision: record.devtoolsRevision }
   }
 
   async addFavorite(
@@ -979,7 +1025,79 @@ export class BrowserSurfaces {
     }
     record.participant = participant
     record.unregister = registerOverlayParticipant(participant)
+    this.openDock(record)
     return view
+  }
+
+  private openDock(record: BrowserRecord): void {
+    if (
+      record.scope.kind !== 'project' ||
+      record.devtools !== null ||
+      record.closed ||
+      record.owner.isDestroyed()
+    ) {
+      return
+    }
+    const contents = this.contents(record)
+    const parent = BrowserWindow.fromWebContents(record.owner)
+    if (contents === null || parent === null || parent.isDestroyed()) return
+    const view = new WebContentsView()
+    view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    view.setVisible(false)
+    parent.contentView.addChildView(view)
+    contents.setDevToolsWebContents(view.webContents)
+    contents.openDevTools({ mode: 'detach', activate: false })
+    const participant: OverlayParticipant = {
+      id: `${record.id}:devtools`,
+      owner: record.owner,
+      view,
+      shown: () => record.devtoolsShown && record.devtools?.view === view,
+    }
+    const lost = (): void => {
+      if (record.devtools?.view !== view) return
+      this.closeDock(record)
+      this.openDock(record)
+    }
+    view.webContents.once('destroyed', lost)
+    view.webContents.on('render-process-gone', lost)
+    record.devtools = { view, participant, unregister: registerOverlayParticipant(participant) }
+    this.placeDock(record)
+    applyParticipant(participant)
+  }
+
+  private closeDock(record: BrowserRecord): void {
+    const dock = record.devtools
+    if (dock === null) return
+    record.devtools = null
+    dock.unregister()
+    const contents = this.contents(record)
+    if (contents !== null) contents.closeDevTools()
+    const parent = record.owner.isDestroyed() ? null : BrowserWindow.fromWebContents(record.owner)
+    if (parent !== null && !parent.isDestroyed()) parent.contentView.removeChildView(dock.view)
+    if (!dock.view.webContents.isDestroyed()) dock.view.webContents.close()
+  }
+
+  private placeDock(record: BrowserRecord): void {
+    const view = record.devtools?.view
+    const rect = record.devtoolsRect
+    if (view === undefined || rect === null || view.webContents.isDestroyed()) return
+    if (rect.width === 0 || rect.height === 0) {
+      const bounds = view.getBounds()
+      view.setBounds({
+        x: -Math.max(1, bounds.width),
+        y: -Math.max(1, bounds.height),
+        width: bounds.width,
+        height: bounds.height,
+      })
+      return
+    }
+    const scale = currentScale()
+    view.setBounds({
+      x: Math.round(rect.x * scale),
+      y: Math.round(rect.y * scale),
+      width: Math.round(rect.width * scale),
+      height: Math.round(rect.height * scale),
+    })
   }
 
   private place(record: BrowserRecord): void {
@@ -1024,6 +1142,7 @@ export class BrowserSurfaces {
   }
 
   private releaseView(record: BrowserRecord): void {
+    this.closeDock(record)
     const view = record.view
     record.view = null
     record.live = false
@@ -1194,8 +1313,11 @@ export class BrowserSurfaces {
         contents.reload()
         break
       case 'inspect':
-        contents.openDevTools({ mode: 'detach' })
+        if (record.scope.kind === 'web') contents.openDevTools({ mode: 'detach' })
         contents.inspectElement(params.x, params.y)
+        if (record.scope.kind === 'project') {
+          this.push(record, { kind: 'devtools', browserId: record.id, action: 'show' })
+        }
         break
     }
   }

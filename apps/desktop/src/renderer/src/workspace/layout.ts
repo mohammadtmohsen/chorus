@@ -3,6 +3,7 @@ import { BrowserWebTabId } from '../../../shared/browser-ipc.js'
 import {
   BOX_WIDTH,
   CONSOLE_WIDTH,
+  DEVTOOLS_WIDTH,
   EDITOR_WIDTH,
   MAIN_PROJECT_SHELL,
   NO_WEB_TABS,
@@ -12,6 +13,7 @@ import {
   TRAFFIC_WIDTH,
   WEB_TABS_MAX,
   type ConversationArrangement,
+  type DevtoolsPanelState,
   type ProjectLayoutSlice,
   type ProjectTerminalPaneState,
   type ReturnSlot,
@@ -159,6 +161,7 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   terminals: {},
   globalTerminal: { open: false, height: TERMINAL_HEIGHT.default, tabs: [], activeId: null },
   trafficPanels: {},
+  devtoolsPanels: {},
   projectTerminals: {},
   collapsedBrowsers: {},
   collapsedWebsites: {},
@@ -183,6 +186,7 @@ export function sliceOf(workspace: WorkspaceSnapshot, projectId: string): Projec
   return {
     conversationGroups: workspace.conversationGroups[projectId],
     trafficPanel: workspace.trafficPanels[projectId],
+    devtoolsPanel: workspace.devtoolsPanels[projectId],
     projectTerminal: workspace.projectTerminals[projectId],
     browserCollapsed: workspace.collapsedBrowsers[projectId],
     websiteCollapsed: workspace.collapsedWebsites[projectId],
@@ -208,6 +212,11 @@ export function mergeSlice(
       workspace.trafficPanels,
       projectId,
       slice.trafficPanel === undefined ? undefined : normalizeTrafficPanel(slice.trafficPanel)
+    ),
+    devtoolsPanels: withEntry(
+      workspace.devtoolsPanels,
+      projectId,
+      slice.devtoolsPanel === undefined ? undefined : normalizeDevtoolsPanel(slice.devtoolsPanel)
     ),
     projectTerminals: withEntry(workspace.projectTerminals, projectId, slice.projectTerminal),
     collapsedBrowsers: withEntry(workspace.collapsedBrowsers, projectId, slice.browserCollapsed),
@@ -438,6 +447,12 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
       Object.entries(workspace.trafficPanels).map(([projectId, panel]) => [
         projectId,
         normalizeTrafficPanel(panel),
+      ])
+    ),
+    devtoolsPanels: Object.fromEntries(
+      Object.entries(workspace.devtoolsPanels).map(([projectId, panel]) => [
+        projectId,
+        normalizeDevtoolsPanel(panel),
       ])
     ),
     projectTerminals: Object.fromEntries(
@@ -967,6 +982,20 @@ export const EMPTY_ARRANGEMENT: ConversationArrangement = {
 
 export const CLOSED_TRAFFIC: TrafficPanelState = { open: false, width: TRAFFIC_WIDTH.default }
 
+export const DEFAULT_DEVTOOLS: DevtoolsPanelState = {
+  width: DEVTOOLS_WIDTH.default,
+  collapsed: false,
+}
+
+export function clampDevtoolsWidth(width: number): number {
+  if (!Number.isFinite(width)) return DEVTOOLS_WIDTH.default
+  return Math.round(Math.max(DEVTOOLS_WIDTH.min, width))
+}
+
+export function normalizeDevtoolsPanel(panel: DevtoolsPanelState): DevtoolsPanelState {
+  return { ...panel, width: clampDevtoolsWidth(panel.width) }
+}
+
 export function clampBoxWidth(width: number): number {
   if (!Number.isFinite(width)) return BOX_WIDTH.default
   return Math.round(Math.max(BOX_WIDTH.min, width))
@@ -1330,6 +1359,11 @@ export function reconcileWorkspace(
     ),
     consoleWidths: Object.fromEntries(
       Object.entries(workspace.consoleWidths).filter(([projectId]) =>
+        allowedProjects.has(projectId)
+      )
+    ),
+    devtoolsPanels: Object.fromEntries(
+      Object.entries(workspace.devtoolsPanels).filter(([projectId]) =>
         allowedProjects.has(projectId)
       )
     ),

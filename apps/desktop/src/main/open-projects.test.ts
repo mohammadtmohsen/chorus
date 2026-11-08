@@ -66,6 +66,7 @@ describe('open project persistence', () => {
         conversationGroups: {},
         globalTerminal: { open: false, height: TERMINAL_HEIGHT.default, tabs: [], activeId: null },
         trafficPanels: {},
+        devtoolsPanels: {},
         projectTerminals: {},
         collapsedBrowsers: {},
         collapsedWebsites: {},

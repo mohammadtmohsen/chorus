@@ -53,7 +53,7 @@ export function electronBrowserSource(input: ElectronBrowserSourceInput): Browse
     },
     url: () => contents.getURL(),
     isGone: () => contents.isDestroyed(),
-    isInspectorOpen: () => contents.isDevToolsOpened(),
+    isInspectorOpen: () => contents.isDevToolsOpened() || contents.devToolsWebContents !== null,
     onNavigated: (listener) => {
       const receive = (_event: unknown, url: string): void => {
         listener(url)

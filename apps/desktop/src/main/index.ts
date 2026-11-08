@@ -5,7 +5,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, ipcMain, session, type WebContents } from 'electron'
+import { app, BrowserWindow, ipcMain, session, webContents, type WebContents } from 'electron'
 import {
   attachDetachedWindowListeners,
   closeEveryDetachedWindow,
@@ -743,6 +743,7 @@ void app.whenReady().then(async () => {
         return owner !== null && browserSurfaces.routeReload(owner.webContents)
       },
       devtools: () => {
+        if (browserSurfaces.routeFocusedDevtools(webContents.getFocusedWebContents())) return true
         const owner = routeOwner()
         return owner !== null && browserSurfaces.routeDevtools(owner.webContents)
       },

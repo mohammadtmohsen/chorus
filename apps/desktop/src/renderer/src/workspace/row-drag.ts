@@ -4,6 +4,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import {
   BOX_WIDTH,
   CONSOLE_WIDTH,
+  DEVTOOLS_WIDTH,
   EDITOR_WIDTH,
   PROJECT_TERMINAL_WIDTH,
   TRAFFIC_WIDTH,
@@ -183,9 +184,10 @@ export interface RowWidths {
   readonly traffic: number | null
   readonly terminal: number | null
   readonly console: number | null
+  readonly devtools: number | null
 }
 
-type RowItemKind = 'box' | 'traffic' | 'terminal' | 'console' | 'fixed'
+type RowItemKind = 'box' | 'traffic' | 'terminal' | 'console' | 'devtools' | 'fixed'
 
 interface RowItems {
   readonly kinds: readonly RowItemKind[]
@@ -202,6 +204,7 @@ function rowItemKind(element: Element): RowItemKind {
   if (element.classList.contains('conversation-slot')) return 'box'
   if (element.classList.contains('traffic-box')) return 'traffic'
   if (element.classList.contains('project-terminal-box')) return 'terminal'
+  if (element.classList.contains('devtools-box')) return 'devtools'
   return 'fixed'
 }
 
@@ -222,6 +225,7 @@ function rowItems(sash: HTMLElement): RowItems | null {
     if (kind === 'traffic') return declaredMinimum(items[at], TRAFFIC_WIDTH.min)
     if (kind === 'terminal') return declaredMinimum(items[at], PROJECT_TERMINAL_WIDTH.min)
     if (kind === 'console') return CONSOLE_WIDTH.min
+    if (kind === 'devtools') return DEVTOOLS_WIDTH.min
     return frozen[at] ?? 0
   })
   const index = children.slice(0, children.indexOf(sash)).filter((child) => !isSash(child)).length
@@ -232,11 +236,13 @@ function rowWidths(items: RowItems, pushed: readonly number[]): RowWidths {
   const trafficAt = items.kinds.indexOf('traffic')
   const terminalAt = items.kinds.indexOf('terminal')
   const consoleAt = items.kinds.indexOf('console')
+  const devtoolsAt = items.kinds.indexOf('devtools')
   return {
     boxes: pushed.filter((_, at) => items.kinds[at] === 'box'),
     traffic: trafficAt < 0 ? null : (pushed[trafficAt] ?? null),
     terminal: terminalAt < 0 ? null : (pushed[terminalAt] ?? null),
     console: consoleAt < 0 ? null : (pushed[consoleAt] ?? null),
+    devtools: devtoolsAt < 0 ? null : (pushed[devtoolsAt] ?? null),
   }
 }
 
