@@ -209,6 +209,7 @@ export interface WorkspaceRuntime {
    * relaunch is a new one. Nothing here is persisted.
    */
   readonly planning: Readonly<Record<string, boolean>>
+  readonly startedProjects: Readonly<Record<string, true>>
   readonly detached: Readonly<Record<string, ReturnSlot>>
 }
 
@@ -285,6 +286,7 @@ export interface WorkspaceActions {
   ) => void
   /** What plan mode actually became, as the session reported it. */
   setPlanning: (conversationId: string, planning: boolean) => void
+  markProjectStarted: (projectId: string) => void
   markDetached: (projectId: string, slot: ReturnSlot) => void
   clearDetached: (projectId: string) => void
   setDetached: (detached: Readonly<Record<string, ReturnSlot>>) => void
@@ -665,6 +667,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       pulses: {},
       ideByConversation: {},
       planning: {},
+      startedProjects: {},
       detached: {},
       addWebTab: (show) => {
         if (get().webTabs.tabs.length >= WEB_TABS_MAX) return ''
@@ -904,6 +907,13 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           state.planning[conversationId] === planning
             ? state
             : { planning: { ...state.planning, [conversationId]: planning } }
+        )
+      },
+      markProjectStarted: (projectId) => {
+        set((state) =>
+          state.startedProjects[projectId] === true
+            ? state
+            : { startedProjects: { ...state.startedProjects, [projectId]: true } }
         )
       },
       markDetached: (projectId, slot) => {

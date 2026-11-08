@@ -3,8 +3,8 @@ import { useState } from 'react'
 import { WorkbenchFrame } from '../workbench/WorkbenchFrame.js'
 
 /**
- * One project's workbench, mounted for **every** tab in the pane rather than
- * only the active one.
+ * One project's workbench, mounted from the first time its tab is shown and kept
+ * mounted after, rather than only while it is the active tab.
  *
  * **This is the terminal rule, one level further out.** `WorkbenchFrame` already
  * documents that unmounting it closes the surface — a whole `WebContents`

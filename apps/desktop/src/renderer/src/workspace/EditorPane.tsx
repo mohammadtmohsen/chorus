@@ -173,6 +173,12 @@ export function EditorPane(
    * Together, the pointer decides and the list heals it.
    */
   const projectId = pane?.activeTabId ?? null
+  const visibleProjectId = projectId !== null && !webShowing ? projectId : null
+  const startedProjects = useWorkspaceStore((state) => state.startedProjects)
+  const markProjectStarted = useWorkspaceStore((state) => state.markProjectStarted)
+  useEffect(() => {
+    if (visibleProjectId !== null) markProjectStarted(visibleProjectId)
+  }, [visibleProjectId, markProjectStarted])
   /* The row the pad is drawn from — its text and the box it is read in, which
      travel together precisely so they cannot be one refresh apart. */
   const note = props.projects.find((project) => project.id === projectId)
@@ -537,7 +543,7 @@ export function EditorPane(
           <div className="conversation-scroller" ref={scroller}>
             {embeddedEditor && projectId !== null && (
               /*
-                One slot per project open in this pane, keyed by project so a tab
+                One slot per project started in this pane, keyed by project so a tab
                 switch moves which one is visible rather than destroying one surface
                 and building another.
               */
@@ -547,24 +553,26 @@ export function EditorPane(
               >
                 {/* `pane` is non-null here: `projectId` is read off it, and the
                     guard above is what narrows both. */}
-                {pane.tabs.map(
-                  (id) =>
-                    PaneWorkbench !== null && (
-                      <PaneWorkbench
-                        key={id}
-                        projectId={id}
-                        active={id === projectId && !webShowing}
-                        projectRoot={
-                          [...props.sessions.values()].find((session) => session.projectId === id)
-                            ?.cwd ?? ''
-                        }
-                        geometry={geometry}
-                        onActivityBar={recordActivityBar}
-                        onRevealRow={revealRow}
-                        onScrollRow={scrollRow}
-                      />
-                    )
-                )}
+                {pane.tabs
+                  .filter((id) => id === visibleProjectId || startedProjects[id] === true)
+                  .map(
+                    (id) =>
+                      PaneWorkbench !== null && (
+                        <PaneWorkbench
+                          key={id}
+                          projectId={id}
+                          active={id === projectId && !webShowing}
+                          projectRoot={
+                            [...props.sessions.values()].find((session) => session.projectId === id)
+                              ?.cwd ?? ''
+                          }
+                          geometry={geometry}
+                          onActivityBar={recordActivityBar}
+                          onRevealRow={revealRow}
+                          onScrollRow={scrollRow}
+                        />
+                      )
+                  )}
               </div>
             )}
             {embeddedEditor && projectId !== null && (
