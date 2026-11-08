@@ -4207,6 +4207,26 @@ export class ChorusRuntime {
     return rooms
   }
 
+  projectBusy(projectId: string): boolean {
+    for (const [id, conversation] of this.active) {
+      if (conversation.projectId !== projectId) continue
+      if (
+        conversation.working.size > 0 ||
+        this.liveReplies.pendingReplies(id).length > 0 ||
+        (this.startupOwners.get(id)?.size ?? 0) > 0 ||
+        [...conversation.participants.values()].some(
+          (participant) => (this.backgroundWork.get(participant.service) ?? 0) > 0
+        )
+      )
+        return true
+    }
+    for (const [id, aside] of this.asides) {
+      if (this.active.get(aside.parentId)?.projectId !== projectId) continue
+      if (this.store.transcriptState(id).working.length > 0) return true
+    }
+    return false
+  }
+
   activeWork(): {
     conversations: string[]
     approvals: number

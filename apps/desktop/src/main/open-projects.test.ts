@@ -67,6 +67,7 @@ describe('open project persistence', () => {
         globalTerminal: { open: false, height: TERMINAL_HEIGHT.default, tabs: [], activeId: null },
         trafficPanels: {},
         devtoolsPanels: {},
+        gitPanels: {},
         projectTerminals: {},
         collapsedBrowsers: {},
         collapsedWebsites: {},

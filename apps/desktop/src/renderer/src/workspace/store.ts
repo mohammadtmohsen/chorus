@@ -18,6 +18,7 @@ import type {
 import {
   CLOSED_TERMINAL_PANEL,
   DEVTOOLS_WIDTH,
+  GIT_WIDTH,
   PROJECT_TERMINAL_WIDTH,
   TRAFFIC_WIDTH,
   WEB_TABS_MAX,
@@ -28,11 +29,13 @@ import {
   clampConsoleWidth,
   clampDevtoolsWidth,
   clampEditorWidthFraction,
+  clampGitWidth,
   clampProjectTerminalWidth,
   clampSidebarWidth,
   clampTrafficWidth,
   CLOSED_TRAFFIC,
   DEFAULT_DEVTOOLS,
+  DEFAULT_GIT,
   DEFAULT_PROJECT_TERMINAL,
   closePane,
   closeTab,
@@ -345,6 +348,8 @@ export interface WorkspaceActions {
   setConsoleWidth: (projectId: string, width: number) => void
   setDevtoolsWidth: (projectId: string, width: number) => void
   setDevtoolsCollapsed: (projectId: string, collapsed: boolean) => void
+  setGitWidth: (projectId: string, width: number) => void
+  setGitCollapsed: (projectId: string, collapsed: boolean) => void
   setTrafficWidth: (projectId: string, width: number) => void
   setTrafficHiddenPathPrefix: (projectId: string, hiddenPathPrefix: string) => void
   setProjectTerminalWidth: (projectId: string, width: number) => void
@@ -504,6 +509,7 @@ function snapshot(state: WorkspaceStore): WorkspaceSnapshot {
     conversationGroups: state.conversationGroups,
     trafficPanels: state.trafficPanels,
     devtoolsPanels: state.devtoolsPanels,
+    gitPanels: state.gitPanels,
     projectTerminals: state.projectTerminals,
     collapsedBrowsers: state.collapsedBrowsers,
     collapsedWebsites: state.collapsedWebsites,
@@ -1133,6 +1139,25 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           }
         })
       },
+      setGitWidth: (projectId, value) => {
+        set((state) => {
+          const current = state.gitPanels[projectId] ?? DEFAULT_GIT
+          const width = clampGitWidth(value)
+          if (current.width === width) return state
+          return {
+            gitPanels: { ...state.gitPanels, [projectId]: { ...current, width } },
+          }
+        })
+      },
+      setGitCollapsed: (projectId, collapsed) => {
+        set((state) => {
+          const current = state.gitPanels[projectId] ?? DEFAULT_GIT
+          if (current.collapsed === collapsed) return state
+          return {
+            gitPanels: { ...state.gitPanels, [projectId]: { ...current, collapsed } },
+          }
+        })
+      },
       setTrafficHiddenPathPrefix: (projectId, hiddenPathPrefix) => {
         set((state) => {
           const current = state.trafficPanels[projectId] ?? CLOSED_TRAFFIC
@@ -1237,6 +1262,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           const traffic = state.trafficPanels[projectId] ?? CLOSED_TRAFFIC
           const terminal = state.projectTerminals[projectId] ?? DEFAULT_PROJECT_TERMINAL
           const devtools = state.devtoolsPanels[projectId] ?? DEFAULT_DEVTOOLS
+          const git = state.gitPanels[projectId] ?? DEFAULT_GIT
           return {
             conversationGroups: editArrangement(state, projectId, resetBoxes),
             editorWidthFractions: Object.fromEntries(
@@ -1252,6 +1278,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             devtoolsPanels: {
               ...state.devtoolsPanels,
               [projectId]: { ...devtools, width: DEVTOOLS_WIDTH.default },
+            },
+            gitPanels: {
+              ...state.gitPanels,
+              [projectId]: { ...git, width: GIT_WIDTH.default },
             },
             projectTerminals: {
               ...state.projectTerminals,

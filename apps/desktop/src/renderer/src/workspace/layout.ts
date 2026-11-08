@@ -5,6 +5,7 @@ import {
   CONSOLE_WIDTH,
   DEVTOOLS_WIDTH,
   EDITOR_WIDTH,
+  GIT_WIDTH,
   MAIN_PROJECT_SHELL,
   NO_WEB_TABS,
   PROJECT_TERMINAL_WIDTH,
@@ -14,6 +15,7 @@ import {
   WEB_TABS_MAX,
   type ConversationArrangement,
   type DevtoolsPanelState,
+  type GitPanelState,
   type ProjectLayoutSlice,
   type ProjectTerminalPaneState,
   type ReturnSlot,
@@ -162,6 +164,7 @@ export const EMPTY_WORKSPACE: WorkspaceSnapshot = {
   globalTerminal: { open: false, height: TERMINAL_HEIGHT.default, tabs: [], activeId: null },
   trafficPanels: {},
   devtoolsPanels: {},
+  gitPanels: {},
   projectTerminals: {},
   collapsedBrowsers: {},
   collapsedWebsites: {},
@@ -187,6 +190,7 @@ export function sliceOf(workspace: WorkspaceSnapshot, projectId: string): Projec
     conversationGroups: workspace.conversationGroups[projectId],
     trafficPanel: workspace.trafficPanels[projectId],
     devtoolsPanel: workspace.devtoolsPanels[projectId],
+    gitPanel: workspace.gitPanels[projectId],
     projectTerminal: workspace.projectTerminals[projectId],
     browserCollapsed: workspace.collapsedBrowsers[projectId],
     websiteCollapsed: workspace.collapsedWebsites[projectId],
@@ -217,6 +221,11 @@ export function mergeSlice(
       workspace.devtoolsPanels,
       projectId,
       slice.devtoolsPanel === undefined ? undefined : normalizeDevtoolsPanel(slice.devtoolsPanel)
+    ),
+    gitPanels: withEntry(
+      workspace.gitPanels,
+      projectId,
+      slice.gitPanel === undefined ? undefined : normalizeGitPanel(slice.gitPanel)
     ),
     projectTerminals: withEntry(workspace.projectTerminals, projectId, slice.projectTerminal),
     collapsedBrowsers: withEntry(workspace.collapsedBrowsers, projectId, slice.browserCollapsed),
@@ -453,6 +462,12 @@ export function normalizeWorkspace(workspace: WorkspaceSnapshot): WorkspaceSnaps
       Object.entries(workspace.devtoolsPanels).map(([projectId, panel]) => [
         projectId,
         normalizeDevtoolsPanel(panel),
+      ])
+    ),
+    gitPanels: Object.fromEntries(
+      Object.entries(workspace.gitPanels).map(([projectId, panel]) => [
+        projectId,
+        normalizeGitPanel(panel),
       ])
     ),
     projectTerminals: Object.fromEntries(
@@ -996,6 +1011,20 @@ export function normalizeDevtoolsPanel(panel: DevtoolsPanelState): DevtoolsPanel
   return { ...panel, width: clampDevtoolsWidth(panel.width) }
 }
 
+export const DEFAULT_GIT: GitPanelState = {
+  width: GIT_WIDTH.default,
+  collapsed: false,
+}
+
+export function clampGitWidth(width: number): number {
+  if (!Number.isFinite(width)) return GIT_WIDTH.default
+  return Math.round(Math.max(GIT_WIDTH.min, width))
+}
+
+export function normalizeGitPanel(panel: GitPanelState): GitPanelState {
+  return { ...panel, width: clampGitWidth(panel.width) }
+}
+
 export function clampBoxWidth(width: number): number {
   if (!Number.isFinite(width)) return BOX_WIDTH.default
   return Math.round(Math.max(BOX_WIDTH.min, width))
@@ -1366,6 +1395,9 @@ export function reconcileWorkspace(
       Object.entries(workspace.devtoolsPanels).filter(([projectId]) =>
         allowedProjects.has(projectId)
       )
+    ),
+    gitPanels: Object.fromEntries(
+      Object.entries(workspace.gitPanels).filter(([projectId]) => allowedProjects.has(projectId))
     ),
   }
   /*

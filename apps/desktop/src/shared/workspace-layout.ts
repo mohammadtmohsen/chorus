@@ -51,6 +51,8 @@ export const CONSOLE_WIDTH = { default: 500, min: 500 } as const
 
 export const DEVTOOLS_WIDTH = { default: 600, min: 400 } as const
 
+export const GIT_WIDTH = { default: 520, min: 380 } as const
+
 export const TRAFFIC_WIDTH = { default: 700, min: 500 } as const
 
 export const PROJECT_TERMINAL_WIDTH = { default: 500, min: 480, run: 480, slot: 320 } as const
@@ -189,6 +191,12 @@ export const DevtoolsPanelState = z.object({
 })
 export type DevtoolsPanelState = z.infer<typeof DevtoolsPanelState>
 
+export const GitPanelState = z.object({
+  width: z.number(),
+  collapsed: z.boolean(),
+})
+export type GitPanelState = z.infer<typeof GitPanelState>
+
 export const MAIN_PROJECT_SHELL = 'main'
 
 export const ProjectTerminalPaneState = z.object({
@@ -284,6 +292,7 @@ export const WorkspaceSnapshot = z.object({
   conversationGroups: z.record(z.string(), ConversationArrangement).default({}),
   trafficPanels: z.record(z.string(), TrafficPanelState).default({}),
   devtoolsPanels: z.record(z.string(), DevtoolsPanelState).default({}),
+  gitPanels: z.record(z.string(), GitPanelState).default({}),
   projectTerminals: z.record(z.string(), ProjectTerminalPaneState).default({}),
   collapsedBrowsers: z.record(z.string(), z.boolean()).default({}),
   collapsedWebsites: z.record(z.string(), z.boolean()).default({}),
@@ -301,6 +310,7 @@ export const ProjectLayoutSlice = z.object({
   conversationGroups: ConversationArrangement.optional(),
   trafficPanel: TrafficPanelState.optional(),
   devtoolsPanel: DevtoolsPanelState.optional(),
+  gitPanel: GitPanelState.optional(),
   projectTerminal: ProjectTerminalPaneState.optional(),
   browserCollapsed: z.boolean().optional(),
   websiteCollapsed: z.boolean().optional(),

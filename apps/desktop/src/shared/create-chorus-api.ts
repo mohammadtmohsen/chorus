@@ -74,6 +74,7 @@ import {
   type RunChannel,
   type RunResponse,
 } from './run-ipc.js'
+import { GIT_CONTRACT, type GitChannel, type GitResponse } from './git-ipc.js'
 import {
   TRAFFIC_CONTRACT,
   TRAFFIC_LIVE_PUSH_CHANNEL,
@@ -183,6 +184,17 @@ export function createChorusApi(transport: ShellTransport): ChorusApi {
         throw new Error(`Malformed response on "${channel}": ${parsed.error.message}`)
       }
       return parsed.data as RunResponse<C>
+    }
+  }
+
+  function invokeGit<C extends GitChannel>(channel: C) {
+    return async (request: unknown): Promise<GitResponse<C>> => {
+      const raw: unknown = await transport.invoke(channel, request)
+      const parsed = GIT_CONTRACT[channel].response.safeParse(raw)
+      if (!parsed.success) {
+        throw new Error(`Malformed response on "${channel}": ${parsed.error.message}`)
+      }
+      return parsed.data as GitResponse<C>
     }
   }
 
@@ -348,6 +360,10 @@ export function createChorusApi(transport: ShellTransport): ChorusApi {
     expandConsole: invokeConsole('console:expand'),
     clearConsole: invokeConsole('console:clear'),
     readRunState: invokeRun('run:state'),
+    readGitState: invokeGit('git:state'),
+    fetchGit: invokeGit('git:fetch'),
+    syncGit: invokeGit('git:sync'),
+    checkoutGit: invokeGit('git:checkout'),
     detectRunScripts: invokeRun('run:detect'),
     configureRun: invokeRun('run:configure'),
     startRun: invokeRun('run:start'),

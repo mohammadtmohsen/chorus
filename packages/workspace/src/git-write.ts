@@ -59,6 +59,7 @@ async function git(
       cwd: options.cwd,
       timeout: options.timeoutMs ?? 30_000,
       maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', SSH_ASKPASS_REQUIRE: 'never' },
     })
     return ok(stdout)
   } catch (error) {
@@ -181,4 +182,49 @@ export async function push(options: PushOptions): Promise<Result<void, GitError>
   // The network deserves longer than a local command, and still a bound.
   const result = await git({ ...options, timeoutMs: 120_000 }, args)
   return result.ok ? ok(undefined) : result
+}
+
+const FULL_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
+
+export type SwitchTarget =
+  | { readonly kind: 'local'; readonly name: string }
+  | { readonly kind: 'track'; readonly remote: string; readonly name: string }
+  | { readonly kind: 'detach'; readonly sha: string }
+
+export function switchArgs(target: SwitchTarget): string[] | null {
+  switch (target.kind) {
+    case 'local':
+      return isSafeRef(target.name) ? ['switch', '--no-guess', target.name] : null
+    case 'track':
+      return isSafeRef(target.remote) && isSafeRef(target.name)
+        ? ['switch', '--create', target.name, '--track', `${target.remote}/${target.name}`]
+        : null
+    case 'detach':
+      return FULL_SHA.test(target.sha) ? ['switch', '--detach', target.sha] : null
+  }
+}
+
+export async function switchTo(
+  options: GitOptions & { readonly target: SwitchTarget }
+): Promise<Result<void, GitError>> {
+  const args = switchArgs(options.target)
+  if (args === null) return err(new GitError('refused-target', options.cwd))
+  const result = await git(options, args)
+  return result.ok ? ok(undefined) : result
+}
+
+export async function fastForward(options: GitOptions): Promise<Result<void, GitError>> {
+  const result = await git(options, [
+    'merge',
+    '--ff-only',
+    '--no-autostash',
+    '--quiet',
+    '@{upstream}',
+  ])
+  return result.ok ? ok(undefined) : result
+}
+
+export async function fetchedHead(options: GitOptions): Promise<Result<string, GitError>> {
+  const result = await git(options, ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'])
+  return result.ok ? ok(result.value.trim()) : result
 }

@@ -12861,6 +12861,7 @@ html.continuous-row .global-note {
   min-width: 500px;
 }
 
+.git-box,
 .traffic-box,
 .devtools-box,
 .project-terminal-box {
@@ -12871,18 +12872,21 @@ html.continuous-row .global-note {
   min-height: 0;
 }
 
+.git-box .conversation-dock-tab,
 .traffic-box .conversation-dock-tab,
 .devtools-box .conversation-dock-tab,
 .project-terminal-box .conversation-dock-tab {
   cursor: default;
 }
 
+.git-box[data-collapsed='true'] .conversation-dock-tab-main,
 .traffic-box[data-collapsed='true'] .conversation-dock-tab-main,
 .devtools-box[data-collapsed='true'] .conversation-dock-tab-main,
 .project-terminal-box[data-collapsed='true'] .conversation-dock-tab-main {
   padding: 0;
 }
 
+.git-box .conversation-body[hidden],
 .traffic-box .conversation-body[hidden],
 .devtools-box .conversation-body[hidden],
 .project-terminal-box .conversation-body[hidden] {
@@ -13935,11 +13939,172 @@ html.continuous-row .global-note {
  * layout is written in container queries, and they are what makes it readable
  * in a column this narrow.
  */
+.conversation-body > .git-panel,
 .conversation-body > .traffic-panel {
   height: auto;
   margin: 0;
   border: 0;
   border-radius: 0;
+}
+
+.git-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-chrome);
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.git-head {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 3);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.git-branch,
+.git-row-name {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+}
+
+.git-branch {
+  flex: 1 1 100%;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.git-track,
+.git-synced {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.git-row-date {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.git-filter {
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: calc(var(--step) * 3);
+  padding: calc(var(--step) * 2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-control);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.git-filter::placeholder {
+  color: var(--text-placeholder);
+}
+
+.git-filter:focus-visible,
+.git-panel button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.git-branches {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.git-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 3);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.git-row[data-head='true'] {
+  background: var(--bg-surface);
+}
+
+.git-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.git-current,
+.git-elsewhere {
+  color: var(--accent-text);
+}
+
+.git-panel button {
+  flex: 0 0 auto;
+  padding: var(--step) calc(var(--step) * 2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-control);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.git-panel button:hover:not(:disabled) {
+  border-color: var(--accent-text);
+}
+
+.git-panel button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.git-panel .git-elsewhere {
+  color: var(--accent-text);
+}
+
+.git-note,
+.git-failure,
+.git-dirty {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+}
+
+.git-failure {
+  color: var(--danger);
+}
+
+.git-failure p {
+  margin: 0;
+}
+
+.git-error,
+.git-dirty {
+  max-height: 160px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.git-dirty ul {
+  margin: 0;
+  padding-inline-start: calc(var(--step) * 4);
+}
+
+.git-empty {
+  align-items: flex-start;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 3);
 }
 
 /*
