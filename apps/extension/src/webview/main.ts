@@ -259,7 +259,7 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
       status.append(
         message.state === 'restart-required'
           ? waiting === undefined
-            ? messages.extension.engineRestartRequired
+            ? messages.notice.engineRestartRequired
             : messages.extension.engineRestartBusy
                 .replaceAll('{{chats}}', String(waiting.conversations.length))
                 .replaceAll('{{approvals}}', String(waiting.approvals))

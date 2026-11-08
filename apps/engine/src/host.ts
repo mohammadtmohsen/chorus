@@ -1,8 +1,10 @@
 import { homedir } from 'node:os'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, join, posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { AgentIdSchema, Logger } from '@chorus/shared'
 import type { IpcHost, WorkbenchContextReport } from '../../desktop/src/main/ipc-host.js'
 import type { WorkbenchPlace } from '../../desktop/src/main/project-root.js'
 import { WorkbenchContext } from '../../desktop/src/shared/workbench-ipc.js'
@@ -25,11 +27,46 @@ import {
   saveNoteImage,
 } from '../../desktop/src/main/note-image-store.js'
 import messages from '../../desktop/src/renderer/src/i18n/en.json'
-import { enginePersistence } from './state.js'
-import type { PeerRegistry } from './peers.js'
-import { EXTENSION_CAPABILITIES } from '../../desktop/src/shared/host-capabilities.js'
+import { enginePersistence, writeJson } from './state.js'
+import type { EnginePeer, PeerRegistry } from './peers.js'
+import {
+  DESKTOP_CAPABILITIES,
+  EXTENSION_CAPABILITIES,
+} from '../../desktop/src/shared/host-capabilities.js'
 import { ENGINE_VERSION } from './version.js'
 import type { WorkbenchAskDiffResult } from '../../desktop/src/shared/workbench-ipc.js'
+import { OfferedSecret, SecretId as SecretIdSchema } from './protocol.js'
+
+export const SecretHostParams = OfferedSecret.extend({ id: SecretIdSchema })
+export type SecretHostParams = z.infer<typeof SecretHostParams>
+export const ConsoleReadHostParams = z.object({
+  projectId: z.string(),
+  request: z.object({
+    count: z.number().int().positive(),
+    skip: z.number().int().nonnegative(),
+    levels: z.array(z.string()).optional(),
+  }),
+})
+export type ConsoleReadHostParams = z.infer<typeof ConsoleReadHostParams>
+export const ConsoleRunHostParams = z.object({
+  projectId: z.string(),
+  request: z.object({
+    expression: z.string(),
+    timeoutMs: z.number().int().positive(),
+    actor: AgentIdSchema,
+  }),
+})
+export type ConsoleRunHostParams = z.infer<typeof ConsoleRunHostParams>
+export const ConsoleDisposeHostParams = z.object({ projectId: z.string() })
+export type ConsoleDisposeHostParams = z.infer<typeof ConsoleDisposeHostParams>
+
+const SecretRevision = z.object({
+  revision: z.number().int().nonnegative(),
+  set: z.boolean(),
+  legacy: z.enum(['desktop', 'vscode']).nullable().default(null),
+})
+type SecretRevision = z.infer<typeof SecretRevision>
+const SecretRevisions = z.partialRecord(SecretIdSchema, SecretRevision)
 
 const AskDiffResult = z.object({
   requestId: z.string(),
@@ -66,6 +103,12 @@ export class EngineHost implements IpcHost {
   readonly secrets: IpcHost['secrets']
   readonly images: IpcHost['images']
   private readonly keys = new Map<SecretId, string>()
+  private readonly acknowledgedKeys = new Map<SecretId, string>()
+  private readonly revisions = new Map<SecretId, SecretRevision>()
+  private readonly pendingSaves = new Map<
+    SecretId,
+    { readonly token: symbol; readonly value: string | null }[]
+  >()
   private writes: Promise<void> = Promise.resolve()
   private runtime: ChorusRuntime | null = null
   private contextSink: ((report: WorkbenchContextReport) => void) | null = null
@@ -74,9 +117,24 @@ export class EngineHost implements IpcHost {
 
   constructor(
     readonly userDataPath: string,
-    readonly registry: PeerRegistry
+    readonly registry: PeerRegistry,
+    private readonly log: Logger = new Logger()
   ) {
     this.openProjects = enginePersistence(userDataPath)
+    const revisionsPath = join(userDataPath, 'secret-revisions.json')
+    if (existsSync(revisionsPath)) {
+      try {
+        const saved = SecretRevisions.safeParse(
+          JSON.parse(readFileSync(revisionsPath, 'utf8')) as unknown
+        )
+        if (saved.success) {
+          for (const [id, revision] of Object.entries(saved.data))
+            this.revisions.set(SecretIdSchema.parse(id), revision)
+        } else this.log.warn('saved secret revisions were invalid; starting empty')
+      } catch {
+        this.log.warn('saved secret revisions could not be read; starting empty')
+      }
+    }
     this.editor = {
       hasSurface: (place) => {
         const project = this.runtime?.projects.findByPlace(place)
@@ -86,8 +144,14 @@ export class EngineHost implements IpcHost {
           this.registry.clients().some((peer) => peer.projectIds.has(project.id))
         )
       },
-      refreshTerminalEnv: () => undefined,
-      reopenProject: () => undefined,
+      refreshTerminalEnv: () => {
+        for (const peer of this.desktopPeers())
+          void peer.requestHost('editor.refreshTerminalEnv', {}).catch(() => undefined)
+      },
+      reopenProject: (place) => {
+        for (const peer of this.desktopPeers(place))
+          void peer.requestHost('editor.reopenProject', { place }).catch(() => undefined)
+      },
       askDiff: async (root, request) => {
         const project = this.runtime?.projects
           .list()
@@ -263,35 +327,125 @@ export class EngineHost implements IpcHost {
   onCompletionInvalidated(handler: () => void): void {
     this.completionInvalidation = handler
   }
-  loadSecrets(secrets: Partial<Record<SecretId, string | null>>): void {
-    for (const [id, value] of Object.entries(secrets)) {
-      if (value === null) this.keys.delete(id as SecretId)
-      else this.keys.set(id as SecretId, value)
-    }
-    this.completionInvalidation?.()
+  loadSecrets(peer: EnginePeer, secrets: Partial<Record<SecretId, OfferedSecret>>): Promise<void> {
+    return this.queueSecretWrite(async () => {
+      for (const [id, offered] of Object.entries(secrets))
+        await this.reconcile(peer, SecretIdSchema.parse(id), offered)
+    })
   }
   flushSecrets(): Promise<void> {
     return this.writes
   }
-  private updateSecret(id: SecretId, value: string | null): void {
-    const peer = this.registry.choose()
-    const previous = this.keys.get(id)
+  private queueSecretWrite(work: () => void | Promise<void>): Promise<void> {
+    const result = this.writes.catch(() => undefined).then(work)
+    this.writes = result
+    void result.catch(() => undefined)
+    return result
+  }
+  private refreshKey(id: SecretId): void {
+    const pending = this.pendingSaves.get(id)
+    const latest = pending?.[pending.length - 1]
+    const value = latest === undefined ? (this.acknowledgedKeys.get(id) ?? null) : latest.value
     if (value === null) this.keys.delete(id)
     else this.keys.set(id, value)
-    this.writes = this.writes
-      .catch(() => undefined)
-      .then(async () => {
-        if (peer === null) throw new Error('no-connected-window')
+    this.completionInvalidation?.()
+  }
+  private adopt(id: SecretId, offered: OfferedSecret, legacy: SecretRevision['legacy']): void {
+    const revision = { revision: offered.revision, set: offered.value !== null, legacy }
+    const saved = new Map(this.revisions)
+    saved.set(id, revision)
+    writeJson(join(this.userDataPath, 'secret-revisions.json'), Object.fromEntries(saved))
+    this.revisions.set(id, revision)
+    if (offered.value === null) this.acknowledgedKeys.delete(id)
+    else this.acknowledgedKeys.set(id, offered.value)
+    this.refreshKey(id)
+  }
+  private nextRevision(known: { revision: number } | undefined): number {
+    return Math.max(Date.now(), (known?.revision ?? 0) + 1)
+  }
+  private currentSecret(id: SecretId): SecretHostParams | null {
+    const known = this.revisions.get(id)
+    if (known === undefined) return null
+    const value = this.acknowledgedKeys.get(id) ?? null
+    if (known.set && value === null) return null
+    return { id, value, revision: known.revision }
+  }
+  private repair(peer: EnginePeer, id: SecretId): void {
+    const params = this.currentSecret(id)
+    if (params !== null) void peer.requestHost('secret', params).catch(() => undefined)
+  }
+  private fanOut(id: SecretId, source?: EnginePeer): void {
+    for (const peer of this.registry.clients()) if (peer !== source) this.repair(peer, id)
+  }
+  private async reconcile(peer: EnginePeer, id: SecretId, offered: OfferedSecret): Promise<void> {
+    const known = this.revisions.get(id)
+    if (offered.revision === 0) {
+      const desktopWins = peer.client.kind === 'desktop' && known?.legacy === 'vscode'
+      if (known === undefined || desktopWins) {
+        if (offered.value === null && known === undefined) return
+        const migration = { value: offered.value, revision: this.nextRevision(known) }
+        const token = Symbol(id)
+        const pending = this.pendingSaves.get(id) ?? []
+        pending.unshift({ token, value: offered.value })
+        this.pendingSaves.set(id, pending)
+        this.refreshKey(id)
         try {
-          await peer.requestHost('secret', { id, value })
-        } catch (error) {
-          if ((this.keys.get(id) ?? null) === value) {
-            if (previous === undefined) this.keys.delete(id)
-            else this.keys.set(id, previous)
+          const acknowledged = await peer.requestHost('secret', { id, ...migration })
+          if (acknowledged !== migration.revision)
+            throw new Error('secret-revision-not-acknowledged')
+          this.adopt(id, migration, peer.client.kind)
+          this.fanOut(id, peer)
+        } catch {
+          this.log.warn('legacy secret migration was not acknowledged', { secretId: id })
+          if (offered.value !== null) {
+            this.acknowledgedKeys.set(id, offered.value)
+            this.refreshKey(id)
           }
-          throw error
+        } finally {
+          const remaining =
+            this.pendingSaves.get(id)?.filter((entry) => entry.token !== token) ?? []
+          if (remaining.length === 0) this.pendingSaves.delete(id)
+          else this.pendingSaves.set(id, remaining)
+          this.refreshKey(id)
         }
-      })
+      } else this.repair(peer, id)
+      return
+    }
+    const current = known?.revision ?? 0
+    if (offered.revision > current) {
+      this.adopt(id, offered, null)
+      this.fanOut(id, peer)
+    } else if (offered.revision < current) this.repair(peer, id)
+    else if (known?.set === false) {
+      if (offered.value !== null) this.repair(peer, id)
+    } else if (offered.value !== null && !this.acknowledgedKeys.has(id)) {
+      this.acknowledgedKeys.set(id, offered.value)
+      this.refreshKey(id)
+      this.fanOut(id, peer)
+    }
+  }
+  private updateSecret(id: SecretId, value: string | null): void {
+    const peer = this.registry.choose()
+    const token = Symbol(id)
+    const pending = this.pendingSaves.get(id) ?? []
+    pending.push({ token, value })
+    this.pendingSaves.set(id, pending)
+    this.refreshKey(id)
+    void this.queueSecretWrite(async () => {
+      try {
+        if (peer === null) throw new Error('no-connected-window')
+        const revision = this.nextRevision(this.revisions.get(id))
+        const acknowledged = await peer.requestHost('secret', { id, value, revision })
+        if (acknowledged !== revision) throw new Error('secret-revision-not-acknowledged')
+        this.adopt(id, { value, revision }, null)
+        this.fanOut(id)
+      } finally {
+        const remaining = this.pendingSaves.get(id)?.filter((entry) => entry.token !== token) ?? []
+        if (remaining.length === 0) this.pendingSaves.delete(id)
+        else this.pendingSaves.set(id, remaining)
+        this.refreshKey(id)
+      }
+    })
   }
   clients(): ReturnType<PeerRegistry['clients']> {
     return this.registry.clients()
@@ -306,11 +460,13 @@ export class EngineHost implements IpcHost {
     if (client !== null) void client.requestHost('reveal', {}).catch(() => undefined)
   }
   appInfo(): ReturnType<IpcHost['appInfo']> {
+    const peer = this.registry.context.getStore()
+    const client = peer?.client
     return {
-      capabilities: EXTENSION_CAPABILITIES,
-      appVersion: ENGINE_VERSION,
-      electronVersion: '',
-      chromeVersion: '',
+      capabilities: client?.kind === 'desktop' ? DESKTOP_CAPABILITIES : EXTENSION_CAPABILITIES,
+      appVersion: peer?.hello.appVersion ?? ENGINE_VERSION,
+      electronVersion: client?.kind === 'desktop' ? client.electronVersion : '',
+      chromeVersion: client?.kind === 'desktop' ? client.chromeVersion : '',
       nodeVersion: process.versions.node,
       platform: process.platform,
       home: homedir(),
@@ -325,7 +481,16 @@ export class EngineHost implements IpcHost {
   async pickDirectory(
     options: Parameters<IpcHost['pickDirectory']>[0]
   ): ReturnType<IpcHost['pickDirectory']> {
-    const path = await this.windows.pickDirectory({ title: options.buttonLabel })
+    const path = z
+      .string()
+      .nullable()
+      .parse(
+        await this.registry.request('pickDirectory', {
+          title: options.buttonLabel,
+          buttonLabel: options.buttonLabel,
+          createDirectory: options.properties.includes('createDirectory'),
+        })
+      )
     return { canceled: path === null, filePaths: path === null ? [] : [path] }
   }
   notify(request: Parameters<IpcHost['notify']>[0]): void {
@@ -345,14 +510,31 @@ export class EngineHost implements IpcHost {
   invalidateCompletionCredential(): void {
     this.completionInvalidation?.()
   }
-  applyTheme(): void {
-    return
+  private desktopPeers(place?: WorkbenchPlace): EnginePeer[] {
+    const project = place === undefined ? null : this.projectForPlace(place)
+    return this.registry
+      .clients()
+      .filter(
+        (peer) =>
+          peer.client.kind === 'desktop' &&
+          (place === undefined || (project !== null && peer.projectIds.has(project.id)))
+      )
   }
-  prepareProjectClose(): Promise<void> {
-    return Promise.resolve()
+  applyTheme(theme: Parameters<IpcHost['applyTheme']>[0]): void {
+    for (const peer of this.desktopPeers())
+      void peer.requestHost('applyTheme', { theme }).catch(() => undefined)
   }
-  closeProject(): Promise<void> {
-    return Promise.resolve()
+  async prepareProjectClose(place: WorkbenchPlace): Promise<void> {
+    await Promise.all(
+      this.desktopPeers(place).map((peer) =>
+        peer.requestHost('editor.prepareProjectClose', { place })
+      )
+    )
+  }
+  async closeProject(place: WorkbenchPlace): Promise<void> {
+    await Promise.all(
+      this.desktopPeers(place).map((peer) => peer.requestHost('editor.closeProject', { place }))
+    )
   }
   async reveal(
     root: string,

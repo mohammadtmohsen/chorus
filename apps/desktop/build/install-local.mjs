@@ -1,6 +1,19 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir } from 'node:os'
+import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -113,7 +126,17 @@ const isRunning = () => {
  * nothing and breaks nothing: the running copy keeps every file by inode under
  * the new name, and only its path changed.
  */
-const keepRunning = process.env.CHORUS_INSTALL_KEEP_RUNNING === '1'
+const requestedKeepRunning = process.env.CHORUS_INSTALL_KEEP_RUNNING === '1'
+const firstSharedEngineInstall =
+  existsSync(destination) && !existsSync(join(destination, 'Contents', 'Resources', 'engine'))
+const keepRunning = requestedKeepRunning && !firstSharedEngineInstall
+
+if (requestedKeepRunning && firstSharedEngineInstall) {
+  console.log(
+    'install-local: CHORUS_INSTALL_KEEP_RUNNING is unavailable for this upgrade; ' +
+      'the old desktop runtime must quit before the shared engine uses its database.'
+  )
+}
 
 if (isRunning() && !keepRunning) {
   console.log(`quitting the running ${productName}…`)
@@ -144,4 +167,45 @@ if (keepRunning && existsSync(destination)) {
 execFileSync('ditto', [source, destination], { stdio: 'inherit' })
 execFileSync('codesign', ['--verify', '--deep', '--strict', destination], { stdio: 'inherit' })
 
+const { version } = JSON.parse(readFileSync(join(desktopDir, 'package.json'), 'utf8'))
+const dataDirectory = join(homedir(), 'Library', 'Application Support', '@chorus', 'desktop')
+mkdirSync(dataDirectory, { recursive: true, mode: 0o700 })
+const pointer = join(dataDirectory, 'engine-install.json')
+const temporary = `${pointer}.${randomUUID()}.tmp`
+writeFileSync(
+  temporary,
+  `${JSON.stringify({
+    version,
+    executable: join(destination, 'Contents', 'MacOS', 'Chorus'),
+    shipped: join(destination, 'Contents', 'Resources', 'engine'),
+  })}\n`,
+  { mode: 0o600, flag: 'wx' }
+)
+renameSync(temporary, pointer)
+
 console.log(`installed ${destination}`)
+
+const code = [
+  ...(process.env.PATH ?? '').split(delimiter).map((directory) => join(directory, 'code')),
+  '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code',
+].find((candidate) => {
+  try {
+    accessSync(candidate, constants.X_OK)
+    return statSync(candidate).isFile()
+  } catch {
+    return false
+  }
+})
+
+if (code === undefined) {
+  console.log('install-local: VS Code CLI not found; the desktop app is installed.')
+} else {
+  const vsix = join(
+    desktopDir,
+    '..',
+    'extension',
+    'dist',
+    `chorus-${version}-darwin-${process.arch}.vsix`
+  )
+  execFileSync(code, ['--install-extension', vsix], { stdio: 'inherit' })
+}

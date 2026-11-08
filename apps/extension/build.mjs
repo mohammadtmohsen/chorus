@@ -1,5 +1,4 @@
 import { build } from 'esbuild'
-import { copyFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const root = import.meta.dirname
@@ -29,5 +28,3 @@ await build({
   format: 'cjs',
   target: 'node24',
 })
-mkdirSync(resolve(root, 'dist'), { recursive: true })
-copyFileSync(resolve(root, '../engine/dist/engine.cjs'), resolve(root, 'dist/engine.cjs'))

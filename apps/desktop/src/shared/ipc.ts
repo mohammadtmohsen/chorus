@@ -1364,6 +1364,24 @@ export const IPC_CONTRACT = {
     response: z.object({ projects: z.array(ListedProject) }),
   },
 
+  'workbench:target': {
+    request: z.object({ projectId: z.string() }),
+    response: z.object({ host: z.string(), root: z.string() }),
+  },
+
+  'workbench:projectOpened': {
+    request: z.object({ projectId: z.string() }),
+    response: z.object({ ok: z.literal(true) }),
+  },
+
+  'workbench:terminalEnvFor': {
+    request: z.object({
+      place: z.object({ host: z.string(), root: z.string() }),
+      ensure: z.boolean().optional(),
+    }),
+    response: z.object({ name: z.string(), value: z.string() }).nullable(),
+  },
+
   'project:rename': {
     request: z.object({ projectId: z.string(), name: z.string() }),
     response: z.object({ name: z.string() }),
@@ -2370,6 +2388,7 @@ export const ConversationNotePush = z
 export type ConversationNotePush = z.infer<typeof ConversationNotePush>
 
 export const CONVERSATION_NOTE_JOURNAL_CHANNEL = 'conversation:noteJournal'
+export const CONVERSATION_NOTE_JOURNAL_ASYNC_CHANNEL = 'conversation:noteJournalAsync'
 export const CONVERSATION_NOTE_JOURNAL_PUSH_CHANNEL = 'conversation:noteJournalChanged'
 
 export const CONVERSATION_NOTE_JOURNAL_MAX_LENGTH = CONVERSATION_NOTE_MAX_LENGTH * 6 + 1_024
@@ -2400,6 +2419,36 @@ export const ConversationNoteJournalResponse = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), error: z.string().max(512) }).strict(),
 ])
 export type ConversationNoteJournalResponse = z.infer<typeof ConversationNoteJournalResponse>
+
+export const SHELL_PRESENCE_CHANNEL = 'shell:presence'
+export const ENGINE_STATUS_CHANNEL = 'engine:status'
+export const ENGINE_UPDATE_CHANNEL = 'engine:update'
+
+export const ShellPresence = z
+  .object({
+    projectIds: z.array(z.string()),
+    focusedProjectId: z.string().nullable(),
+    attentive: z.boolean(),
+    visible: z.boolean(),
+  })
+  .strict()
+export type ShellPresence = z.infer<typeof ShellPresence>
+
+export const EngineStatus = z
+  .object({
+    state: z.enum(['connecting', 'connected', 'reconnecting', 'stopped', 'restart-required']),
+  })
+  .strict()
+export type EngineStatus = z.infer<typeof EngineStatus>
+
+export const EngineUpdate = z.object({ version: z.string(), build: z.string() }).strict()
+export type EngineUpdate = z.infer<typeof EngineUpdate>
+
+export interface DesktopShellApi {
+  presence(report: ShellPresence): void
+  onEngineStatus(listener: (status: EngineStatus) => void): () => void
+  onEngineUpdate(listener: (update: EngineUpdate) => void): () => void
+}
 
 export const REVEAL_PUSH_CHANNEL = 'conversation:revealed'
 

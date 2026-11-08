@@ -1,4 +1,4 @@
-import { onHostProjectAdopted } from './host-actions.js'
+import { hostReconnected, onHostProjectAdopted } from './host-actions.js'
 import { diagnosticStaging } from './diagnostic-staging.js'
 import { useHostCapabilities } from './host-context.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -179,6 +179,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   const seen = useRef<Readonly<Record<string, number>>>({})
   const seenTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  const [engineRestartRequired, setEngineRestartRequired] = useState(false)
   const detachedVisibility = useRef(
     new Map<
       string,
@@ -200,6 +201,77 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   const [restoring, setRestoring] = useState(true)
   const [restored, setRestored] = useState(false)
   const [zoom, setZoom] = useState<number | null>(null)
+
+  useEffect(() => {
+    const desktop = window.chorusDesktop
+    if (desktop === undefined) return undefined
+    let wasConnected = false
+    let hasConnected = false
+    const stopStatus = desktop.onEngineStatus(({ state }) => {
+      const connected = state === 'connected'
+      const reconnected = connected && !wasConnected && hasConnected
+      wasConnected = connected
+      if (connected || state === 'restart-required') hasConnected = true
+      if (reconnected) hostReconnected()
+      if (state === 'restart-required') setEngineRestartRequired(true)
+      else if (connected) setEngineRestartRequired(false)
+    })
+    const stopUpdate = desktop.onEngineUpdate(() => {
+      setEngineRestartRequired(true)
+    })
+    return () => {
+      stopStatus()
+      stopUpdate()
+    }
+  }, [])
+
+  useEffect(() => {
+    const desktop = window.chorusDesktop
+    if (desktop === undefined) return undefined
+    let lastReport = ''
+    const report = (): void => {
+      const state = useWorkspaceStore.getState()
+      const projectIds =
+        role.kind === 'detached'
+          ? [role.projectId]
+          : [...new Set(Object.values(state.panes).flatMap((pane) => pane.tabs))]
+      const focusedProjectId =
+        role.kind === 'detached'
+          ? role.projectId
+          : state.focusedPaneId === null
+            ? null
+            : (state.panes[state.focusedPaneId]?.activeTabId ?? null)
+      const visible = document.visibilityState === 'visible'
+      const presence = {
+        projectIds,
+        focusedProjectId,
+        attentive: visible && document.hasFocus(),
+        visible,
+      }
+      const encoded = JSON.stringify(presence)
+      if (encoded === lastReport) return
+      lastReport = encoded
+      desktop.presence(presence)
+    }
+    report()
+    const stop = useWorkspaceStore.subscribe(
+      (state) => ({ panes: state.panes, focusedPaneId: state.focusedPaneId }),
+      report,
+      {
+        equalityFn: (left, right) =>
+          left.panes === right.panes && left.focusedPaneId === right.focusedPaneId,
+      }
+    )
+    window.addEventListener('focus', report)
+    window.addEventListener('blur', report)
+    document.addEventListener('visibilitychange', report)
+    return () => {
+      stop()
+      window.removeEventListener('focus', report)
+      window.removeEventListener('blur', report)
+      document.removeEventListener('visibilitychange', report)
+    }
+  }, [role])
 
   /*
    * What the detached windows say they are showing, and only while one of them
@@ -1793,6 +1865,19 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
 
   const toastStack = <ToastStack />
 
+  const notice = error ?? (engineRestartRequired ? t('notice.engineRestartRequired') : null)
+  const topLevelNotice =
+    notice === null ? null : (
+      <ErrorNotice
+        message={notice}
+        className="notice--workspace"
+        onDismiss={() => {
+          setError(null)
+          setEngineRestartRequired(false)
+        }}
+      />
+    )
+
   const sheets = (
     <>
       {/*
@@ -1856,7 +1941,12 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   )
 
   if (restoring) {
-    return <div className="empty" aria-busy="true" />
+    return (
+      <>
+        <div className="empty" aria-busy="true" />
+        {topLevelNotice}
+      </>
+    )
   }
   /*
    * No projects yet: the first-launch screen, and the only way out of it.
@@ -1874,6 +1964,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   if (sessions.length === 0 && projects.length === 0 && error === null) {
     return (
       <>
+        {topLevelNotice}
         <div className="empty">
           <ChorusLogo label={t('app.name')} />
           <h1>{t('app.name')}</h1>
@@ -1916,6 +2007,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   if (sessions.length === 0 && (projects.length === 0 || noAgentInstalled(probes))) {
     return (
       <>
+        {error === null && topLevelNotice}
         <Stuck
           error={error}
           starting={starting}
@@ -1957,15 +2049,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   if (role.kind === 'detached') {
     return (
       <div className="stage">
-        {error !== null && (
-          <ErrorNotice
-            message={error}
-            className="notice--workspace"
-            onDismiss={() => {
-              setError(null)
-            }}
-          />
-        )}
+        {topLevelNotice}
         {stopping && (
           <p className="notice notice--workspace notice--closing" role="status">
             {t('workspace.stopping')}
@@ -2053,15 +2137,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
         />
       )}
 
-      {error !== null && (
-        <ErrorNotice
-          message={error}
-          className="notice--workspace"
-          onDismiss={() => {
-            setError(null)
-          }}
-        />
-      )}
+      {topLevelNotice}
 
       {stopping && (
         <p className="notice notice--workspace notice--closing" role="status">

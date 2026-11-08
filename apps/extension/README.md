@@ -10,16 +10,26 @@ replace them, and it does not send your account through anyone's server.
 
 ## Install
 
-Chorus is a private VSIX on GitHub Releases. Download the VSIX for your machine, then install it:
+Chorus for VS Code runs on the engine inside the Chorus app, so the app must be installed, at the
+same version. From the repository, one command installs both:
+
+```bash
+pnpm app:install
+```
+
+From a release, install the Chorus app, then the VSIX of the same version for your machine:
 
 ```bash
 code --install-extension chorus-<version>-darwin-arm64.vsix
 ```
 
+The app and the extension share one engine and one history: projects, chats, notes and API keys
+are the same in both. If their versions differ, the extension says so and does not connect.
+
 To show websites, install Google Chrome, Chromium or Microsoft Edge. Chorus uses its own browser
 profile, with one sign-in shared across projects.
 
-A VSIX does not update itself. To update, install the newer VSIX the same way.
+A VSIX does not update itself. `pnpm app:install` updates both; from a release, install both again.
 
 ## Start
 
@@ -45,8 +55,9 @@ whatever folder VS Code opened.
 While the Chorus side bar has focus, its shortcuts work as they do in the desktop app. VS Code does not also
 act on them.
 
-Chats keep running if you reload the window or close it. The engine stops by itself five minutes after
-the last window closes, once nothing is running and nothing is waiting on you.
+Chats keep running if you reload the window or close it, and if you quit the Chorus app. The engine
+stops by itself five minutes after the last window closes, in VS Code or the app, once nothing is
+running and nothing is waiting on you.
 
 ## What differs from the desktop app
 
@@ -56,7 +67,6 @@ the last window closes, once nothing is running and nothing is waiting on you.
   **Chorus: Open Markdown Preview**, which does.
 - Dragging a folder in from Finder has no path. Use the `+` menu. Files work.
 - A plain VS Code terminal does not get a project's Traffic variable. A project terminal does.
-- API keys stored by the desktop app are not readable here, so enter them again in Settings.
 - If the same project's terminal is open in two windows, the newest window controls it.
 
 ## Opening at the disk root

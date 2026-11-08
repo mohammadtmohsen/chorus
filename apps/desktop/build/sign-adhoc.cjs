@@ -35,6 +35,25 @@ function repairSpawnHelper(app) {
   }
 }
 
+function assertEngineSpawnHelper(app) {
+  const root = join(app, 'Contents/Resources/engine/node_modules/node-pty')
+  const directory = [
+    join(root, 'build', 'Release'),
+    join(root, 'build', 'Debug'),
+    join(root, 'prebuilds', `darwin-${process.arch}`),
+  ].find((path) => existsSync(join(path, 'pty.node')))
+  if (directory === undefined) {
+    throw new Error(`node-pty native binding missing from the engine: ${root}`)
+  }
+  const helper = join(directory, 'spawn-helper')
+  if (!existsSync(helper)) {
+    throw new Error(`spawn-helper missing from the engine: ${helper}`)
+  }
+  if ((statSync(helper).mode & 0o111) === 0) {
+    throw new Error(`Engine spawn-helper is not executable: ${helper}`)
+  }
+}
+
 /**
  * `codesign` over the packed .app — ad-hoc, or with a named identity.
  *
@@ -59,6 +78,7 @@ exports.default = async function signAdHoc({ appOutDir, packager, electronPlatfo
 
   const app = join(appOutDir, `${packager.appInfo.productFilename}.app`)
   repairSpawnHelper(app)
+  assertEngineSpawnHelper(app)
 
   const identity = process.env.CHORUS_SIGN_IDENTITY
   const signWith = identity === undefined || identity === '' ? '-' : identity

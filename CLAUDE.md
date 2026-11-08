@@ -62,12 +62,17 @@ shell** — two, in fact, and they are different things:
 ## Commands
 
 ```bash
-pnpm dev       # electron-vite dev — restarts the main process on its own sources
+pnpm dev       # builds the engine, then electron-vite dev — restarts main on its own sources
 pnpm check     # typecheck + lint + format:check + test. Run this before saying done.
 pnpm test      # vitest only
 pnpm e2e       # builds the desktop app and drives it with Playwright
-pnpm app:install   # packages and installs the local build
+pnpm app:install   # packages and installs the app and the VS Code extension, one version
 ```
+
+**Runtime code runs in the engine, not in desktop main** (plan 87). `pnpm dev` does not
+rebuild it: after changing anything the engine bundles — `runtime.ts`, `ipc-handlers.ts`,
+`packages/*` — run `pnpm --filter @chorus/engine build` and restart the app, and the idle dev
+engine is replaced.
 
 `pnpm check` is the gate. It is fast (~40s warm) and there is no reason to skip
 it.
@@ -196,8 +201,8 @@ it is still excluded, for two reasons that are not that test:
   the permission engine treats as secret. A terminal is the sharpest instance —
   `cat .env`, `env`, `aws configure`, a pasted token — and nothing scrubs a shell.
 
-Scrollback lives in a bounded `@xterm/headless` mirror in main, is replayed to a
-view on attach, and goes when the app does.
+Scrollback lives in a bounded `@xterm/headless` mirror in the engine, is replayed to a
+view on attach, and goes when the engine does.
 
 ## Where things live
 
@@ -212,11 +217,15 @@ packages/workspace        path helpers and `parseDiff`. **Not** a git UI any mor
                           what is left is load-bearing: `parseDiff` draws the
                           transcript's diff cards, `resolveWithinRoot`,
                           `canonicalRoot` and `projectRelativePath` guard main.
-apps/desktop/src/main     Electron main: runtime, IPC, windows, terminal.ts,
-                          workbench-surface.ts (the views), workbench-host.ts (the REH),
-                          project-service.ts (the registry over event-store)
-apps/engine               the VS Code extension's long-lived process: the real ChorusRuntime
-                          and IPC handlers over an authenticated socket. Imports apps/desktop/src
+apps/desktop/src/main     Electron main: one engine client per window, the IPC relay, windows,
+                          workbench-surface.ts (the views), workbench-host.ts (the REH), the
+                          desktop browser. runtime.ts, terminal.ts and project-service.ts live
+                          here as source but run inside the engine
+apps/engine               the only process that opens the event log: the real ChorusRuntime and
+                          IPC handlers over an authenticated socket, shared by the desktop app
+                          and the VS Code extension. Ships inside Chorus.app (Resources/engine)
+                          and runs on its binary as Node. Imports apps/desktop/src. Plan:
+                          docs/plans/87-one-install-one-database.md
 apps/extension            the VS Code host: relay, ports over VS Code APIs, one webview running
                           the real renderer. PARITY in src/parity.ts classifies every ChorusApi
                           method, so a new one does not compile until it is decided. Live drivers

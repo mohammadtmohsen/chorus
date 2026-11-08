@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
@@ -11,6 +11,16 @@ import type { WorkspaceSnapshot } from '../../desktop/src/shared/workspace-layou
 import type { ChorusRuntime } from '../../desktop/src/main/runtime.js'
 
 const Storage = z.record(z.string(), z.string())
+
+export const DESKTOP_WORKSPACE_KEY = 'chorus-desktop'
+
+export function desktopClientDirectory(dataDirectory: string): string {
+  return join(
+    dataDirectory,
+    'clients',
+    createHash('sha256').update(DESKTOP_WORKSPACE_KEY).digest('hex')
+  )
+}
 
 function readJson(path: string): unknown {
   try {
@@ -26,6 +36,17 @@ export function writeJson(path: string, value: unknown): void {
   renameSync(temporary, path)
 }
 
+export function seedFromDesktop(dataDirectory: string): void {
+  const sessions = join(dataDirectory, 'engine-sessions.json')
+  const desktop = join(dataDirectory, 'open-projects.json')
+  if (existsSync(sessions) || !existsSync(desktop)) return
+  const saved = parseOpenProjects(readJson(desktop))
+  const directory = desktopClientDirectory(dataDirectory)
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  writeJson(join(directory, 'open-projects.json'), OpenProjectsFile.parse({ version: 1, ...saved }))
+  writeJson(sessions, OpenProjectsFile.parse({ version: 1, ...saved, workspace: null }))
+}
+
 export class ClientState {
   readonly directory: string
   readonly conversationIds: Set<string>
@@ -34,7 +55,10 @@ export class ClientState {
 
   constructor(dataDirectory: string, key: string) {
     const name = createHash('sha256').update(key).digest('hex')
-    this.directory = join(dataDirectory, 'clients', name)
+    this.directory =
+      key === DESKTOP_WORKSPACE_KEY
+        ? desktopClientDirectory(dataDirectory)
+        : join(dataDirectory, 'clients', name)
     mkdirSync(this.directory, { recursive: true, mode: 0o700 })
     const saved = parseOpenProjects(readJson(join(this.directory, 'open-projects.json')))
     this.workspace = saved.workspace

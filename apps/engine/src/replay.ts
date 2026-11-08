@@ -63,9 +63,20 @@ export function replayEvents(
   peer: EnginePeer,
   afterSeq: number
 ): Promise<void> {
-  const ids = new Set(peer.state.conversationIds)
-  for (const id of peer.state.conversationIds)
-    for (const aside of runtime.listAsides(id)) ids.add(aside.id)
+  const role = peer.role
+  const ids = new Set(
+    role.kind === 'main'
+      ? peer.state.conversationIds
+      : runtime
+          .activeSessions()
+          .filter(
+            (session) =>
+              session.projectId === role.projectId &&
+              peer.state.conversationIds.has(session.conversationId)
+          )
+          .map((session) => session.conversationId)
+  )
+  for (const id of [...ids]) for (const aside of runtime.listAsides(id)) ids.add(aside.id)
   const throughSeq = runtime.logPosition()
   return peer.replay(throughSeq, ids, () => batches(runtime, ids, afterSeq, throughSeq))
 }

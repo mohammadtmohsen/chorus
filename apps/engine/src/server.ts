@@ -1,11 +1,21 @@
 import { readSettings } from '../../desktop/src/main/settings.js'
-import { chmodSync, existsSync, unlinkSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  watch,
+  type FSWatcher,
+} from 'node:fs'
 import { createServer, type Socket } from 'node:net'
+import { join } from 'node:path'
 import { z } from 'zod'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { AgentAdapter } from '@chorus/agent-protocol'
 import { Logger, type AgentId } from '@chorus/shared'
-import { ChorusRuntime } from '../../desktop/src/main/runtime.js'
+import { ChorusRuntime, type ProjectConsoles } from '../../desktop/src/main/runtime.js'
 import { TrafficIpc } from '../../desktop/src/main/traffic-ipc.js'
 import { RunIpc } from '../../desktop/src/main/run-ipc.js'
 import { ConsoleIpc } from '../../desktop/src/main/console-ipc.js'
@@ -40,8 +50,15 @@ import {
   type ServerMessage,
 } from './protocol.js'
 import { acquireDirectoryLock, socketPathFor } from './lock.js'
-import { ClientState } from './state.js'
-import { removeDescriptor, writeDescriptor } from './descriptor.js'
+import { ClientState, seedFromDesktop } from './state.js'
+import {
+  buildOf,
+  compareVersions,
+  readEngineInstall,
+  removeDescriptor,
+  writeDescriptor,
+} from './descriptor.js'
+import { ENGINE_VERSION } from './version.js'
 import { EnginePeer, PeerRegistry } from './peers.js'
 import { FrameReader } from './wire.js'
 import { replayEvents } from './replay.js'
@@ -54,7 +71,6 @@ export interface ServeOptions {
   readonly log?: Logger
   readonly adapters?: Map<AgentId, AgentAdapter>
   readonly idleTimeoutMs?: number
-  readonly runtimeVersion?: string
   readonly beforeOpen?: () => Promise<void>
 }
 
@@ -66,10 +82,12 @@ export async function serveEngine(
   const lock = acquired
   const log = options.log ?? new Logger()
   const registry = new PeerRegistry()
-  const host = new EngineHost(options.dataDirectory, registry)
+  let host: EngineHost
   let runtime: ChorusRuntime
   try {
     await options.beforeOpen?.()
+    seedFromDesktop(options.dataDirectory)
+    host = new EngineHost(options.dataDirectory, registry, log)
     runtime = ChorusRuntime.open(host, log, options.adapters, { deferRestoredAgents: true })
     host.attach(runtime)
     await runtime.restoreOpenConversations()
@@ -124,7 +142,31 @@ export async function serveEngine(
     registrar
   )
   const consoles = new BrowserConsoles({ preferredOwner: (id) => registry.choose(id) })
-  runtime.attachBrowserConsoles(consoles)
+  const desktopFor = (projectId: string): EnginePeer | null => {
+    const peer = registry.chooseByFocus(projectId)
+    return peer?.client.kind === 'desktop' ? peer : null
+  }
+  const routed: ProjectConsoles = {
+    read: (projectId, request) => {
+      const peer = desktopFor(projectId)
+      return peer === null
+        ? registry.context.exit(() => Promise.resolve(consoles.read(projectId, request)))
+        : peer.requestHost('console.read', { projectId, request }).then(String)
+    },
+    run: (projectId, request) => {
+      const peer = desktopFor(projectId)
+      return peer === null
+        ? registry.context.exit(() => consoles.run(projectId, request))
+        : peer.requestHost('console.run', { projectId, request }).then(String)
+    },
+    dispose: (projectId) => {
+      consoles.dispose(projectId)
+      for (const peer of registry.clients())
+        if (peer.client.kind === 'desktop')
+          void peer.requestHost('console.dispose', { projectId }).catch(() => undefined)
+    },
+  }
+  runtime.attachBrowserConsoles(routed)
   const consoleIpc = new ConsoleIpc(
     { consoles, isAdopted: (id) => runtime.projects.get(id) !== null },
     registrar
@@ -186,7 +228,7 @@ export async function serveEngine(
   const descriptor: EngineDescriptor = {
     protocol: PROTOCOL_VERSION,
     build: options.build,
-    runtimeVersion: options.runtimeVersion ?? process.versions.node,
+    appVersion: ENGINE_VERSION,
     generation: lock.generation,
     token: randomBytes(32).toString('hex'),
     socketPath,
@@ -198,6 +240,59 @@ export async function serveEngine(
   let closing: Promise<void> | null = null
   let idleSince: number | null = Date.now()
   const connections = new Set<Socket>()
+  let installWatcher: FSWatcher | null = null
+  let cleanupTimer: ReturnType<typeof setTimeout> | null = null
+  let shutdownTimer: ReturnType<typeof setTimeout> | null = null
+  let idle: ReturnType<typeof setInterval> | null = null
+  let welcomed = false
+
+  const installedRuntime = (): { version: string; build: string } | null => {
+    const install = readEngineInstall(options.dataDirectory)
+    if (install === null) return null
+    return { version: install.version, build: buildOf(install.shipped) }
+  }
+
+  const publishUpdate = (): void => {
+    try {
+      const installed = installedRuntime()
+      if (installed === null || installed.build === descriptor.build) return
+      for (const peer of registry.clients()) peer.send('engine:update', installed)
+    } catch (error) {
+      log.warn('engine install pointer could not be read', { error: String(error) })
+    }
+  }
+
+  const cleanupRuntimes = (): void => {
+    cleanupTimer = null
+    const directory = join(options.dataDirectory, 'engine-runtime')
+    try {
+      const installed = installedRuntime()
+      if (installed === null || !lstatSync(directory).isDirectory()) return
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (
+          !entry.isDirectory() ||
+          entry.name === descriptor.build ||
+          entry.name === installed.build
+        )
+          continue
+        const path = join(directory, entry.name)
+        try {
+          const stat = lstatSync(path)
+          if (!stat.isDirectory()) continue
+          if (entry.name.endsWith('.tmp')) {
+            if (Date.now() - Math.max(stat.mtimeMs, stat.ctimeMs, stat.birthtimeMs) <= 3_600_000)
+              continue
+          } else if (!/^[a-f0-9]{64}$/.test(entry.name)) continue
+          rmSync(path, { recursive: true, force: true })
+        } catch (error) {
+          log.warn('engine runtime copy could not be removed', { path, error: String(error) })
+        }
+      }
+    } catch (error) {
+      if (existsSync(directory))
+        log.warn('engine runtime cleanup could not complete', { error: String(error) })
+    }
+  }
 
   const answer = (peer: EnginePeer, id: string, work: () => Promise<unknown>): void => {
     const key = `${peer.hello.workspaceKey}:${peer.hello.clientId}:${id}`
@@ -233,6 +328,9 @@ export async function serveEngine(
     const handler = registered.get(channel)
     if (handler === undefined) throw new Error('channel-refused')
     if (channel === 'conversation:layout') {
+      if (peer.role.kind !== 'main') {
+        return { ok: true }
+      }
       const request = IPC_CONTRACT['conversation:layout'].request.parse(raw)
       peer.state.workspace = WorkspaceSnapshot.parse(request.workspace)
       for (const id of request.order) peer.state.conversationIds.add(id)
@@ -241,19 +339,30 @@ export async function serveEngine(
     }
     if (channel === 'conversation:restore') {
       await handler({ sender: peer, isMainFrame: true }, raw)
+      const role = peer.role
       return {
         sessions: runtime
           .activeSessions()
-          .filter((session) => peer.state.conversationIds.has(session.conversationId)),
-        workspace: peer.state.workspace,
+          .filter(
+            (session) =>
+              peer.state.conversationIds.has(session.conversationId) &&
+              (role.kind === 'main' || session.projectId === role.projectId)
+          ),
+        workspace: role.kind === 'main' ? peer.state.workspace : null,
       }
     }
-    if (channel === 'conversation:active')
+    if (channel === 'conversation:active') {
+      const role = peer.role
       return {
         sessions: runtime
           .activeSessions()
-          .filter((session) => peer.state.conversationIds.has(session.conversationId)),
+          .filter(
+            (session) =>
+              peer.state.conversationIds.has(session.conversationId) &&
+              (role.kind === 'main' || session.projectId === role.projectId)
+          ),
       }
+    }
     const request =
       channel === 'console:evaluate'
         ? CONSOLE_CONTRACT['console:evaluate'].request.parse(raw)
@@ -304,6 +413,12 @@ export async function serveEngine(
       channel === 'project:forget'
     )
       peer.state.remember(runtime)
+    if (
+      channel.startsWith('project:') &&
+      channel !== 'project:list' &&
+      channel !== 'project:checkRemoteHost'
+    )
+      for (const client of registry.clients()) client.send('projects:changed', {})
     return result
   }
 
@@ -340,12 +455,17 @@ export async function serveEngine(
         if (
           message.protocol !== descriptor.protocol ||
           message.build !== descriptor.build ||
-          message.runtimeVersion !== descriptor.runtimeVersion
+          compareVersions(message.appVersion, descriptor.appVersion) < 0
         ) {
           const { token: _token, ...publicDescriptor } = descriptor
           const activity = runtime.activeWork()
           peer.write({ kind: 'restartRequired', descriptor: publicDescriptor, activity })
-          if (!activity.busy || message.protocol !== descriptor.protocol) return
+          if (
+            !activity.busy ||
+            message.protocol !== descriptor.protocol ||
+            message.appVersion !== descriptor.appVersion
+          )
+            return
         }
         for (const previous of registry.peers)
           if (
@@ -355,11 +475,13 @@ export async function serveEngine(
             previous.socket.destroy()
         peer.ready = true
         registry.peers.add(peer)
-        host.loadSecrets(message.secrets)
-        traffic.registerShell(peer, { kind: 'main' })
-        run.registerShell(peer, { kind: 'main' })
-        consoleIpc.registerShell(peer, { kind: 'main' })
-        browser.registerShell(peer, { kind: 'main' })
+        void host.loadSecrets(peer, message.secrets).catch(() => {
+          socket.destroy()
+        })
+        traffic.registerShell(peer, peer.role)
+        run.registerShell(peer, peer.role)
+        consoleIpc.registerShell(peer, peer.role)
+        browser.registerShell(peer, peer.role)
         peer.write({
           kind: 'welcome',
           generation: descriptor.generation,
@@ -367,6 +489,11 @@ export async function serveEngine(
           activity: runtime.activeWork(),
           storage: state.storage,
         })
+        if (!welcomed) {
+          welcomed = true
+          cleanupTimer = setTimeout(cleanupRuntimes, 60_000)
+          cleanupTimer.unref()
+        }
         peer.send(ATTENTION_ROOMS_CHANNEL, runtime.attentionRooms())
         if (!message.cold)
           void replayEvents(runtime, peer, message.lastSeq).catch(() => {
@@ -382,7 +509,8 @@ export async function serveEngine(
       if (message.kind === 'shutdown') {
         answer(current, message.id, () => {
           if (runtime.activeWork().busy) return Promise.reject(new Error('engine-busy'))
-          setTimeout(() => {
+          shutdownTimer ??= setTimeout(() => {
+            shutdownTimer = null
             void close()
           }, 50)
           return Promise.resolve({ ok: true })
@@ -413,8 +541,13 @@ export async function serveEngine(
           }
           break
         case 'secret':
-          host.loadSecrets({ [message.secretId]: message.value })
-          host.invalidateCompletionCredential()
+          void host
+            .loadSecrets(current, {
+              [message.secretId]: { value: message.value, revision: message.revision },
+            })
+            .catch(() => {
+              socket.destroy()
+            })
           break
         case 'editorContext':
           host.reportContext(message.report)
@@ -459,6 +592,7 @@ export async function serveEngine(
           answer(current, message.id, () => {
             const { project, created } = runtime.projects.adopt(message.path)
             current.projectIds.add(project.id)
+            for (const client of registry.clients()) client.send('projects:changed', {})
             return Promise.resolve({
               project: { id: project.id, name: project.name, root: project.root, created },
             })
@@ -506,32 +640,49 @@ export async function serveEngine(
       }
     })
   })
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(socketPath, resolve)
-  }).catch(async (error: unknown) => {
-    await runtime.close()
-    lock.release()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socketPath, resolve)
+    })
+    if (process.platform !== 'win32') chmodSync(socketPath, 0o600)
+    writeDescriptor(options.dataDirectory, descriptor)
+    installWatcher = watch(options.dataDirectory, (_event, filename) => {
+      if (filename === null || filename === 'engine-install.json') publishUpdate()
+    })
+    installWatcher.on('error', (error) => {
+      log.warn('engine install pointer watcher failed', { error: String(error) })
+      installWatcher?.close()
+      installWatcher = null
+    })
+    installWatcher.unref()
+    const idleTimeout = options.idleTimeoutMs ?? 300_000
+    idle = setInterval(
+      () => {
+        if (registry.clients().length > 0 || runtime.activeWork().busy) {
+          idleSince = null
+          return
+        }
+        idleSince ??= Date.now()
+        if (Date.now() - idleSince >= idleTimeout) void close()
+      },
+      Math.min(1000, Math.max(20, idleTimeout / 2))
+    )
+    idle.unref()
+  } catch (error) {
+    await close()
     throw error
-  })
-  if (process.platform !== 'win32') chmodSync(socketPath, 0o600)
-  writeDescriptor(options.dataDirectory, descriptor)
-  const idleTimeout = options.idleTimeoutMs ?? 300_000
-  const idle = setInterval(
-    () => {
-      if (registry.clients().length > 0 || runtime.activeWork().busy) {
-        idleSince = null
-        return
-      }
-      idleSince ??= Date.now()
-      if (Date.now() - idleSince >= idleTimeout) void close()
-    },
-    Math.min(1000, Math.max(20, idleTimeout / 2))
-  )
-  idle.unref()
+  }
   function close(): Promise<void> {
     closing ??= (async () => {
-      clearInterval(idle)
+      if (idle !== null) clearInterval(idle)
+      idle = null
+      installWatcher?.close()
+      installWatcher = null
+      if (cleanupTimer !== null) clearTimeout(cleanupTimer)
+      cleanupTimer = null
+      if (shutdownTimer !== null) clearTimeout(shutdownTimer)
+      shutdownTimer = null
       for (const state of states.values()) state.remember(runtime)
       for (const stop of stops) stop()
       for (const socket of connections) socket.destroy()

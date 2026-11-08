@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { diagnosticParams } from '@chorus/ide-protocol/protocol'
 import { WorkbenchContext } from '../../desktop/src/shared/workbench-ipc.js'
+import { WindowRole } from '../../desktop/src/shared/detached-window-ipc.js'
 
-export const PROTOCOL_VERSION = 2
+export const PROTOCOL_VERSION = 3
 export const MAX_FRAME_BYTES = 64 * 1024 * 1024
 export const PERSON_PACED_CHANNELS: ReadonlySet<string> = new Set([
   'project:adopt',
@@ -24,6 +25,7 @@ export const SecretId = z.enum([
   'completion-deepseek',
   'completion-codestral',
 ])
+export type SecretId = z.infer<typeof SecretId>
 export const ATTENTION_ROOMS_CHANNEL = 'host:attentionRooms'
 export const AttentionRoom = z.object({
   conversationId: z.string(),
@@ -43,10 +45,24 @@ export const EngineActivity = z.object({
   busy: z.boolean(),
 })
 export type EngineActivity = z.infer<typeof EngineActivity>
+export const EngineClientKind = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('vscode') }),
+  z.object({
+    kind: z.literal('desktop'),
+    electronVersion: z.string(),
+    chromeVersion: z.string(),
+  }),
+])
+export type EngineClientKind = z.infer<typeof EngineClientKind>
+export const OfferedSecret = z.object({
+  value: z.string().max(65536).nullable(),
+  revision: z.number().int().nonnegative(),
+})
+export type OfferedSecret = z.infer<typeof OfferedSecret>
 export const EngineDescriptor = z.object({
   protocol: z.number().int(),
   build: z.string(),
-  runtimeVersion: z.string(),
+  appVersion: z.string(),
   generation: z.string(),
   token: z.string().regex(/^[a-f0-9]{64}$/),
   socketPath: z.string(),
@@ -58,12 +74,14 @@ export const Hello = z.object({
   token: z.string(),
   protocol: z.number().int(),
   build: z.string(),
-  runtimeVersion: z.string(),
+  appVersion: z.string(),
+  client: EngineClientKind,
+  role: WindowRole,
   clientId: z.string().min(1).max(200),
   workspaceKey: z.string().min(1).max(1000),
   workspaceFolders: z.array(z.string().max(8192)).max(100),
   trusted: z.boolean(),
-  secrets: z.record(SecretId, z.string().max(65536).nullable()),
+  secrets: z.record(SecretId, OfferedSecret),
   lastSeq: z.number().int().nonnegative().default(0),
   cold: z.boolean().default(false),
 })
@@ -104,6 +122,7 @@ export const ClientMessage = z.discriminatedUnion('kind', [
     kind: z.literal('secret'),
     secretId: SecretId,
     value: z.string().max(65536).nullable(),
+    revision: z.number().int().nonnegative(),
   }),
   z.object({ kind: z.literal('status'), id: z.string() }),
   z.object({ kind: z.literal('replay'), id: z.string(), afterSeq: z.number().int().nonnegative() }),

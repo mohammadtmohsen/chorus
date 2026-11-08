@@ -474,6 +474,7 @@
     "context": "Task: {{objective}}"
   },
   "notice": {
+    "engineRestartRequired": "Chorus needs to restart after an update. Running work will continue until it is finished.",
     "code": {
       "editWithoutApproval": "Claude made this edit without asking Chorus.",
       "editVisibilityUnavailable": "Chorus could not take control of edit permissions for this session — edits may not be shown before they happen.",
@@ -722,7 +723,7 @@
     "hiddenPathPrefixPlaceholder": "/api/v1/provider-online",
     "hiddenPathPrefixHint": "Hide this leading path in the table. Saved automatically for this project. Leave blank to show the complete path.",
     "portHint": "Chorus listens here. Your app points at this.",
-    "envVarHint": "If this project is on this machine, terminals in its editor get this variable set to the listener's current advertised address, restored ones included. Chorus starts listening when the editor opens and keeps forwarding until Chorus quits or the project is removed, and Start and Stop do not change the value. Clearing the variable closes the listener, once capture is stopped if it is running. The backend URL, port and reach can only be changed while not capturing, and a new port moves the listener. The Proxy host IP can refresh while capture stays on. Whenever the name, port or proxy host changes, and for anything started before Chorus was listening, restart the dev server once from a new terminal and fully reload an Expo app. With a variable named, the line below is an assignment to put in front of a command run anywhere else. Without one, it is the address to set as the app's API base URL by hand.",
+    "envVarHint": "If this project is on this machine, terminals in its editor get this variable set to the listener's current advertised address, restored ones included. Chorus starts listening when the editor opens and keeps forwarding until the project is removed or Chorus is no longer running in either the app or VS Code, and Start and Stop do not change the value. Clearing the variable closes the listener, once capture is stopped if it is running. The backend URL, port and reach can only be changed while not capturing, and a new port moves the listener. The Proxy host IP can refresh while capture stays on. Whenever the name, port or proxy host changes, and for anything started before Chorus was listening, restart the dev server once from a new terminal and fully reload an Expo app. With a variable named, the line below is an assignment to put in front of a command run anywhere else. Without one, it is the address to set as the app's API base URL by hand.",
     "originFailed": "That address was refused. It has to be an absolute http or https URL.",
     "logcat": "Android logcat",
     "filters": "Logcat filters",
@@ -1400,7 +1401,6 @@
     "restart": "Restart Chorus",
     "engineStopped": "The Chorus engine stopped. Your conversation history is saved.",
     "engineStarting": "Starting Chorus…",
-    "engineRestartRequired": "Chorus needs to restart after an update. Running work will continue until it is finished.",
     "engineRestartBusy": "Chorus needs to restart. Still active: {{chats}} chats, {{approvals}} approvals, {{questions}} questions, {{runs}} runs and {{starting}} agents starting.",
     "engineRestartReady": "Chorus needs to restart after an update.",
     "engineRestartRuns": "Restart Chorus and run these projects again?",
@@ -1412,6 +1412,8 @@
     "engineRestartRerunFailed": "Chorus could not start the run again for {{project}}.",
     "engineRestartRerunReady": "Chorus restarted and started the project runs again.",
     "engineFailed": "Chorus could not connect to its engine.",
+    "engineNotInstalled": "Install the Chorus app first: run `pnpm app:install`.",
+    "engineVersionMismatch": "Chorus for VS Code is {{extension}} but the Chorus app is {{app}}. Run `pnpm app:install` to update both.",
     "requestTimedOut": "Chorus did not get an answer in time. Try again.",
     "requestInvalid": "Chorus could not read that request.",
     "untrusted": "Trust this workspace before opening Chorus.",

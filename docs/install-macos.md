@@ -98,9 +98,11 @@ pnpm install
 pnpm app:install
 ```
 
-That builds Chorus and installs it into `/Applications`. Run it again any time
-to update. It quits a running copy for you, refuses to overwrite anything that
-is not Chorus, and verifies the result.
+That builds Chorus and installs it into `/Applications`, then installs Chorus for
+VS Code at the same version when VS Code's `code` command is found. Run it again
+any time to update both. It quits a running copy for you, refuses to overwrite
+anything that is not Chorus, and verifies the result. Work an agent is doing
+keeps running through an update; Chorus asks for a restart once it is done.
 
 ## When you see a dialog
 

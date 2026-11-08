@@ -5,10 +5,12 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -43,6 +45,77 @@ const APP = fileURLToPath(new URL('..', import.meta.url))
  */
 const DEBUGGER_TIMEOUT_MS = 30_000
 
+async function stopEngine(dataDirectory, executable) {
+  rmSync(join(dataDirectory, 'engine-install.json'), { force: true })
+  const ownsProcess = (command) => {
+    const prefix = `${executable} ${join(dataDirectory, 'engine-runtime')}/`
+    if (!command.startsWith(prefix)) return false
+    const build = command.slice(prefix.length).split('/')[0]
+    const expected =
+      `${executable} ${join(dataDirectory, 'engine-runtime', build, 'engine.cjs')} ` +
+      `--data ${dataDirectory} --build ${build}`
+    return (
+      /^[a-f0-9]{64}$/.test(build) &&
+      (command === expected || command === `${expected} --probe-lock`)
+    )
+  }
+  const signaled = new Set()
+  const generations = new Map()
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+      return false
+    }
+  }
+  const deadline = Date.now() + 30_000
+  let emptySince = null
+  while (Date.now() < deadline) {
+    try {
+      const descriptor = JSON.parse(readFileSync(join(dataDirectory, 'engine.json'), 'utf8'))
+      if (
+        typeof descriptor.generation !== 'string' ||
+        !Number.isSafeInteger(descriptor.pid) ||
+        descriptor.pid < 1
+      )
+        throw new Error(`Invalid engine descriptor for ${dataDirectory}`)
+      generations.set(descriptor.generation, descriptor.pid)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    const processes = execFileSync('/bin/ps', ['-axo', 'pid=,command='], {
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
+      .filter((match) => match !== null && ownsProcess(match[2]))
+    if (processes.length === 0 && ![...generations.values(), ...signaled].some(alive)) {
+      emptySince ??= Date.now()
+      if (Date.now() - emptySince >= 1000) return
+    } else {
+      emptySince = null
+      for (const match of processes) {
+        const pid = Number(match[1])
+        if (signaled.has(pid)) continue
+        try {
+          const command = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'command='], {
+            encoding: 'utf8',
+          }).trim()
+          if (command !== match[2]) continue
+          process.kill(pid, 'SIGTERM')
+          signaled.add(pid)
+        } catch (error) {
+          if (error.code !== 'ESRCH' && error.status !== 1) throw error
+        }
+      }
+    }
+    await wait(100)
+  }
+  throw new Error(`Engine did not exit for ${dataDirectory}: ${[...generations.keys()].join(', ')}`)
+}
+
 /**
  * @param options.executable A built `.app` binary to drive instead of `out/`.
  *   What the specs assert is the same either way; what differs is whether the
@@ -55,8 +128,11 @@ const DEBUGGER_TIMEOUT_MS = 30_000
  *   to own.
  */
 export async function launch({ userData, keepData = false, executable, env: extra } = {}) {
-  const dataPath = userData ?? mkdtemp()
-  const env = { ...process.env, CHORUS_USER_DATA: dataPath, ...extra }
+  const electron = realpathSync(executable ?? createRequire(import.meta.url)('electron'))
+  const requestedDataPath = userData ?? mkdtemp()
+  mkdirSync(requestedDataPath, { recursive: true })
+  const dataPath = realpathSync(requestedDataPath)
+  const env = { ...process.env, ...extra, CHORUS_USER_DATA: dataPath }
   // The VS Code extension host sets this, and it makes Electron boot as Node.
   delete env.ELECTRON_RUN_AS_NODE
 
@@ -77,27 +153,55 @@ export async function launch({ userData, keepData = false, executable, env: extr
    * stderr makes attaching to someone else's app impossible rather than
    * unlikely.
    */
-  const [command, args] =
-    executable === undefined
-      ? ['npx', ['electron', '.', '--remote-debugging-port=0']]
-      : [executable, ['--remote-debugging-port=0']]
+  const args =
+    executable === undefined ? ['.', '--remote-debugging-port=0'] : ['--remote-debugging-port=0']
 
-  const child = spawn(command, args, {
+  const child = spawn(electron, args, {
     cwd: APP,
     stdio: ['ignore', 'pipe', 'pipe'],
     env,
   })
   let output = ''
+  let launchError
+  child.once('error', (error) => {
+    launchError = error
+  })
   child.stdout.on('data', (d) => (output += d.toString()))
   child.stderr.on('data', (d) => (output += d.toString()))
+
+  let socket
+  let stopping
+  const stop = (signal = 'SIGTERM') => {
+    stopping ??= (async () => {
+      try {
+        socket?.close()
+        if (child.exitCode === null && child.signalCode === null && launchError === undefined) {
+          child.kill(signal)
+          const deadline = Date.now() + 30_000
+          while (
+            child.exitCode === null &&
+            child.signalCode === null &&
+            launchError === undefined
+          ) {
+            if (Date.now() >= deadline) throw new Error('The app did not exit')
+            await wait(100)
+          }
+        }
+      } finally {
+        await stopEngine(dataPath, electron)
+      }
+    })()
+    return stopping
+  }
 
   /** Waits for the child to say which port it bound, rather than assuming one. */
   const announcedPort = async () => {
     const until = Date.now() + DEBUGGER_TIMEOUT_MS
     while (Date.now() < until) {
+      if (launchError !== undefined) throw launchError
       const found = readPort(output)
       if (found !== null) return found
-      if (child.exitCode !== null) break
+      if (child.exitCode !== null || child.signalCode !== null) break
       await wait(100)
     }
     throw new Error('the app never announced a debugging port')
@@ -111,7 +215,6 @@ export async function launch({ userData, keepData = false, executable, env: extr
    * cause was already being captured here and thrown away — with a broken
    * bundle, "the app never opened a window" was the entire diagnosis.
    */
-  let socket
   // Declared without a seed: the try below assigns it before anything reads it,
   // and a `0` here would only read as a port that could be meaningful.
   let debugPort
@@ -119,7 +222,8 @@ export async function launch({ userData, keepData = false, executable, env: extr
     debugPort = await announcedPort()
     socket = await connect(debugPort)
   } catch (error) {
-    child.kill('SIGKILL')
+    await stop('SIGKILL')
+    if (!keepData) rmSync(dataPath, { recursive: true, force: true })
     /*
      * Both ends, because the useful line is at whichever one you did not keep.
      * A native module that will not load prints its message first and twenty
@@ -154,7 +258,13 @@ export async function launch({ userData, keepData = false, executable, env: extr
    * when a failure needs the renderer's own words, and accept that the run is
    * then only good for reading, not for measuring.
    */
-  if (process.env.CHORUS_E2E_CONSOLE === '1') await session.send('Runtime.enable')
+  try {
+    if (process.env.CHORUS_E2E_CONSOLE === '1') await session.send('Runtime.enable')
+  } catch (error) {
+    await stop('SIGKILL')
+    if (!keepData) rmSync(dataPath, { recursive: true, force: true })
+    throw error
+  }
 
   return {
     dataPath,
@@ -176,16 +286,12 @@ export async function launch({ userData, keepData = false, executable, env: extr
     ...session,
     output: () => output,
     async quit() {
-      socket.close()
-      child.kill('SIGTERM')
-      await wait(2_500)
+      await stop()
       if (!keepData) rmSync(dataPath, { recursive: true, force: true })
     },
     /** Quit without clearing the data, so the next launch can restore from it. */
     async stop() {
-      socket.close()
-      child.kill('SIGTERM')
-      await wait(2_500)
+      await stop()
     },
   }
 }

@@ -187,6 +187,7 @@ interface Surface {
   state: 'active' | 'handing-off'
   layoutWidth: number | null
   activityBarWidth: number
+  context: WorkbenchContext | null
   readonly processNonce: string | null
   readonly processes: Map<number, OwnedProcessTree>
   readonly ownedPids: Set<number>
@@ -237,6 +238,7 @@ const CANCELLED_COMPLETIONS_LIMIT = 512
  * the one that notices.
  */
 const byOwner = new Map<WebContents, Set<string>>()
+const ownerDocuments = new WeakMap<WebContents, number>()
 
 const handoffs = new Map<
   string,
@@ -742,7 +744,7 @@ async function setSurfacesVisible(
  * for the same reason, since a grant reaches the shell's React state and would
  * reach the first log line anyone adds while debugging this.
  */
-function redeem(caller: WebContents, target: WorkbenchTarget): WorkbenchPlace {
+async function redeem(caller: WebContents, target: WorkbenchTarget): Promise<WorkbenchPlace> {
   if ('projectId' in target) {
     /*
      * **Authorised by adoption rather than by this document**, and that is a
@@ -763,7 +765,7 @@ function redeem(caller: WebContents, target: WorkbenchTarget): WorkbenchPlace {
     if (resolveProjectPlace === null) {
       throw new Error(`No project registry is wired, so "${target.projectId}" cannot be opened`)
     }
-    const place = resolveProjectPlace(target.projectId)
+    const place = await resolveProjectPlace(target.projectId)
     if (detachedAccess?.(caller, place.root) === false) {
       throw new Error(`No workbench project "${target.projectId}" is open in this window`)
     }
@@ -992,6 +994,7 @@ function warnFailure(message: string, error: unknown): void {
 
 /** Every surface this shell owns, torn down without asking it — and every grant. */
 function releaseOwner(owner: WebContents): void {
+  ownerDocuments.set(owner, (ownerDocuments.get(owner) ?? 0) + 1)
   for (const id of [...(byOwner.get(owner) ?? [])]) {
     void destroySurface(id).catch((error: unknown) => {
       warnFailure('Workbench surface could not close', error)
@@ -1023,8 +1026,34 @@ export async function openSurface(
   target: WorkbenchTarget,
   devServerUrl: string | undefined
 ): Promise<string> {
-  const place = redeem(owner, target)
-  if ('projectId' in target) openRegisteredProject?.(target.projectId)
+  if (owner.isDestroyed()) {
+    throw new Error('A workbench surface needs a window to attach to')
+  }
+  watchOwner(owner)
+  const document = ownerDocuments.get(owner) ?? 0
+  const place = await redeem(owner, target)
+  const validateOwner = (): BrowserWindow => {
+    if (owner.isDestroyed() || (ownerDocuments.get(owner) ?? 0) !== document) {
+      throw new Error('A workbench surface needs a window to attach to')
+    }
+    const parent = BrowserWindow.fromWebContents(owner)
+    if (parent === null || parent.isDestroyed()) {
+      throw new Error('A workbench surface needs a window to attach to')
+    }
+    if ('projectId' in target) {
+      if (detachedAccess?.(owner, place.root) === false) {
+        throw new Error(`No workbench project "${target.projectId}" is open in this window`)
+      }
+    } else if (grants.get(target.grant)?.owner !== owner) {
+      throw new Error(`No workbench project grant "${target.grant}" belongs to this window`)
+    }
+    return parent
+  }
+  validateOwner()
+  if ('projectId' in target) {
+    await openRegisteredProject?.(target.projectId)
+    validateOwner()
+  }
   if (closedProjectPlaces.has(placeKey(place)))
     throw new Error('This project is closed or still closing.')
   const projectRoot = place.root
@@ -1059,10 +1088,12 @@ export async function openSurface(
    * fetched, and parenting a view to a destroyed window is a crash rather than a
    * refusal.
    */
-  const parent = BrowserWindow.fromWebContents(owner)
-  if (parent === null || owner.isDestroyed()) {
+  let parent: BrowserWindow
+  try {
+    parent = validateOwner()
+  } catch (error) {
     releaseRuntime(place)
-    throw new Error('A workbench surface needs a window to attach to')
+    throw error
   }
 
   const id = randomUUID()
@@ -1110,6 +1141,7 @@ export async function openSurface(
     state: 'active',
     layoutWidth: null,
     activityBarWidth: 0,
+    context: null,
     processNonce: place.host === LOCAL_HOST ? randomUUID() : null,
     processes: new Map(),
     ownedPids: new Set(),
@@ -1181,6 +1213,12 @@ function attachSurface(surface: Surface, owner: WebContents): void {
   watchWindowFocus(surface)
   surface.state = 'active'
   applyVisibility(surface)
+  if (surface.context !== null) {
+    onContext?.(
+      { host: surface.host, projectRoot: surface.projectRoot, context: surface.context },
+      surface.owner
+    )
+  }
 }
 
 export function beginHandoff(
@@ -1204,6 +1242,18 @@ export function beginHandoff(
   }
   surface.state = 'handing-off'
   byOwner.get(caller)?.delete(viewId)
+  if (
+    ![...byId.values()].some(
+      (other) =>
+        other !== surface &&
+        other.owner === surface.owner &&
+        other.state === 'active' &&
+        other.host === surface.host &&
+        other.projectRoot === surface.projectRoot
+    )
+  ) {
+    onSurfaceGone?.({ host: surface.host, root: surface.projectRoot }, surface.owner)
+  }
   stopWatchingFocus(viewId)
   for (const [grant, held] of [...grants]) {
     if (host === LOCAL_HOST && held.owner === caller && held.projectRoot === projectRoot) {
@@ -1327,8 +1377,17 @@ function destroySurface(viewId: string, prepared = false): Promise<void> {
    * share a root, and telling the shell the editor is gone while another is
    * still showing it would drop a context that is still true.
    */
-  if (![...byId.values()].some((other) => other.projectRoot === surface.projectRoot)) {
-    onSurfaceGone?.({ host: surface.host, root: surface.projectRoot })
+  if (
+    surface.state === 'active' &&
+    ![...byId.values()].some(
+      (other) =>
+        other.owner === surface.owner &&
+        other.state === 'active' &&
+        other.host === surface.host &&
+        other.projectRoot === surface.projectRoot
+    )
+  ) {
+    onSurfaceGone?.({ host: surface.host, root: surface.projectRoot }, surface.owner)
   }
   /*
    * `editorHidden` is **not** pruned here, and that is deliberate: it is keyed by
@@ -1701,8 +1760,8 @@ export function closeAllSurfaces(): Promise<void> {
  * a cycle — and a function is the whole of what this file needs, so taking the
  * service would be taking a registry in order to call one method on it.
  */
-let resolveProjectPlace: ((projectId: string) => WorkbenchPlace) | null = null
-let openRegisteredProject: ((projectId: string) => void) | null = null
+let resolveProjectPlace: ((projectId: string) => Promise<WorkbenchPlace>) | null = null
+let openRegisteredProject: ((projectId: string) => void | Promise<void>) | null = null
 
 let detachedAccess: ((caller: WebContents, projectRoot: string) => boolean) | null = null
 
@@ -1763,8 +1822,8 @@ function fromMainFrame(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>
 
 export function registerWorkbenchHandlers(
   devServerUrl: string | undefined,
-  resolvePlace?: (projectId: string) => WorkbenchPlace,
-  openProject?: (projectId: string) => void
+  resolvePlace?: (projectId: string) => Promise<WorkbenchPlace>,
+  openProject?: (projectId: string) => void | Promise<void>
 ): void {
   resolveProjectPlace = resolvePlace ?? null
   openRegisteredProject = openProject ?? null
@@ -2186,7 +2245,12 @@ export function registerWorkbenchHandlers(
     if (surface === undefined) return
     const parsed = WorkbenchContext.safeParse(raw)
     if (!parsed.success) return
-    onContext?.({ host: surface.host, projectRoot: surface.projectRoot, context: parsed.data })
+    surface.context = parsed.data
+    if (surface.state !== 'active') return
+    onContext?.(
+      { host: surface.host, projectRoot: surface.projectRoot, context: parsed.data },
+      surface.owner
+    )
   })
 
   ipcMain.handle(
@@ -2312,7 +2376,7 @@ export interface WorkbenchContextReport {
   readonly context: WorkbenchContext
 }
 
-let onContext: ((report: WorkbenchContextReport) => void) | null = null
+let onContext: ((report: WorkbenchContextReport, owner: WebContents) => void) | null = null
 
 /**
  * Told when a project's last surface goes, so a held context can be dropped.
@@ -2322,9 +2386,11 @@ let onContext: ((report: WorkbenchContextReport) => void) | null = null
  * surface that no longer exists, while the external bridge — which may now be
  * the only editor there is — stays suppressed behind it.
  */
-let onSurfaceGone: ((place: WorkbenchPlace) => void) | null = null
+let onSurfaceGone: ((place: WorkbenchPlace, owner: WebContents) => void) | null = null
 
-export function setWorkbenchSurfaceGoneSink(sink: ((place: WorkbenchPlace) => void) | null): void {
+export function setWorkbenchSurfaceGoneSink(
+  sink: ((place: WorkbenchPlace, owner: WebContents) => void) | null
+): void {
   onSurfaceGone = sink
 }
 
@@ -2335,7 +2401,7 @@ export function setHandoffExpiredSink(sink: ((projectRoot: string) => void) | nu
 }
 
 export function setWorkbenchContextSink(
-  sink: ((report: WorkbenchContextReport) => void) | null
+  sink: ((report: WorkbenchContextReport, owner: WebContents) => void) | null
 ): void {
   onContext = sink
 }

@@ -154,7 +154,8 @@ export class EngineBrowsers {
     private readonly isAdopted: (id: string) => boolean,
     log: Logger
   ) {
-    this.settings = new BrowserSettingsStore(directory)
+    const browserDirectory = join(directory, 'vscode-browser')
+    this.settings = new BrowserSettingsStore(browserDirectory)
     this.browserStreams = new BrowserStreams((id) => {
       const record = this.byId.get(id)
       return record === undefined ? null : this.active(record)
@@ -189,7 +190,7 @@ export class EngineBrowsers {
       },
     }
     this.chrome = new ChromeProcess(
-      join(directory, 'browser', 'chrome-profile'),
+      join(browserDirectory, 'browser', 'chrome-profile'),
       (message, fields) => {
         log.warn(message, fields)
       }

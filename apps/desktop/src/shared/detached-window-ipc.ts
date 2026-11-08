@@ -3,6 +3,10 @@ import { IPC_CONTRACT } from './ipc.js'
 import { ProjectLayoutSlice, ReturnSlot } from './workspace-layout.js'
 
 export type WindowRole = { kind: 'main' } | { kind: 'detached'; projectId: string }
+export const WindowRole = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('main') }),
+  z.object({ kind: z.literal('detached'), projectId: z.string().min(1) }),
+])
 
 const Ok = z.object({ ok: z.literal(true) })
 const Refused = z.object({ refused: z.literal(true) })

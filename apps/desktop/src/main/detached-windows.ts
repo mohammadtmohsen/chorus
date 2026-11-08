@@ -9,7 +9,6 @@ import {
   type WebContents,
 } from 'electron'
 import {
-  CONVERSATIONS_PUSH_CHANNEL,
   DETACHED_WINDOW_CHANNELS,
   DETACHED_WINDOW_CONTRACT,
   HIT_TEST_REQUEST_PUSH_CHANNEL,
@@ -21,9 +20,10 @@ import {
   type DetachedWindowRequest,
   type DetachedWindowResponse,
 } from '../shared/detached-window-ipc.js'
+import { IPC_CONTRACT } from '../shared/ipc.js'
 import type { ProjectLayoutSlice, ReturnSlot } from '../shared/workspace-layout.js'
-import type { ChorusRuntime } from './runtime.js'
-import { isShellSender, shellWindows } from './shell-windows.js'
+import type { EngineClient } from '../../../engine/src/client.js'
+import { isShellSender } from './shell-windows.js'
 import { beginHandoff, type WorkbenchPlace } from './workbench-surface.js'
 
 export type DetachedState =
@@ -38,10 +38,16 @@ interface DetachedEntry {
   slice: ProjectLayoutSlice
 }
 
+function isDetached(entry: DetachedEntry): boolean {
+  return entry.state === 'detached'
+}
+
 interface Ticket {
   readonly projectId: string
   readonly kind: 'detach' | 'redock'
   readonly caller: WebContents
+  readonly processId: number
+  readonly frameToken: string
   readonly expires: number
   readonly title: string
   readonly cursor: Point
@@ -62,8 +68,8 @@ export interface DetachedWindowDeps {
     x: number,
     y: number
   ) => BrowserWindow
-  readonly resolvePlace: (projectId: string) => WorkbenchPlace
-  readonly runtime: ChorusRuntime
+  readonly resolvePlace: (projectId: string) => Promise<WorkbenchPlace>
+  readonly clientFor: (sender: WebContents) => EngineClient
 }
 
 type Handlers = {
@@ -125,12 +131,27 @@ function tryHandOff(
   }
 }
 
+function validateTicket(
+  held: Ticket | undefined,
+  caller: WebContents,
+  kind: Ticket['kind']
+): asserts held is Ticket {
+  if (
+    held?.caller !== caller ||
+    held.kind !== kind ||
+    held.expires < Date.now() ||
+    caller.isDestroyed() ||
+    held.processId !== caller.mainFrame.processId ||
+    held.frameToken !== caller.mainFrame.frameToken
+  ) {
+    throw new Error('That detach ticket is not valid for this window')
+  }
+}
+
 function takeTicket(id: string, caller: WebContents, kind: Ticket['kind']): Ticket {
   const held = tickets.get(id)
   tickets.delete(id)
-  if (held?.caller !== caller || held.kind !== kind || held.expires < Date.now()) {
-    throw new Error('That detach ticket is not valid for this window')
-  }
+  validateTicket(held, caller, kind)
   return held
 }
 
@@ -242,6 +263,8 @@ export function registerDetachedWindowHandlers(deps: DetachedWindowDeps): void {
         projectId: request.projectId,
         kind: 'detach',
         caller: event.sender,
+        processId: event.sender.mainFrame.processId,
+        frameToken: event.sender.mainFrame.frameToken,
         expires: Date.now() + PREPARE_TICKET_TTL_MS,
         title: request.title,
         cursor,
@@ -250,9 +273,19 @@ export function registerDetachedWindowHandlers(deps: DetachedWindowDeps): void {
       })
       return { ticket: id }
     },
-    'project:commitDetach': (event, request) => {
+    'project:commitDetach': async (event, request) => {
       const held = takeTicket(request.ticket, event.sender, 'detach')
-      const place = deps.resolvePlace(held.projectId)
+      const place = await deps.resolvePlace(held.projectId)
+      validateTicket(held, event.sender, 'detach')
+      const main = deps.mainWindow()
+      if (
+        main === null ||
+        main.isDestroyed() ||
+        main.webContents !== event.sender ||
+        entries.has(held.projectId)
+      ) {
+        throw new Error('That detach ticket is not valid for this window')
+      }
       const window = deps.createDetachedWindow(
         held.projectId,
         held.title,
@@ -291,17 +324,34 @@ export function registerDetachedWindowHandlers(deps: DetachedWindowDeps): void {
       const content = main.getContentBounds()
       if (inside(cursor, entry.window.getBounds()) || !inside(cursor, content)) return REFUSED
       const zoom = main.webContents.getZoomFactor()
+      const processId = event.sender.mainFrame.processId
+      const frameToken = event.sender.mainFrame.frameToken
       const answer = await askHitTest(
         main,
         (cursor.x - content.x) / zoom,
         (cursor.y - content.y) / zoom
       )
-      if (answer.paneId === null || answer.slot === null) return REFUSED
+      if (
+        answer.paneId === null ||
+        answer.slot === null ||
+        deps.mainWindow() !== main ||
+        main.isDestroyed() ||
+        entries.get(request.projectId) !== entry ||
+        !isDetached(entry) ||
+        entry.window.isDestroyed() ||
+        event.sender.isDestroyed() ||
+        event.sender.mainFrame.processId !== processId ||
+        event.sender.mainFrame.frameToken !== frameToken
+      ) {
+        return REFUSED
+      }
       const id = randomUUID()
       tickets.set(id, {
         projectId: request.projectId,
         kind: 'redock',
         caller: event.sender,
+        processId,
+        frameToken,
         expires: Date.now() + PREPARE_TICKET_TTL_MS,
         title: '',
         cursor,
@@ -367,14 +417,26 @@ export function registerDetachedWindowHandlers(deps: DetachedWindowDeps): void {
         slice: entry.slice,
       })),
     }),
-    'window:detachedBootstrap': (event) => {
+    'window:detachedBootstrap': async (event) => {
       const [projectId, entry] = entryForWindow(event.sender)
+      const processId = event.sender.mainFrame.processId
+      const frameToken = event.sender.mainFrame.frameToken
+      const response = IPC_CONTRACT['conversation:active'].response.parse(
+        await deps.clientFor(event.sender).invoke('conversation:active', {})
+      )
+      if (
+        entries.get(projectId) !== entry ||
+        entry.window.isDestroyed() ||
+        event.sender.isDestroyed() ||
+        event.sender.mainFrame.processId !== processId ||
+        event.sender.mainFrame.frameToken !== frameToken
+      ) {
+        throw new Error('No detached project belongs to this window')
+      }
       return {
         projectId,
         slice: entry.slice,
-        conversations: deps.runtime
-          .activeSessions()
-          .filter((session) => session.projectId === projectId),
+        conversations: response.sessions.filter((session) => session.projectId === projectId),
       }
     },
     'window:flushResult': () => OK,
@@ -388,12 +450,6 @@ export function registerDetachedWindowHandlers(deps: DetachedWindowDeps): void {
       return OK
     },
   }
-
-  deps.runtime.onConversationsChanged(() => {
-    for (const window of shellWindows()) {
-      if (!window.isDestroyed()) window.webContents.send(CONVERSATIONS_PUSH_CHANNEL)
-    }
-  })
 
   for (const channel of DETACHED_WINDOW_CHANNELS) {
     ipcMain.handle(channel, async (event, rawRequest: unknown) => {

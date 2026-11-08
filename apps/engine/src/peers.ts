@@ -53,6 +53,13 @@ export class EnginePeer implements ShellClient {
     })
   }
 
+  get client(): Hello['client'] {
+    return this.hello.client
+  }
+  get role(): Hello['role'] {
+    return this.hello.role
+  }
+
   isGone(): boolean {
     return this.socket.destroyed
   }
@@ -168,6 +175,13 @@ export class PeerRegistry {
     return (
       this.clients()
         .filter((peer) => projectId === undefined || peer.projectIds.has(projectId))
+        .sort((a, b) => b.focusedAt - a.focusedAt)[0] ?? null
+    )
+  }
+  chooseByFocus(projectId: string): EnginePeer | null {
+    return (
+      this.clients()
+        .filter((peer) => peer.projectIds.has(projectId))
         .sort((a, b) => b.focusedAt - a.focusedAt)[0] ?? null
     )
   }

@@ -421,6 +421,19 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
 
     'project:list': () => Promise.resolve({ projects: runtime.listProjects() }),
 
+    'workbench:target': (request: IpcRequest<'workbench:target'>) =>
+      Promise.resolve(runtime.projects.workbenchTarget(request.projectId)),
+
+    'workbench:projectOpened': (request: IpcRequest<'workbench:projectOpened'>) => {
+      runtime.openProject(request.projectId)
+      return Promise.resolve(OK)
+    },
+
+    'workbench:terminalEnvFor': (request: IpcRequest<'workbench:terminalEnvFor'>) =>
+      request.ensure === true
+        ? runtime.ensureTerminalEnv(request.place)
+        : Promise.resolve(runtime.terminalEnvFor(request.place)),
+
     'project:rename': (request: { projectId: string; name: string }) =>
       Promise.resolve(runtime.renameProject(request.projectId, request.name)),
 

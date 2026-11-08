@@ -6,8 +6,11 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { launchVSCode } from './vscode-driver.mjs'
 
@@ -20,6 +23,79 @@ const NO_REQUEST_CALLS = [
   'readDiagnostics',
   'exportDiagnostics',
 ]
+
+async function stopEngine(dataDirectory, executable) {
+  rmSync(join(dataDirectory, 'engine-install.json'), { force: true })
+  const ownsProcess = (command) => {
+    const prefix = `${executable} ${join(dataDirectory, 'engine-runtime')}/`
+    if (!command.startsWith(prefix)) return false
+    const build = command.slice(prefix.length).split('/')[0]
+    const expected =
+      `${executable} ${join(dataDirectory, 'engine-runtime', build, 'engine.cjs')} ` +
+      `--data ${dataDirectory} --build ${build}`
+    return (
+      /^[a-f0-9]{64}$/.test(build) &&
+      (command === expected || command === `${expected} --probe-lock`)
+    )
+  }
+  const signaled = new Set()
+  const generations = new Map()
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+      return false
+    }
+  }
+  const deadline = Date.now() + 30_000
+  let emptySince = null
+  while (Date.now() < deadline) {
+    const descriptorPath = join(dataDirectory, 'engine.json')
+    try {
+      const descriptor = JSON.parse(readFileSync(descriptorPath, 'utf8'))
+      if (
+        typeof descriptor.generation !== 'string' ||
+        !Number.isSafeInteger(descriptor.pid) ||
+        descriptor.pid < 1
+      )
+        throw new Error(`Invalid engine descriptor for ${dataDirectory}`)
+      generations.set(descriptor.generation, descriptor.pid)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    const processes = execFileSync('/bin/ps', ['-axo', 'pid=,command='], {
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
+      .filter((match) => match !== null && ownsProcess(match[2]))
+    if (processes.length === 0 && ![...generations.values(), ...signaled].some(alive)) {
+      emptySince ??= Date.now()
+      if (Date.now() - emptySince >= 1000) return
+    } else {
+      emptySince = null
+      for (const match of processes) {
+        const pid = Number(match[1])
+        if (signaled.has(pid)) continue
+        try {
+          const command = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'command='], {
+            encoding: 'utf8',
+          }).trim()
+          if (command !== match[2]) continue
+          process.kill(pid, 'SIGTERM')
+          signaled.add(pid)
+        } catch (error) {
+          if (error.code !== 'ESRCH' && error.status !== 1) throw error
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error(`Engine did not exit for ${dataDirectory}: ${[...generations.keys()].join(', ')}`)
+}
+
 export async function integrationHarness(
   name,
   { folder, args = [], settings = {}, preinstall = [] } = {}
@@ -33,10 +109,34 @@ export async function integrationHarness(
   const control = join(root, 'control')
   const userDataDir = join(root, 'portable', 'user-data')
   const extensionsDir = join(root, 'extensions')
-  for (const path of [workspace, alpha, beta, nested, control, extensionsDir])
+  const engineDataDirectory = join(root, 'engine-data')
+  for (const path of [workspace, alpha, beta, nested, control, extensionsDir, engineDataDirectory])
     mkdirSync(path, { recursive: true })
-  const vsix = resolve(import.meta.dirname, '../dist/chorus-0.20.0-darwin-arm64.vsix')
-  const env = { ...process.env, CHORUS_E2E_CONTROL: control }
+  const manifest = JSON.parse(readFileSync(resolve(import.meta.dirname, '../package.json'), 'utf8'))
+  const vsix = resolve(
+    import.meta.dirname,
+    `../dist/chorus-${manifest.version}-${process.platform}-${process.arch}.vsix`
+  )
+  const desktopRoot = resolve(import.meta.dirname, '../../desktop')
+  const desktopRequire = createRequire(join(desktopRoot, 'package.json'))
+  const executable = desktopRequire(join(desktopRoot, 'node_modules/electron'))
+  const pointer = join(engineDataDirectory, 'engine-install.json')
+  const temporary = `${pointer}.${randomUUID()}.tmp`
+  writeFileSync(
+    temporary,
+    JSON.stringify({
+      version: manifest.version,
+      executable,
+      shipped: resolve(import.meta.dirname, '../../engine/dist/runtime'),
+    }),
+    { mode: 0o600 }
+  )
+  renameSync(temporary, pointer)
+  const env = {
+    ...process.env,
+    CHORUS_E2E_CONTROL: control,
+    CHORUS_ENGINE_DATA: engineDataDirectory,
+  }
   for (const key of Object.keys(env))
     if (key === 'ELECTRON_RUN_AS_NODE' || key.startsWith('VSCODE_'))
       Reflect.deleteProperty(env, key)
@@ -99,24 +199,29 @@ export async function integrationHarness(
     return answer.value
   }
   const start = async ({ editorPath, before } = {}) => {
-    ;({ driver } = await launchVSCode({
-      folder: folder === undefined ? workspace : (folder ?? undefined),
-      args,
-      settings,
-      developmentPath: join(import.meta.dirname, 'fixture'),
-      userDataDir,
-      extensionsDir,
-      env,
-    }))
-    await driver.workbench()
-    if (before !== undefined) await before()
-    await native({ action: 'state' })
-    if (editorPath !== undefined) await native({ action: 'open', path: editorPath })
-    await driver.command('Chorus: Open')
-    await driver.waitInWebview(
-      'window.chorus !== undefined && document.querySelector(".empty .primary") !== null',
-      { timeoutMs: 60_000 }
-    )
+    try {
+      ;({ driver } = await launchVSCode({
+        folder: folder === undefined ? workspace : (folder ?? undefined),
+        args,
+        settings,
+        developmentPath: join(import.meta.dirname, 'fixture'),
+        userDataDir,
+        extensionsDir,
+        env,
+      }))
+      await driver.workbench()
+      if (before !== undefined) await before()
+      await native({ action: 'state' })
+      if (editorPath !== undefined) await native({ action: 'open', path: editorPath })
+      await driver.command('Chorus: Open')
+      await driver.waitInWebview(
+        'window.chorus !== undefined && document.querySelector(".empty .primary") !== null',
+        { timeoutMs: 60_000 }
+      )
+    } catch (error) {
+      await close()
+      throw error
+    }
   }
   const view = () => driver.webview({ extensionId: 'mohammadtmohsen.chorus', selector: '#root' })
   const api = async (method, request) =>
@@ -191,17 +296,11 @@ export async function integrationHarness(
     )
   const close = async () => {
     save()
-    if (driver !== undefined) await driver.quit()
-    const descriptor = join(
-      userDataDir,
-      'User/globalStorage/mohammadtmohsen.chorus/engine/engine.json'
-    )
-    if (existsSync(descriptor)) {
-      try {
-        process.kill(JSON.parse(readFileSync(descriptor, 'utf8')).pid, 'SIGTERM')
-      } catch (error) {
-        if (error.code !== 'ESRCH') throw error
-      }
+    try {
+      if (driver !== undefined) await driver.quit()
+    } finally {
+      await stopEngine(engineDataDirectory, executable)
+      rmSync(engineDataDirectory, { recursive: true, force: true })
     }
   }
   return {
@@ -212,6 +311,7 @@ export async function integrationHarness(
     nested,
     userDataDir,
     extensionsDir,
+    engineDataDirectory,
     checks,
     check,
     native,
