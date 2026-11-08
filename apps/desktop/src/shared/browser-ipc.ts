@@ -605,6 +605,13 @@ export const BrowserPush = z.discriminatedUnion('kind', [
     .strict(),
   z
     .object({
+      kind: z.literal('devtools-row-wheel'),
+      browserId: BrowserId,
+      wheel: BrowserPageRowWheel,
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal('found'),
       browserId: BrowserId,
       matches: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -636,6 +643,7 @@ export const BROWSER_PAGE_FILL_CHANNEL = 'browser:page:fill'
 export const BROWSER_PAGE_FORM_CHANNEL = 'browser:page:form'
 export const BROWSER_PAGE_SCAN_CHANNEL = 'browser:page:scan'
 export const BROWSER_PAGE_ROW_WHEEL_CHANNEL = 'browser:page:row-wheel'
+export const BROWSER_DEVTOOLS_ROW_WHEEL_CHANNEL = 'browser:devtools:row-wheel'
 export const BROWSER_PAGE_ROW_WHEEL_ENABLE_CHANNEL = 'browser:page:row-wheel-enable'
 export const BROWSER_PAGE_SWIPE_CHANNEL = 'browser:page:swipe'
 export const BROWSER_PAGE_SWIPE_STATE_CHANNEL = 'browser:page:swipe-state'

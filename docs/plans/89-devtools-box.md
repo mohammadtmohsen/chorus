@@ -140,8 +140,8 @@ not showing. A project browser that never loaded a page has none.
 - The VS Code extension: no native views there, so no box. Its new API method is `waived`.
 - No way to turn DevTools off for a page, no pop-out, no dock-side switching. `detach` mode is the
   one that cannot be re-docked from inside DevTools (`OpenDevToolsOptions.mode`).
-- No horizontal-swipe-to-scroll-the-row over DevTools; the page has a row-wheel bridge, DevTools
-  does not get one.
+- ~~No horizontal-swipe-to-scroll-the-row over DevTools.~~ Reversed by the user after the first
+  install, 2026-11-08 — see **Follow-up: the row owns horizontal scroll over DevTools**.
 - DevTools' own state (selected panel, breakpoints) does not survive the page view going away: a
   relaunch, a pane split (which re-attaches the browser and releases the record,
   `browser-surface.ts:396`) or a closed tab starts a fresh DevTools.
@@ -444,3 +444,119 @@ sequenceDiagram
 
 - None. Questions answered 2026-11-08: always running (A); collapse and width remembered, starts
   expanded; toolbar and Inspect show the box; ⌥⌘I toggles it.
+
+## Follow-up: the row owns horizontal scroll over DevTools
+
+Asked 2026-11-08 after the first install: the row's continuous horizontal scroll stopped at the
+DevTools box, because the native DevTools view consumes the wheel. Every other box hands
+horizontal scroll to Chorus; this one must too.
+
+```mermaid
+flowchart LR
+  W[horizontal wheel over DevTools] --> P["preload/devtools.ts (capture, block)"]
+  P -- "browser:devtools:row-wheel" --> M[main: dock identity · devtools:// sender · BrowserPageRowWheel]
+  M -- "push { kind: 'devtools-row-wheel' }" --> D[DevtoolsPanel]
+  D --> R[row.scrollLeft += horizontalRowWheel]
+```
+
+Same rule as the page bridge (`preload/browser.ts:657-675`): horizontal-dominant wheel, or Shift
+with vertical, goes to the row and is blocked in DevTools; vertical wheel and Ctrl/Cmd-wheel stay
+with DevTools. Electron loads a webContents' preload in `devtools://` frames —
+`RendererClientBase::ShouldLoadPreload` returns true when `IsDevTools(render_frame)`
+(`renderer_client_base.cc:130-133,207-217`, v43.2.0), sandboxed and not.
+
+**The preload imports nothing from our own source at runtime** — only `electron`, plus
+type-only imports. Rollup emits a shared chunk for any module two preload entries both reach, and
+a sandboxed preload cannot load a chunk (`electron.vite.config.ts:165-182`). So the channel name is
+a string literal and the horizontal-dominant check is restated, as `preload/browser.ts` already
+does; main stays the authority and validates with `BrowserPageRowWheel`.
+
+A separate push kind, not `row-wheel`: `BrowserPanel` already acts on `row-wheel` for the same
+`browserId`, but only while the Browser box is expanded, so reusing it would scroll twice or not
+at all.
+
+| File                               | Change                                                                                                                                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `electron.vite.config.ts`          | preload input `devtools: resolve(__dirname, 'src/preload/devtools.ts')`                                                                                                                                                |
+| `src/preload/devtools.ts` — new    | capture `wheel` listener, `passive: false`: trusted, cancelable, no Ctrl/Cmd, horizontal-dominant or Shift, finite and within 10 000 → block, `ipcRenderer.send`                                                       |
+| `shared/browser-ipc.ts`            | `BROWSER_DEVTOOLS_ROW_WHEEL_CHANNEL = 'browser:devtools:row-wheel'`; push `{ kind: 'devtools-row-wheel', browserId, wheel: BrowserPageRowWheel }`                                                                      |
+| `main/browser-surface.ts`          | `BrowserSurfaceDeps.devtoolsPreloadPath`; the dock view gets `preload`, `sandbox`, `contextIsolation`, no `nodeIntegration`; `view.webContents.ipc.on` channel → current dock, `devtools:` sender frame, schema → push |
+| `main/index.ts:684`                | `devtoolsPreloadPath: join(__dirname, '../preload/devtools.js')`                                                                                                                                                       |
+| `renderer/src/DevtoolsPanel.tsx`   | on `devtools-row-wheel` for its `browserId` while `active && !collapsed`: `markTouched(projectId)`, `row.scrollLeft += horizontalRowWheel(wheel, row.clientWidth)`                                                     |
+| `workspace/EditorPane.tsx`         | pass `markTouched={markRowTouched}`                                                                                                                                                                                    |
+| `BrowserPanel.tsx`, `web-pages.ts` | `case 'devtools-row-wheel':` no-op                                                                                                                                                                                     |
+| `main/browser-surface.test.ts`     | deps fixtures gain `devtoolsPreloadPath`                                                                                                                                                                               |
+
+Acceptance: a horizontal trackpad swipe or Shift-wheel over the DevTools box scrolls the row
+continuously through it, as over Traffic and Terminal; vertical scroll inside DevTools is
+unchanged; `out/preload/` emits `devtools.js` and still no `chunks/`.
+
+**Correction after install, 2026-11-08 — a fling stopped dead at both DevTools edges.** The
+"cancelable" condition in the table above was wrong, copied from `preload/browser.ts`. Chromium
+dispatches a view's wheel events as non-blocking for the rest of a sequence once that view did not
+consume the sequence's `kPhaseBegan` event (`components/input/mouse_wheel_event_queue.cc:249-251`,
+`:305-310`), momentum events included. A fling begun over Terminal or Browser reaches DevTools as
+mid-sequence momentum, so after any ordinary scroll inside DevTools those events are not
+cancelable, the preload dropped them, and the row stopped at the edge. The editor's forwarder
+(`workbench/entry.ts:326-337`) has no such condition, which is why the editor box is smooth. The
+preload now forwards a non-cancelable event too, calling `preventDefault` only when it can.
+Inferred from source; not reproduced.
+
+## Follow-up 2: native views step aside while the row moves
+
+That correction did not help: a fling still stopped dead at both DevTools edges. Two temporary
+`wheel-diag` builds (main `input-event` per view, then every event the DevTools preload saw) showed
+why, from the running app, 2026-11-08:
+
+```
+devtools: w Pfc F w Pfc F … w Pfc F w B u w u w u … E
+```
+
+The first ~15–25 events of a fling reach the preload (`P`), cancelable, and are forwarded (`F`).
+Then Chromium starts DevTools' own native scroll (`B`) and **stops delivering wheel events to the
+page at all** — no `P` after it — and plays the momentum inside DevTools (`u`), which cannot move
+sideways. The Browser page does exactly the same (`page@18439`: ~17 forwarded, then `B`, ~60 `u`),
+later in the fling. macOS routes each event to the view under the pointer, so the edge handoff
+itself works; the momentum is lost inside the native view. No preload can fix that.
+
+**Fix:** while the row is moving, the page and the DevTools view are replaced by a still and
+hidden, so every event lands on the shell's own row (`routeRowWheel`, `row-drag.ts:85-104`) — the
+path that makes chats, Traffic and Terminal smooth. ~150 ms after the row stops they come back.
+Trade-off accepted by the user: a frozen snapshot while the row moves.
+
+```mermaid
+sequenceDiagram
+  participant R as row (shell)
+  participant P as BrowserPanel / DevtoolsPanel
+  participant M as main
+  R-->>P: scroll (row starts moving)
+  P->>M: browser:capture { target: page | devtools }
+  M-->>P: still (JPEG data URL)
+  P->>P: render still behind the view
+  P->>M: geometry { active: false } → view hidden
+  Note over R: wheel events now reach the shell row
+  R-->>P: no scroll for 150 ms
+  P->>M: geometry { active: true } → view shown
+  P->>P: drop still once shown
+```
+
+| File                                                                                                          | Change                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `shared/browser-ipc.ts`                                                                                       | `'browser:capture'` `{ browserId, target: 'page' \| 'devtools' }` → `{ still: BrowserStill \| null }`; `captureBrowserStill`   |
+| `shared/create-chorus-api.ts`, `main/browser-ipc.ts`, `main/browser-port.ts`, `main/electron-browser-port.ts` | wiring, as for `devtoolsGeometry`                                                                                              |
+| `apps/engine/src/browser-surfaces.ts`                                                                         | `captureStill: () => ({ still: null })`                                                                                        |
+| `apps/extension/src/parity.ts`, `parity.test.ts`                                                              | `captureBrowserStill: 'waived'`                                                                                                |
+| `main/browser-surface.ts`                                                                                     | `captureStill`: the page or dock view, `capturePage()` → `toJPEG(85)` as `workbench-surface.ts:569-573`; null when absent      |
+| `workspace/hooks.ts`                                                                                          | `useRowMoving(scroller, enabled)`: true from a row `scroll` until 150 ms without one                                           |
+| `BrowserPanel.tsx` (native only), `DevtoolsPanel.tsx`                                                         | while moving: capture, render the still, then send `active: false`; on stop send `active: true`, drop the still after it lands |
+| `main/index.ts`, `preload/devtools.ts`                                                                        | remove every `wheel-diag` addition; the preload returns to its fling-fix form                                                  |
+
+Acceptance: a fast fling crosses Terminal → DevTools → Browser and back without stopping at any
+edge, as between chats; vertical scroll inside the page and DevTools is unchanged; both views
+come back live within ~150 ms of the row stopping; no `wheel-diag` left in the source.
+
+**Reverted 2026-11-08, at the user's request, after one install.** Left to right worked; right to
+left was "broken completely". Why is not known — it was reverted before anyone looked. The code
+returns to Follow-up 1 with its fling fix and no diagnostics, the build whose `app.asar` is
+`8ff4ec51…`. The diagnosis above still stands: the momentum is lost inside the native view, so the
+DevTools edge stop remains open.

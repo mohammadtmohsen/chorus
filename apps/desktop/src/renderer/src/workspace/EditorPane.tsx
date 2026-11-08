@@ -782,6 +782,7 @@ export function EditorPane(
                       active={id === projectId && !webShowing}
                       collapsed={devtoolsPanels[id]?.collapsed === true}
                       scroller={scroller}
+                      markTouched={markRowTouched}
                       onCollapse={(collapsed) => {
                         setDevtools(id, collapsed)
                       }}
