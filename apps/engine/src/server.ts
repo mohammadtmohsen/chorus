@@ -18,6 +18,8 @@ import { Logger, type AgentId } from '@chorus/shared'
 import { ChorusRuntime, type ProjectConsoles } from '../../desktop/src/main/runtime.js'
 import { TrafficIpc } from '../../desktop/src/main/traffic-ipc.js'
 import { RunIpc } from '../../desktop/src/main/run-ipc.js'
+import { GitBoxService } from '../../desktop/src/main/git-box.js'
+import { GitIpc } from '../../desktop/src/main/git-ipc.js'
 import { ConsoleIpc } from '../../desktop/src/main/console-ipc.js'
 import { BrowserIpc } from '../../desktop/src/main/browser-ipc.js'
 import { BrowserConsoles } from '../../desktop/src/main/browser-console.js'
@@ -138,6 +140,19 @@ export async function serveEngine(
       },
       detect: detectScripts,
       platform: process.platform,
+    },
+    registrar
+  )
+  const git = new GitIpc(
+    {
+      service: new GitBoxService({
+        project: (id) => runtime.projects.get(id),
+        projects: () => runtime.projects.list(),
+        projectBusy: (id) => runtime.projectBusy(id),
+        gitlab: null,
+        now: Date.now,
+      }),
+      isAdopted: (id) => runtime.projects.get(id) !== null,
     },
     registrar
   )
@@ -480,6 +495,7 @@ export async function serveEngine(
         })
         traffic.registerShell(peer, peer.role)
         run.registerShell(peer, peer.role)
+        git.registerShell(peer, peer.role)
         consoleIpc.registerShell(peer, peer.role)
         browser.registerShell(peer, peer.role)
         peer.write({
@@ -635,6 +651,7 @@ export async function serveEngine(
         if (closing === null) host.projectVisibilityChanged(previousProjects)
         traffic.releaseShell(peer)
         run.releaseShell(peer)
+        git.releaseShell(peer)
         consoleIpc.releaseShell(peer)
         browser.releaseShell(peer)
       }
@@ -693,6 +710,7 @@ export async function serveEngine(
       })
       traffic.close()
       run.close()
+      git.close()
       consoleIpc.close()
       await browser.close()
       consoles.close()

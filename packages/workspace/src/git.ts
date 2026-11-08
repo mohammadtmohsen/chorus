@@ -56,6 +56,7 @@ async function git(
       // for an editor passes its own, smaller cap: there the size *is* the
       // answer, and `maxBuffer length exceeded` is how it arrives.
       maxBuffer: options.maxBytes ?? 32 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', SSH_ASKPASS_REQUIRE: 'never' },
     })
     return ok(stdout)
   } catch (error) {
@@ -302,6 +303,135 @@ export async function readBranches(options: GitOptions): Promise<Result<BranchRe
     })
   }
   return ok(branches)
+}
+
+export type BranchTrack =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'gone' }
+  | { readonly kind: 'tracking'; readonly ahead: number; readonly behind: number }
+
+export interface BranchEntry {
+  readonly name: string
+  readonly remote: boolean
+  readonly head: boolean
+  readonly sha: string
+  readonly committedAt: number
+  readonly upstream: string | null
+  readonly track: BranchTrack
+}
+
+const TRACK = /^\[(?:ahead (\d+))?(?:, )?(?:behind (\d+))?\]$/
+
+export function parseTrack(upstream: string, track: string): BranchTrack {
+  if (upstream === '') return { kind: 'none' }
+  if (track === '[gone]') return { kind: 'gone' }
+  const match = TRACK.exec(track)
+  return { kind: 'tracking', ahead: Number(match?.[1] ?? 0), behind: Number(match?.[2] ?? 0) }
+}
+
+export async function readBranchInventory(
+  options: GitOptions
+): Promise<Result<BranchEntry[], GitError>> {
+  const result = await git(options, [
+    'for-each-ref',
+    '--format=%(HEAD)%00%(refname)%00%(objectname)%00%(committerdate:unix)%00%(upstream)%00%(upstream:track)',
+    '--sort=-committerdate',
+    'refs/heads',
+    'refs/remotes',
+  ])
+  if (!result.ok) return result
+  const branches: BranchEntry[] = []
+  for (const line of result.value.split('\n')) {
+    const [marker, refname, sha, date, upstream, track] = line.split('\0')
+    if (refname === undefined || sha === undefined) continue
+    const remote = refname.startsWith('refs/remotes/')
+    if (remote && refname.endsWith('/HEAD')) continue
+    const tracking =
+      upstream?.startsWith('refs/remotes/') === true
+        ? upstream.slice('refs/remotes/'.length)
+        : upstream
+    branches.push({
+      name: refname.slice(remote ? 'refs/remotes/'.length : 'refs/heads/'.length),
+      remote,
+      head: marker === '*',
+      sha,
+      committedAt: Number(date ?? 0),
+      upstream: tracking === undefined || tracking === '' ? null : tracking,
+      track: parseTrack(upstream ?? '', track ?? ''),
+    })
+  }
+  return ok(branches)
+}
+
+export interface RemoteLocation {
+  readonly host: string
+  readonly path: string
+}
+
+const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):(.+)$/
+
+export function parseRemoteUrl(url: string): RemoteLocation | null {
+  const trimmed = url.trim()
+  const scp = SCP_REMOTE.exec(trimmed)
+  const parts = scp !== null ? { host: scp[1], path: scp[2] } : urlParts(trimmed)
+  if (parts?.host === undefined || parts.path === undefined) return null
+  const path = parts.path
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '')
+  return path.includes('/') ? { host: parts.host.toLowerCase(), path } : null
+}
+
+function urlParts(value: string): { host: string; path: string } | null {
+  try {
+    const parsed = new URL(value)
+    return ['https:', 'http:', 'ssh:'].includes(parsed.protocol)
+      ? { host: parsed.hostname, path: decodeURIComponent(parsed.pathname) }
+      : null
+  } catch {
+    return null
+  }
+}
+
+export async function readRemoteUrl(
+  options: GitOptions & { readonly remote: string }
+): Promise<Result<string, GitError>> {
+  if (!isSafeRef(options.remote)) return err(refused(options.remote, options))
+  const result = await git(options, ['remote', 'get-url', options.remote])
+  return result.ok ? ok(result.value.trim()) : result
+}
+
+export async function fetchBranches(
+  options: GitOptions & { readonly remote: string }
+): Promise<Result<void, GitError>> {
+  if (!isSafeRef(options.remote)) return err(refused(options.remote, options))
+  const result = await git({ ...options, timeoutMs: options.timeoutMs ?? 60_000 }, [
+    'fetch',
+    '--quiet',
+    '--no-tags',
+    '--prune',
+    options.remote,
+    `+refs/heads/*:refs/remotes/${options.remote}/*`,
+  ])
+  return result.ok ? ok(undefined) : result
+}
+
+export async function readFetchRefspecs(
+  options: GitOptions & { readonly remote: string }
+): Promise<Result<string[], GitError>> {
+  if (!isSafeRef(options.remote)) return err(refused(options.remote, options))
+  const result = await git(options, ['config', '--get-all', `remote.${options.remote}.fetch`])
+  return result.ok ? ok(result.value.split('\n').filter((line) => line !== '')) : result
+}
+
+export function mapsBranch(refspecs: readonly string[], remote: string, branch: string): boolean {
+  return refspecs.some((spec) => {
+    const [source, destination] = spec.replace(/^\+/, '').split(':')
+    return (
+      (source === 'refs/heads/*' && destination === `refs/remotes/${remote}/*`) ||
+      (source === `refs/heads/${branch}` && destination === `refs/remotes/${remote}/${branch}`)
+    )
+  })
 }
 
 /**

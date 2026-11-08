@@ -13,6 +13,7 @@ import type { DetachedWindowApi } from './detached-window-ipc.js'
 import type { BrowserApi } from './browser-ipc.js'
 import type { ConsoleApi } from './console-ipc.js'
 import type { RunApi } from './run-ipc.js'
+import type { GitApi } from './git-ipc.js'
 import type { TrafficApi } from './traffic-ipc.js'
 
 /**
@@ -2521,7 +2522,7 @@ export function isIpcChannel(value: string): value is IpcChannel {
  * validates `event.sender`. The shape belongs beside the channels it names.
  */
 export interface ChorusApi
-  extends WorkbenchShellApi, DetachedWindowApi, TrafficApi, RunApi, BrowserApi, ConsoleApi {
+  extends WorkbenchShellApi, DetachedWindowApi, TrafficApi, RunApi, GitApi, BrowserApi, ConsoleApi {
   readonly getAppInfo: () => Promise<AppInfo>
   /** Asks; the answer arrives on `onLimits`. */
   readonly refreshLimits: () => Promise<{ ok: true }>

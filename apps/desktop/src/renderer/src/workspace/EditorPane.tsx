@@ -6,12 +6,14 @@ import {
   BOX_WIDTH,
   DEVTOOLS_WIDTH,
   EDITOR_WIDTH,
+  GIT_WIDTH,
   TRAFFIC_WIDTH,
   type WorkspaceLayoutNode,
 } from '../../../shared/workspace-layout.js'
 import type { SessionInfo } from '../Session.js'
 import { BrowserPanel } from '../BrowserPanel.js'
 import { DevtoolsPanel } from '../DevtoolsPanel.js'
+import { GitPanel } from '../GitPanel.js'
 import { BrowserScreencast } from '../BrowserScreencast.js'
 import type { BrowserResponse } from '../../../shared/browser-ipc.js'
 import { ProjectTerminalPane } from '../ProjectTerminalPane.js'
@@ -43,6 +45,7 @@ import {
   useConversationGroups,
   useDevtoolsPanel,
   useEditorWidthFraction,
+  useGitPanel,
   usePane,
   useProjectRun,
   useProjectTerminalPane,
@@ -188,6 +191,7 @@ export function EditorPane(
   const content = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const trafficBox = useRef<HTMLElement>(null)
+  const gitBox = useRef<HTMLElement>(null)
   const terminalBox = useRef<HTMLElement>(null)
   const devtoolsBox = useRef<HTMLElement>(null)
   const websiteBox = useRef<HTMLElement>(null)
@@ -286,11 +290,14 @@ export function EditorPane(
   const run = useProjectRun(projectId)
   const terminalPane = useProjectTerminalPane(projectId)
   const devtools = useDevtoolsPanel(projectId)
+  const git = useGitPanel(projectId)
   const terminalShown = run?.available === true
   const terminalMinimum = projectTerminalMinimum(terminalPane.shells.length)
   const trafficCollapsed = traffic.collapsed === true
   const terminalCollapsed = terminalPane.collapsed === true
   const devtoolsCollapsed = devtools.collapsed
+  const gitCollapsed = git.collapsed
+  const gitWidth = gitCollapsed ? COLLAPSED_TOOL_WIDTH : Math.max(git.width, GIT_WIDTH.min)
   const trafficWidth = trafficCollapsed
     ? COLLAPSED_TOOL_WIDTH
     : Math.max(traffic.width, TRAFFIC_WIDTH.min)
@@ -304,6 +311,7 @@ export function EditorPane(
   const browserCollapsed = projectId !== null && collapsedBrowsers[projectId] === true
   const websiteCollapsed = projectId !== null && collapsedWebsites[projectId] === true
   const trafficBodyId = useId()
+  const gitBodyId = useId()
   const markRowTouched = useRowScroll(scroller, projectId, run !== null, hasPane, rowOrigin)
   useEffect(() => {
     const row = scroller.current
@@ -328,6 +336,8 @@ export function EditorPane(
     setConsoleWidth,
     setDevtoolsWidth,
     setDevtoolsCollapsed,
+    setGitWidth,
+    setGitCollapsed,
     setRowScroll,
     setTrafficWidth,
     setProjectTerminalWidth,
@@ -390,6 +400,7 @@ export function EditorPane(
   })
   const applyRow = (id: string) => (row: RowWidths) => {
     setConversationWidths(id, row.boxes)
+    if (row.git !== null) setGitWidth(id, row.git)
     if (row.traffic !== null) setTrafficWidth(id, row.traffic)
     if (row.terminal !== null) setProjectTerminalWidth(id, row.terminal)
     if (row.console !== null) setConsoleWidth(id, row.console)
@@ -672,6 +683,56 @@ export function EditorPane(
                   </div>
                 </Fragment>
               ))}
+            {projectId !== null && capabilities.embeddedEditor && (
+              <>
+                {rowSash}
+                <section
+                  className="git-box"
+                  ref={gitBox}
+                  data-collapsed={gitCollapsed}
+                  data-min-width={GIT_WIDTH.min}
+                  style={{ flex: `0 0 ${String(gitWidth)}px` }}
+                >
+                  <div className="conversation-dock">
+                    <div className="conversation-dock-tabs">
+                      <div className="conversation-dock-tab" data-active="true">
+                        <span className="conversation-dock-tab-main">
+                          <span className="conversation-dock-tab-title">{t('git.tabTitle')}</span>
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="conversation-dock-toggle"
+                      aria-expanded={!gitCollapsed}
+                      aria-controls={gitBodyId}
+                      aria-label={gitCollapsed ? t('git.expand') : t('git.collapse')}
+                      title={gitCollapsed ? t('git.expand') : t('git.collapse')}
+                      onClick={() => {
+                        markRowTouched(projectId)
+                        flushSync(() => {
+                          setGitCollapsed(projectId, !gitCollapsed)
+                        })
+                        if (gitCollapsed) revealInRow(gitBox.current)
+                        commitLayout()
+                      }}
+                    >
+                      <span aria-hidden="true">{gitCollapsed ? '▸' : '◂'}</span>
+                    </button>
+                  </div>
+                  <div id={gitBodyId} className="conversation-body" hidden={gitCollapsed}>
+                    <GitPanel
+                      key={projectId}
+                      projectId={projectId}
+                      collapsed={gitCollapsed}
+                      onOpenProject={(id) => {
+                        useWorkspaceStore.getState().openProject(id)
+                      }}
+                    />
+                  </div>
+                </section>
+              </>
+            )}
             {projectId !== null && (
               <>
                 {rowSash}

@@ -17,6 +17,7 @@ import {
   CONSOLE_WIDTH,
   type ConversationArrangement,
   type DevtoolsPanelState,
+  type GitPanelState,
   type ProjectTerminalPaneState,
   type TerminalPanelState,
   type TrafficPanelState,
@@ -27,6 +28,7 @@ import {
 import {
   CLOSED_TRAFFIC,
   DEFAULT_DEVTOOLS,
+  DEFAULT_GIT,
   DEFAULT_PROJECT_TERMINAL,
   leafPaneIds,
   tabLocation,
@@ -85,6 +87,8 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     setConsoleWidth,
     setDevtoolsWidth,
     setDevtoolsCollapsed,
+    setGitWidth,
+    setGitCollapsed,
     setTrafficWidth,
     setTrafficHiddenPathPrefix,
     setProjectTerminalWidth,
@@ -157,6 +161,8 @@ function selectActions(state: WorkspaceStore): WorkspaceActions {
     setConsoleWidth,
     setDevtoolsWidth,
     setDevtoolsCollapsed,
+    setGitWidth,
+    setGitCollapsed,
     setTrafficWidth,
     setTrafficHiddenPathPrefix,
     setProjectTerminalWidth,
@@ -303,6 +309,12 @@ export function useTrafficPanel(projectId: string | null): TrafficPanelState {
 export function useDevtoolsPanel(projectId: string | null): DevtoolsPanelState {
   return useWorkspaceStore((state) =>
     projectId === null ? DEFAULT_DEVTOOLS : (state.devtoolsPanels[projectId] ?? DEFAULT_DEVTOOLS)
+  )
+}
+
+export function useGitPanel(projectId: string | null): GitPanelState {
+  return useWorkspaceStore((state) =>
+    projectId === null ? DEFAULT_GIT : (state.gitPanels[projectId] ?? DEFAULT_GIT)
   )
 }
 

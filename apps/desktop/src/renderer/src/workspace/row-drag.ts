@@ -6,6 +6,7 @@ import {
   CONSOLE_WIDTH,
   DEVTOOLS_WIDTH,
   EDITOR_WIDTH,
+  GIT_WIDTH,
   PROJECT_TERMINAL_WIDTH,
   TRAFFIC_WIDTH,
 } from '../../../shared/workspace-layout.js'
@@ -185,9 +186,10 @@ export interface RowWidths {
   readonly terminal: number | null
   readonly console: number | null
   readonly devtools: number | null
+  readonly git: number | null
 }
 
-type RowItemKind = 'box' | 'traffic' | 'terminal' | 'console' | 'devtools' | 'fixed'
+type RowItemKind = 'box' | 'traffic' | 'terminal' | 'console' | 'devtools' | 'git' | 'fixed'
 
 interface RowItems {
   readonly kinds: readonly RowItemKind[]
@@ -205,6 +207,7 @@ function rowItemKind(element: Element): RowItemKind {
   if (element.classList.contains('traffic-box')) return 'traffic'
   if (element.classList.contains('project-terminal-box')) return 'terminal'
   if (element.classList.contains('devtools-box')) return 'devtools'
+  if (element.classList.contains('git-box')) return 'git'
   return 'fixed'
 }
 
@@ -226,6 +229,7 @@ function rowItems(sash: HTMLElement): RowItems | null {
     if (kind === 'terminal') return declaredMinimum(items[at], PROJECT_TERMINAL_WIDTH.min)
     if (kind === 'console') return CONSOLE_WIDTH.min
     if (kind === 'devtools') return DEVTOOLS_WIDTH.min
+    if (kind === 'git') return GIT_WIDTH.min
     return frozen[at] ?? 0
   })
   const index = children.slice(0, children.indexOf(sash)).filter((child) => !isSash(child)).length
@@ -237,12 +241,14 @@ function rowWidths(items: RowItems, pushed: readonly number[]): RowWidths {
   const terminalAt = items.kinds.indexOf('terminal')
   const consoleAt = items.kinds.indexOf('console')
   const devtoolsAt = items.kinds.indexOf('devtools')
+  const gitAt = items.kinds.indexOf('git')
   return {
     boxes: pushed.filter((_, at) => items.kinds[at] === 'box'),
     traffic: trafficAt < 0 ? null : (pushed[trafficAt] ?? null),
     terminal: terminalAt < 0 ? null : (pushed[terminalAt] ?? null),
     console: consoleAt < 0 ? null : (pushed[consoleAt] ?? null),
     devtools: devtoolsAt < 0 ? null : (pushed[devtoolsAt] ?? null),
+    git: gitAt < 0 ? null : (pushed[gitAt] ?? null),
   }
 }
 

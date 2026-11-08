@@ -19,6 +19,7 @@ vi.mock('./PaneWorkbench.js', () => ({ PaneWorkbench: () => null }))
 vi.mock('../BrowserPanel.js', () => ({ BrowserPanel: () => null }))
 vi.mock('./ProjectNotes.js', () => ({ ProjectNotes: () => null }))
 vi.mock('../TrafficPanel.js', () => ({ TrafficPanel: () => null }))
+vi.mock('../GitPanel.js', () => ({ GitPanel: () => null }))
 vi.mock('../ProjectTerminalPane.js', () => ({ ProjectTerminalPane: () => null }))
 vi.mock('./hooks.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
