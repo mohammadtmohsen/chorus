@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LOCAL_HOST } from '@chorus/event-store'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import en from '../renderer/src/i18n/en.json'
 import {
   WORKBENCH_ACTIVITY_BAR_PUSH_CHANNEL,
   WORKBENCH_ACTIVITY_BAR_REPORT_CHANNEL,
@@ -237,7 +238,21 @@ const RUNTIME = {
   commit: '987c9597516278c9fcf10d963a0592ce1384ab93',
   quality: 'stable',
 }
-const LOCAL_RUNTIME = { ...RUNTIME, processNonce: expect.any(String) as string }
+const REVIEW_LABELS = {
+  title: en.git.review.editorTitle,
+  actionFailed: en.git.failure['git-failed'],
+  comment: en.git.review.comment,
+  reply: en.git.review.reply,
+  resolve: en.git.review.resolve,
+  reopen: en.git.review.reopen,
+  commentingBlocked: en.git.review.commentingBlocked,
+  status: en.git.review.status,
+}
+const LOCAL_RUNTIME = {
+  ...RUNTIME,
+  processNonce: expect.any(String) as string,
+  reviewLabels: REVIEW_LABELS,
+}
 /** How many views existed when the lease was taken — see the ordering test below. */
 let viewsAtAcquire = -1
 /*
@@ -1212,7 +1227,12 @@ describe('the shared server lease', () => {
       expect(acquireRemoteWorkbenchRuntime).toHaveBeenCalledWith('officepc', 'C:/api')
       expect(acquireWorkbenchRuntime).not.toHaveBeenCalled()
       expect(view.webContents.sent).toEqual([
-        { ...RUNTIME, remoteAuthority: '127.0.0.1:48000', projectRoot: '/C:/api' },
+        {
+          ...RUNTIME,
+          remoteAuthority: '127.0.0.1:48000',
+          projectRoot: '/C:/api',
+          reviewLabels: REVIEW_LABELS,
+        },
       ])
 
       await surface.closeSurface(shell as never, viewId)

@@ -41,6 +41,13 @@ import type { WindowRole } from '../shared/detached-window-ipc.js'
 import type { WorkbenchContextReport } from './ipc-host.js'
 import type { WorkbenchPlace } from './project-root.js'
 import type { WorkbenchTerminalEnv } from '../shared/workbench-ipc.js'
+import {
+  GIT_CONTRACT,
+  GIT_REVIEW_PUSH_CHANNEL,
+  GitReviewEnvelope,
+  type GitRequest,
+  type GitResponse,
+} from '../shared/git-ipc.js'
 import { BrowserIpc } from './browser-ipc.js'
 import { BrowserConsoles } from './browser-console.js'
 import { ConsoleIpc } from './console-ipc.js'
@@ -72,6 +79,9 @@ import {
   setWorkbenchTerminalEnvSource,
   setWorkbenchContextSink,
   setWorkbenchSurfaceGoneSink,
+  setWorkbenchReviewSource,
+  publishWorkbenchReview,
+  resetWorkbenchReviews,
 } from './workbench-surface.js'
 import { adoptShellPath } from './which.js'
 
@@ -108,6 +118,28 @@ function clientFor(sender: WebContents): EngineClient {
   const entry = engineWindows.get(sender)
   if (entry === undefined || sender.isDestroyed()) throw new Error('unknown-shell-window')
   return entry.client
+}
+
+async function invokeReview<
+  C extends
+    | 'git:activeReview'
+    | 'git:reviewFile'
+    | 'git:openDiff'
+    | 'git:comment'
+    | 'git:reply'
+    | 'git:resolve',
+>(owner: WebContents, channel: C, request: GitRequest<C>): Promise<GitResponse<C>> {
+  const raw = await clientFor(owner).invoke(
+    channel,
+    request,
+    undefined,
+    channel === 'git:reviewFile' ? 30_000 : undefined
+  )
+  const result = GIT_CONTRACT[channel].response.safeParse(raw)
+  if (!result.success) {
+    throw new Error(`Malformed response on "${channel}": ${result.error.message}`)
+  }
+  return result.data as GitResponse<C>
 }
 
 function activeClient(): EngineClient {
@@ -218,6 +250,10 @@ function connectWindow(window: BrowserWindow, role: WindowRole): EngineWindow {
   engineWindows.set(window.webContents, entry)
   client.setHostHandler((method, params) => answerEngineHostCall(role, method, params))
   client.onPush((channel, payload) => {
+    if (channel === GIT_REVIEW_PUSH_CHANNEL) {
+      const state = GitReviewEnvelope.safeParse(payload)
+      if (state.success) publishWorkbenchReview(window.webContents, state.data)
+    }
     if (channel === EVENTS_PUSH_CHANNEL) {
       const events = EventsPush.safeParse(payload)
       if (events.success) {
@@ -239,6 +275,7 @@ function connectWindow(window: BrowserWindow, role: WindowRole): EngineWindow {
     const changed = entry.state !== state
     entry.state = state
     deliver(entry, ENGINE_STATUS_CHANNEL, { state })
+    if (changed && state === 'connected') resetWorkbenchReviews(window.webContents)
     if (state === 'connected') entry.update = null
     if (changed && (state === 'connected' || state === 'restart-required'))
       void client
@@ -609,6 +646,14 @@ void app.whenReady().then(async () => {
   setWorkbenchTerminalEnvSource({
     current: (place) => terminalEnvironment.get(placeKey(place)) ?? null,
     ensure: (place) => environmentFor(place, true),
+  })
+  setWorkbenchReviewSource({
+    reviewFile: (owner, request) => invokeReview(owner, 'git:reviewFile', request),
+    comment: (owner, request) => invokeReview(owner, 'git:comment', request),
+    reply: (owner, request) => invokeReview(owner, 'git:reply', request),
+    resolve: (owner, request) => invokeReview(owner, 'git:resolve', request),
+    state: (owner, projectId) => invokeReview(owner, 'git:activeReview', { projectId }),
+    openDiff: (owner, request) => invokeReview(owner, 'git:openDiff', request),
   })
   const detachedDeps: DetachedWindowDeps = {
     mainWindow: () => mainWindow,

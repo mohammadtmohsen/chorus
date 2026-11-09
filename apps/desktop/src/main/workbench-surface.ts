@@ -66,6 +66,15 @@ import {
   WORKBENCH_USER_SETTINGS_WRITE_CHANNEL,
   WorkbenchActivityBarWidth,
   WorkbenchContext,
+  WORKBENCH_REVIEW_STATE_CHANNEL,
+  WORKBENCH_REVIEW_CHANGED_CHANNEL,
+  WORKBENCH_REVIEW_ACTION_CHANNEL,
+  WORKBENCH_REVIEW_FILE_CHANNEL,
+  WorkbenchReviewAction,
+  WorkbenchReviewFileRequest,
+  type WorkbenchReviewState,
+  type WorkbenchReviewActionResult,
+  type WorkbenchReviewFileResult,
   WorkbenchRowScrollDelta,
   remotePath,
   type CompletionReply,
@@ -93,6 +102,8 @@ import {
   recordEditorOutcome,
   requestCompletion,
 } from './completion-client.js'
+import { mainT } from './i18n.js'
+import type { GitRequest, GitResponse, GitReviewEnvelope } from '../shared/git-ipc.js'
 import { READ_PREVIEW_SELECTION } from './preview-selection.js'
 import { acquireRemoteWorkbenchRuntime, releaseRemoteWorkbenchRuntime } from './remote-workbench.js'
 import { currentScale, onScaleChange } from './scale.js'
@@ -165,6 +176,7 @@ export { approveProjectRoot, type WorkbenchPlace } from './project-root.js'
 
 interface Surface {
   readonly id: string
+  projectId: string | null
   readonly host: string
   /** Canonical, and never the string the renderer proposed. See `approveProjectRoot`. */
   readonly projectRoot: string
@@ -820,6 +832,21 @@ function describe(surface: Surface): WorkbenchConnection {
     connectionToken: surface.runtime.connectionToken,
     commit: surface.runtime.commit,
     quality: surface.runtime.quality,
+    reviewLabels: {
+      title: mainT('git.review.editorTitle'),
+      actionFailed: mainT('git.failure.git-failed'),
+      comment: mainT('git.review.comment'),
+      reply: mainT('git.review.reply'),
+      resolve: mainT('git.review.resolve'),
+      reopen: mainT('git.review.reopen'),
+      commentingBlocked: mainT('git.review.commentingBlocked'),
+      status: {
+        added: mainT('git.review.status.added'),
+        removed: mainT('git.review.status.removed'),
+        modified: mainT('git.review.status.modified'),
+        renamed: mainT('git.review.status.renamed'),
+      },
+    },
     /*
      * Spread in or not present at all, rather than set to a value meaning "no".
      *
@@ -1062,7 +1089,14 @@ export async function openSurface(
     throw new Error('This project is closed or still closing.')
   const projectRoot = place.root
   const claimed = claimHandoff(owner, place)
-  if (claimed !== null) return claimed
+  if (claimed !== null) {
+    const surface = byId.get(claimed)
+    if (surface !== undefined && 'projectId' in target && surface.projectId !== target.projectId) {
+      surface.projectId = target.projectId
+      liveContents(surface)?.send(WORKBENCH_REVIEW_CHANGED_CHANNEL, null)
+    }
+    return claimed
+  }
 
   /*
    * The lease is taken **before** the view exists, and the await is why this
@@ -1137,6 +1171,7 @@ export async function openSurface(
 
   const surface: Surface = {
     id,
+    projectId: 'projectId' in target ? target.projectId : null,
     host: place.host,
     projectRoot,
     runtime,
@@ -1772,6 +1807,51 @@ export function closeAllSurfaces(): Promise<void> {
 let resolveProjectPlace: ((projectId: string) => Promise<WorkbenchPlace>) | null = null
 let openRegisteredProject: ((projectId: string) => void | Promise<void>) | null = null
 
+interface WorkbenchReviewSource {
+  reviewFile(
+    owner: WebContents,
+    request: GitRequest<'git:reviewFile'>
+  ): Promise<GitResponse<'git:reviewFile'>>
+  comment(
+    owner: WebContents,
+    request: GitRequest<'git:comment'>
+  ): Promise<GitResponse<'git:comment'>>
+  reply(owner: WebContents, request: GitRequest<'git:reply'>): Promise<GitResponse<'git:reply'>>
+  resolve(
+    owner: WebContents,
+    request: GitRequest<'git:resolve'>
+  ): Promise<GitResponse<'git:resolve'>>
+  state(owner: WebContents, projectId: string): Promise<GitReviewEnvelope>
+  openDiff(
+    owner: WebContents,
+    request: GitRequest<'git:openDiff'>
+  ): Promise<GitResponse<'git:openDiff'>>
+}
+
+let reviewSource: WorkbenchReviewSource | null = null
+
+export function setWorkbenchReviewSource(source: WorkbenchReviewSource): void {
+  reviewSource = source
+}
+
+export function publishWorkbenchReview(owner: WebContents, state: GitReviewEnvelope): void {
+  for (const surface of byId.values()) {
+    if (surface.owner !== owner || surface.projectId !== state.projectId) continue
+    const contents = liveContents(surface)
+    contents?.send(WORKBENCH_REVIEW_CHANGED_CHANNEL, {
+      revision: state.revision,
+      review: state.review,
+    })
+  }
+}
+
+export function resetWorkbenchReviews(owner: WebContents): void {
+  for (const surface of byId.values()) {
+    if (surface.owner !== owner) continue
+    liveContents(surface)?.send(WORKBENCH_REVIEW_CHANGED_CHANNEL, null)
+  }
+}
+
 let detachedAccess: ((caller: WebContents, projectRoot: string) => boolean) | null = null
 
 export function setDetachedAccessPredicate(
@@ -1836,6 +1916,104 @@ export function registerWorkbenchHandlers(
 ): void {
   resolveProjectPlace = resolvePlace ?? null
   openRegisteredProject = openProject ?? null
+  ipcMain.handle(WORKBENCH_REVIEW_STATE_CHANNEL, async (event): Promise<WorkbenchReviewState> => {
+    const surface = byContents.get(event.sender)
+    if (surface === undefined || !fromMainFrame(event)) throw new Error('unknown workbench surface')
+    if (surface.projectId === null || reviewSource === null) return { revision: 0, review: null }
+    const projectId = surface.projectId
+    const state = await reviewSource.state(surface.owner, projectId)
+    if (state.projectId !== projectId) throw new Error('workbench-review-project-mismatch')
+    return { revision: state.revision, review: state.review }
+  })
+  ipcMain.handle(
+    WORKBENCH_REVIEW_FILE_CHANNEL,
+    async (event, raw: unknown): Promise<WorkbenchReviewFileResult> => {
+      const surface = byContents.get(event.sender)
+      if (surface === undefined || !fromMainFrame(event)) {
+        throw new Error('unknown workbench surface')
+      }
+      if (surface.projectId === null || reviewSource === null) {
+        return { ok: false, message: mainT('git.failure.refused-target') }
+      }
+      const parsed = WorkbenchReviewFileRequest.safeParse(raw)
+      if (!parsed.success) return { ok: false, message: mainT('git.failure.refused-target') }
+      try {
+        const result = await reviewSource.reviewFile(surface.owner, {
+          ...parsed.data,
+          projectId: surface.projectId,
+        })
+        if (result.failure === null && result.text !== null) {
+          return { ok: true, text: result.text }
+        }
+        return {
+          ok: false,
+          message: [mainT(`git.failure.${result.failure ?? 'git-failed'}`), result.error]
+            .filter((part) => part !== null)
+            .join('\n'),
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const mismatch =
+          message === 'channel-refused' || message.includes('Malformed response on "git:')
+        return {
+          ok: false,
+          message: mainT(mismatch ? 'git.restartRequired' : 'git.failure.git-failed'),
+        }
+      }
+    }
+  )
+  ipcMain.handle(
+    WORKBENCH_REVIEW_ACTION_CHANNEL,
+    async (event, raw: unknown): Promise<WorkbenchReviewActionResult> => {
+      const surface = byContents.get(event.sender)
+      if (surface === undefined || !fromMainFrame(event))
+        throw new Error('unknown workbench surface')
+      if (surface.projectId === null || reviewSource === null) {
+        return { ok: false, message: mainT('git.failure.refused-target') }
+      }
+      const parsed = WorkbenchReviewAction.safeParse(raw)
+      if (!parsed.success) return { ok: false, message: mainT('git.failure.refused-target') }
+      const action = parsed.data
+      const { kind, ...fields } = action
+      const request = { ...fields, projectId: surface.projectId }
+      try {
+        let result: GitResponse<'git:openDiff'>
+        switch (kind) {
+          case 'openDiff':
+            result = await reviewSource.openDiff(
+              surface.owner,
+              request as GitRequest<'git:openDiff'>
+            )
+            break
+          case 'comment':
+            result = await reviewSource.comment(surface.owner, request as GitRequest<'git:comment'>)
+            break
+          case 'reply':
+            result = await reviewSource.reply(surface.owner, request as GitRequest<'git:reply'>)
+            break
+          case 'resolve':
+            result = await reviewSource.resolve(surface.owner, request as GitRequest<'git:resolve'>)
+            break
+        }
+        return result.failure === null
+          ? { ok: true }
+          : {
+              ok: false,
+              message: [mainT(`git.failure.${result.failure}`), result.error]
+                .filter((part) => part !== null)
+                .join('\n'),
+            }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const mismatch =
+          message === 'channel-refused' || message.includes('Malformed response on "git:')
+        return {
+          ok: false,
+          message: mainT(mismatch ? 'git.restartRequired' : 'git.failure.git-failed'),
+        }
+      }
+    }
+  )
   ipcMain.on(
     WORKBENCH_STORAGE_FLUSH_RESULT_CHANNEL,
     (event, requestId: unknown, error: unknown) => {

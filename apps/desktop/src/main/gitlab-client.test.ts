@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { fileDigest, GitLabClient, GitLabDirectory, hunksOf } from './gitlab-client.js'
+import { GitLabClient, GitLabDirectory, hunksOf, positionFor } from './gitlab-client.js'
 import type { MrDiffItem } from './gitlab-client.js'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -37,6 +37,28 @@ function diffItem(overrides: Partial<MrDiffItem> = {}): MrDiffItem {
     new_file: false,
     renamed_file: false,
     deleted_file: false,
+    ...overrides,
+  }
+}
+
+function discussionNote(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 1,
+    system: false,
+    type: 'DiffNote',
+    body: 'Initial comment',
+    author: { name: 'Reviewer', username: 'reviewer' },
+    created_at: '2026-11-09T10:24:00Z',
+    resolved: false,
+    position: {
+      head_sha: version.headSha,
+      base_sha: version.baseSha,
+      start_sha: version.startSha,
+      old_path: 'src/file.ts',
+      new_path: 'src/file.ts',
+      old_line: 2,
+      new_line: 2,
+    },
     ...overrides,
   }
 }
@@ -469,21 +491,105 @@ describe('GitLab review files', () => {
       ],
     })
   })
+})
 
-  it('retains unchanged text digests but resets binary and mode-only files with the head', () => {
-    const next = { ...version, id: 10, headSha: 'd'.repeat(40) }
-    const text = diffItem()
-    expect(fileDigest(version, text)).toBe(fileDigest(next, text))
-    expect(fileDigest(version, text)).not.toBe(fileDigest(version, { ...text, b_mode: '100755' }))
-    for (const file of [
-      diffItem({ diff: '' }),
-      diffItem({ diff: 'Binary files a/file.png and b/file.png differ\n' }),
-      diffItem({ diff: 'old mode 100644\nnew mode 100755\n', b_mode: '100755' }),
-      diffItem({ collapsed: true }),
-      diffItem({ too_large: true }),
-    ]) {
-      expect(fileDigest(version, file)).not.toBe(fileDigest(next, file))
-    }
+describe('GitLab line positions', () => {
+  it.each([
+    ['modified', 2, { new_line: 2 }],
+    ['original', 2, { old_line: 2 }],
+    ['modified', 1, { old_line: 1, new_line: 1 }],
+  ] as const)('maps %s line %i inside a hunk', (side, line, expected) => {
+    const position = positionFor(version, diffItem(), side, line)
+    expect(position).toEqual({
+      position_type: 'text',
+      base_sha: version.baseSha,
+      start_sha: version.startSha,
+      head_sha: version.headSha,
+      old_path: 'src/file.ts',
+      new_path: 'src/file.ts',
+      ...expected,
+    })
+  })
+
+  it.each([
+    ['original', 2, 2, 2],
+    ['original', 6, 6, 7],
+    ['modified', 7, 6, 7],
+  ] as const)('maps %s line %i outside a hunk', (side, line, oldLine, newLine) => {
+    const file = diffItem({ diff: '@@ -4,2 +4,3 @@\n context\n-old\n+first\n+second\n' })
+    expect(positionFor(version, file, side, line)).toMatchObject({
+      old_line: oldLine,
+      new_line: newLine,
+    })
+  })
+
+  it('keeps the boundary of a zero-length insertion and maps the following unchanged line', () => {
+    const file = diffItem({ diff: '@@ -3,0 +4,2 @@\n+first\n+second\n' })
+    expect(positionFor(version, file, 'original', 3)).toMatchObject({ old_line: 3, new_line: 3 })
+    expect(positionFor(version, file, 'original', 4)).toMatchObject({ old_line: 4, new_line: 6 })
+  })
+
+  it('uses both recorded paths for a renamed file', () => {
+    const file = diffItem({ old_path: 'old.ts', new_path: 'new.ts', renamed_file: true })
+    expect(positionFor(version, file, 'modified', 1)).toMatchObject({
+      old_path: 'old.ts',
+      new_path: 'new.ts',
+      old_line: 1,
+      new_line: 1,
+    })
+  })
+})
+
+describe('GitLab review writes', () => {
+  it.each([
+    ['POST', '/discussions', { body: 'Comment', position: { new_line: 1 } }],
+    ['POST', '/discussions/thread/notes', { body: 'Reply' }],
+    ['PUT', '/discussions/thread', { resolved: true }],
+    ['PUT', '/discussions/thread', { resolved: false }],
+    ['POST', '/approve', { sha: version.headSha }],
+    ['POST', '/unapprove', {}],
+  ] as const)('sends %s %s with its JSON body', async (method, suffix, body) => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response('{}'))
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.writeReview(location, 7, method, suffix, body)).resolves.toMatchObject({
+      ok: true,
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      `https://gitlab.com/api/v4/projects/group%2Fproject/merge_requests/7${suffix}`,
+      expect.objectContaining({ method, body: JSON.stringify(body) })
+    )
+  })
+
+  it('retains GitLab position errors', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Position is invalid' }), { status: 400 })
+      )
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.writeReview(location, 7, 'POST', '/discussions', {})).resolves.toEqual({
+      ok: false,
+      failure: 'invalid-response',
+      retryAt: null,
+      error: 'Position is invalid',
+    })
+  })
+
+  it('re-reads discussions and approvals uncached after a write', async () => {
+    const fallback = reviewRequest()
+    const request = vi
+      .fn<typeof fetch>()
+      .mockImplementation((url, options) =>
+        options?.method === 'POST' ? Promise.resolve(new Response('{}')) : fallback(url, options)
+      )
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await directory.review(location, 7)
+    await directory.writeReview(location, 7, 'POST', '/approve', { sha: version.headSha })
+    await directory.review(location, 7, true)
+    expect(request.mock.calls.filter(([url]) => urlOf(url).includes('/discussions?'))).toHaveLength(
+      2
+    )
+    expect(request.mock.calls.filter(([url]) => urlOf(url).endsWith('/approvals'))).toHaveLength(2)
   })
 })
 
@@ -536,12 +642,21 @@ describe('GitLabDirectory review snapshots', () => {
       start_sha: version.startSha,
       old_path: 'src/file.ts',
       new_path: 'src/file.ts',
+      old_line: 2,
+      new_line: 2,
     }
-    const note = { system: false, type: 'DiffNote', position }
+    const note = discussionNote({ position, resolved: true })
+    const reply = {
+      id: 2,
+      system: false,
+      body: 'A reply without a position',
+      author: { name: 'Author', username: 'author' },
+      created_at: '2026-11-09T11:25:00Z',
+    }
     const request = reviewRequest({
       versions: [{ id: 3 }, { id: 9 }, { id: 5 }],
       discussions: [
-        { id: 'current', notes: [note, note] },
+        { id: 'current', notes: [note, reply, { system: true }] },
         {
           id: 'old-head',
           notes: [{ ...note, position: { ...position, head_sha: 'd'.repeat(40) } }],
@@ -560,6 +675,17 @@ describe('GitLabDirectory review snapshots', () => {
           id: 'other-path',
           notes: [{ ...note, position: { ...position, new_path: 'other.ts' } }],
         },
+        {
+          id: 'other-old-path',
+          notes: [{ ...note, position: { ...position, old_path: 'other.ts' } }],
+        },
+        {
+          id: 'a-reply-cannot-reanchor-the-thread',
+          notes: [
+            { ...note, position: { ...position, head_sha: 'd'.repeat(40) } },
+            { ...note, id: 3 },
+          ],
+        },
       ],
     })
     const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
@@ -572,6 +698,7 @@ describe('GitLabDirectory review snapshots', () => {
             iid: 7,
             description: '',
             labels: [{ name: 'In Review', color: '#123456', textColor: '#fff' }],
+            fork: false,
           },
           version,
           pipeline: { id: 501, projectId: 99, status: 'success' },
@@ -586,7 +713,6 @@ describe('GitLabDirectory review snapshots', () => {
           files: [
             {
               raw: diffItem(),
-              digest: fileDigest(version, diffItem()),
               summary: {
                 path: 'src/file.ts',
                 status: 'modified',
@@ -596,12 +722,103 @@ describe('GitLabDirectory review snapshots', () => {
               },
             },
           ],
+          threads: [
+            {
+              id: 'current',
+              path: 'src/file.ts',
+              oldPath: 'src/file.ts',
+              oldLine: 2,
+              newLine: 2,
+              resolved: true,
+              notes: [
+                {
+                  id: 1,
+                  body: 'Initial comment',
+                  author: { name: 'Reviewer', username: 'reviewer' },
+                  createdAt: Date.parse('2026-11-09T10:24:00Z'),
+                },
+                {
+                  id: 2,
+                  body: 'A reply without a position',
+                  author: { name: 'Author', username: 'author' },
+                  createdAt: Date.parse('2026-11-09T11:25:00Z'),
+                },
+              ],
+            },
+          ],
           complete: true,
         },
       },
     })
     expect(request.mock.calls.filter(([url]) => urlOf(url).endsWith('/versions/9'))).toHaveLength(1)
+    expect(request.mock.calls.filter(([url]) => urlOf(url).includes('/discussions?'))).toHaveLength(
+      1
+    )
     expect(request.mock.calls.every(([, options]) => options?.method === 'GET')).toBe(true)
+  })
+
+  it.each([
+    { old_line: 3, new_line: null, oldLine: 3, newLine: null },
+    { old_line: null, new_line: null, oldLine: null, newLine: null },
+  ])('preserves original-side and absent line anchors: %o', async (lines) => {
+    const request = reviewRequest({
+      discussions: [
+        {
+          id: 'positioned',
+          notes: [
+            discussionNote({
+              position: {
+                head_sha: version.headSha,
+                base_sha: version.baseSha,
+                start_sha: version.startSha,
+                old_path: 'src/file.ts',
+                new_path: 'src/file.ts',
+                old_line: lines.old_line,
+                new_line: lines.new_line,
+              },
+            }),
+          ],
+        },
+      ],
+    })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        kind: 'ready',
+        snapshot: {
+          threads: [{ id: 'positioned', oldLine: lines.oldLine, newLine: lines.newLine }],
+          files: [{ summary: { threads: 1 } }],
+        },
+      },
+    })
+  })
+
+  it.each([
+    { resolved: 'invalid' },
+    { position: { new_line: 'invalid' } },
+    { created_at: 'invalid' },
+    { author: { name: null, username: 'reviewer' } },
+    { body: null },
+  ])('drops a malformed thread without hiding the review: %o', async (invalid) => {
+    const request = reviewRequest({
+      discussions: [
+        { id: 'valid', notes: [discussionNote()] },
+        { id: 'malformed', notes: [discussionNote(invalid)] },
+      ],
+    })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        kind: 'ready',
+        snapshot: {
+          threads: [{ id: 'valid', resolved: false }],
+          files: [{ summary: { path: 'src/file.ts', threads: 1 } }],
+          complete: true,
+        },
+      },
+    })
   })
 
   it.each([401, 403, 404])('retains review files when approvals return %i', async (status) => {

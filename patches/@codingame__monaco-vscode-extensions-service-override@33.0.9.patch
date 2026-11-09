@@ -1,0 +1,29 @@
+diff --git a/vscode/src/vs/workbench/api/browser/mainThreadSCM.js b/vscode/src/vs/workbench/api/browser/mainThreadSCM.js
+index d0848ad48e7e7c472e4ee80b41d2449f66cf1ccc..a3b28fe29ffe23562163383dac87fee43b6b8ccf 100644
+--- a/vscode/src/vs/workbench/api/browser/mainThreadSCM.js
++++ b/vscode/src/vs/workbench/api/browser/mainThreadSCM.js
+@@ -307,12 +307,22 @@ class MainThreadSCMHistoryProvider {
+         }, undefined);
+     }
+ }
++let nextScmHostIndex = 0;
++const scmHostIndexes = new WeakMap();
++function scmProviderId(proxy, handle) {
++    let index = scmHostIndexes.get(proxy);
++    if (index === undefined) {
++        index = nextScmHostIndex++;
++        scmHostIndexes.set(proxy, index);
++    }
++    return index === 0 ? `scm${handle}` : `scm${index}-${handle}`;
++}
+ class MainThreadSCMProvider {
+     get id() {
+-        return `scm${this._handle}`;
++        return scmProviderId(this.proxy, this._handle);
+     }
+     get parentId() {
+-        return this._parentHandle !== undefined ? `scm${this._parentHandle}` : undefined;
++        return this._parentHandle !== undefined ? scmProviderId(this.proxy, this._parentHandle) : undefined;
+     }
+     get providerId() {
+         return this._providerId;

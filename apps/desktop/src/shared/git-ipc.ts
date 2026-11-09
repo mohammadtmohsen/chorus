@@ -74,9 +74,26 @@ export const GitReviewFile = z.object({
   collapsed: z.boolean(),
   tooLarge: z.boolean(),
   threads: z.number().int().nonnegative(),
-  viewed: z.enum(['no', 'yes', 'changed']),
 })
 export type GitReviewFile = z.infer<typeof GitReviewFile>
+
+export const GitReviewThread = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+  oldPath: z.string(),
+  oldLine: z.number().int().positive().nullable(),
+  newLine: z.number().int().positive().nullable(),
+  resolved: z.boolean(),
+  notes: z.array(
+    z.object({
+      id: z.number().int().positive(),
+      body: z.string(),
+      author: MrRow.shape.author,
+      createdAt: z.number().int(),
+    })
+  ),
+})
+export type GitReviewThread = z.infer<typeof GitReviewThread>
 
 export const GitReviewReady = z.object({
   kind: z.literal('ready'),
@@ -88,6 +105,7 @@ export const GitReviewReady = z.object({
     sourceBranch: true,
     targetBranch: true,
     labels: true,
+    fork: true,
   }).extend({ description: z.string() }),
   version: ReviewVersion,
   pipeline: MrRow.shape.pipeline,
@@ -102,6 +120,7 @@ export const GitReviewReady = z.object({
     })
     .nullable(),
   files: z.array(GitReviewFile),
+  threads: z.array(GitReviewThread),
   complete: z.boolean(),
   updatedSinceReview: z.boolean(),
 })
@@ -118,12 +137,53 @@ export const GitReview = z.discriminatedUnion('kind', [
 ])
 export type GitReview = z.infer<typeof GitReview>
 
+export const GitReviewEnvelope = z.object({
+  projectId: z.string().min(1),
+  revision: z.number().int().nonnegative(),
+  review: GitReviewReady.nullable(),
+})
+export type GitReviewEnvelope = z.infer<typeof GitReviewEnvelope>
+
+export const GitReviewOutcome = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('ready') }),
+  z.object({ kind: z.literal('preparing') }),
+  z.object({
+    kind: z.literal('failed'),
+    failure: GitFailure,
+    retryAt: z.number().int().nullable(),
+  }),
+])
+export type GitReviewOutcome = z.infer<typeof GitReviewOutcome>
+
+export const GitReviewReply = GitReviewEnvelope.extend({ outcome: GitReviewOutcome })
+export type GitReviewReply = z.infer<typeof GitReviewReply>
+
+export const GIT_REVIEW_PUSH_CHANNEL = 'git:reviewChanged'
+
 export const GitReviewRequest = GitProject.extend({ iid: z.number().int().positive() }).strict()
 export const GitReviewVersionRequest = GitReviewRequest.extend({
   versionId: z.number().int().positive(),
 }).strict()
 export const GitReviewFileRequest = GitReviewVersionRequest.extend({
   path: z.string().min(1),
+}).strict()
+export const GitReviewFileReadRequest = GitReviewFileRequest.extend({
+  side: z.enum(['original', 'modified']),
+}).strict()
+
+const GitCommentBody = z.string().refine((body) => body.trim().length > 0)
+export const GitCommentRequest = GitReviewFileRequest.extend({
+  side: z.enum(['original', 'modified']),
+  line: z.number().int().positive(),
+  body: GitCommentBody,
+}).strict()
+export const GitReplyRequest = GitReviewRequest.extend({
+  discussionId: z.string().min(1),
+  body: GitCommentBody,
+}).strict()
+export const GitResolveRequest = GitReviewRequest.extend({
+  discussionId: z.string().min(1),
+  resolved: z.boolean(),
 }).strict()
 
 const GitDiffResult = z.object({
@@ -217,10 +277,19 @@ export type GitCheckoutTarget = z.infer<typeof GitCheckoutTarget>
 export const GIT_CONTRACT = {
   'git:state': { request: GitProject, response: GitBoxState },
   'git:requests': { request: GitProject, response: GitRequests },
-  'git:review': { request: GitReviewRequest, response: GitReview },
-  'git:viewed': {
-    request: GitReviewFileRequest.extend({ viewed: z.boolean() }).strict(),
-    response: GitReview,
+  'git:review': { request: GitReviewRequest, response: GitReviewReply },
+  'git:activeReview': { request: GitProject, response: GitReviewEnvelope },
+  'git:closeReview': { request: GitProject, response: GitReviewEnvelope },
+  'git:reviewFile': {
+    request: GitReviewFileReadRequest,
+    response: GitDiffResult.extend({ text: z.string().nullable() }),
+  },
+  'git:comment': { request: GitCommentRequest, response: GitDiffResult },
+  'git:reply': { request: GitReplyRequest, response: GitDiffResult },
+  'git:resolve': { request: GitResolveRequest, response: GitDiffResult },
+  'git:approve': {
+    request: GitReviewVersionRequest.extend({ approve: z.boolean() }).strict(),
+    response: GitDiffResult,
   },
   'git:openDiff': {
     request: GitReviewFileRequest,
@@ -245,12 +314,29 @@ export type GitResponse<C extends GitChannel> = z.infer<GitContract[C]['response
 export const GIT_CHANNELS = Object.keys(GIT_CONTRACT) as GitChannel[]
 
 export interface GitApi {
+  readonly readGitReviewFile: (
+    request: GitRequest<'git:reviewFile'>
+  ) => Promise<GitResponse<'git:reviewFile'>>
+  readonly commentOnGit: (request: GitRequest<'git:comment'>) => Promise<GitResponse<'git:comment'>>
+  readonly replyToGitThread: (request: GitRequest<'git:reply'>) => Promise<GitResponse<'git:reply'>>
+  readonly resolveGitThread: (
+    request: GitRequest<'git:resolve'>
+  ) => Promise<GitResponse<'git:resolve'>>
+  readonly approveGitReview: (
+    request: GitRequest<'git:approve'>
+  ) => Promise<GitResponse<'git:approve'>>
+  readonly readActiveGitReview: (
+    request: GitRequest<'git:activeReview'>
+  ) => Promise<GitResponse<'git:activeReview'>>
+  readonly closeGitReview: (
+    request: GitRequest<'git:closeReview'>
+  ) => Promise<GitResponse<'git:closeReview'>>
+  readonly onGitReviewChanged: (listener: (state: GitReviewEnvelope) => void) => () => void
   readonly readGitState: (request: GitRequest<'git:state'>) => Promise<GitResponse<'git:state'>>
   readonly readGitRequests: (
     request: GitRequest<'git:requests'>
   ) => Promise<GitResponse<'git:requests'>>
   readonly readGitReview: (request: GitRequest<'git:review'>) => Promise<GitResponse<'git:review'>>
-  readonly setGitViewed: (request: GitRequest<'git:viewed'>) => Promise<GitResponse<'git:viewed'>>
   readonly openGitDiff: (
     request: GitRequest<'git:openDiff'>
   ) => Promise<GitResponse<'git:openDiff'>>
@@ -262,4 +348,17 @@ export interface GitApi {
   readonly checkoutGit: (
     request: GitRequest<'git:checkout'>
   ) => Promise<GitResponse<'git:checkout'>>
+}
+
+export function formatGitTime(timestamp: number): string {
+  const date = new Date(timestamp)
+  const options: Intl.DateTimeFormatOptions = {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
+  return date.toLocaleString([], options)
 }

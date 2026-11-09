@@ -13,7 +13,6 @@ function file(path: string): GitReviewFile {
     collapsed: false,
     tooLarge: false,
     threads: 0,
-    viewed: 'no',
   }
 }
 

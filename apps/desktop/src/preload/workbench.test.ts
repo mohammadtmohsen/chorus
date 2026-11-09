@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import en from '../renderer/src/i18n/en.json'
 import {
   WORKBENCH_CONNECTION_CHANNEL,
   WORKBENCH_FOCUS_CHANNEL,
@@ -29,7 +30,13 @@ import {
   WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL,
   WORKBENCH_REVIEW_DIFF_CHANNEL,
   WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL,
+  WORKBENCH_REVIEW_STATE_CHANNEL,
+  WORKBENCH_REVIEW_CHANGED_CHANNEL,
+  WORKBENCH_REVIEW_ACTION_CHANNEL,
+  WORKBENCH_REVIEW_FILE_CHANNEL,
   type WorkbenchReviewDiffResult,
+  type WorkbenchReviewFileRequest,
+  type WorkbenchReviewFileResult,
 } from '../shared/workbench-ipc.js'
 
 /**
@@ -45,6 +52,7 @@ const invoke = vi.fn()
 const send = vi.fn()
 
 interface Exposed {
+  reviewFile: (request: WorkbenchReviewFileRequest) => Promise<WorkbenchReviewFileResult>
   connection: () => Promise<unknown>
   readUserSettings: () => Promise<string | null>
   writeUserSettings: (text: string) => Promise<void>
@@ -67,6 +75,16 @@ const DESCRIPTOR = {
   connectionToken: 'a-token',
   commit: '987c9597516278c9fcf10d963a0592ce1384ab93',
   quality: 'stable',
+  reviewLabels: {
+    title: en.git.review.editorTitle,
+    actionFailed: en.git.failure['git-failed'],
+    comment: en.git.review.comment,
+    reply: en.git.review.reply,
+    resolve: en.git.review.resolve,
+    reopen: en.git.review.reopen,
+    commentingBlocked: en.git.review.commentingBlocked,
+    status: en.git.review.status,
+  },
 }
 
 vi.mock('electron', () => ({
@@ -76,6 +94,9 @@ vi.mock('electron', () => ({
     },
   },
   ipcRenderer: {
+    removeListener: (channel: string) => {
+      listeners.delete(channel)
+    },
     on: (channel: string, listener: (event: unknown, payload: unknown) => void) => {
       listeners.set(channel, listener)
     },
@@ -114,6 +135,10 @@ const {
   ROW_SCROLL_REQUEST_CHANNEL,
   REVIEW_DIFF_CHANNEL,
   REVIEW_DIFF_RESULT_CHANNEL,
+  REVIEW_STATE_CHANNEL,
+  REVIEW_CHANGED_CHANNEL,
+  REVIEW_ACTION_CHANNEL,
+  REVIEW_FILE_CHANNEL,
   asConnection,
   asLayoutWidth,
   asTerminalEnv,
@@ -150,12 +175,20 @@ describe('the workbench preload', () => {
     expect(ROW_SCROLL_REQUEST_CHANNEL).toBe(WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL)
     expect(REVIEW_DIFF_CHANNEL).toBe(WORKBENCH_REVIEW_DIFF_CHANNEL)
     expect(REVIEW_DIFF_RESULT_CHANNEL).toBe(WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL)
+    expect(REVIEW_STATE_CHANNEL).toBe(WORKBENCH_REVIEW_STATE_CHANNEL)
+    expect(REVIEW_CHANGED_CHANNEL).toBe(WORKBENCH_REVIEW_CHANGED_CHANNEL)
+    expect(REVIEW_ACTION_CHANNEL).toBe(WORKBENCH_REVIEW_ACTION_CHANNEL)
+    expect(REVIEW_FILE_CHANNEL).toBe(WORKBENCH_REVIEW_FILE_CHANNEL)
   })
 
   it('exposes only the declared workbench methods', () => {
     // The list, not the count: a method named here is a capability a document
     // running extension code is handed, so which ones they are is the assertion.
     expect(Object.keys(exposed ?? {})).toEqual([
+      'reviewFile',
+      'reviewState',
+      'onReviewChanged',
+      'reviewAction',
       'connection',
       /*
        * The window-focus pair, and the narrowest additions to this list so far.
@@ -278,6 +311,36 @@ describe('the workbench preload', () => {
     ])
   })
 
+  describe('review file reads', () => {
+    beforeEach(() => {
+      invoke.mockReset()
+    })
+    afterEach(() => {
+      invoke.mockReset()
+    })
+
+    it.each([
+      { ok: true, text: '' },
+      { ok: true, text: 'Restored content' },
+      { ok: false, message: 'Load the new review version' },
+    ])('validates a review-file reply $ok', async (result) => {
+      const request = { iid: 7, versionId: 9, side: 'original', path: 'src/old.ts' } as const
+      invoke.mockResolvedValueOnce(result)
+      await expect(exposed?.reviewFile(request)).resolves.toEqual(result)
+      expect(invoke).toHaveBeenCalledExactlyOnceWith(REVIEW_FILE_CHANNEL, request)
+    })
+
+    it.each([null, { ok: true, text: 7 }, { ok: false, message: '' }])(
+      'rejects a malformed review-file reply %j',
+      async (result) => {
+        invoke.mockResolvedValueOnce(result)
+        await expect(
+          exposed?.reviewFile({ iid: 7, versionId: 9, side: 'modified', path: 'src/file.ts' })
+        ).rejects.toThrow('Malformed workbench review file response')
+      }
+    )
+  })
+
   it('registers its listener at the top of the script, before anything asks', () => {
     // The push is sequenced on the view's `did-finish-load`, which is still
     // earlier than the workbench's own module graph finishing. Nothing else can
@@ -295,13 +358,24 @@ describe('the workbench preload', () => {
       oldPath: 'src/main.ts',
       before: 'before',
       after: 'after',
+      workspace: false,
+      matches: true,
     },
     {
       requestId: 'review-all',
       iid: 42,
       versionId: 7,
       title: '!42 changes',
-      files: [{ path: 'src/main.ts', oldPath: 'src/old.ts', before: 'before', after: 'after' }],
+      files: [
+        {
+          path: 'src/main.ts',
+          oldPath: 'src/old.ts',
+          before: 'before',
+          after: '',
+          workspace: true,
+          matches: true,
+        },
+      ],
     },
   ])('answers review diff request $requestId on its result channel', async (request) => {
     send.mockClear()

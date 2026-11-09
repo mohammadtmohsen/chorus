@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFile, stat } from 'node:fs/promises'
+import type * as FileSystemModule from 'node:fs/promises'
 import {
   EventStore,
   LOCAL_HOST,
@@ -10,10 +12,14 @@ import {
 } from '@chorus/event-store'
 import * as workspace from '@chorus/workspace'
 import type * as WorkspaceModule from '@chorus/workspace'
-import type { GitRequest, ReviewVersion } from '../shared/git-ipc.js'
+import type {
+  GitRequest,
+  GitResponse,
+  GitReviewEnvelope,
+  ReviewVersion,
+} from '../shared/git-ipc.js'
 import { GitBoxService } from './git-box.js'
 import {
-  fileDigest,
   GitLabDirectory,
   type GitLabReviewFile,
   type GitLabReviewSnapshot,
@@ -21,6 +27,11 @@ import {
 } from './gitlab-client.js'
 import type { EditorPort } from './host-ports.js'
 import { testHostPorts } from './test-host-ports.js'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof FileSystemModule>()
+  return { ...actual, stat: vi.fn<typeof actual.stat>(), readFile: vi.fn<typeof actual.readFile>() }
+})
 
 vi.mock('@chorus/workspace', async (importOriginal) => {
   const actual = await importOriginal<typeof WorkspaceModule>()
@@ -42,6 +53,7 @@ vi.mock('@chorus/workspace', async (importOriginal) => {
 
 const ROOT = '/fictional/review-project'
 const NOW = 1_000
+const REGULAR_FILE = { isFile: () => true } as Awaited<ReturnType<typeof stat>>
 const KEY = { host: 'gitlab.com', project: 'group/project', iid: 7 }
 const VERSION: ReviewVersion = {
   id: 9,
@@ -51,14 +63,11 @@ const VERSION: ReviewVersion = {
 }
 
 const latestVersion = vi.fn<GitLabDirectory['latestVersion']>()
+const writeReview = vi.fn<GitLabDirectory['writeReview']>()
 const hasSurface = vi.fn<EditorPort['hasSurface']>()
 const openReviewDiff = vi.fn<EditorPort['openReviewDiff']>()
 
-function reviewFile(
-  path: string,
-  overrides: Partial<MrDiffItem> = {},
-  version: ReviewVersion = VERSION
-): GitLabReviewFile {
+function reviewFile(path: string, overrides: Partial<MrDiffItem> = {}): GitLabReviewFile {
   const raw: MrDiffItem = {
     old_path: path,
     new_path: path,
@@ -72,7 +81,6 @@ function reviewFile(
   }
   return {
     raw,
-    digest: fileDigest(version, raw),
     summary: {
       path: raw.new_path,
       oldPath: raw.old_path,
@@ -104,6 +112,7 @@ function snapshot(overrides: Partial<GitLabReviewSnapshot> = {}): GitLabReviewSn
       sourceBranch: 'feature',
       targetBranch: 'main',
       labels: [],
+      fork: false,
     },
     version: VERSION,
     pipeline: null,
@@ -116,6 +125,7 @@ function snapshot(overrides: Partial<GitLabReviewSnapshot> = {}): GitLabReviewSn
       userCanApprove: true,
     },
     files: [reviewFile('src/a.ts'), reviewFile('src/b.ts')],
+    threads: [],
     complete: true,
     ...overrides,
   }
@@ -148,6 +158,13 @@ function fileRequest(path = 'src/a.ts'): GitRequest<'git:openDiff'> {
 
 function allRequest(): GitRequest<'git:openAllDiffs'> {
   return { projectId: project.id, iid: KEY.iid, versionId: current.version.id }
+}
+
+function checkedOut(branch: string | null): void {
+  vi.mocked(workspace.readStatus).mockResolvedValue({
+    ok: true,
+    value: { branch, upstream: null, ahead: 0, behind: 0, files: [], clean: true },
+  })
 }
 
 beforeEach(() => {
@@ -184,6 +201,8 @@ beforeEach(() => {
     })
   )
   vi.spyOn(directory, 'latestVersion').mockImplementation(latestVersion)
+  writeReview.mockResolvedValue({ ok: true, value: {}, fetchedAt: NOW })
+  vi.spyOn(directory, 'writeReview').mockImplementation(writeReview)
   hasSurface.mockReturnValue(true)
   openReviewDiff.mockResolvedValue({ requestId: 'test-review', ok: true })
   editor = {
@@ -201,6 +220,13 @@ beforeEach(() => {
   vi.mocked(workspace.readFileAt).mockImplementation(({ ref, path }) =>
     Promise.resolve({ ok: true, value: { kind: 'text', text: `${ref}:${path}` } })
   )
+  checkedOut('main')
+  vi.mocked(stat).mockResolvedValue(REGULAR_FILE)
+  vi.mocked(readFile).mockImplementation((path) =>
+    Promise.resolve(
+      `${current.version.headSha}:${typeof path === 'string' ? path.slice(ROOT.length + 1) : ''}`
+    )
+  )
   service = createService()
 })
 
@@ -210,81 +236,108 @@ afterEach(() => {
   expect(network).not.toHaveBeenCalled()
 })
 
-describe('Git box review marks', () => {
+describe('Git box seen reviews', () => {
   it('returns the review files when approvals are unavailable', async () => {
     current = snapshot({ approvals: null })
     await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
-      kind: 'ready',
-      approvals: null,
-      files: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }],
+      outcome: { kind: 'ready' },
+      review: {
+        kind: 'ready',
+        approvals: null,
+        files: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }],
+      },
     })
   })
 
-  it('refuses a moved head before writing marks or touching git or the editor', async () => {
+  it('opens held diffs locally but still checks the remote head before commenting', async () => {
     await service.review(project.id, KEY.iid)
     latestVersion.mockResolvedValue({
       ok: true,
       value: VERSION.id + 1,
       fetchedAt: NOW,
     })
-    const setViewed = vi.spyOn(marks, 'setViewed')
     const setSeen = vi.spyOn(marks, 'setSeen')
 
-    await expect(service.viewed({ ...fileRequest(), viewed: true })).resolves.toEqual({
-      kind: 'failed',
-      failure: 'head-moved',
-      retryAt: null,
-    })
     await expect(service.openDiff(fileRequest())).resolves.toEqual({
-      failure: 'head-moved',
+      failure: null,
       retryAt: null,
       error: null,
     })
     await expect(service.openAllDiffs(allRequest())).resolves.toEqual({
-      failure: 'head-moved',
+      failure: null,
       retryAt: null,
       error: null,
       skipped: 0,
     })
-    expect(setViewed).not.toHaveBeenCalled()
+    expect(latestVersion).not.toHaveBeenCalled()
+    await expect(
+      service.comment({ ...fileRequest(), side: 'modified', line: 1, body: 'A comment' })
+    ).resolves.toEqual({ failure: 'head-moved', retryAt: null, error: null })
+    expect(latestVersion).toHaveBeenCalledExactlyOnceWith(
+      { host: KEY.host, path: KEY.project },
+      KEY.iid
+    )
     expect(setSeen).not.toHaveBeenCalled()
-    expect(workspace.fetchRef).not.toHaveBeenCalled()
-    expect(workspace.readFileAt).not.toHaveBeenCalled()
-    expect(openReviewDiff).not.toHaveBeenCalled()
+    expect(writeReview).not.toHaveBeenCalled()
+    expect(openReviewDiff).toHaveBeenCalledTimes(2)
   })
 
-  it('restores unchanged marks and reports changed files after a newer version', async () => {
-    await service.review(project.id, KEY.iid)
-    await service.viewed({ ...fileRequest('src/a.ts'), viewed: true })
-    await service.viewed({ ...fileRequest('src/b.ts'), viewed: true })
-    const next = { ...VERSION, id: 10, headSha: 'd'.repeat(40) }
-    current = snapshot({
-      version: next,
-      files: [
-        reviewFile('src/a.ts', {}, next),
-        reviewFile('src/b.ts', { diff: '@@ -1 +1 @@\n-before\n+changed again\n' }, next),
-      ],
+  it('records the first open and leaves an unchanged head unflagged on reopening', async () => {
+    const setSeen = vi.spyOn(marks, 'setSeen')
+    await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
+      outcome: { kind: 'ready' },
+      review: { updatedSinceReview: false },
     })
+    expect(marks.readSeen(KEY)).toEqual({
+      versionId: VERSION.id,
+      headSha: VERSION.headSha,
+      seenAt: NOW,
+    })
+
+    await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
+      outcome: { kind: 'ready' },
+      review: { updatedSinceReview: false },
+    })
+    expect(setSeen).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains the previous seen flag for the session and clears it on the next open', async () => {
+    await service.review(project.id, KEY.iid)
+    const next = { ...VERSION, id: 10, headSha: 'd'.repeat(40) }
+    current = snapshot({ version: next })
     marks = new ReviewMarksStore(db)
     service = createService()
 
     await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
-      kind: 'ready',
-      updatedSinceReview: true,
-      files: [
-        { path: 'src/a.ts', viewed: 'yes' },
-        { path: 'src/b.ts', viewed: 'changed' },
-      ],
+      outcome: { kind: 'ready' },
+      review: {
+        kind: 'ready',
+        updatedSinceReview: true,
+        files: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }],
+      },
     })
-    expect(marks.readSeen(KEY)?.headSha).toBe(VERSION.headSha)
+    expect(marks.readSeen(KEY)).toEqual({
+      versionId: next.id,
+      headSha: next.headSha,
+      seenAt: NOW,
+    })
+    const setSeen = vi.spyOn(marks, 'setSeen')
+    expect(service.activeReview(project.id).review?.updatedSinceReview).toBe(true)
+    expect(setSeen).not.toHaveBeenCalled()
+
+    await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
+      outcome: { kind: 'ready' },
+      review: { updatedSinceReview: false },
+    })
+    expect(service.activeReview(project.id).review?.updatedSinceReview).toBe(false)
   })
 
-  it('records a seen version only after every file in a complete review is viewed', async () => {
-    await service.review(project.id, KEY.iid)
-    await service.viewed({ ...fileRequest('src/a.ts'), viewed: true })
-    expect(marks.readSeen(KEY)).toBeNull()
-
-    await service.viewed({ ...fileRequest('src/b.ts'), viewed: true })
+  it('records a ready review as seen even when the snapshot is incomplete', async () => {
+    current = snapshot({ complete: false })
+    await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
+      outcome: { kind: 'ready' },
+      review: { complete: false, updatedSinceReview: false },
+    })
     expect(marks.readSeen(KEY)).toEqual({
       versionId: VERSION.id,
       headSha: VERSION.headSha,
@@ -292,18 +345,620 @@ describe('Git box review marks', () => {
     })
   })
 
-  it('keeps an incomplete review unseen when every returned file is viewed', async () => {
-    current = snapshot({ complete: false })
-    await service.review(project.id, KEY.iid)
-    await service.viewed({ ...fileRequest('src/a.ts'), viewed: true })
-    await service.viewed({ ...fileRequest('src/b.ts'), viewed: true })
+  it.each(['preparing', 'failed'] as const)('does not mark a %s review seen', async (kind) => {
+    const setSeen = vi.spyOn(marks, 'setSeen')
+    const answer: Awaited<ReturnType<GitLabDirectory['review']>> =
+      kind === 'preparing'
+        ? { ok: true, value: { kind: 'preparing' }, fetchedAt: NOW }
+        : { ok: false, failure: 'network', retryAt: null }
+    vi.spyOn(directory, 'review').mockResolvedValue(answer)
 
-    expect(marks.readViewed(KEY).size).toBe(2)
+    await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
+      outcome: { kind },
+      review: null,
+    })
+    expect(setSeen).not.toHaveBeenCalled()
+    expect(marks.readSeen(KEY)).toBeNull()
+  })
+
+  it('does not mark a ready snapshot seen when the token changes during its read', async () => {
+    const setSeen = vi.spyOn(marks, 'setSeen')
+    vi.spyOn(directory, 'review').mockImplementationOnce(() => {
+      vi.spyOn(directory, 'identity').mockReturnValue('another-account')
+      return Promise.resolve({
+        ok: true,
+        value: { kind: 'ready', snapshot: current },
+        fetchedAt: NOW,
+      })
+    })
+
+    await expect(service.review(project.id, KEY.iid)).resolves.toMatchObject({
+      outcome: { kind: 'failed', failure: 'head-moved' },
+      review: null,
+    })
+    expect(setSeen).not.toHaveBeenCalled()
     expect(marks.readSeen(KEY)).toBeNull()
   })
 })
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let finish: (value: T) => void = () => undefined
+  const promise = new Promise<T>((resolve) => {
+    finish = resolve
+  })
+  return {
+    promise,
+    resolve: (value) => {
+      finish(value)
+    },
+  }
+}
+
+describe('the active review', () => {
+  it('numbers every change across projects and stops pushing after unsubscribe', async () => {
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    const unsubscribe = service.subscribe(listener)
+    expect(service.activeReview(project.id)).toEqual({
+      projectId: project.id,
+      revision: 0,
+      review: null,
+    })
+    const ready = await service.review(project.id, KEY.iid)
+    const reopened = await service.review(project.id, KEY.iid)
+    const other = service.closeReview('another-project')
+    const closed = service.closeReview(project.id)
+
+    expect([ready.revision, reopened.revision, other.revision, closed.revision]).toEqual([
+      1, 2, 3, 4,
+    ])
+    expect(listener.mock.calls.map(([state]) => state.revision)).toEqual([1, 2, 3, 4])
+    expect(reopened.review).toEqual(ready.review)
+    expect(service.activeReview(project.id)).toEqual(closed)
+    unsubscribe()
+    service.closeReview(project.id)
+    expect(listener).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not let a pending read restore a closed review', async () => {
+    const setSeen = vi.spyOn(marks, 'setSeen')
+    const pending = deferred<Awaited<ReturnType<GitLabDirectory['review']>>>()
+    const entered = deferred<undefined>()
+    vi.spyOn(directory, 'review').mockImplementationOnce(() => {
+      entered.resolve(undefined)
+      return pending.promise
+    })
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    service.subscribe(listener)
+    const reading = service.review(project.id, KEY.iid)
+    await entered.promise
+    const closed = service.closeReview(project.id)
+    pending.resolve({ ok: true, value: { kind: 'ready', snapshot: current }, fetchedAt: NOW })
+
+    await expect(reading).resolves.toEqual({
+      ...closed,
+      outcome: { kind: 'failed', failure: 'head-moved', retryAt: null },
+    })
+    expect(service.activeReview(project.id)).toEqual(closed)
+    expect(listener).toHaveBeenCalledExactlyOnceWith(closed)
+    expect(setSeen).not.toHaveBeenCalled()
+    expect(marks.readSeen(KEY)).toBeNull()
+  })
+
+  it('keeps a newer selection when an earlier read completes last', async () => {
+    const setSeen = vi.spyOn(marks, 'setSeen')
+    const first = current
+    const pending = deferred<Awaited<ReturnType<GitLabDirectory['review']>>>()
+    const entered = deferred<undefined>()
+    vi.spyOn(directory, 'review').mockImplementationOnce(() => {
+      entered.resolve(undefined)
+      return pending.promise
+    })
+    const reading = service.review(project.id, KEY.iid)
+    await entered.promise
+    current = snapshot({ mr: { ...first.mr, iid: 8 } })
+    const newer = await service.review(project.id, 8)
+    pending.resolve({ ok: true, value: { kind: 'ready', snapshot: first }, fetchedAt: NOW })
+
+    await expect(reading).resolves.toMatchObject({
+      revision: newer.revision,
+      review: { mr: { iid: 8 } },
+      outcome: { kind: 'failed', failure: 'head-moved' },
+    })
+    expect(service.activeReview(project.id).review?.mr.iid).toBe(8)
+    expect(service.activeReview(project.id).revision).toBe(newer.revision)
+    expect(marks.readSeen(KEY)).toBeNull()
+    expect(marks.readSeen({ ...KEY, iid: 8 })).toEqual({
+      versionId: VERSION.id,
+      headSha: VERSION.headSha,
+      seenAt: NOW,
+    })
+    expect(setSeen).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['preparing', 'failed'] as const)(
+    'keeps the last good snapshot after a same-MR %s outcome and clears it for another MR',
+    async (kind) => {
+      await service.review(project.id, KEY.iid)
+      const setSeen = vi.spyOn(marks, 'setSeen')
+      const held = service.activeReview(project.id)
+      const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+      service.subscribe(listener)
+      const answer: Awaited<ReturnType<GitLabDirectory['review']>> =
+        kind === 'preparing'
+          ? { ok: true, value: { kind: 'preparing' }, fetchedAt: NOW }
+          : { ok: false, failure: 'network', retryAt: null }
+      vi.spyOn(directory, 'review').mockResolvedValue(answer)
+
+      const same = await service.review(project.id, KEY.iid)
+      expect(same).toMatchObject({ ...held, outcome: { kind } })
+      expect(listener).not.toHaveBeenCalled()
+      const different = await service.review(project.id, 8)
+      expect(different.review).toBeNull()
+      expect(different.revision).toBe(held.revision + 1)
+      expect(different.outcome.kind).toBe(kind)
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(setSeen).not.toHaveBeenCalled()
+      expect(marks.readSeen({ ...KEY, iid: 8 })).toBeNull()
+    }
+  )
+
+  it('refuses stale file actions without changing marks, the snapshot or the revision', async () => {
+    await service.review(project.id, KEY.iid)
+    const held = service.activeReview(project.id)
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    const setSeen = vi.spyOn(marks, 'setSeen')
+    service.subscribe(listener)
+    await expect(
+      service.openDiff({
+        ...fileRequest(),
+        versionId: VERSION.id + 1,
+      })
+    ).resolves.toEqual({
+      failure: 'head-moved',
+      retryAt: null,
+      error: null,
+    })
+    await expect(service.openDiff({ ...fileRequest(), iid: KEY.iid + 1 })).resolves.toEqual({
+      failure: 'head-moved',
+      retryAt: null,
+      error: null,
+    })
+    expect(setSeen).not.toHaveBeenCalled()
+    expect(latestVersion).not.toHaveBeenCalled()
+    expect(listener).not.toHaveBeenCalled()
+    expect(service.activeReview(project.id)).toEqual(held)
+  })
+})
+
+describe('Git box review writes', () => {
+  const thread = {
+    id: 'discussion-1',
+    path: 'src/a.ts',
+    oldPath: 'src/a.ts',
+    oldLine: 1,
+    newLine: 1,
+    resolved: false,
+    notes: [
+      {
+        id: 1,
+        body: 'Existing',
+        author: { name: 'Author', username: 'author' },
+        createdAt: NOW,
+      },
+    ],
+  }
+  const kinds = ['comment', 'reply', 'resolve', 'reopen', 'approve', 'unapprove'] as const
+  const invoke = (kind: (typeof kinds)[number]): Promise<GitResponse<'git:approve'>> => {
+    const base = { projectId: project.id, iid: KEY.iid }
+    switch (kind) {
+      case 'comment':
+        return service.comment({ ...fileRequest(), side: 'modified', line: 1, body: 'New comment' })
+      case 'reply':
+        return service.reply({ ...base, discussionId: thread.id, body: 'A reply' })
+      case 'resolve':
+      case 'reopen':
+        return service.resolve({ ...base, discussionId: thread.id, resolved: kind === 'resolve' })
+      case 'approve':
+      case 'unapprove':
+        return service.approve({ ...base, versionId: VERSION.id, approve: kind === 'approve' })
+    }
+  }
+
+  it.each(kinds)('sends %s and publishes the refreshed snapshot', async (kind) => {
+    current = snapshot({ threads: [thread] })
+    await service.review(project.id, KEY.iid)
+    const reviews = vi.spyOn(directory, 'review')
+    reviews.mockClear()
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    service.subscribe(listener)
+    writeReview.mockImplementationOnce(() => {
+      current = { ...current, mr: { ...current.mr, title: 'After write' } }
+      return Promise.resolve({ ok: true, value: {}, fetchedAt: NOW })
+    })
+    await expect(invoke(kind)).resolves.toEqual({ failure: null, retryAt: null, error: null })
+    const writes = {
+      comment: {
+        method: 'POST',
+        suffix: '/discussions',
+        body: {
+          body: 'New comment',
+          position: {
+            position_type: 'text',
+            base_sha: VERSION.baseSha,
+            start_sha: VERSION.startSha,
+            head_sha: VERSION.headSha,
+            old_path: 'src/a.ts',
+            new_path: 'src/a.ts',
+            new_line: 1,
+          },
+        },
+      },
+      reply: {
+        method: 'POST',
+        suffix: '/discussions/discussion-1/notes',
+        body: { body: 'A reply' },
+      },
+      resolve: { method: 'PUT', suffix: '/discussions/discussion-1', body: { resolved: true } },
+      reopen: { method: 'PUT', suffix: '/discussions/discussion-1', body: { resolved: false } },
+      approve: { method: 'POST', suffix: '/approve', body: { sha: VERSION.headSha } },
+      unapprove: { method: 'POST', suffix: '/unapprove', body: {} },
+    } as const
+    const expected = writes[kind]
+    expect(writeReview).toHaveBeenCalledExactlyOnceWith(
+      { host: KEY.host, path: KEY.project },
+      KEY.iid,
+      expected.method,
+      expected.suffix,
+      expected.body
+    )
+    expect(reviews).toHaveBeenCalledExactlyOnceWith(
+      { host: KEY.host, path: KEY.project },
+      KEY.iid,
+      true
+    )
+    expect(listener).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        revision: 2,
+        review: expect.objectContaining({
+          mr: expect.objectContaining({ title: 'After write' }),
+        }),
+      })
+    )
+  })
+
+  it.each(kinds)('refuses %s after the review head moves', async (kind) => {
+    current = snapshot({ threads: [thread] })
+    await service.review(project.id, KEY.iid)
+    latestVersion.mockResolvedValue({ ok: true, value: VERSION.id + 1, fetchedAt: NOW })
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    service.subscribe(listener)
+    await expect(invoke(kind)).resolves.toEqual({
+      failure: 'head-moved',
+      retryAt: null,
+      error: null,
+    })
+    expect(writeReview).not.toHaveBeenCalled()
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('maps approval conflicts to head-moved and retains GitLab error text', async () => {
+    await service.review(project.id, KEY.iid)
+    writeReview.mockResolvedValue({
+      ok: false,
+      failure: 'conflict',
+      retryAt: null,
+      error: 'SHA changed',
+    })
+    await expect(invoke('approve')).resolves.toEqual({
+      failure: 'head-moved',
+      retryAt: null,
+      error: 'SHA changed',
+    })
+  })
+
+  it('keeps a refused position message and does not publish a failed write', async () => {
+    await service.review(project.id, KEY.iid)
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    service.subscribe(listener)
+    writeReview.mockResolvedValue({
+      ok: false,
+      failure: 'invalid-response',
+      retryAt: null,
+      error: 'Position is invalid',
+    })
+    await expect(invoke('comment')).resolves.toEqual({
+      failure: 'git-failed',
+      retryAt: null,
+      error: 'Position is invalid',
+    })
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('reports that a write was submitted when the following refresh fails', async () => {
+    await service.review(project.id, KEY.iid)
+    vi.spyOn(directory, 'review').mockResolvedValueOnce({
+      ok: false,
+      failure: 'network',
+      retryAt: null,
+    })
+    await expect(invoke('comment')).resolves.toMatchObject({
+      failure: 'network',
+      error: expect.stringContaining('submitted to GitLab'),
+    })
+    expect(writeReview).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Git box restored review files', () => {
+  it('reads a renamed original by its old path and the modified file by its new path', async () => {
+    current = snapshot({
+      files: [reviewFile('src/new.ts', { old_path: 'src/old.ts', renamed_file: true })],
+    })
+    await service.review(project.id, KEY.iid)
+    await expect(
+      service.reviewFile({ ...fileRequest('src/old.ts'), side: 'original' })
+    ).resolves.toEqual({
+      failure: null,
+      retryAt: null,
+      error: null,
+      text: `${VERSION.baseSha}:src/old.ts`,
+    })
+    await expect(
+      service.reviewFile({ ...fileRequest('src/new.ts'), side: 'modified' })
+    ).resolves.toMatchObject({ failure: null, text: `${VERSION.headSha}:src/new.ts` })
+    expect(workspace.readFileAt).toHaveBeenNthCalledWith(1, {
+      cwd: ROOT,
+      ref: VERSION.baseSha,
+      path: 'src/old.ts',
+    })
+    expect(workspace.readFileAt).toHaveBeenNthCalledWith(2, {
+      cwd: ROOT,
+      ref: VERSION.headSha,
+      path: 'src/new.ts',
+    })
+    expect(latestVersion).not.toHaveBeenCalled()
+    expect(openReviewDiff).not.toHaveBeenCalled()
+  })
+
+  it('refuses a different restored version without git or GitLab reads', async () => {
+    await service.review(project.id, KEY.iid)
+    await expect(
+      service.reviewFile({ ...fileRequest(), side: 'modified', versionId: VERSION.id + 1 })
+    ).resolves.toEqual({ failure: 'head-moved', retryAt: null, error: null, text: null })
+    expect(latestVersion).not.toHaveBeenCalled()
+    expect(workspace.fetchRef).not.toHaveBeenCalled()
+    expect(workspace.readFileAt).not.toHaveBeenCalled()
+  })
+
+  it.each(['added', 'removed'] as const)('returns the empty side of a %s file', async (status) => {
+    current = snapshot({
+      files: [
+        reviewFile('src/file.ts', {
+          new_file: status === 'added',
+          deleted_file: status === 'removed',
+        }),
+      ],
+    })
+    await service.review(project.id, KEY.iid)
+    await expect(
+      service.reviewFile({
+        ...fileRequest('src/file.ts'),
+        side: status === 'added' ? 'original' : 'modified',
+      })
+    ).resolves.toEqual({ failure: null, retryAt: null, error: null, text: '' })
+    expect(latestVersion).not.toHaveBeenCalled()
+    expect(workspace.readFileAt).not.toHaveBeenCalled()
+  })
+})
+
 describe('Git box editor diffs', () => {
+  it.each(['closed', 'root', 'token', 'no-token', 'file'] as const)(
+    'refuses the local %s mismatch without remote checks',
+    async (mismatch) => {
+      await service.review(project.id, KEY.iid)
+      if (mismatch === 'closed') service.closeReview(project.id)
+      if (mismatch === 'root') project = { ...project, canonicalRoot: '/another-project' }
+      if (mismatch === 'token') vi.spyOn(directory, 'identity').mockReturnValue('another-token')
+      if (mismatch === 'no-token') vi.spyOn(directory, 'identity').mockReturnValue(null)
+      const request = fileRequest(mismatch === 'file' ? 'missing-from-review.ts' : 'src/a.ts')
+      let failure = 'head-moved'
+      if (mismatch === 'file') failure = 'refused-target'
+      if (mismatch === 'no-token') failure = 'no-token'
+      await expect(service.openDiff(request)).resolves.toEqual({
+        failure,
+        retryAt: null,
+        error: null,
+      })
+      expect(latestVersion).not.toHaveBeenCalled()
+      expect(workspace.fetchRef).not.toHaveBeenCalled()
+      expect(workspace.readFileAt).not.toHaveBeenCalled()
+      expect(openReviewDiff).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps edit mode but blocks comments when workspace content differs from the head', async () => {
+    checkedOut('feature')
+    vi.mocked(readFile).mockResolvedValue('edited on disk')
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest())
+    expect(openReviewDiff).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ workspace: true, matches: false, after: '' })
+    )
+  })
+
+  it('opens workspace text without sending it and checks whether it matches the head', async () => {
+    checkedOut('feature')
+    await service.review(project.id, KEY.iid)
+
+    await expect(service.openDiff(fileRequest())).resolves.toMatchObject({ failure: null })
+
+    expect(stat).toHaveBeenCalledExactlyOnceWith(`${ROOT}/src/a.ts`)
+    expect(workspace.readFileAt).toHaveBeenCalledTimes(2)
+    expect(workspace.readFileAt).toHaveBeenCalledWith({
+      cwd: ROOT,
+      ref: VERSION.baseSha,
+      path: 'src/a.ts',
+    })
+    expect(openReviewDiff).toHaveBeenCalledExactlyOnceWith(ROOT, {
+      iid: KEY.iid,
+      versionId: VERSION.id,
+      path: 'src/a.ts',
+      oldPath: 'src/a.ts',
+      before: `${VERSION.baseSha}:src/a.ts`,
+      after: '',
+      workspace: true,
+      matches: true,
+    })
+  })
+
+  it.each(['main', null])('keeps the review read-only on branch %s', async (branch) => {
+    checkedOut(branch)
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest())
+
+    expect(openReviewDiff).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ after: `${VERSION.headSha}:src/a.ts`, workspace: false })
+    )
+    expect(stat).not.toHaveBeenCalled()
+  })
+
+  it('keeps a fork read-only even when its source branch name matches', async () => {
+    checkedOut('feature')
+    current = snapshot({ mr: { ...current.mr, fork: true } })
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest())
+
+    expect(openReviewDiff).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ after: `${VERSION.headSha}:src/a.ts`, workspace: false })
+    )
+    expect(stat).not.toHaveBeenCalled()
+  })
+
+  it.each(['missing', 'directory'] as const)(
+    'keeps a %s workspace file read-only',
+    async (kind) => {
+      checkedOut('feature')
+      if (kind === 'missing') vi.mocked(stat).mockRejectedValue(new Error('File missing'))
+      else {
+        vi.mocked(stat).mockResolvedValue({
+          isFile: () => false,
+        } as Awaited<ReturnType<typeof stat>>)
+      }
+      await service.review(project.id, KEY.iid)
+      await service.openDiff(fileRequest())
+
+      expect(openReviewDiff).toHaveBeenCalledWith(
+        ROOT,
+        expect.objectContaining({ after: `${VERSION.headSha}:src/a.ts`, workspace: false })
+      )
+    }
+  )
+
+  it('keeps a path outside the project read-only', async () => {
+    checkedOut('feature')
+    current = snapshot({ files: [reviewFile('../outside.ts')] })
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest('../outside.ts'))
+
+    expect(openReviewDiff).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ after: `${VERSION.headSha}:../outside.ts`, workspace: false })
+    )
+    expect(stat).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the branch when the same review file is opened again', async () => {
+    checkedOut('feature')
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest())
+    checkedOut('main')
+    await service.openDiff(fileRequest())
+
+    expect(openReviewDiff).toHaveBeenNthCalledWith(
+      1,
+      ROOT,
+      expect.objectContaining({ workspace: true, after: '' })
+    )
+    expect(openReviewDiff).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      expect.objectContaining({ workspace: false, after: `${VERSION.headSha}:src/a.ts` })
+    )
+  })
+
+  it('mixes editable and read-only files in one multi-file diff', async () => {
+    checkedOut('feature')
+    current = snapshot({
+      files: [
+        reviewFile('editable.ts'),
+        reviewFile('removed.ts', { deleted_file: true }),
+        reviewFile('missing.ts'),
+        reviewFile('../outside.ts'),
+      ],
+    })
+    vi.mocked(stat).mockImplementation((path) =>
+      String(path).endsWith('/missing.ts')
+        ? Promise.reject(new Error('File missing'))
+        : Promise.resolve(REGULAR_FILE)
+    )
+    await service.review(project.id, KEY.iid)
+    await expect(service.openAllDiffs(allRequest())).resolves.toEqual({
+      failure: null,
+      retryAt: null,
+      error: null,
+      skipped: 0,
+    })
+
+    expect(openReviewDiff).toHaveBeenCalledExactlyOnceWith(ROOT, {
+      iid: KEY.iid,
+      versionId: VERSION.id,
+      title: '!7 changes',
+      files: [
+        {
+          path: 'editable.ts',
+          oldPath: 'editable.ts',
+          before: `${VERSION.baseSha}:editable.ts`,
+          after: '',
+          workspace: true,
+          matches: true,
+        },
+        {
+          path: 'removed.ts',
+          oldPath: 'removed.ts',
+          before: `${VERSION.baseSha}:removed.ts`,
+          after: '',
+          workspace: false,
+          matches: true,
+        },
+        {
+          path: 'missing.ts',
+          oldPath: 'missing.ts',
+          before: `${VERSION.baseSha}:missing.ts`,
+          after: `${VERSION.headSha}:missing.ts`,
+          workspace: false,
+          matches: true,
+        },
+        {
+          path: '../outside.ts',
+          oldPath: '../outside.ts',
+          before: `${VERSION.baseSha}:../outside.ts`,
+          after: `${VERSION.headSha}:../outside.ts`,
+          workspace: false,
+          matches: true,
+        },
+      ],
+    })
+    expect(workspace.readFileAt).toHaveBeenCalledWith({
+      cwd: ROOT,
+      ref: VERSION.headSha,
+      path: 'editable.ts',
+    })
+    expect(workspace.readStatus).toHaveBeenCalledExactlyOnceWith({ cwd: ROOT })
+  })
+
   it('counts skipped files and stops a multi-file diff at the UTF-8 text bound', async () => {
     const paths = ['first.ts', 'second.ts', 'third.ts', 'fourth.ts']
     const text = 'é'.repeat(1024 * 1024)
@@ -335,7 +990,14 @@ describe('Git box editor diffs', () => {
       iid: KEY.iid,
       versionId: VERSION.id,
       title: '!7 changes',
-      files: paths.map((path) => ({ path, oldPath: path, before: text, after: text })),
+      files: paths.map((path) => ({
+        path,
+        oldPath: path,
+        before: text,
+        after: text,
+        workspace: false,
+        matches: true,
+      })),
     })
     for (const path of ['image.png', 'large.ts', 'unread.ts']) {
       expect(workspace.readFileAt).not.toHaveBeenCalledWith(expect.objectContaining({ path }))
@@ -386,6 +1048,8 @@ describe('Git box editor diffs', () => {
       oldPath: 'src/old.ts',
       before: `${VERSION.baseSha}:src/old.ts`,
       after: `${VERSION.headSha}:src/new.ts`,
+      workspace: false,
+      matches: true,
     })
   })
 
@@ -406,10 +1070,13 @@ describe('Git box editor diffs', () => {
       oldPath: 'added.ts',
       before: '',
       after: `${VERSION.headSha}:added.ts`,
+      workspace: false,
+      matches: true,
     })
   })
 
   it('opens a deleted file with an empty after side and reads only the base', async () => {
+    checkedOut('feature')
     current = snapshot({ files: [reviewFile('deleted.ts', { deleted_file: true })] })
     await service.review(project.id, KEY.iid)
     await service.openDiff(fileRequest('deleted.ts'))
@@ -426,6 +1093,8 @@ describe('Git box editor diffs', () => {
       oldPath: 'deleted.ts',
       before: `${VERSION.baseSha}:deleted.ts`,
       after: '',
+      workspace: false,
+      matches: true,
     })
   })
 

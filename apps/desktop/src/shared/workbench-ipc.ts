@@ -1,4 +1,12 @@
 import { z } from 'zod'
+import {
+  GitCommentRequest,
+  GitReplyRequest,
+  GitResolveRequest,
+  GitReviewEnvelope,
+  GitReviewFileReadRequest,
+  GitReviewFileRequest,
+} from './git-ipc.js'
 /*
  * The `/protocol` subpath, never the package's barrel.
  *
@@ -79,6 +87,21 @@ export const WorkbenchConnection = z.object({
   connectionToken: z.string().min(1),
   commit: z.string().regex(/^[0-9a-f]{40}$/),
   quality: z.string().min(1),
+  reviewLabels: z.object({
+    title: z.string().min(1),
+    actionFailed: z.string().min(1),
+    comment: z.string().min(1),
+    reply: z.string().min(1),
+    resolve: z.string().min(1),
+    reopen: z.string().min(1),
+    commentingBlocked: z.string().min(1),
+    status: z.object({
+      added: z.string(),
+      removed: z.string(),
+      modified: z.string(),
+      renamed: z.string(),
+    }),
+  }),
   processNonce: z.uuid().optional(),
   /**
    * Present only when Workspace Trust is waived, and there is no value that says
@@ -105,6 +128,47 @@ export const WorkbenchConnection = z.object({
   workspaceTrust: z.literal('waived').optional(),
 })
 export type WorkbenchConnection = z.infer<typeof WorkbenchConnection>
+
+export const WORKBENCH_REVIEW_STATE_CHANNEL = 'workbench:review:state'
+export const WORKBENCH_REVIEW_CHANGED_CHANNEL = 'workbench:review:changed'
+export const WORKBENCH_REVIEW_ACTION_CHANNEL = 'workbench:review:action'
+export const WORKBENCH_REVIEW_FILE_CHANNEL = 'workbench:review:file'
+
+export const WorkbenchReviewState = GitReviewEnvelope.omit({ projectId: true })
+export type WorkbenchReviewState = z.infer<typeof WorkbenchReviewState>
+
+export const WorkbenchReviewAction = z.discriminatedUnion('kind', [
+  GitReviewFileRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('openDiff') })
+    .strict(),
+  GitCommentRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('comment') })
+    .strict(),
+  GitReplyRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('reply') })
+    .strict(),
+  GitResolveRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('resolve') })
+    .strict(),
+])
+export type WorkbenchReviewAction = z.infer<typeof WorkbenchReviewAction>
+
+export const WorkbenchReviewActionResult = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), message: z.string().min(1) }),
+])
+export type WorkbenchReviewActionResult = z.infer<typeof WorkbenchReviewActionResult>
+
+export const WorkbenchReviewFileRequest = GitReviewFileReadRequest.omit({
+  projectId: true,
+}).strict()
+export type WorkbenchReviewFileRequest = z.infer<typeof WorkbenchReviewFileRequest>
+
+export const WorkbenchReviewFileResult = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), text: z.string() }),
+  z.object({ ok: z.literal(false), message: z.string().min(1) }),
+])
+export type WorkbenchReviewFileResult = z.infer<typeof WorkbenchReviewFileResult>
 
 /**
  * An OS-absolute path, spelled the way a `vscode-remote` URI requires.
@@ -579,6 +643,8 @@ export interface WorkbenchReviewDiffFile {
   readonly oldPath: string
   readonly before: string
   readonly after: string
+  readonly workspace: boolean
+  readonly matches: boolean
 }
 
 export type WorkbenchReviewDiffInput = {
@@ -973,6 +1039,10 @@ export interface WorkbenchShellApi {
  * from the sender, so the renderer cannot name another project's resources.
  */
 export interface ChorusWorkbenchApi {
+  readonly reviewFile: (request: WorkbenchReviewFileRequest) => Promise<WorkbenchReviewFileResult>
+  readonly reviewState: () => Promise<unknown>
+  readonly onReviewChanged: (handler: (state: unknown) => void) => () => void
+  readonly reviewAction: (action: WorkbenchReviewAction) => Promise<WorkbenchReviewActionResult>
   /**
    * Resolves with the descriptor for THIS view's project. No arguments: the
    * renderer cannot name a project, because main derives it from the sender.

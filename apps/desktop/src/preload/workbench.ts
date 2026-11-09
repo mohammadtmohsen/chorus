@@ -5,6 +5,8 @@ import type {
   CompletionPayload,
   PreviewSelection,
   WorkbenchConnection,
+  WorkbenchReviewActionResult,
+  WorkbenchReviewFileResult,
   WorkbenchTerminalEnv,
 } from '../shared/workbench-ipc.js'
 
@@ -93,6 +95,10 @@ export const ASK_DIFF_CHANNEL = 'workbench:askDiff'
 export const ASK_DIFF_RESULT_CHANNEL = 'workbench:askDiff:result'
 export const REVIEW_DIFF_CHANNEL = 'workbench:reviewDiff'
 export const REVIEW_DIFF_RESULT_CHANNEL = 'workbench:reviewDiff:result'
+export const REVIEW_STATE_CHANNEL = 'workbench:review:state'
+export const REVIEW_CHANGED_CHANNEL = 'workbench:review:changed'
+export const REVIEW_ACTION_CHANNEL = 'workbench:review:action'
+export const REVIEW_FILE_CHANNEL = 'workbench:review:file'
 /* Opening a file a transcript row named, in this project's editor. */
 export const REVEAL_CHANNEL = 'workbench:reveal'
 export const REVEAL_RESULT_CHANNEL = 'workbench:reveal:result'
@@ -133,12 +139,65 @@ export function asConnection(value: unknown): WorkbenchConnection | null {
     const held = record[field]
     if (typeof held !== 'string' || held === '') return null
   }
+  const reviewLabels = record['reviewLabels']
+  if (typeof reviewLabels !== 'object' || reviewLabels === null || !('title' in reviewLabels)) {
+    return null
+  }
+  const title = reviewLabels.title
+  if (typeof title !== 'string' || title === '') return null
+  const labels = reviewLabels as Record<string, unknown>
+  const actionFailed = labels['actionFailed']
+  const comment = labels['comment']
+  const reply = labels['reply']
+  const resolve = labels['resolve']
+  const reopen = labels['reopen']
+  const commentingBlocked = labels['commentingBlocked']
+  const status = labels['status']
+  if (typeof actionFailed !== 'string' || actionFailed === '') return null
+  if (
+    typeof comment !== 'string' ||
+    comment === '' ||
+    typeof reply !== 'string' ||
+    reply === '' ||
+    typeof resolve !== 'string' ||
+    resolve === '' ||
+    typeof reopen !== 'string' ||
+    reopen === '' ||
+    typeof commentingBlocked !== 'string' ||
+    commentingBlocked === ''
+  ) {
+    return null
+  }
+  if (typeof status !== 'object' || status === null) return null
+  const statuses = status as Record<string, unknown>
+  const added = statuses['added']
+  const removed = statuses['removed']
+  const modified = statuses['modified']
+  const renamed = statuses['renamed']
+  if (
+    typeof added !== 'string' ||
+    typeof removed !== 'string' ||
+    typeof modified !== 'string' ||
+    typeof renamed !== 'string'
+  ) {
+    return null
+  }
   return {
     projectRoot: record['projectRoot'] as string,
     remoteAuthority: record['remoteAuthority'] as string,
     connectionToken: record['connectionToken'] as string,
     commit: record['commit'] as string,
     quality: record['quality'] as string,
+    reviewLabels: {
+      title,
+      actionFailed,
+      comment,
+      reply,
+      resolve,
+      reopen,
+      commentingBlocked,
+      status: { added, removed, modified, renamed },
+    },
     ...(typeof record['processNonce'] === 'string' &&
     /^[0-9a-f-]{36}$/i.test(record['processNonce'])
       ? { processNonce: record['processNonce'] }
@@ -194,6 +253,51 @@ ipcRenderer.on(LAYOUT_CHANNEL, (_event, payload: unknown) => {
 })
 
 const api: ChorusWorkbenchApi = {
+  reviewFile: async (request): Promise<WorkbenchReviewFileResult> => {
+    const raw: unknown = await ipcRenderer.invoke(REVIEW_FILE_CHANNEL, request)
+    if (typeof raw === 'object' && raw !== null && 'ok' in raw) {
+      if (raw.ok === true && 'text' in raw && typeof raw.text === 'string') {
+        return { ok: true, text: raw.text }
+      }
+      if (
+        raw.ok === false &&
+        'message' in raw &&
+        typeof raw.message === 'string' &&
+        raw.message !== ''
+      ) {
+        return { ok: false, message: raw.message }
+      }
+    }
+    throw new Error('Malformed workbench review file response')
+  },
+  reviewState: async (): Promise<unknown> => {
+    const raw: unknown = await ipcRenderer.invoke(REVIEW_STATE_CHANNEL)
+    return raw
+  },
+  onReviewChanged: (handler) => {
+    const listener = (_event: IpcRendererEvent, state: unknown): void => {
+      handler(state)
+    }
+    ipcRenderer.on(REVIEW_CHANGED_CHANNEL, listener)
+    return () => {
+      ipcRenderer.removeListener(REVIEW_CHANGED_CHANNEL, listener)
+    }
+  },
+  reviewAction: async (action): Promise<WorkbenchReviewActionResult> => {
+    const raw: unknown = await ipcRenderer.invoke(REVIEW_ACTION_CHANNEL, action)
+    if (typeof raw === 'object' && raw !== null && 'ok' in raw) {
+      if (raw.ok === true) return { ok: true }
+      if (
+        raw.ok === false &&
+        'message' in raw &&
+        typeof raw.message === 'string' &&
+        raw.message !== ''
+      ) {
+        return { ok: false, message: raw.message }
+      }
+    }
+    throw new Error('Malformed workbench review action response')
+  },
   connection: async () => {
     if (buffered !== null) return buffered
 
