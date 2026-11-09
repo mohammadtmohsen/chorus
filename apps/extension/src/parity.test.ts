@@ -28,12 +28,16 @@ describe('the extension accounts for every ChorusApi method', () => {
       'fetchGit',
       'fillBrowserPassword',
       'importGitlabToken',
+      'openGitAllDiffs',
+      'openGitDiff',
       'readBrowserDownloads',
       'readBrowserPasswords',
       'readGitRequests',
+      'readGitReview',
       'readGitState',
       'removeBrowserPassword',
       'setBrowserDevtoolsGeometry',
+      'setGitViewed',
       'syncGit',
     ])
   })

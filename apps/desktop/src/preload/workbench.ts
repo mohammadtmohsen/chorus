@@ -91,6 +91,8 @@ export const EDIT_RESULT_CHANNEL = 'workbench:edit:result'
 /* The proposed-edit diff — open, replace or close. */
 export const ASK_DIFF_CHANNEL = 'workbench:askDiff'
 export const ASK_DIFF_RESULT_CHANNEL = 'workbench:askDiff:result'
+export const REVIEW_DIFF_CHANNEL = 'workbench:reviewDiff'
+export const REVIEW_DIFF_RESULT_CHANNEL = 'workbench:reviewDiff:result'
 /* Opening a file a transcript row named, in this project's editor. */
 export const REVEAL_CHANNEL = 'workbench:reveal'
 export const REVEAL_RESULT_CHANNEL = 'workbench:reveal:result'
@@ -531,6 +533,27 @@ const api: ChorusWorkbenchApi = {
           ipcRenderer.send(ASK_DIFF_RESULT_CHANNEL, {
             requestId,
             ok: false,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+      })()
+    })
+  },
+
+  onReviewDiffRequest: (handler) => {
+    ipcRenderer.on(REVIEW_DIFF_CHANNEL, (_event, request: unknown) => {
+      void (async () => {
+        const requestId =
+          typeof request === 'object' && request !== null && 'requestId' in request
+            ? String(request.requestId)
+            : ''
+        try {
+          ipcRenderer.send(REVIEW_DIFF_RESULT_CHANNEL, await handler(request))
+        } catch (error) {
+          ipcRenderer.send(REVIEW_DIFF_RESULT_CHANNEL, {
+            requestId,
+            ok: false,
+            failure: 'open-failed',
             message: error instanceof Error ? error.message : String(error),
           })
         }

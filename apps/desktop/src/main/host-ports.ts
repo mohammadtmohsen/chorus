@@ -5,6 +5,8 @@ import type {
   WorkbenchAskDiffResult,
   WorkbenchEditRequest,
   WorkbenchEditResult,
+  WorkbenchReviewDiffInput,
+  WorkbenchReviewDiffResult,
   WorkbenchSnapshotResult,
 } from '../shared/workbench-ipc.js'
 import type { WorkbenchPlace } from './project-root.js'
@@ -20,6 +22,10 @@ export interface EditorPort {
     projectRoot: string,
     request: Omit<WorkbenchAskDiffRequest, 'requestId'>
   ): Promise<WorkbenchAskDiffResult>
+  openReviewDiff(
+    projectRoot: string,
+    request: WorkbenchReviewDiffInput
+  ): Promise<WorkbenchReviewDiffResult>
   edit(
     place: WorkbenchPlace,
     request: Omit<WorkbenchEditRequest, 'requestId'>

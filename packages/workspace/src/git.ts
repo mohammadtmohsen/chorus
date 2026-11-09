@@ -214,6 +214,11 @@ export async function readBranchDiff(
  */
 export const MAX_EDITOR_BYTES = 2 * 1024 * 1024
 
+export async function hasCommit(options: GitOptions & { readonly sha: string }): Promise<boolean> {
+  if (!/^[0-9a-f]{40}$/.test(options.sha)) return false
+  return (await git(options, ['cat-file', '-e', `${options.sha}^{commit}`])).ok
+}
+
 /**
  * One side of a comparison, and why it might not be text.
  *

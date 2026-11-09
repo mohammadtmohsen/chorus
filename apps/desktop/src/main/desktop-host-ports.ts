@@ -4,6 +4,7 @@ import {
   EditorAskDiffRequest,
   EditorEditRequest,
   EditorPlace,
+  EditorReviewDiffRequest,
 } from '../../../engine/src/editor-protocol.js'
 import {
   ConsoleDisposeHostParams,
@@ -33,6 +34,7 @@ import {
   requestWorkbenchAskDiff,
   requestWorkbenchEdit,
   requestWorkbenchReveal,
+  requestWorkbenchReviewDiff,
   requestWorkbenchSnapshot,
 } from './workbench-surface.js'
 
@@ -152,6 +154,13 @@ export async function answerEngineHostCall(
         ...(close === undefined ? {} : { close }),
         ...(revealPath === undefined ? {} : { revealPath }),
       })
+    }
+    case 'editor.openReviewDiff': {
+      const place = EditorPlace.parse(params['place'])
+      return await requestWorkbenchReviewDiff(
+        place.root,
+        EditorReviewDiffRequest.parse(params['request'])
+      )
     }
     case 'editor.edit':
       return await requestWorkbenchEdit(

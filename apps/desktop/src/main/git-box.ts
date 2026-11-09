@@ -3,28 +3,44 @@ import {
   fetchBranches,
   fetchedHead,
   fetchRef,
+  hasCommit,
   isSafeRef,
   mapsBranch,
   parseRemoteUrl,
   readBranchInventory,
   readFetchRefspecs,
   readRemoteUrl,
+  readFileAt,
   readStatus,
   switchTo,
   type BranchEntry,
   type RemoteLocation,
   type SwitchTarget,
 } from '@chorus/workspace'
-import { LOCAL_HOST, type Project } from '@chorus/event-store'
+import { LOCAL_HOST, type Project, type ReviewMarksStore } from '@chorus/event-store'
 import type {
   GitBoxState,
   GitBranch,
   GitFailure,
   GitRequest,
   GitRequests,
+  GitResponse,
+  GitReview,
+  GitReviewFile,
+  GitReviewReady,
   GitSyncNote,
 } from '../shared/git-ipc.js'
-import type { GitLabDirectory } from './gitlab-client.js'
+import type { WorkbenchReviewDiffFile } from '../shared/workbench-ipc.js'
+import type {
+  GitLabDirectory,
+  GitLabFailure,
+  GitLabReviewFile,
+  GitLabReviewSnapshot,
+} from './gitlab-client.js'
+import type { EditorPort } from './host-ports.js'
+import { mainT } from './i18n.js'
+
+const MAX_REVIEW_TEXT_BYTES = 16 * 1024 * 1024
 
 export interface GitProviderPort {
   handles(host: string): boolean
@@ -37,6 +53,8 @@ export interface GitBoxDeps {
   readonly projects: () => readonly Project[]
   readonly projectBusy: (projectId: string) => boolean
   readonly gitlab: GitLabDirectory
+  readonly marks: ReviewMarksStore
+  readonly editor: EditorPort
   readonly now: () => number
 }
 
@@ -54,9 +72,27 @@ interface Outcome {
 type Resolved =
   { readonly target: SwitchTarget } | { readonly failure: GitFailure; readonly error?: string }
 
+interface HeldReview {
+  readonly root: string
+  readonly location: RemoteLocation
+  readonly identity: string
+  readonly snapshot: GitLabReviewSnapshot
+}
+
+type ReviewGuard =
+  | { readonly session: HeldReview; readonly file: GitLabReviewFile }
+  | { readonly failure: GitFailure; readonly retryAt: number | null }
+
+type ReviewVersionGuard =
+  | { readonly session: HeldReview }
+  | { readonly failure: GitFailure; readonly retryAt: number | null }
+
 export class GitBoxService {
   private readonly synced = new Map<string, number>()
   private readonly locks = new Map<string, Promise<void>>()
+  private readonly reviews = new Map<string, HeldReview>()
+  private readonly reviewReads = new Map<string, number>()
+  private readonly fetchedReviews = new Set<string>()
 
   constructor(private readonly deps: GitBoxDeps) {}
 
@@ -170,6 +206,7 @@ export class GitBoxService {
     return {
       rows: result.value.rows.map((row) => ({
         ...row,
+        updatedSinceReview: this.updatedSinceReview(location, row.iid, row.sha),
         elsewhere: row.fork
           ? []
           : clones
@@ -181,6 +218,183 @@ export class GitBoxService {
       failure: null,
       retryAt: null,
       username: result.value.username,
+    }
+  }
+
+  async review(projectId: string, iid: number): Promise<GitReview> {
+    const ticket = (this.reviewReads.get(projectId) ?? 0) + 1
+    this.reviewReads.set(projectId, ticket)
+    this.reviews.delete(projectId)
+    const cwd = this.localRoot(projectId)
+    if (cwd === null) return reviewFailed('not-local')
+    const origin = await readRemoteUrl({ cwd, remote: 'origin' })
+    const location = origin.ok ? parseRemoteUrl(origin.value) : null
+    const gitlab = this.deps.gitlab
+    if (location === null || !gitlab.handles(location.host)) return reviewFailed('not-gitlab')
+    const identity = gitlab.identity(location.host)
+    if (identity === null) return reviewFailed('no-token')
+    const result = await gitlab.review(location, iid)
+    if (this.reviewReads.get(projectId) !== ticket) return reviewFailed('head-moved')
+    if (!result.ok) return reviewFailed(gitFailure(result.failure), result.retryAt)
+    if (result.value.kind === 'preparing') return result.value
+    if (gitlab.identity(location.host) !== identity) return reviewFailed('head-moved')
+    const session: HeldReview = { root: cwd, location, identity, snapshot: result.value.snapshot }
+    this.reviews.set(projectId, session)
+    return this.reviewState(session)
+  }
+
+  async viewed(request: GitRequest<'git:viewed'>): Promise<GitReview> {
+    const guarded = await this.guardReview(request)
+    if ('failure' in guarded) return reviewFailed(guarded.failure, guarded.retryAt)
+    const { session, file } = guarded
+    const key = {
+      host: session.location.host,
+      project: session.location.path,
+      iid: request.iid,
+    }
+    const now = this.deps.now()
+    this.deps.marks.setViewed(key, file.summary.path, request.viewed ? file.digest : null, now)
+    const state = this.reviewState(session)
+    if (state.complete && state.files.every((entry) => entry.viewed === 'yes')) {
+      this.deps.marks.setSeen(key, state.version.id, state.version.headSha, now)
+      return { ...state, updatedSinceReview: false }
+    }
+    return state
+  }
+
+  async openDiff(request: GitRequest<'git:openDiff'>): Promise<GitResponse<'git:openDiff'>> {
+    const guarded = await this.guardReview(request)
+    if ('failure' in guarded) {
+      return { failure: guarded.failure, retryAt: guarded.retryAt, error: null }
+    }
+    const { session, file } = guarded
+    if (!this.deps.editor.hasSurface({ host: LOCAL_HOST, root: session.root })) {
+      return { failure: 'no-editor', retryAt: null, error: null }
+    }
+    if (file.summary.binary || file.summary.tooLarge) {
+      return { failure: 'not-text', retryAt: null, error: null }
+    }
+    const fetched = await this.exclusive(session.root, () => this.ensureReviewRefs(session))
+    if (fetched.failure !== null) return fetched
+    const { version } = session.snapshot
+    const [before, after] = await Promise.all([
+      file.summary.status === 'added'
+        ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
+        : readFileAt({ cwd: session.root, ref: version.baseSha, path: file.summary.oldPath }),
+      file.summary.status === 'removed'
+        ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
+        : readFileAt({ cwd: session.root, ref: version.headSha, path: file.summary.path }),
+    ])
+    if (!before.ok) return { failure: 'git-failed', retryAt: null, error: before.error.message }
+    if (!after.ok) return { failure: 'git-failed', retryAt: null, error: after.error.message }
+    if (before.value.kind === 'absent' || after.value.kind === 'absent') {
+      return { failure: 'git-failed', retryAt: null, error: null }
+    }
+    if (before.value.kind !== 'text' || after.value.kind !== 'text') {
+      return { failure: 'not-text', retryAt: null, error: null }
+    }
+    if (
+      this.reviews.get(request.projectId) !== session ||
+      this.deps.gitlab.identity(session.location.host) !== session.identity
+    ) {
+      return { failure: 'head-moved', retryAt: null, error: null }
+    }
+    try {
+      const result = await this.deps.editor.openReviewDiff(session.root, {
+        iid: request.iid,
+        versionId: version.id,
+        path: file.summary.path,
+        oldPath: file.summary.oldPath,
+        before: before.value.text,
+        after: after.value.text,
+      })
+      const failure = result.failure === 'no-editor' ? 'no-editor' : 'git-failed'
+      return {
+        failure: result.ok ? null : failure,
+        retryAt: null,
+        error: result.message ?? null,
+      }
+    } catch {
+      return { failure: 'no-editor', retryAt: null, error: null }
+    }
+  }
+
+  async openAllDiffs(
+    request: GitRequest<'git:openAllDiffs'>
+  ): Promise<GitResponse<'git:openAllDiffs'>> {
+    const guarded = await this.guardReviewVersion(request)
+    if ('failure' in guarded) {
+      return { failure: guarded.failure, retryAt: guarded.retryAt, error: null, skipped: 0 }
+    }
+    const { session } = guarded
+    if (!this.deps.editor.hasSurface({ host: LOCAL_HOST, root: session.root })) {
+      return { failure: 'no-editor', retryAt: null, error: null, skipped: 0 }
+    }
+    const fetched = await this.exclusive(session.root, () => this.ensureReviewRefs(session))
+    if (fetched.failure !== null) return { ...fetched, skipped: 0 }
+    const { version } = session.snapshot
+    const files: WorkbenchReviewDiffFile[] = []
+    let skipped = 0
+    let bytes = 0
+    for (const [index, file] of session.snapshot.files.entries()) {
+      if (file.summary.binary || file.summary.tooLarge) {
+        skipped++
+        continue
+      }
+      const [before, after] = await Promise.all([
+        file.summary.status === 'added'
+          ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
+          : readFileAt({ cwd: session.root, ref: version.baseSha, path: file.summary.oldPath }),
+        file.summary.status === 'removed'
+          ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
+          : readFileAt({ cwd: session.root, ref: version.headSha, path: file.summary.path }),
+      ])
+      if (!before.ok) {
+        return { failure: 'git-failed', retryAt: null, error: before.error.message, skipped }
+      }
+      if (!after.ok) {
+        return { failure: 'git-failed', retryAt: null, error: after.error.message, skipped }
+      }
+      if (before.value.kind !== 'text' || after.value.kind !== 'text') {
+        skipped++
+        continue
+      }
+      const size = Buffer.byteLength(before.value.text) + Buffer.byteLength(after.value.text)
+      if (bytes + size > MAX_REVIEW_TEXT_BYTES) {
+        skipped += session.snapshot.files.length - index
+        break
+      }
+      bytes += size
+      files.push({
+        path: file.summary.path,
+        oldPath: file.summary.oldPath,
+        before: before.value.text,
+        after: after.value.text,
+      })
+    }
+    if (
+      this.reviews.get(request.projectId) !== session ||
+      this.deps.gitlab.identity(session.location.host) !== session.identity
+    ) {
+      return { failure: 'head-moved', retryAt: null, error: null, skipped }
+    }
+    if (files.length === 0) return { failure: null, retryAt: null, error: null, skipped }
+    try {
+      const result = await this.deps.editor.openReviewDiff(session.root, {
+        iid: request.iid,
+        versionId: version.id,
+        title: mainT('git.review.allChangesTitle', { iid: request.iid }),
+        files,
+      })
+      const failure = result.failure === 'no-editor' ? 'no-editor' : 'git-failed'
+      return {
+        failure: result.ok ? null : failure,
+        retryAt: null,
+        error: result.message ?? null,
+        skipped,
+      }
+    } catch {
+      return { failure: 'no-editor', retryAt: null, error: null, skipped }
     }
   }
 
@@ -218,6 +432,106 @@ export class GitBoxService {
       .filter((project) => project.id !== projectId && project.host === LOCAL_HOST)
     const clones = await Promise.all(others.map((project) => cloneOf(project, wanted)))
     return clones.filter((clone): clone is Clone => clone !== null)
+  }
+
+  private async guardReview(request: GitRequest<'git:openDiff'>): Promise<ReviewGuard> {
+    const guarded = await this.guardReviewVersion(request)
+    if ('failure' in guarded) return guarded
+    const { session } = guarded
+    const file = session.snapshot.files.find((entry) => entry.summary.path === request.path)
+    return file === undefined ? { failure: 'refused-target', retryAt: null } : { session, file }
+  }
+
+  private async guardReviewVersion(
+    request: GitRequest<'git:openAllDiffs'>
+  ): Promise<ReviewVersionGuard> {
+    const session = this.reviews.get(request.projectId)
+    if (session === undefined) return { failure: 'head-moved', retryAt: null }
+    if (
+      session.root !== this.localRoot(request.projectId) ||
+      session.snapshot.mr.iid !== request.iid ||
+      session.snapshot.version.id !== request.versionId
+    ) {
+      return { failure: 'head-moved', retryAt: null }
+    }
+    const identity = this.deps.gitlab.identity(session.location.host)
+    if (identity === null) return { failure: 'no-token', retryAt: null }
+    if (identity !== session.identity) return { failure: 'head-moved', retryAt: null }
+    const latest = await this.deps.gitlab.latestVersion(session.location, request.iid)
+    if (!latest.ok) return { failure: gitFailure(latest.failure), retryAt: latest.retryAt }
+    if (
+      latest.value !== request.versionId ||
+      this.reviews.get(request.projectId) !== session ||
+      this.deps.gitlab.identity(session.location.host) !== identity
+    ) {
+      return { failure: 'head-moved', retryAt: null }
+    }
+    return { session }
+  }
+
+  private reviewState(session: HeldReview): GitReviewReady {
+    const { snapshot, location } = session
+    const viewed = this.deps.marks.readViewed({
+      host: location.host,
+      project: location.path,
+      iid: snapshot.mr.iid,
+    })
+    return {
+      kind: 'ready',
+      mr: snapshot.mr,
+      version: snapshot.version,
+      pipeline: snapshot.pipeline,
+      approvals: snapshot.approvals,
+      files: snapshot.files.map<GitReviewFile>((entry) => {
+        const digest = viewed.get(entry.summary.path)
+        return {
+          ...entry.summary,
+          viewed: digest === undefined ? 'no' : digest === entry.digest ? 'yes' : 'changed',
+        }
+      }),
+      complete: snapshot.complete,
+      updatedSinceReview: this.updatedSinceReview(
+        location,
+        snapshot.mr.iid,
+        snapshot.version.headSha
+      ),
+    }
+  }
+
+  private updatedSinceReview(location: RemoteLocation, iid: number, sha: string): boolean {
+    const seen = this.deps.marks.readSeen({ host: location.host, project: location.path, iid })
+    return seen !== null && seen.headSha !== sha
+  }
+
+  private async ensureReviewRefs(session: HeldReview): Promise<GitResponse<'git:openDiff'>> {
+    const { version, mr } = session.snapshot
+    const key = `${session.root}\u0000${version.headSha}`
+    const cwd = session.root
+    if (!this.fetchedReviews.has(key) || !(await hasCommit({ cwd, sha: version.headSha }))) {
+      const fetched = await fetchRef({
+        cwd,
+        remote: 'origin',
+        ref: `refs/merge-requests/${String(mr.iid)}/head`,
+      })
+      if (!fetched.ok) return { failure: 'git-failed', retryAt: null, error: fetched.error.message }
+      const head = await fetchedHead({ cwd })
+      if (!head.ok) return { failure: 'git-failed', retryAt: null, error: head.error.message }
+      if (head.value !== version.headSha)
+        return { failure: 'head-moved', retryAt: null, error: null }
+      this.fetchedReviews.add(key)
+    }
+    if (!(await hasCommit({ cwd, sha: version.baseSha }))) {
+      const fetched = await fetchRef({
+        cwd,
+        remote: 'origin',
+        ref: `refs/heads/${mr.targetBranch}`,
+      })
+      if (!fetched.ok) return { failure: 'git-failed', retryAt: null, error: fetched.error.message }
+      if (!(await hasCommit({ cwd, sha: version.baseSha }))) {
+        return { failure: 'git-failed', retryAt: null, error: null }
+      }
+    }
+    return { failure: null, retryAt: null, error: null }
   }
 
   private async forwardable(projectId: string, cwd: string): Promise<GitSyncNote | null> {
@@ -311,6 +625,14 @@ export class GitBoxService {
     if (project === null) throw new Error(`No project ${projectId}`)
     return project.host === LOCAL_HOST ? project.canonicalRoot : null
   }
+}
+
+function gitFailure(failure: GitLabFailure): GitFailure {
+  return failure === 'invalid-response' || failure === 'conflict' ? 'git-failed' : failure
+}
+
+function reviewFailed(failure: GitFailure, retryAt: number | null = null): GitReview {
+  return { kind: 'failed', failure, retryAt }
 }
 
 async function cloneOf(project: Project, wanted: RemoteLocation): Promise<Clone | null> {

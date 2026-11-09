@@ -34,7 +34,11 @@ import {
   EXTENSION_CAPABILITIES,
 } from '../../desktop/src/shared/host-capabilities.js'
 import { ENGINE_VERSION } from './version.js'
-import type { WorkbenchAskDiffResult } from '../../desktop/src/shared/workbench-ipc.js'
+import type {
+  WorkbenchAskDiffResult,
+  WorkbenchReviewDiffResult,
+} from '../../desktop/src/shared/workbench-ipc.js'
+import { EditorReviewDiffResult } from './editor-protocol.js'
 import { OfferedSecret, SecretId as SecretIdSchema } from './protocol.js'
 
 export const SecretHostParams = OfferedSecret.extend({ id: SecretIdSchema })
@@ -175,6 +179,39 @@ export class EngineHost implements IpcHost {
             request: { ...request, requestId, ...(revealPath === undefined ? {} : { revealPath }) },
           })
         )
+      },
+      openReviewDiff: async (root, request): Promise<WorkbenchReviewDiffResult> => {
+        const requestId = randomUUID()
+        const project = this.projectForPlace({ host: LOCAL_HOST, root })
+        const place = project === null ? null : { host: project.host, root: project.canonicalRoot }
+        const peer =
+          place === null
+            ? undefined
+            : this.desktopPeers(place).sort((a, b) => b.focusedAt - a.focusedAt)[0]
+        if (place === null || peer === undefined) {
+          return { requestId, ok: false, failure: 'no-editor' }
+        }
+        try {
+          const value = EditorReviewDiffResult.parse(
+            await peer.requestHost('editor.openReviewDiff', {
+              place,
+              request: { ...request, requestId },
+            })
+          )
+          return {
+            requestId: value.requestId,
+            ok: value.ok,
+            ...(value.failure === undefined ? {} : { failure: value.failure }),
+            ...(value.message === undefined ? {} : { message: value.message }),
+          }
+        } catch (error) {
+          return {
+            requestId,
+            ok: false,
+            failure: 'open-failed',
+            message: error instanceof Error ? error.message : String(error),
+          }
+        }
       },
       edit: async (place, request) => {
         const project = this.projectForPlace(place)

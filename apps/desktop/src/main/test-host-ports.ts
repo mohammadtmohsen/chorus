@@ -8,6 +8,7 @@ export function testHostPorts(userDataPath: string): HostPorts {
       refreshTerminalEnv: () => undefined,
       reopenProject: () => undefined,
       askDiff: () => Promise.resolve({ requestId: 'test', ok: false }),
+      openReviewDiff: () => Promise.resolve({ requestId: 'test', ok: false, failure: 'no-editor' }),
       edit: () =>
         Promise.resolve({
           requestId: 'test',
