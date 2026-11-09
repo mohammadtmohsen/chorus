@@ -77,6 +77,24 @@ export const GitReviewFile = z.object({
 })
 export type GitReviewFile = z.infer<typeof GitReviewFile>
 
+export const GitReviewThread = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+  oldPath: z.string(),
+  oldLine: z.number().int().positive().nullable(),
+  newLine: z.number().int().positive().nullable(),
+  resolved: z.boolean(),
+  notes: z.array(
+    z.object({
+      id: z.number().int().positive(),
+      body: z.string(),
+      author: MrRow.shape.author,
+      createdAt: z.number().int(),
+    })
+  ),
+})
+export type GitReviewThread = z.infer<typeof GitReviewThread>
+
 export const GitReviewReady = z.object({
   kind: z.literal('ready'),
   mr: MrRow.pick({
@@ -102,6 +120,7 @@ export const GitReviewReady = z.object({
     })
     .nullable(),
   files: z.array(GitReviewFile),
+  threads: z.array(GitReviewThread),
   complete: z.boolean(),
   updatedSinceReview: z.boolean(),
 })
@@ -289,4 +308,17 @@ export interface GitApi {
   readonly checkoutGit: (
     request: GitRequest<'git:checkout'>
   ) => Promise<GitResponse<'git:checkout'>>
+}
+
+export function formatGitTime(timestamp: number): string {
+  const date = new Date(timestamp)
+  const options: Intl.DateTimeFormatOptions = {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
+  return date.toLocaleString([], options)
 }

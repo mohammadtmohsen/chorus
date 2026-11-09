@@ -1730,6 +1730,26 @@ seen keeps `scm${handle}`, every later one gets `scm${host}-${handle}`, and `par
 the same function so Git's worktree and submodule parents still resolve. Re-check it on every
 `@codingame/monaco-vscode-*` upgrade.
 
+**3b.3, decided 2026-11-09 — the user took every recommendation.** Threads are **read-only**;
+writing — a new comment on a line as a GitLab draft, replies, resolve, publish — stays in 3c, so
+nothing reaches GitLab by accident. **Resolved threads show, collapsed** and marked resolved, as
+GitLab shows them. **Anchors stay on the MR's line numbers**: in edit mode a thread sits on the
+workspace file and does not follow lines the person inserts until the review is reloaded; tracking
+edits belongs with writing. Because a file's diff may open read-only (`chorus-review:` on both
+sides) or editable (the workspace file on the right), threads are created on the exact URIs the
+diff used: `review-diff.ts` reports each opened file's two URIs to the extension, which creates
+that file's threads on them once per review version.
+
+**3c reshaped 2026-11-09 by the user: no drafts.** A comment is posted the moment it is submitted,
+so `git:draftSave`, `git:draftDelete`, `git:publish`, the drafts read and the drafts tray in the
+"Channels added" table below are dropped. What stays: a new comment on a diff line (`POST
+…/discussions` with the version's three SHAs and the position the "Positions" rule computes), a
+reply (`POST …/discussions/:id/notes`), resolve and reopen (`PUT …/discussions/:id`), and Approve
+(`POST …/approve` with `sha` = the version's head). The Source Control rows moved to their own
+`chorus-merge-request:` scheme: once any diff opens, the read-only file provider registered for the
+whole `chorus-review:` scheme made every row read-only, and the workbench's lock replaced the
+status letter and colour.
+
 **Edit mode, decided 2026-11-09 — the user took every recommendation.** When the project has the
 MR's source branch checked out and the MR is not from a fork, a diff's modified side is the real
 file in the project's workspace — editable, saved to disk, with language features — and the original

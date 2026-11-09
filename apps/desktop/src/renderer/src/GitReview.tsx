@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type {
-  GitResponse,
-  GitReview as GitReviewResult,
-  GitReviewFile,
+import {
+  formatGitTime,
+  type GitResponse,
+  type GitReview as GitReviewResult,
+  type GitReviewFile,
 } from '../../shared/git-ipc.js'
 import { isSafeHref } from '../../shared/markdown.js'
 import {
-  formatGitTime,
   gitFailureKey,
   isGitRestartError,
   PIPELINE_STATUSES,

@@ -16,6 +16,27 @@ import type {
 export const REVIEW_SCHEME = 'chorus-review'
 const resources = new Set<string>()
 
+export interface ReviewDiffOpenedFile {
+  readonly path: string
+  readonly original: string
+  readonly modified: string
+}
+
+export interface ReviewDiffOpened {
+  readonly iid: number
+  readonly versionId: number
+  readonly files: readonly ReviewDiffOpenedFile[]
+}
+
+const openedListeners = new Set<(event: ReviewDiffOpened) => void>()
+
+export function onReviewDiffOpened(listener: (event: ReviewDiffOpened) => void): () => void {
+  openedListeners.add(listener)
+  return () => {
+    openedListeners.delete(listener)
+  }
+}
+
 export function reviewAuthority(
   side: 'original' | 'modified' | 'all',
   iid: number,
@@ -83,6 +104,7 @@ export function serveReviewDiff(): void {
       if (root === undefined && requested.some((file) => file.workspace)) {
         return { requestId, ok: false, failure: 'open-failed' }
       }
+      const openedFiles: ReviewDiffOpenedFile[] = []
       const inputs = requested.map(({ path, oldPath, before, after, workspace }) => {
         const original = URI.from({
           scheme: REVIEW_SCHEME,
@@ -114,6 +136,7 @@ export function serveReviewDiff(): void {
         }
         const languageId =
           languages.guessLanguageIdByFilepathOrFirstLine(URI.file(path)) ?? 'plaintext'
+        openedFiles.push({ path, original: original.toString(), modified: modified.toString() })
         return {
           original: { resource: original, languageId },
           modified: { resource: modified, languageId },
@@ -145,9 +168,10 @@ export function serveReviewDiff(): void {
               options: { pinned: true, preserveFocus: false, revealIfOpened: true },
             }
       )
-      return pane === undefined
-        ? { requestId, ok: false, failure: 'open-failed' }
-        : { requestId, ok: true }
+      if (pane === undefined) return { requestId, ok: false, failure: 'open-failed' }
+      const event: ReviewDiffOpened = { iid, versionId, files: openedFiles }
+      for (const listener of openedListeners) listener(event)
+      return { requestId, ok: true }
     } catch (error) {
       return {
         requestId,

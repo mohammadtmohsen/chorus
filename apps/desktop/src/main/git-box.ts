@@ -546,6 +546,7 @@ export class GitBoxService {
       pipeline: snapshot.pipeline,
       approvals: snapshot.approvals,
       files: snapshot.files.map((entry) => entry.summary),
+      threads: snapshot.threads,
       complete: snapshot.complete,
       updatedSinceReview: session.updatedSinceReview,
     }

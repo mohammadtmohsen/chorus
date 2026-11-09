@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto'
 import { parseDiff, parseRemoteUrl, readRemoteUrl } from '@chorus/workspace'
 import type { DiffFile, RemoteLocation } from '@chorus/workspace'
 import { z } from 'zod'
-import type { GitReviewFile, GitReviewReady, MrRow, ReviewVersion } from '../shared/git-ipc.js'
+import type {
+  GitReviewFile,
+  GitReviewReady,
+  GitReviewThread,
+  MrRow,
+  ReviewVersion,
+} from '../shared/git-ipc.js'
 import type { GitProviderPort } from './git-box.js'
 
 export type GitLabFailure =
@@ -265,24 +271,37 @@ const MrVersion = MrVersionItem.extend({
   diffs: z.array(MrDiffItem),
 })
 
-const Discussion = z.object({
-  id: z.string(),
-  notes: z.array(
-    z.object({
-      system: z.boolean(),
-      type: z.string().nullable(),
-      position: z
-        .object({
-          base_sha: z.string().nullish(),
-          start_sha: z.string().nullish(),
-          head_sha: z.string().nullish(),
-          old_path: z.string().nullish(),
-          new_path: z.string().nullish(),
-        })
-        .nullish(),
-    })
-  ),
-})
+const Discussion = z
+  .object({
+    id: z.string().min(1),
+    notes: z.array(
+      z.discriminatedUnion('system', [
+        z.object({ system: z.literal(true) }),
+        z.object({
+          system: z.literal(false),
+          id: z.number().int().positive(),
+          body: z.string(),
+          author: Person,
+          created_at: z.string().refine((value) => Number.isFinite(Date.parse(value))),
+          type: z.string().nullish(),
+          resolved: z.boolean().optional(),
+          position: z
+            .object({
+              base_sha: z.string().nullish(),
+              start_sha: z.string().nullish(),
+              head_sha: z.string().nullish(),
+              old_path: z.string().nullish(),
+              new_path: z.string().nullish(),
+              old_line: z.number().int().positive().nullish(),
+              new_line: z.number().int().positive().nullish(),
+            })
+            .nullish(),
+        }),
+      ])
+    ),
+  })
+  .nullable()
+  .catch(null)
 
 const Approvals = z.object({
   approved: z.boolean().optional(),
@@ -304,6 +323,7 @@ export interface GitLabReviewSnapshot {
   readonly pipeline: MrRow['pipeline']
   readonly approvals: GitReviewReady['approvals']
   readonly files: GitLabReviewFile[]
+  readonly threads: GitReviewThread[]
   readonly complete: boolean
 }
 
@@ -487,6 +507,45 @@ export class GitLabDirectory implements GitProviderPort {
       baseSha: source.base_commit_sha,
       startSha: source.start_commit_sha,
     }
+    const threads = discussions.value.items.flatMap((discussion): GitReviewThread[] => {
+      if (discussion === null) return []
+      const first = discussion.notes[0]
+      if (first?.system !== false || first.type !== 'DiffNote') return []
+      const position = first.position
+      if (
+        position?.head_sha !== version.headSha ||
+        position.base_sha !== version.baseSha ||
+        position.start_sha !== version.startSha
+      ) {
+        return []
+      }
+      const file = source.diffs.find(
+        (entry) => entry.old_path === position.old_path && entry.new_path === position.new_path
+      )
+      if (file === undefined) return []
+      return [
+        {
+          id: discussion.id,
+          path: file.new_path,
+          oldPath: file.old_path,
+          oldLine: position.old_line ?? null,
+          newLine: position.new_line ?? null,
+          resolved: first.resolved ?? false,
+          notes: discussion.notes.flatMap((note) =>
+            note.system
+              ? []
+              : [
+                  {
+                    id: note.id,
+                    body: note.body,
+                    author: note.author,
+                    createdAt: Date.parse(note.created_at),
+                  },
+                ]
+          ),
+        },
+      ]
+    })
     const files: GitLabReviewFile[] = source.diffs.map((raw) => {
       const parsed = hunksOf(raw)
       const collapsed = raw.collapsed === true
@@ -500,20 +559,6 @@ export class GitLabDirectory implements GitProviderPort {
           !raw.renamed_file &&
           !collapsed &&
           !tooLarge)
-      const threads = discussions.value.items.filter((discussion) =>
-        discussion.notes.some((note) => {
-          const position = note.position
-          return (
-            !note.system &&
-            note.type === 'DiffNote' &&
-            position?.head_sha === version.headSha &&
-            position.base_sha === version.baseSha &&
-            position.start_sha === version.startSha &&
-            position.old_path === raw.old_path &&
-            position.new_path === raw.new_path
-          )
-        })
-      ).length
       return {
         raw,
         summary: {
@@ -531,7 +576,9 @@ export class GitLabDirectory implements GitProviderPort {
           binary,
           collapsed,
           tooLarge,
-          threads,
+          threads: threads.filter(
+            (thread) => thread.oldPath === raw.old_path && thread.path === raw.new_path
+          ).length,
         },
       }
     })
@@ -577,6 +624,7 @@ export class GitLabDirectory implements GitProviderPort {
               }
             : null,
           files,
+          threads,
           complete,
         },
       },

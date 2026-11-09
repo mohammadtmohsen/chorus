@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type {
-  GitBoxState,
-  GitCheckoutTarget,
-  GitFailure,
-  GitRequests,
-  GitReviewEnvelope,
-  MrRow,
+import {
+  formatGitTime,
+  type GitBoxState,
+  type GitCheckoutTarget,
+  type GitFailure,
+  type GitRequests,
+  type GitReviewEnvelope,
+  type MrRow,
 } from '../../shared/git-ipc.js'
 import { isSafeHref } from '../../shared/markdown.js'
 import { GitReview, type ReviewState } from './GitReview.js'
@@ -24,19 +25,6 @@ export const PIPELINE_STATUSES = new Set([
   'manual',
   'scheduled',
 ])
-
-export function formatGitTime(timestamp: number): string {
-  const date = new Date(timestamp)
-  const options: Intl.DateTimeFormatOptions = {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }
-  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
-  return date.toLocaleString([], options)
-}
 
 export type GitUiFailure = GitFailure | 'restart-required'
 

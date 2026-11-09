@@ -119,6 +119,7 @@ function snapshot(overrides: Partial<GitLabReviewSnapshot> = {}): GitLabReviewSn
       userCanApprove: true,
     },
     files: [reviewFile('src/a.ts'), reviewFile('src/b.ts')],
+    threads: [],
     complete: true,
     ...overrides,
   }

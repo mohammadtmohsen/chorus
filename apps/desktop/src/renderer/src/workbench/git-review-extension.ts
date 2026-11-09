@@ -1,14 +1,20 @@
 import { ExtensionHostKind, registerExtension } from '@codingame/monaco-vscode-api/extensions'
-import type { FileDecoration, SourceControl, Uri } from 'vscode'
-import type { GitReviewFile } from '../../../shared/git-ipc.js'
+import type { Comment, CommentThread, FileDecoration, SourceControl, Uri } from 'vscode'
+import { formatGitTime, type GitReviewFile, type GitReviewReady } from '../../../shared/git-ipc.js'
 import {
   WorkbenchReviewAction,
   WorkbenchReviewState,
   type WorkbenchConnection,
 } from '../../../shared/workbench-ipc.js'
-import { REVIEW_SCHEME, reviewAuthority } from './review-diff.js'
+import {
+  onReviewDiffOpened,
+  reviewAuthority,
+  type ReviewDiffOpened,
+  type ReviewDiffOpenedFile,
+} from './review-diff.js'
 
 const SOURCE_CONTROL_ID = 'chorus.gitReview'
+const ROW_SCHEME = 'chorus-merge-request'
 const STATUS_COLORS: Record<GitReviewFile['status'], string> = {
   added: 'gitDecoration.addedResourceForeground',
   removed: 'gitDecoration.deletedResourceForeground',
@@ -29,7 +35,19 @@ export async function startGitReviewExtension(
     ExtensionHostKind.LocalProcess,
     { system: true }
   )
-  const api = await extension.getApi()
+  const pendingOpened: ReviewDiffOpened[] = []
+  let receiveOpened: ((event: ReviewDiffOpened) => boolean) | null = null
+  const unsubscribeOpened = onReviewDiffOpened((event) => {
+    if (receiveOpened?.(event) !== true) pendingOpened.push(event)
+  })
+  const api = await extension.getApi().catch((error: unknown) => {
+    unsubscribeOpened()
+    throw error
+  })
+  const commentController = api.comments.createCommentController(SOURCE_CONTROL_ID, labels.title)
+  const commentThreads = new Map<string, CommentThread>()
+  const openedFiles = new Map<string, ReviewDiffOpenedFile>()
+  let activeReview: GitReviewReady | null = null
   const decorationChanges = new api.EventEmitter<undefined>()
   let decorations = new Map<string, FileDecoration>()
   const decorationProvider = api.window.registerFileDecorationProvider({
@@ -38,7 +56,7 @@ export async function startGitReviewExtension(
   })
   const resourceOf = (iid: number, versionId: number, path: string): Uri =>
     api.Uri.from({
-      scheme: REVIEW_SCHEME,
+      scheme: ROW_SCHEME,
       authority: reviewAuthority('modified', iid, versionId),
       path: `/${path}`,
     })
@@ -49,6 +67,84 @@ export async function startGitReviewExtension(
   const reportFailure = (): void => {
     void api.window.showErrorMessage(labels.actionFailed)
   }
+  const clearComments = (): void => {
+    for (const thread of commentThreads.values()) thread.dispose()
+    commentThreads.clear()
+  }
+  const rememberOpened = (event: ReviewDiffOpened): boolean => {
+    if (activeReview?.mr.iid !== event.iid || activeReview.version.id !== event.versionId) {
+      return false
+    }
+    for (const file of event.files) {
+      openedFiles.set(JSON.stringify([file.path, file.original, file.modified]), file)
+    }
+    return true
+  }
+  const renderComments = (): void => {
+    const review = activeReview
+    if (review === null) return
+    const wanted = new Set<string>()
+    for (const file of openedFiles.values()) {
+      for (const discussion of review.threads) {
+        if (discussion.path !== file.path) continue
+        const line = discussion.newLine ?? discussion.oldLine
+        if (line === null) continue
+        const resource = discussion.newLine === null ? file.original : file.modified
+        const key = JSON.stringify([discussion.id, resource])
+        if (wanted.has(key)) continue
+        wanted.add(key)
+        const comments = discussion.notes.map<Comment>((note) => {
+          const body = new api.MarkdownString(note.body)
+          body.isTrusted = false
+          body.supportHtml = false
+          return {
+            body,
+            author: { name: note.author.name },
+            mode: api.CommentMode.Preview,
+            label: formatGitTime(note.createdAt),
+          }
+        })
+        const state = discussion.resolved
+          ? api.CommentThreadState.Resolved
+          : api.CommentThreadState.Unresolved
+        const collapsed = discussion.resolved
+          ? api.CommentThreadCollapsibleState.Collapsed
+          : api.CommentThreadCollapsibleState.Expanded
+        const existing = commentThreads.get(key)
+        if (existing === undefined) {
+          const thread = commentController.createCommentThread(
+            api.Uri.parse(resource),
+            new api.Range(line - 1, 0, line - 1, 0),
+            comments
+          )
+          thread.canReply = false
+          thread.state = state
+          thread.collapsibleState = collapsed
+          commentThreads.set(key, thread)
+        } else {
+          existing.comments = comments
+          if (existing.state !== state) {
+            existing.state = state
+            existing.collapsibleState = collapsed
+          }
+        }
+      }
+    }
+    for (const [key, thread] of commentThreads) {
+      if (wanted.has(key)) continue
+      thread.dispose()
+      commentThreads.delete(key)
+    }
+  }
+  receiveOpened = (event) => {
+    if (!rememberOpened(event)) return false
+    try {
+      renderComments()
+    } catch {
+      reportFailure()
+    }
+    return true
+  }
   const apply = (raw: unknown): void => {
     const parsed = WorkbenchReviewState.safeParse(raw)
     if (!parsed.success || parsed.data.revision < latest) return
@@ -56,6 +152,20 @@ export async function startGitReviewExtension(
     latest = state.revision
     const review = state.review
     const identity = review === null ? '' : `${String(review.mr.iid)}:${String(review.version.id)}`
+    activeReview = review
+    if (identity !== shown) {
+      clearComments()
+      openedFiles.clear()
+      if (review === null) pendingOpened.length = 0
+    }
+    if (review !== null) {
+      for (const event of pendingOpened.splice(0)) rememberOpened(event)
+      try {
+        renderComments()
+      } catch {
+        reportFailure()
+      }
+    }
     if (identity === shown) return
     shown = identity
     sourceControl?.dispose()
@@ -141,6 +251,9 @@ export async function startGitReviewExtension(
   window.addEventListener('unload', () => {
     readGeneration++
     unsubscribe()
+    unsubscribeOpened()
+    clearComments()
+    commentController.dispose()
     command.dispose()
     sourceControl?.dispose()
     decorationProvider.dispose()
