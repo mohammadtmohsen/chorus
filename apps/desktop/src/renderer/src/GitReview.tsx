@@ -13,6 +13,7 @@ import {
   PIPELINE_STATUSES,
   type GitUiFailure,
 } from './GitPanel.js'
+import { useOpenLink } from './workspace/web-pages.js'
 
 export type ReviewState =
   | Exclude<GitReviewResult, { kind: 'failed' }>
@@ -114,6 +115,7 @@ export function GitReview(props: {
   readonly onBack: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const followLink = useOpenLink()
   const review = props.review
   const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [issues, setIssues] = useState<Record<string, RowIssue>>({})
@@ -318,9 +320,15 @@ export function GitReview(props: {
           <button type="button" onClick={props.onBack}>
             {t('git.review.back')}
           </button>
-          <span className="git-request-title">
+          <a
+            className="git-request-title"
+            href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={followLink}
+          >
             {t('git.requestNumber', { iid: review.mr.iid })} {review.mr.title}
-          </span>
+          </a>
           <span className="git-request-author">
             {t('git.author', {
               name: review.mr.author.name,
@@ -392,13 +400,6 @@ export function GitReview(props: {
           <span className="git-review-sha" title={review.version.headSha}>
             {review.version.headSha.slice(0, 8)}
           </span>
-          <a
-            href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {t('git.openOnGitlab')}
-          </a>
           <button
             type="button"
             disabled={busy !== null || review.files.length === 0}
@@ -434,6 +435,7 @@ export function GitReview(props: {
               href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={followLink}
             >
               {t('git.openOnGitlab')}
             </a>
@@ -450,6 +452,7 @@ export function GitReview(props: {
               href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={followLink}
             >
               {t('git.openOnGitlab')}
             </a>
@@ -468,6 +471,7 @@ export function GitReview(props: {
             href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={followLink}
           >
             {t('git.review.skipped', { count: allResult.skipped })}
           </a>
@@ -552,6 +556,7 @@ export function GitReview(props: {
                     href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={followLink}
                   >
                     {t('git.openOnGitlab')}
                   </a>
@@ -576,6 +581,7 @@ export function GitReview(props: {
                       href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={followLink}
                     >
                       {t('git.openOnGitlab')}
                     </a>

@@ -321,6 +321,7 @@ export interface BranchEntry {
   readonly head: boolean
   readonly sha: string
   readonly committedAt: number
+  readonly author: string
   readonly upstream: string | null
   readonly track: BranchTrack
 }
@@ -339,7 +340,7 @@ export async function readBranchInventory(
 ): Promise<Result<BranchEntry[], GitError>> {
   const result = await git(options, [
     'for-each-ref',
-    '--format=%(HEAD)%00%(refname)%00%(objectname)%00%(committerdate:unix)%00%(upstream)%00%(upstream:track)',
+    '--format=%(HEAD)%00%(refname)%00%(objectname)%00%(committerdate:unix)%00%(upstream)%00%(upstream:track)%00%(authorname)',
     '--sort=-committerdate',
     'refs/heads',
     'refs/remotes',
@@ -347,7 +348,7 @@ export async function readBranchInventory(
   if (!result.ok) return result
   const branches: BranchEntry[] = []
   for (const line of result.value.split('\n')) {
-    const [marker, refname, sha, date, upstream, track] = line.split('\0')
+    const [marker, refname, sha, date, upstream, track, author] = line.split('\0')
     if (refname === undefined || sha === undefined) continue
     const remote = refname.startsWith('refs/remotes/')
     if (remote && refname.endsWith('/HEAD')) continue
@@ -361,6 +362,7 @@ export async function readBranchInventory(
       head: marker === '*',
       sha,
       committedAt: Number(date ?? 0),
+      author: author ?? '',
       upstream: tracking === undefined || tracking === '' ? null : tracking,
       track: parseTrack(upstream ?? '', track ?? ''),
     })

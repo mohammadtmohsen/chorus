@@ -1,6 +1,9 @@
+import { useCallback, type MouseEvent } from 'react'
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { BROWSER_HOME_URL } from '../../../shared/browser-ipc.js'
+import { isSafeHref } from '../../../shared/markdown.js'
+import { useHostCapabilities } from '../host-context.js'
 import type {
   BrowserAction,
   BrowserDownloads,
@@ -23,7 +26,7 @@ export interface WebPage {
   readonly found: { readonly matches: number; readonly active: number } | null
   readonly revision: number
   readonly failed: boolean
-  readonly homePending: boolean
+  readonly pendingAddress: string | null
   readonly focus: 'address' | 'find' | null
   readonly focusRequest: number
   readonly findText: string
@@ -43,7 +46,7 @@ const EMPTY_PAGE: WebPage = Object.freeze({
   found: null,
   revision: 0,
   failed: false,
-  homePending: false,
+  pendingAddress: null,
   focus: null,
   focusRequest: 0,
   findText: '',
@@ -86,6 +89,29 @@ export function clearWebPrompt(id: string, candidateId: string): void {
   }
 }
 
+export function openLink(address: string, inWebTab: boolean): void {
+  if (!isSafeHref(address)) return
+  if (inWebTab) {
+    const added = useWorkspaceStore.getState().addWebTab(true)
+    if (added !== '') {
+      updateWebPage(added, { pendingAddress: address })
+      return
+    }
+  }
+  window.open(address, '_blank', 'noopener,noreferrer')
+}
+
+export function useOpenLink(): (event: MouseEvent<HTMLAnchorElement>) => void {
+  const inWebTab = useHostCapabilities().nativeBrowserViews
+  return useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault()
+      openLink(event.currentTarget.href, inWebTab)
+    },
+    [inWebTab]
+  )
+}
+
 export function nextWebRevision(id: string): number {
   const revision = (useWebPagesStore.getState().pages[id]?.revision ?? 0) + 1
   updateWebPage(id, { revision })
@@ -111,10 +137,11 @@ export function attachWebPage(id: string): Promise<void> {
         settings: reply.settings,
         failed: false,
       })
-      if (useWebPagesStore.getState().pages[id]?.homePending === true) {
-        updateWebPage(id, { homePending: false })
+      const address = useWebPagesStore.getState().pages[id]?.pendingAddress ?? null
+      if (address !== null) {
+        updateWebPage(id, { pendingAddress: null })
         return window.chorus
-          .navigateBrowser({ browserId: reply.browserId, address: BROWSER_HOME_URL })
+          .navigateBrowser({ browserId: reply.browserId, address })
           .then((navigated) => {
             if (useWebPagesStore.getState().pages[id]?.browserId !== reply.browserId) return
             updateWebPage(id, { state: navigated.state })
@@ -165,7 +192,7 @@ export function runWebCommand(command: BrowserWebCommand): void {
   if (command === 'new-tab') {
     const added = state.addWebTab(true)
     if (added !== '') {
-      updateWebPage(added, { homePending: true, focus: 'address', focusRequest: 1 })
+      updateWebPage(added, { pendingAddress: BROWSER_HOME_URL, focus: 'address', focusRequest: 1 })
     }
     return
   }

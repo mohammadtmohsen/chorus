@@ -11,6 +11,7 @@ import {
 } from '../../shared/git-ipc.js'
 import { isSafeHref } from '../../shared/markdown.js'
 import { GitReview, type ReviewState } from './GitReview.js'
+import { useOpenLink } from './workspace/web-pages.js'
 
 export const PIPELINE_STATUSES = new Set([
   'created',
@@ -44,6 +45,23 @@ export function gitFailureKey(failure: GitUiFailure): string {
   return failure === 'restart-required' ? 'git.restartRequired' : `git.failure.${failure}`
 }
 
+const AUTHOR_HUES = 6
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export function authorHue(name: string): number {
+  let hash = 0
+  for (const char of name.trim().toLocaleLowerCase()) {
+    hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 1_000_003
+  }
+  return hash % AUTHOR_HUES
+}
+
+export function changeAge(changedAt: number, readAt: number | null): 'day' | 'week' | 'older' {
+  const elapsed = (readAt ?? changedAt) - changedAt
+  if (elapsed < DAY_MS) return 'day'
+  return elapsed < 7 * DAY_MS ? 'week' : 'older'
+}
+
 export function GitPanel(props: {
   readonly projectId: string
   readonly collapsed: boolean
@@ -52,11 +70,11 @@ export function GitPanel(props: {
   readonly onOpenProject: (projectId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const followLink = useOpenLink()
   const [state, setState] = useState<GitBoxState | null>(null)
   const [busy, setBusy] = useState<'fetch' | 'sync' | 'checkout' | null>(null)
   const [failure, setFailure] = useState<GitUiFailure | null>(null)
   const [filter, setFilter] = useState('')
-  const [scope, setScope] = useState<'reviewRequested' | 'mine' | 'all'>('reviewRequested')
   const [revision, setRevision] = useState(0)
   const [requests, setRequests] = useState<GitRequestsState | null>(null)
   const [requestsRevision, setRequestsRevision] = useState(0)
@@ -241,6 +259,8 @@ export function GitPanel(props: {
           failure: isGitRestartError(error) ? 'restart-required' : 'network',
           retryAt: null,
           username: null,
+          protectedBranches: [],
+          defaultBranch: null,
         })
       })
     return () => {
@@ -374,8 +394,9 @@ export function GitPanel(props: {
   const shown = state.branches
     .filter((branch) => branch.name.toLocaleLowerCase().includes(query))
     .sort((a, b) => Number(b.head) - Number(a.head))
-  const rows = requests?.rows.filter((row) => scope === 'all' || row[scope]) ?? []
   const byBranch = new Map<string, MrRow[]>()
+  const protectedBranches = new Set(requests?.failure === null ? requests.protectedBranches : [])
+  const defaultBranch = requests?.failure === null ? requests.defaultBranch : null
   if (requests?.failure === null) {
     for (const row of requests.rows) {
       if (row.fork) continue
@@ -456,20 +477,6 @@ export function GitPanel(props: {
       )}
       {tab === 'requests' ? (
         <section className="git-requests" aria-label={t('git.requests')}>
-          <div className="git-scopes" role="group" aria-label={t('git.requestFilter')}>
-            {(['reviewRequested', 'mine', 'all'] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={scope === value}
-                onClick={() => {
-                  setScope(value)
-                }}
-              >
-                {t(`git.scope.${value}`)}
-              </button>
-            ))}
-          </div>
           {requests === null ? (
             <p className="git-note muted" role="status">
               {t('git.requestsLoading')}
@@ -494,11 +501,11 @@ export function GitPanel(props: {
                   {t('git.requestsPartial', { count: requests.rows.length })}
                 </p>
               )}
-              {rows.length === 0 ? (
-                <p className="git-note muted">{t('git.noMatchingRequests')}</p>
+              {requests.rows.length === 0 ? (
+                <p className="git-note muted">{t('git.noRequests')}</p>
               ) : (
                 <ul className="git-request-list">
-                  {rows.map((row) => {
+                  {requests.rows.map((row) => {
                     const pipelineStatus = row.pipeline?.status ?? 'unknown'
                     const status = PIPELINE_STATUSES.has(pipelineStatus)
                       ? pipelineStatus
@@ -510,23 +517,30 @@ export function GitPanel(props: {
                           href={isSafeHref(row.webUrl) ? row.webUrl : undefined}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={followLink}
                         >
                           {t('git.requestNumber', { iid: row.iid })} {row.title}
                         </a>
-                        {row.labels.map((label) => (
-                          <span
-                            key={label.name}
-                            className="git-label"
-                            style={{
-                              ...(label.color === null ? {} : { backgroundColor: label.color }),
-                              ...(label.textColor === null ? {} : { color: label.textColor }),
-                            }}
-                          >
-                            {label.name}
-                          </span>
-                        ))}
-                        {row.draft && <span className="git-request-draft">{t('git.draft')}</span>}
-                        <span className="git-request-author">
+                        {(row.labels.length > 0 || row.draft) && (
+                          <div className="git-row-line">
+                            {row.labels.map((label) => (
+                              <span
+                                key={label.name}
+                                className="git-label"
+                                style={{
+                                  ...(label.color === null ? {} : { backgroundColor: label.color }),
+                                  ...(label.textColor === null ? {} : { color: label.textColor }),
+                                }}
+                              >
+                                {label.name}
+                              </span>
+                            ))}
+                            {row.draft && (
+                              <span className="git-request-draft">{t('git.draft')}</span>
+                            )}
+                          </div>
+                        )}
+                        <span className="git-request-author" data-hue={authorHue(row.author.name)}>
                           {t('git.author', {
                             name: row.author.name,
                             username: row.author.username,
@@ -538,59 +552,74 @@ export function GitPanel(props: {
                             target: row.targetBranch,
                           })}
                         </span>
-                        <span className="git-row-date">
-                          {t('git.requestUpdatedAt', { time: formatGitTime(row.updatedAt) })}
-                        </span>
-                        <span className="git-pipeline" data-status={status}>
-                          <span className="git-pipeline-dot" aria-hidden="true" />
-                          {t(`git.pipeline.${status}`)}
-                        </span>
-                        {row.unresolved && (
-                          <span className="git-request-unresolved">{t('git.unresolved')}</span>
-                        )}
-                        <span className="git-request-notes">
-                          {t('git.notes', { count: row.notes })}
-                        </span>
-                        {row.updatedSinceReview && (
-                          <span className="git-updated">{t('git.updatedSinceReview')}</span>
-                        )}
-                        {row.elsewhere.map((clone) => (
-                          <button
-                            key={clone.projectId}
-                            type="button"
-                            className="git-elsewhere"
-                            onClick={() => {
-                              props.onOpenProject(clone.projectId)
-                            }}
+                        <div className="git-row-line">
+                          <span
+                            className="git-row-date"
+                            data-age={changeAge(row.updatedAt, requests.fetchedAt)}
                           >
-                            {t('git.checkedOutIn', { name: clone.name })}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          disabled={busy !== null}
-                          onClick={() => {
-                            void loadReview(row.iid)
-                          }}
-                        >
-                          {t('git.review.open')}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy !== null || !/^[0-9a-f]{40}$/.test(row.sha)}
-                          onClick={() => {
-                            void checkout({ kind: 'mr', iid: row.iid, sha: row.sha })
-                          }}
-                        >
-                          {t('git.checkout')}
-                        </button>
-                        <a
-                          href={isSafeHref(row.webUrl) ? row.webUrl : undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {t('git.openOnGitlab')}
-                        </a>
+                            {t('git.requestUpdatedAt', { time: formatGitTime(row.updatedAt) })}
+                          </span>
+                          <span className="git-pipeline" data-status={status}>
+                            <span className="git-pipeline-dot" aria-hidden="true" />
+                            {t(`git.pipeline.${status}`)}
+                          </span>
+                          {row.unresolved && (
+                            <span className="git-request-unresolved">{t('git.unresolved')}</span>
+                          )}
+                          <span className="git-request-notes">
+                            {t('git.notes', { count: row.notes })}
+                          </span>
+                          {row.diff !== null && (
+                            <span className="git-request-diff">
+                              <span className="git-request-added">
+                                {t('git.linesAdded', { count: row.diff.added })}
+                              </span>
+                              <span className="git-request-removed">
+                                {t('git.linesRemoved', { count: row.diff.removed })}
+                              </span>
+                              <span>{t('git.changedFiles', { count: row.diff.files })}</span>
+                            </span>
+                          )}
+                          {row.updatedSinceReview && (
+                            <span className="git-updated">{t('git.updatedSinceReview')}</span>
+                          )}
+                          <div className="git-row-actions">
+                            <button
+                              type="button"
+                              disabled={busy !== null}
+                              onClick={() => {
+                                void loadReview(row.iid)
+                              }}
+                            >
+                              {t('git.review.open')}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy !== null || !/^[0-9a-f]{40}$/.test(row.sha)}
+                              onClick={() => {
+                                void checkout({ kind: 'mr', iid: row.iid, sha: row.sha })
+                              }}
+                            >
+                              {t('git.checkout')}
+                            </button>
+                          </div>
+                        </div>
+                        {row.elsewhere.length > 0 && (
+                          <div className="git-row-line">
+                            {row.elsewhere.map((clone) => (
+                              <button
+                                key={clone.projectId}
+                                type="button"
+                                className="git-elsewhere"
+                                onClick={() => {
+                                  props.onOpenProject(clone.projectId)
+                                }}
+                              >
+                                {t('git.checkedOutIn', { name: clone.name })}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </li>
                     )
                   })}
@@ -625,55 +654,105 @@ export function GitPanel(props: {
                     className="git-row"
                     data-head={branch.head}
                   >
-                    <span className="git-row-name">{branch.name}</span>
-                    <span className="git-row-date" title={t('git.changedAt', { time })}>
-                      {time}
-                    </span>
-                    {branch.head && <span className="git-current">{t('git.current')}</span>}
-                    {(byBranch.get(branch.name) ?? []).map((row) => (
-                      <a
-                        key={row.iid}
-                        className="git-request-badge"
-                        href={isSafeHref(row.webUrl) ? row.webUrl : undefined}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={row.title}
+                    <div className="git-row-line">
+                      <span
+                        className="git-row-name"
+                        data-protected={protectedBranches.has(branch.name)}
                       >
-                        {t('git.requestNumber', { iid: row.iid })}
-                      </a>
-                    ))}
-                    {branch.track.kind === 'tracking' &&
-                      (branch.track.ahead > 0 || branch.track.behind > 0) && (
-                        <span className="git-track">
-                          {branch.track.ahead > 0 && t('git.ahead', { count: branch.track.ahead })}
-                          {branch.track.ahead > 0 && branch.track.behind > 0 && ' '}
-                          {branch.track.behind > 0 &&
-                            t('git.behind', { count: branch.track.behind })}
+                        {branch.name}
+                      </span>
+                      {protectedBranches.has(branch.name) && (
+                        <span className="git-branch-flag" data-flag="protected">
+                          {t('git.protected')}
                         </span>
                       )}
-                    {branch.track.kind === 'gone' && <span className="muted">{t('git.gone')}</span>}
-                    {branch.elsewhere.map((clone) => (
-                      <button
-                        key={clone.projectId}
-                        type="button"
-                        className="git-elsewhere"
-                        onClick={() => {
-                          props.onOpenProject(clone.projectId)
-                        }}
+                      {defaultBranch === branch.name && (
+                        <span className="git-branch-flag">{t('git.defaultBranch')}</span>
+                      )}
+                    </div>
+                    {branch.author !== null && (
+                      <span className="git-row-author" data-hue={authorHue(branch.author)}>
+                        {branch.author}
+                      </span>
+                    )}
+                    <div className="git-row-line">
+                      <span
+                        className="git-row-date"
+                        data-age={changeAge(branch.changedAt * 1000, state.readAt)}
+                        title={t('git.changedAt', { time })}
                       >
-                        {t('git.checkedOutIn', { name: clone.name })}
-                      </button>
-                    ))}
-                    {!branch.head && (
-                      <button
-                        type="button"
-                        disabled={busy !== null}
-                        onClick={() => {
-                          void checkout({ kind: branch.kind, name: branch.name })
-                        }}
-                      >
-                        {busy === 'checkout' ? t('git.checkingOut') : t('git.checkout')}
-                      </button>
+                        {time}
+                      </span>
+                      {(byBranch.get(branch.name) ?? []).map((row) => (
+                        <span key={row.iid} className="git-branch-request">
+                          <a
+                            className="git-request-badge"
+                            href={isSafeHref(row.webUrl) ? row.webUrl : undefined}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={row.title}
+                            onClick={followLink}
+                          >
+                            {t('git.requestNumber', { iid: row.iid })}
+                          </a>
+                          {row.diff !== null && (
+                            <span className="git-request-diff">
+                              <span className="git-request-added">
+                                {t('git.linesAdded', { count: row.diff.added })}
+                              </span>
+                              <span className="git-request-removed">
+                                {t('git.linesRemoved', { count: row.diff.removed })}
+                              </span>
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                      {branch.track.kind === 'tracking' && branch.track.ahead > 0 && (
+                        <span className="git-track" data-direction="ahead">
+                          {t('git.ahead', { count: branch.track.ahead })}
+                        </span>
+                      )}
+                      {branch.track.kind === 'tracking' && branch.track.behind > 0 && (
+                        <span className="git-track" data-direction="behind">
+                          {t('git.behind', { count: branch.track.behind })}
+                        </span>
+                      )}
+                      {branch.track.kind === 'gone' && (
+                        <span className="git-track" data-direction="gone">
+                          {t('git.gone')}
+                        </span>
+                      )}
+                      <div className="git-row-actions">
+                        {branch.head ? (
+                          <span className="git-current">{t('git.current')}</span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={() => {
+                              void checkout({ kind: branch.kind, name: branch.name })
+                            }}
+                          >
+                            {busy === 'checkout' ? t('git.checkingOut') : t('git.checkout')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {branch.elsewhere.length > 0 && (
+                      <div className="git-row-line">
+                        {branch.elsewhere.map((clone) => (
+                          <button
+                            key={clone.projectId}
+                            type="button"
+                            className="git-elsewhere"
+                            onClick={() => {
+                              props.onOpenProject(clone.projectId)
+                            }}
+                          >
+                            {t('git.checkedOutIn', { name: clone.name })}
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </li>
                 )
