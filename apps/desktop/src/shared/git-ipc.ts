@@ -23,6 +23,46 @@ export type GitFailure = z.infer<typeof GitFailure>
 
 export const GitClone = z.object({ projectId: z.string().min(1), name: z.string() })
 
+export const MrRow = z.object({
+  iid: z.number().int().positive(),
+  title: z.string(),
+  webUrl: z.url(),
+  draft: z.boolean(),
+  labels: z.array(
+    z.object({ name: z.string(), color: z.string().nullable(), textColor: z.string().nullable() })
+  ),
+  author: z.object({ username: z.string(), name: z.string() }),
+  sourceBranch: z.string(),
+  targetBranch: z.string(),
+  sha: z.string(),
+  fork: z.boolean(),
+  updatedAt: z.number().int(),
+  notes: z.number().int().nonnegative(),
+  unresolved: z.boolean(),
+  mine: z.boolean(),
+  reviewRequested: z.boolean(),
+  pipeline: z
+    .object({
+      id: z.number().int().positive(),
+      projectId: z.number().int().positive(),
+      status: z.string(),
+      webUrl: z.url(),
+    })
+    .nullable(),
+  elsewhere: z.array(GitClone),
+})
+export type MrRow = z.infer<typeof MrRow>
+
+export const GitRequests = z.object({
+  rows: z.array(MrRow),
+  complete: z.boolean(),
+  fetchedAt: z.number().int().nullable(),
+  failure: GitFailure.nullable(),
+  retryAt: z.number().int().nullable(),
+  username: z.string().nullable(),
+})
+export type GitRequests = z.infer<typeof GitRequests>
+
 export const GitTrack = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }),
   z.object({ kind: z.literal('gone') }),
@@ -97,6 +137,7 @@ export type GitCheckoutTarget = z.infer<typeof GitCheckoutTarget>
 
 export const GIT_CONTRACT = {
   'git:state': { request: GitProject, response: GitBoxState },
+  'git:requests': { request: GitProject, response: GitRequests },
   'git:fetch': { request: GitProject, response: GitBoxState },
   'git:sync': { request: GitProject, response: GitBoxState },
   'git:checkout': {
@@ -113,6 +154,9 @@ export const GIT_CHANNELS = Object.keys(GIT_CONTRACT) as GitChannel[]
 
 export interface GitApi {
   readonly readGitState: (request: GitRequest<'git:state'>) => Promise<GitResponse<'git:state'>>
+  readonly readGitRequests: (
+    request: GitRequest<'git:requests'>
+  ) => Promise<GitResponse<'git:requests'>>
   readonly fetchGit: (request: GitRequest<'git:fetch'>) => Promise<GitResponse<'git:fetch'>>
   readonly syncGit: (request: GitRequest<'git:sync'>) => Promise<GitResponse<'git:sync'>>
   readonly checkoutGit: (

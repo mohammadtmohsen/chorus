@@ -1,7 +1,40 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { safeStorage } from 'electron'
+import { z } from 'zod'
 import { workbenchUserDataPath } from './workbench-user-settings.js'
+
+export const GITLAB_WORKFLOW_SECRET =
+  '{"extensionId":"gitlab.gitlab-workflow","key":"gitlab-tokens"}'
+
+const WorkflowSecrets = z.record(
+  z.string(),
+  z.object({ token: z.string().min(1), refreshToken: z.string().optional() })
+)
+
+export type WorkflowImport =
+  | { readonly kind: 'token'; readonly token: string }
+  | { readonly kind: 'none' | 'oauth-only' | 'several' }
+
+export function importableGitLabToken(raw: string | null, instanceUrl: string): WorkflowImport {
+  if (raw === null) return { kind: 'none' }
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(raw)
+  } catch {
+    return { kind: 'none' }
+  }
+  const parsed = WorkflowSecrets.safeParse(decoded)
+  if (!parsed.success) return { kind: 'none' }
+  const forHost = Object.entries(parsed.data).filter(([accountId]) =>
+    accountId.startsWith(`${instanceUrl}|`)
+  )
+  const tokens = forHost.filter(([, secret]) => secret.refreshToken === undefined)
+  if (tokens.length > 1) return { kind: 'several' }
+  const only = tokens[0]
+  if (only !== undefined) return { kind: 'token', token: only[1].token }
+  return { kind: forHost.length > 0 ? 'oauth-only' : 'none' }
+}
 
 /**
  * Where an extension's credentials live between launches.

@@ -14107,6 +14107,130 @@ html.continuous-row .global-note {
   padding: calc(var(--step) * 3);
 }
 
+.git-tabs,
+.git-scopes {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.git-tabs button[aria-pressed='true'],
+.git-scopes button[aria-pressed='true'] {
+  color: var(--accent-text);
+  border-color: var(--accent-text);
+  background: var(--bg-surface);
+}
+
+.git-requests {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.git-request-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.git-request-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 3);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.git-panel a {
+  color: var(--accent-text);
+  overflow-wrap: anywhere;
+}
+
+.git-panel a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.git-request-title {
+  flex: 1 1 100%;
+  font-weight: 600;
+}
+
+.git-label {
+  padding: var(--step) calc(var(--step) * 2);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.git-request-author,
+.git-request-branches {
+  flex: 1 1 100%;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.git-request-branches {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.git-request-badge,
+.git-request-draft {
+  padding: 0 var(--step);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.git-request-draft,
+.git-request-notes,
+.git-pipeline {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.git-request-unresolved {
+  color: var(--danger);
+}
+
+.git-pipeline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--step);
+}
+
+.git-pipeline-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.git-pipeline[data-status='success'] {
+  color: var(--ansi-green);
+}
+
+.git-pipeline[data-status='failed'] {
+  color: var(--danger);
+}
+
+.git-pipeline[data-status='running'],
+.git-pipeline[data-status='pending'] {
+  color: var(--accent-text);
+}
+
 /*
  * Which group the keyboard and a new conversation will land in — and it is said
  * the way the pane strip says it, not with a second invention.

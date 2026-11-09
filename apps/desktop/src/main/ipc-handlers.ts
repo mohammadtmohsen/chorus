@@ -114,6 +114,7 @@ function withSecretState(settings: Settings, ports: IpcHost): SettingsWithSecret
   return {
     ...settings,
     deepseekKeySet: ports.secrets.isSet('deepseek'),
+    gitlabTokenSet: ports.secrets.isSet('gitlab'),
     typesafeKeySet: ports.secrets.isSet('typesafe'),
     completionDeepseekKeySet: ports.secrets.isSet('completion-deepseek'),
     completionCodestralKeySet: ports.secrets.isSet('completion-codestral'),
@@ -686,6 +687,7 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
     'settings:write': (
       request: Partial<Settings> & {
         deepseekApiKey?: string
+        gitlabToken?: string
         typesafeApiKey?: string
         completionDeepseekApiKey?: string
         completionCodestralApiKey?: string
@@ -701,6 +703,7 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
        */
       const {
         deepseekApiKey,
+        gitlabToken,
         typesafeApiKey,
         completionDeepseekApiKey,
         completionCodestralApiKey,
@@ -709,6 +712,10 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
       if (deepseekApiKey !== undefined) {
         if (deepseekApiKey === '') ports.secrets.clear('deepseek')
         else ports.secrets.write('deepseek', deepseekApiKey)
+      }
+      if (gitlabToken !== undefined) {
+        if (gitlabToken === '') ports.secrets.clear('gitlab')
+        else ports.secrets.write('gitlab', gitlabToken)
       }
       if (typesafeApiKey !== undefined) {
         if (typesafeApiKey === '') ports.secrets.clear('typesafe')
@@ -766,6 +773,17 @@ export function buildHandlers(runtime: ChorusRuntime, ports: IpcHost): IpcHandle
         if (!window.isGone()) window.send(SETTINGS_PUSH_CHANNEL, answer)
       }
       return Promise.resolve(answer)
+    },
+
+    'settings:importGitlabToken': async () => {
+      const result = await ports.importGitlabToken()
+      const settings = withSecretState(readSettings(ports.getPath('userData')), ports)
+      if (result === 'imported') {
+        for (const window of ports.clients()) {
+          if (!window.isGone()) window.send(SETTINGS_PUSH_CHANNEL, settings)
+        }
+      }
+      return { result, gitlabTokenSet: settings.gitlabTokenSet }
     },
 
     'diagnostics:read': () =>

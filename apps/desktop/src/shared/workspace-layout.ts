@@ -194,6 +194,7 @@ export type DevtoolsPanelState = z.infer<typeof DevtoolsPanelState>
 export const GitPanelState = z.object({
   width: z.number(),
   collapsed: z.boolean(),
+  tab: z.enum(['requests', 'branches']).optional(),
 })
 export type GitPanelState = z.infer<typeof GitPanelState>
 

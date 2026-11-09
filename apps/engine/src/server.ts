@@ -19,6 +19,7 @@ import { ChorusRuntime, type ProjectConsoles } from '../../desktop/src/main/runt
 import { TrafficIpc } from '../../desktop/src/main/traffic-ipc.js'
 import { RunIpc } from '../../desktop/src/main/run-ipc.js'
 import { GitBoxService } from '../../desktop/src/main/git-box.js'
+import { GitLabDirectory } from '../../desktop/src/main/gitlab-client.js'
 import { GitIpc } from '../../desktop/src/main/git-ipc.js'
 import { ConsoleIpc } from '../../desktop/src/main/console-ipc.js'
 import { BrowserIpc } from '../../desktop/src/main/browser-ipc.js'
@@ -149,7 +150,9 @@ export async function serveEngine(
         project: (id) => runtime.projects.get(id),
         projects: () => runtime.projects.list(),
         projectBusy: (id) => runtime.projectBusy(id),
-        gitlab: null,
+        gitlab: new GitLabDirectory({
+          token: (gitlabHost) => (gitlabHost === 'gitlab.com' ? host.secrets.read('gitlab') : null),
+        }),
         now: Date.now,
       }),
       isAdopted: (id) => runtime.projects.get(id) !== null,
@@ -398,7 +401,9 @@ export async function serveEngine(
       const request = IPC_CONTRACT['terminal:detach'].request.parse(raw)
       peer.terminals.delete(JSON.stringify(request.ref))
     }
-    if (channel === 'settings:write') await host.flushSecrets()
+    if (channel === 'settings:write' || channel === 'settings:importGitlabToken') {
+      await host.flushSecrets()
+    }
     if (
       channel === 'conversation:begin' ||
       channel === 'conversation:start' ||

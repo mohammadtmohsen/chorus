@@ -67,6 +67,10 @@ const SecretRevision = z.object({
 })
 type SecretRevision = z.infer<typeof SecretRevision>
 const SecretRevisions = z.partialRecord(SecretIdSchema, SecretRevision)
+const WorkbenchTokenImport = z.union([
+  z.object({ kind: z.literal('token'), token: z.string().min(1) }),
+  z.object({ kind: z.enum(['none', 'oauth-only', 'several']) }),
+])
 
 const AskDiffResult = z.object({
   requestId: z.string(),
@@ -499,6 +503,21 @@ export class EngineHost implements IpcHost {
   probeAgents: IpcHost['probeAgents'] = () => probeAgentsWithSecrets((id) => this.keys.has(id))
   checkTypesafeKey: IpcHost['checkTypesafeKey'] = () =>
     checkTypesafeValue(this.keys.get('typesafe') ?? null)
+  async importGitlabToken(): ReturnType<IpcHost['importGitlabToken']> {
+    const peer = this.desktopPeers()[0]
+    if (peer === undefined) return 'none'
+    let imported: z.infer<typeof WorkbenchTokenImport>
+    try {
+      imported = WorkbenchTokenImport.parse(
+        await peer.requestHost('gitlab.importWorkbenchToken', {})
+      )
+    } catch {
+      return 'none'
+    }
+    if (imported.kind !== 'token') return imported.kind
+    this.secrets.write('gitlab', imported.token)
+    return 'imported'
+  }
   checkRemoteHost: IpcHost['checkRemoteHost'] = (host) =>
     checkRemoteHost(new SshRemoteHost(host), REMOTE_CHECK_DEADLINE_MS)
   extensionDeps(): ReturnType<IpcHost['extensionDeps']> {

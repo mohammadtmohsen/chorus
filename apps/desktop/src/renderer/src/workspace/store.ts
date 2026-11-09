@@ -350,6 +350,7 @@ export interface WorkspaceActions {
   setDevtoolsCollapsed: (projectId: string, collapsed: boolean) => void
   setGitWidth: (projectId: string, width: number) => void
   setGitCollapsed: (projectId: string, collapsed: boolean) => void
+  setGitTab: (projectId: string, tab: 'requests' | 'branches') => void
   setTrafficWidth: (projectId: string, width: number) => void
   setTrafficHiddenPathPrefix: (projectId: string, hiddenPathPrefix: string) => void
   setProjectTerminalWidth: (projectId: string, width: number) => void
@@ -1155,6 +1156,15 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           if (current.collapsed === collapsed) return state
           return {
             gitPanels: { ...state.gitPanels, [projectId]: { ...current, collapsed } },
+          }
+        })
+      },
+      setGitTab: (projectId, tab) => {
+        set((state) => {
+          const current = state.gitPanels[projectId] ?? DEFAULT_GIT
+          if (current.tab === tab) return state
+          return {
+            gitPanels: { ...state.gitPanels, [projectId]: { ...current, tab } },
           }
         })
       },

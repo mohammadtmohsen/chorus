@@ -21,8 +21,10 @@ import type {
   GitBranch,
   GitFailure,
   GitRequest,
+  GitRequests,
   GitSyncNote,
 } from '../shared/git-ipc.js'
+import type { GitLabDirectory } from './gitlab-client.js'
 
 export interface GitProviderPort {
   handles(host: string): boolean
@@ -34,7 +36,7 @@ export interface GitBoxDeps {
   readonly project: (projectId: string) => Project | null
   readonly projects: () => readonly Project[]
   readonly projectBusy: (projectId: string) => boolean
-  readonly gitlab: GitProviderPort | null
+  readonly gitlab: GitLabDirectory
   readonly now: () => number
 }
 
@@ -81,7 +83,7 @@ export class GitBoxService {
       dirtyCount: status.value.files.length,
       branches: rowsOf(branches.value, clones),
       provider:
-        gitlab !== null && location !== null && gitlab.handles(location.host)
+        location !== null && gitlab.handles(location.host)
           ? {
               kind: 'gitlab',
               host: location.host,
@@ -99,6 +101,7 @@ export class GitBoxService {
     const cwd = this.localRoot(projectId)
     if (cwd === null) return unavailable('not-local')
     const fetched = await fetchBranches({ cwd, remote: 'origin' })
+    await this.invalidateRequests(cwd)
     if (!fetched.ok) {
       return {
         ...(await this.state(projectId)),
@@ -114,6 +117,7 @@ export class GitBoxService {
     const cwd = this.localRoot(projectId)
     if (cwd === null) return unavailable('not-local')
     const fetched = await fetchBranches({ cwd, remote: 'origin' })
+    await this.invalidateRequests(cwd)
     if (!fetched.ok) {
       return {
         ...(await this.state(projectId)),
@@ -134,6 +138,50 @@ export class GitBoxService {
           }
     })
     return { ...outcome.state, failure: outcome.failure }
+  }
+
+  async requests(projectId: string): Promise<GitRequests> {
+    const empty: GitRequests = {
+      rows: [],
+      complete: true,
+      fetchedAt: null,
+      failure: null,
+      retryAt: null,
+      username: null,
+    }
+    const cwd = this.localRoot(projectId)
+    if (cwd === null) return { ...empty, failure: 'not-gitlab' }
+    const origin = await readRemoteUrl({ cwd, remote: 'origin' })
+    const location = origin.ok ? parseRemoteUrl(origin.value) : null
+    const gitlab = this.deps.gitlab
+    if (location === null || !gitlab.handles(location.host)) {
+      return { ...empty, failure: 'not-gitlab' }
+    }
+    if (!gitlab.connected(location.host)) return { ...empty, failure: 'no-token' }
+    const result = await gitlab.requests(location)
+    if (!result.ok) {
+      const failure =
+        result.failure === 'invalid-response' || result.failure === 'conflict'
+          ? 'git-failed'
+          : result.failure
+      return { ...empty, failure, retryAt: result.retryAt }
+    }
+    const clones = await this.clonesOf(projectId, location)
+    return {
+      rows: result.value.rows.map((row) => ({
+        ...row,
+        elsewhere: row.fork
+          ? []
+          : clones
+              .filter((clone) => clone.branch === row.sourceBranch)
+              .map((clone) => ({ projectId: clone.projectId, name: clone.name })),
+      })),
+      complete: result.value.complete,
+      fetchedAt: result.fetchedAt,
+      failure: null,
+      retryAt: null,
+      username: result.value.username,
+    }
   }
 
   checkout(projectId: string, target: GitRequest<'git:checkout'>['target']): Promise<Outcome> {
@@ -198,8 +246,7 @@ export class GitBoxService {
   ): Promise<Resolved> {
     if (target.kind === 'local') return this.resolveBranch(cwd, target.name, 'local')
     if (target.kind === 'remote') return this.resolveBranch(cwd, target.name, 'remote')
-    const request =
-      this.deps.gitlab === null ? null : await this.deps.gitlab.requestOf(cwd, target.iid)
+    const request = await this.deps.gitlab.requestOf(cwd, target.iid)
     if (request === null) return { failure: 'not-gitlab' }
     if (!request.fork) return this.resolveBranch(cwd, request.sourceBranch, 'any')
     const fetched = await fetchRef({
@@ -249,6 +296,14 @@ export class GitBoxService {
 
   private async refused(projectId: string, failure: GitFailure, error?: string): Promise<Outcome> {
     return { state: { ...(await this.state(projectId)), failure, error: error ?? null }, failure }
+  }
+
+  private async invalidateRequests(cwd: string): Promise<void> {
+    const origin = await readRemoteUrl({ cwd, remote: 'origin' })
+    const location = origin.ok ? parseRemoteUrl(origin.value) : null
+    if (location !== null && this.deps.gitlab.handles(location.host)) {
+      this.deps.gitlab.invalidate(location)
+    }
   }
 
   private localRoot(projectId: string): string | null {
