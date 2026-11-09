@@ -1,5 +1,11 @@
 import { z } from 'zod'
-import { GitReviewEnvelope, GitReviewFileRequest } from './git-ipc.js'
+import {
+  GitCommentRequest,
+  GitReplyRequest,
+  GitResolveRequest,
+  GitReviewEnvelope,
+  GitReviewFileRequest,
+} from './git-ipc.js'
 /*
  * The `/protocol` subpath, never the package's barrel.
  *
@@ -83,6 +89,11 @@ export const WorkbenchConnection = z.object({
   reviewLabels: z.object({
     title: z.string().min(1),
     actionFailed: z.string().min(1),
+    comment: z.string().min(1),
+    reply: z.string().min(1),
+    resolve: z.string().min(1),
+    reopen: z.string().min(1),
+    commentingBlocked: z.string().min(1),
     status: z.object({
       added: z.string(),
       removed: z.string(),
@@ -124,9 +135,20 @@ export const WORKBENCH_REVIEW_ACTION_CHANNEL = 'workbench:review:action'
 export const WorkbenchReviewState = GitReviewEnvelope.omit({ projectId: true })
 export type WorkbenchReviewState = z.infer<typeof WorkbenchReviewState>
 
-export const WorkbenchReviewAction = GitReviewFileRequest.omit({ projectId: true })
-  .extend({ kind: z.literal('openDiff') })
-  .strict()
+export const WorkbenchReviewAction = z.discriminatedUnion('kind', [
+  GitReviewFileRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('openDiff') })
+    .strict(),
+  GitCommentRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('comment') })
+    .strict(),
+  GitReplyRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('reply') })
+    .strict(),
+  GitResolveRequest.omit({ projectId: true })
+    .extend({ kind: z.literal('resolve') })
+    .strict(),
+])
 export type WorkbenchReviewAction = z.infer<typeof WorkbenchReviewAction>
 
 export const WorkbenchReviewActionResult = z.discriminatedUnion('ok', [
@@ -609,6 +631,7 @@ export interface WorkbenchReviewDiffFile {
   readonly before: string
   readonly after: string
   readonly workspace: boolean
+  readonly matches: boolean
 }
 
 export type WorkbenchReviewDiffInput = {

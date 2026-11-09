@@ -168,6 +168,21 @@ export const GitReviewFileRequest = GitReviewVersionRequest.extend({
   path: z.string().min(1),
 }).strict()
 
+const GitCommentBody = z.string().refine((body) => body.trim().length > 0)
+export const GitCommentRequest = GitReviewFileRequest.extend({
+  side: z.enum(['original', 'modified']),
+  line: z.number().int().positive(),
+  body: GitCommentBody,
+}).strict()
+export const GitReplyRequest = GitReviewRequest.extend({
+  discussionId: z.string().min(1),
+  body: GitCommentBody,
+}).strict()
+export const GitResolveRequest = GitReviewRequest.extend({
+  discussionId: z.string().min(1),
+  resolved: z.boolean(),
+}).strict()
+
 const GitDiffResult = z.object({
   failure: GitFailure.nullable(),
   retryAt: z.number().int().nullable(),
@@ -262,6 +277,13 @@ export const GIT_CONTRACT = {
   'git:review': { request: GitReviewRequest, response: GitReviewReply },
   'git:activeReview': { request: GitProject, response: GitReviewEnvelope },
   'git:closeReview': { request: GitProject, response: GitReviewEnvelope },
+  'git:comment': { request: GitCommentRequest, response: GitDiffResult },
+  'git:reply': { request: GitReplyRequest, response: GitDiffResult },
+  'git:resolve': { request: GitResolveRequest, response: GitDiffResult },
+  'git:approve': {
+    request: GitReviewVersionRequest.extend({ approve: z.boolean() }).strict(),
+    response: GitDiffResult,
+  },
   'git:openDiff': {
     request: GitReviewFileRequest,
     response: GitDiffResult,
@@ -285,6 +307,14 @@ export type GitResponse<C extends GitChannel> = z.infer<GitContract[C]['response
 export const GIT_CHANNELS = Object.keys(GIT_CONTRACT) as GitChannel[]
 
 export interface GitApi {
+  readonly commentOnGit: (request: GitRequest<'git:comment'>) => Promise<GitResponse<'git:comment'>>
+  readonly replyToGitThread: (request: GitRequest<'git:reply'>) => Promise<GitResponse<'git:reply'>>
+  readonly resolveGitThread: (
+    request: GitRequest<'git:resolve'>
+  ) => Promise<GitResponse<'git:resolve'>>
+  readonly approveGitReview: (
+    request: GitRequest<'git:approve'>
+  ) => Promise<GitResponse<'git:approve'>>
   readonly readActiveGitReview: (
     request: GitRequest<'git:activeReview'>
   ) => Promise<GitResponse<'git:activeReview'>>

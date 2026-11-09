@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import {
   fastForward,
   fetchBranches,
@@ -40,6 +40,7 @@ import type {
   GitLabReviewFile,
   GitLabReviewSnapshot,
 } from './gitlab-client.js'
+import { positionFor } from './gitlab-client.js'
 import type { EditorPort } from './host-ports.js'
 import { mainT } from './i18n.js'
 
@@ -303,6 +304,141 @@ export class GitBoxService {
     return state
   }
 
+  comment(request: GitRequest<'git:comment'>): Promise<GitResponse<'git:comment'>> {
+    const key = `review:${request.projectId}`
+    return this.exclusive(key, async (): Promise<GitResponse<'git:comment'>> => {
+      const guarded = await this.guardReview(request)
+      if ('failure' in guarded) return { ...guarded, error: null }
+      const { session, file } = guarded
+      const position = positionFor(session.snapshot.version, file.raw, request.side, request.line)
+      if (position === null) return { failure: 'refused-target', retryAt: null, error: null }
+      return this.writeReview(request.projectId, session, 'POST', '/discussions', {
+        body: request.body,
+        position,
+      })
+    })
+  }
+
+  reply(request: GitRequest<'git:reply'>): Promise<GitResponse<'git:reply'>> {
+    const key = `review:${request.projectId}`
+    return this.exclusive(key, async (): Promise<GitResponse<'git:reply'>> => {
+      const guarded = await this.guardDiscussion(request)
+      if ('failure' in guarded) return { ...guarded, error: null }
+      return this.writeReview(
+        request.projectId,
+        guarded.session,
+        'POST',
+        `/discussions/${encodeURIComponent(request.discussionId)}/notes`,
+        { body: request.body }
+      )
+    })
+  }
+
+  resolve(request: GitRequest<'git:resolve'>): Promise<GitResponse<'git:resolve'>> {
+    const key = `review:${request.projectId}`
+    return this.exclusive(key, async (): Promise<GitResponse<'git:resolve'>> => {
+      const guarded = await this.guardDiscussion(request)
+      if ('failure' in guarded) return { ...guarded, error: null }
+      return this.writeReview(
+        request.projectId,
+        guarded.session,
+        'PUT',
+        `/discussions/${encodeURIComponent(request.discussionId)}`,
+        { resolved: request.resolved }
+      )
+    })
+  }
+
+  approve(request: GitRequest<'git:approve'>): Promise<GitResponse<'git:approve'>> {
+    const key = `review:${request.projectId}`
+    return this.exclusive(key, async (): Promise<GitResponse<'git:approve'>> => {
+      const guarded = await this.guardReviewVersion(request)
+      if ('failure' in guarded) return { ...guarded, error: null }
+      return this.writeReview(
+        request.projectId,
+        guarded.session,
+        'POST',
+        request.approve ? '/approve' : '/unapprove',
+        request.approve ? { sha: guarded.session.snapshot.version.headSha } : {},
+        request.approve
+      )
+    })
+  }
+
+  private async writeReview(
+    projectId: string,
+    session: HeldReview,
+    method: 'POST' | 'PUT',
+    suffix: string,
+    body: unknown,
+    approving = false
+  ): Promise<GitResponse<'git:approve'>> {
+    if (
+      this.reviews.get(projectId) !== session ||
+      this.deps.gitlab.identity(session.location.host) !== session.identity
+    ) {
+      return { failure: 'head-moved', retryAt: null, error: null }
+    }
+    const result = await this.deps.gitlab.writeReview(
+      session.location,
+      session.snapshot.mr.iid,
+      method,
+      suffix,
+      body
+    )
+    if (!result.ok) {
+      return {
+        failure:
+          approving && result.failure === 'conflict' ? 'head-moved' : gitFailure(result.failure),
+        retryAt: result.retryAt,
+        error: result.error ?? null,
+      }
+    }
+    const posted = mainT('git.review.writeRefreshFailed')
+    if (
+      this.reviews.get(projectId) !== session ||
+      this.deps.gitlab.identity(session.location.host) !== session.identity
+    ) {
+      return { failure: 'head-moved', retryAt: null, error: posted }
+    }
+    const refreshed = await this.deps.gitlab.review(session.location, session.snapshot.mr.iid, true)
+    if (!refreshed.ok) {
+      return {
+        failure: gitFailure(refreshed.failure),
+        retryAt: refreshed.retryAt,
+        error: [posted, refreshed.error].filter((part) => part !== undefined).join('\n'),
+      }
+    }
+    if (
+      refreshed.value.kind !== 'ready' ||
+      refreshed.value.snapshot.version.id !== session.snapshot.version.id ||
+      this.reviews.get(projectId) !== session ||
+      this.deps.gitlab.identity(session.location.host) !== session.identity
+    ) {
+      return { failure: 'head-moved', retryAt: null, error: posted }
+    }
+    this.reviews.set(projectId, { ...session, snapshot: refreshed.value.snapshot })
+    this.publishReview(projectId)
+    return { failure: null, retryAt: null, error: null }
+  }
+
+  private async guardDiscussion(
+    request: GitRequest<'git:reply'> | GitRequest<'git:resolve'>
+  ): Promise<ReviewVersionGuard> {
+    const session = this.reviews.get(request.projectId)
+    if (
+      session?.snapshot.mr.iid !== request.iid ||
+      !session.snapshot.threads.some((thread) => thread.id === request.discussionId)
+    ) {
+      return { failure: 'head-moved', retryAt: null }
+    }
+    return this.guardReviewVersion({
+      projectId: request.projectId,
+      iid: request.iid,
+      versionId: session.snapshot.version.id,
+    })
+  }
+
   async openDiff(request: GitRequest<'git:openDiff'>): Promise<GitResponse<'git:openDiff'>> {
     const guarded = await this.guardReview(request)
     if ('failure' in guarded) {
@@ -319,6 +455,7 @@ export class GitBoxService {
     if (fetched.failure !== null) return fetched
     const editable = await this.onReviewBranch(session)
     const workspace = await this.workspaceReviewFile(session, file, editable)
+    const matches = !workspace || (await this.matchesReviewHead(session, file))
     const { version } = session.snapshot
     const [before, after] = await Promise.all([
       file.summary.status === 'added'
@@ -351,6 +488,7 @@ export class GitBoxService {
         before: before.value.text,
         after: after.value.text,
         workspace,
+        matches,
       })
       const failure = result.failure === 'no-editor' ? 'no-editor' : 'git-failed'
       return {
@@ -387,6 +525,7 @@ export class GitBoxService {
         continue
       }
       const workspace = await this.workspaceReviewFile(session, file, editable)
+      const matches = !workspace || (await this.matchesReviewHead(session, file))
       const [before, after] = await Promise.all([
         file.summary.status === 'added'
           ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
@@ -417,6 +556,7 @@ export class GitBoxService {
         before: before.value.text,
         after: after.value.text,
         workspace,
+        matches,
       })
     }
     if (
@@ -485,6 +625,24 @@ export class GitBoxService {
     if (session.snapshot.mr.fork) return false
     const status = await readStatus({ cwd: session.root })
     return status.ok && status.value.branch === session.snapshot.mr.sourceBranch
+  }
+
+  private async matchesReviewHead(session: HeldReview, file: GitLabReviewFile): Promise<boolean> {
+    const resolved = resolveWithinRoot(session.root, file.summary.path)
+    if (!resolved.ok) return false
+    try {
+      const [working, head] = await Promise.all([
+        readFile(resolved.value, 'utf8'),
+        readFileAt({
+          cwd: session.root,
+          ref: session.snapshot.version.headSha,
+          path: file.summary.path,
+        }),
+      ])
+      return head.ok && head.value.kind === 'text' && working === head.value.text
+    } catch {
+      return false
+    }
   }
 
   private async workspaceReviewFile(

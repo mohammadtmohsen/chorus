@@ -118,6 +118,7 @@ export function GitReview(props: {
   const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [issues, setIssues] = useState<Record<string, RowIssue>>({})
   const [allDiffs, setAllDiffs] = useState<AllDiffsState | null>(null)
+  const [approvalIssue, setApprovalIssue] = useState<RowIssue | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const generation = useRef(0)
   const pending = useRef<symbol | null>(null)
@@ -129,10 +130,43 @@ export function GitReview(props: {
     setBusy(null)
     setIssues({})
     setAllDiffs(null)
+    setApprovalIssue(null)
     return () => {
       if (generation.current === current) generation.current++
     }
   }, [props.projectId, props.iid, versionId])
+
+  const approve = async (value: boolean): Promise<void> => {
+    if (review?.kind !== 'ready' || pending.current !== null) return
+    const ticket = Symbol('approval')
+    pending.current = ticket
+    const current = generation.current
+    setBusy('approval')
+    setApprovalIssue(null)
+    try {
+      const result = await window.chorus.approveGitReview({
+        projectId: props.projectId,
+        iid: props.iid,
+        versionId: review.version.id,
+        approve: value,
+      })
+      if (generation.current !== current || pending.current !== ticket) return
+      if (result.failure !== null) setApprovalIssue({ ...result, failure: result.failure })
+    } catch (error) {
+      if (generation.current === current && pending.current === ticket) {
+        setApprovalIssue({
+          failure: isGitRestartError(error) ? 'restart-required' : 'git-failed',
+          retryAt: null,
+          error: null,
+        })
+      }
+    } finally {
+      if (pending.current === ticket) {
+        pending.current = null
+        setBusy(null)
+      }
+    }
+  }
 
   const open = async (file: GitReviewFile): Promise<void> => {
     if (review?.kind !== 'ready' || pending.current !== null) return
@@ -271,6 +305,12 @@ export function GitReview(props: {
       ? null
       : Math.max(0, approvalsRequired - approvalsLeft)
   const allResult = allDiffs ?? { failure: null, retryAt: null, error: null, skipped: 0 }
+  const canChangeApproval =
+    approvals?.userHasApproved === true || approvals?.userCanApprove === true
+  let approvalLabel = approvals?.userHasApproved
+    ? 'git.review.revokeApproval'
+    : 'git.review.approve'
+  if (busy === 'approval') approvalLabel = 'git.review.approving'
   return (
     <div className="git-panel git-review" aria-busy={busy !== null}>
       <div className="git-review-overview">
@@ -336,6 +376,16 @@ export function GitReview(props: {
                 )}
             </>
           )}
+          <button
+            type="button"
+            disabled={busy !== null || !canChangeApproval}
+            title={canChangeApproval ? undefined : t('git.review.approvalUnavailable')}
+            onClick={() => {
+              void approve(!approvals?.userHasApproved)
+            }}
+          >
+            {t(approvalLabel)}
+          </button>
           {review.updatedSinceReview && (
             <span className="git-updated">{t('git.updatedSinceReview')}</span>
           )}
@@ -372,6 +422,22 @@ export function GitReview(props: {
           <p className="git-note" role="status">
             {t('git.review.branchDiffers')}
           </p>
+        )}
+        {approvalIssue !== null && (
+          <div className="git-failure" role="alert">
+            <p>{t(gitFailureKey(approvalIssue.failure))}</p>
+            {approvalIssue.error !== null && <pre className="git-error">{approvalIssue.error}</pre>}
+            {approvalIssue.retryAt !== null && (
+              <p>{t('git.retryAt', { time: formatGitTime(approvalIssue.retryAt) })}</p>
+            )}
+            <a
+              href={isSafeHref(review.mr.webUrl) ? review.mr.webUrl : undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t('git.openOnGitlab')}
+            </a>
+          </div>
         )}
         {allResult.failure !== null && (
           <div className="git-failure" role="alert">

@@ -15,6 +15,10 @@ export interface GitIpcDeps {
     | 'state'
     | 'requests'
     | 'review'
+    | 'comment'
+    | 'reply'
+    | 'resolve'
+    | 'approve'
     | 'activeReview'
     | 'closeReview'
     | 'subscribe'
@@ -98,6 +102,14 @@ export class GitIpc {
         return this.deps.service.activeReview(projectId)
       case 'git:closeReview':
         return this.deps.service.closeReview(projectId)
+      case 'git:comment':
+        return this.deps.service.comment(request as GitRequest<'git:comment'>)
+      case 'git:reply':
+        return this.deps.service.reply(request as GitRequest<'git:reply'>)
+      case 'git:resolve':
+        return this.deps.service.resolve(request as GitRequest<'git:resolve'>)
+      case 'git:approve':
+        return this.deps.service.approve(request as GitRequest<'git:approve'>)
       case 'git:openDiff':
         return this.deps.service.openDiff(request as GitRequest<'git:openDiff'>)
       case 'git:openAllDiffs':

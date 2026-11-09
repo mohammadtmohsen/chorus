@@ -23,7 +23,12 @@ export type GitLabFailure =
 
 export type GitLabResult<T> =
   | { readonly ok: true; readonly value: T; readonly fetchedAt: number }
-  | { readonly ok: false; readonly failure: GitLabFailure; readonly retryAt: number | null }
+  | {
+      readonly ok: false
+      readonly failure: GitLabFailure
+      readonly retryAt: number | null
+      readonly error?: string
+    }
 
 export interface Paged<T> {
   readonly items: T[]
@@ -31,10 +36,12 @@ export interface Paged<T> {
 }
 
 const FAILURE_BY_STATUS: Readonly<Record<number, GitLabFailure>> = {
+  400: 'invalid-response',
   401: 'unauthorized',
   403: 'forbidden',
   404: 'not-found',
   409: 'conflict',
+  422: 'invalid-response',
 }
 
 const PAGE = 100
@@ -184,10 +191,29 @@ export class GitLabClient {
       const seconds = Number(response.headers.get('Retry-After'))
       const until = this.now() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 60) * 1000
       this.coolUntil = Math.max(this.coolUntil, until)
-      return { ok: false, failure: 'rate-limited', retryAt: this.coolUntil }
     }
     if (!response.ok) {
-      return { ok: false, failure: FAILURE_BY_STATUS[response.status] ?? 'network', retryAt: null }
+      let error: string | undefined
+      try {
+        const decoded: unknown = await response.json()
+        if (typeof decoded === 'object' && decoded !== null) {
+          const record = decoded as Record<string, unknown>
+          const value = record['message'] ?? record['error'] ?? record['errors']
+          if (typeof value === 'string') error = value
+          else if (value !== undefined) error = JSON.stringify(value)
+        }
+      } catch {
+        error = undefined
+      }
+      return {
+        ok: false,
+        failure:
+          response.status === 429
+            ? 'rate-limited'
+            : (FAILURE_BY_STATUS[response.status] ?? 'network'),
+        retryAt: response.status === 429 ? this.coolUntil : null,
+        ...(error === undefined ? {} : { error }),
+      }
     }
     try {
       const decoded: unknown = response.status === 204 ? null : await response.json()
@@ -335,6 +361,56 @@ export function hunksOf(file: MrDiffItem): DiffFile | null {
   return parsed === undefined ? null : { ...parsed, path: file.new_path, oldPath: file.old_path }
 }
 
+export function positionFor(
+  version: ReviewVersion,
+  file: MrDiffItem,
+  side: 'original' | 'modified',
+  line: number
+): Record<string, string | number> | null {
+  if (!Number.isSafeInteger(line) || line <= 0) return null
+  if ((file.new_file && side === 'original') || (file.deleted_file && side === 'modified')) {
+    return null
+  }
+  const parsed = hunksOf(file)
+  if (parsed === null || parsed.binary || file.collapsed || file.too_large) return null
+  const position: Record<string, string | number> = {
+    position_type: 'text',
+    base_sha: version.baseSha,
+    start_sha: version.startSha,
+    head_sha: version.headSha,
+    old_path: file.old_path,
+    new_path: file.new_path,
+  }
+  let offset = 0
+  for (const hunk of parsed.hunks) {
+    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(hunk.header)
+    if (header === null) return null
+    const before = Number(header[1])
+    const beforeCount = Number(header[2] ?? 1)
+    const after = Number(header[3])
+    const afterCount = Number(header[4] ?? 1)
+    const start = side === 'original' ? before : after
+    const count = side === 'original' ? beforeCount : afterCount
+    if (line < start || (count === 0 && line === start)) break
+    if (count > 0 && line < start + count) {
+      const at = hunk.lines.find((entry) =>
+        side === 'original' ? entry.before === line : entry.after === line
+      )
+      if (at === undefined) return null
+      if (at.before !== undefined) position['old_line'] = at.before
+      if (at.after !== undefined) position['new_line'] = at.after
+      return position
+    }
+    const delta = after + Math.max(0, afterCount - 1) - before - Math.max(0, beforeCount - 1)
+    offset = side === 'original' ? delta : -delta
+  }
+  const other = line + offset
+  if (!Number.isSafeInteger(other) || other <= 0) return null
+  position['old_line'] = side === 'original' ? line : other
+  position['new_line'] = side === 'modified' ? line : other
+  return position
+}
+
 function labelsOf(labels: readonly (string | z.infer<typeof Label>)[]): MrRow['labels'] {
   return labels.map((value) => {
     const label: z.infer<typeof Label> = typeof value === 'string' ? { name: value } : value
@@ -441,9 +517,30 @@ export class GitLabDirectory implements GitProviderPort {
     return this.latestVersionOf(location, account, encodeURIComponent(location.path), iid)
   }
 
+  async writeReview(
+    location: RemoteLocation,
+    iid: number,
+    method: 'POST' | 'PUT',
+    suffix: string,
+    body: unknown
+  ): Promise<GitLabResult<unknown>> {
+    const account = this.clientOf(location.host)
+    if (account === null) return { ok: false, failure: 'no-token', retryAt: null }
+    const project = encodeURIComponent(location.path)
+    const result = await account.client.write(
+      project,
+      method,
+      `/projects/${project}/merge_requests/${String(iid)}${suffix}`,
+      body,
+      z.unknown()
+    )
+    return this.changed(location.host, account) ?? result
+  }
+
   async review(
     location: RemoteLocation,
-    iid: number
+    iid: number,
+    fresh = false
   ): Promise<
     GitLabResult<{ kind: 'preparing' } | { kind: 'ready'; snapshot: GitLabReviewSnapshot }>
   > {
@@ -465,8 +562,10 @@ export class GitLabDirectory implements GitProviderPort {
     const [versioned, detail, discussions, approvals, user] = await Promise.all([
       account.client.get(project, `${root}/versions/${String(latest.value)}`, MrVersion, TTL_MS),
       this.detail(location, account, project, iid),
-      account.client.getAll(project, `${root}/discussions`, Discussion, TTL_MS),
-      account.client.get(project, `${root}/approvals`, Approvals, TTL_MS),
+      account.client.getAll(project, `${root}/discussions`, Discussion, TTL_MS, 20, fresh),
+      fresh
+        ? account.client.getUncached(`${root}/approvals`, Approvals)
+        : account.client.get(project, `${root}/approvals`, Approvals, TTL_MS),
       this.userOf(account),
     ])
     const changed = this.changed(location.host, account)

@@ -145,8 +145,27 @@ export function asConnection(value: unknown): WorkbenchConnection | null {
   if (typeof title !== 'string' || title === '') return null
   const labels = reviewLabels as Record<string, unknown>
   const actionFailed = labels['actionFailed']
+  const comment = labels['comment']
+  const reply = labels['reply']
+  const resolve = labels['resolve']
+  const reopen = labels['reopen']
+  const commentingBlocked = labels['commentingBlocked']
   const status = labels['status']
   if (typeof actionFailed !== 'string' || actionFailed === '') return null
+  if (
+    typeof comment !== 'string' ||
+    comment === '' ||
+    typeof reply !== 'string' ||
+    reply === '' ||
+    typeof resolve !== 'string' ||
+    resolve === '' ||
+    typeof reopen !== 'string' ||
+    reopen === '' ||
+    typeof commentingBlocked !== 'string' ||
+    commentingBlocked === ''
+  ) {
+    return null
+  }
   if (typeof status !== 'object' || status === null) return null
   const statuses = status as Record<string, unknown>
   const added = statuses['added']
@@ -167,7 +186,16 @@ export function asConnection(value: unknown): WorkbenchConnection | null {
     connectionToken: record['connectionToken'] as string,
     commit: record['commit'] as string,
     quality: record['quality'] as string,
-    reviewLabels: { title, actionFailed, status: { added, removed, modified, renamed } },
+    reviewLabels: {
+      title,
+      actionFailed,
+      comment,
+      reply,
+      resolve,
+      reopen,
+      commentingBlocked,
+      status: { added, removed, modified, renamed },
+    },
     ...(typeof record['processNonce'] === 'string' &&
     /^[0-9a-f-]{36}$/i.test(record['processNonce'])
       ? { processNonce: record['processNonce'] }

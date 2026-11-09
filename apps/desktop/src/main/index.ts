@@ -120,11 +120,9 @@ function clientFor(sender: WebContents): EngineClient {
   return entry.client
 }
 
-async function invokeReview<C extends 'git:activeReview' | 'git:openDiff'>(
-  owner: WebContents,
-  channel: C,
-  request: GitRequest<C>
-): Promise<GitResponse<C>> {
+async function invokeReview<
+  C extends 'git:activeReview' | 'git:openDiff' | 'git:comment' | 'git:reply' | 'git:resolve',
+>(owner: WebContents, channel: C, request: GitRequest<C>): Promise<GitResponse<C>> {
   const raw = await clientFor(owner).invoke(channel, request)
   const result = GIT_CONTRACT[channel].response.safeParse(raw)
   if (!result.success) {
@@ -639,6 +637,9 @@ void app.whenReady().then(async () => {
     ensure: (place) => environmentFor(place, true),
   })
   setWorkbenchReviewSource({
+    comment: (owner, request) => invokeReview(owner, 'git:comment', request),
+    reply: (owner, request) => invokeReview(owner, 'git:reply', request),
+    resolve: (owner, request) => invokeReview(owner, 'git:resolve', request),
     state: (owner, projectId) => invokeReview(owner, 'git:activeReview', { projectId }),
     openDiff: (owner, request) => invokeReview(owner, 'git:openDiff', request),
   })

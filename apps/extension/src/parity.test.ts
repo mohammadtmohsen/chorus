@@ -23,8 +23,10 @@ describe('the extension accounts for every ChorusApi method', () => {
     ).toEqual([
       'actOnBrowserDownload',
       'allowBrowserPasswordSaving',
+      'approveGitReview',
       'checkoutGit',
       'closeGitReview',
+      'commentOnGit',
       'decideBrowserPassword',
       'fetchGit',
       'fillBrowserPassword',
@@ -39,6 +41,8 @@ describe('the extension accounts for every ChorusApi method', () => {
       'readGitReview',
       'readGitState',
       'removeBrowserPassword',
+      'replyToGitThread',
+      'resolveGitThread',
       'setBrowserDevtoolsGeometry',
       'syncGit',
     ])

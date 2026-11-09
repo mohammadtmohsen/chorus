@@ -241,6 +241,11 @@ const RUNTIME = {
 const REVIEW_LABELS = {
   title: en.git.review.editorTitle,
   actionFailed: en.git.failure['git-failed'],
+  comment: en.git.review.comment,
+  reply: en.git.review.reply,
+  resolve: en.git.review.resolve,
+  reopen: en.git.review.reopen,
+  commentingBlocked: en.git.review.commentingBlocked,
   status: en.git.review.status,
 }
 const LOCAL_RUNTIME = {

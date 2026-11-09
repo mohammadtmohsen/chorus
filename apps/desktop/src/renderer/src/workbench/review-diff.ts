@@ -20,6 +20,8 @@ export interface ReviewDiffOpenedFile {
   readonly path: string
   readonly original: string
   readonly modified: string
+  readonly workspace: boolean
+  readonly matches: boolean
 }
 
 export interface ReviewDiffOpened {
@@ -56,7 +58,8 @@ function isReviewFile(value: unknown): value is WorkbenchReviewDiffFile {
     file['oldPath'] !== '' &&
     typeof file['before'] === 'string' &&
     typeof file['after'] === 'string' &&
-    typeof file['workspace'] === 'boolean'
+    typeof file['workspace'] === 'boolean' &&
+    typeof file['matches'] === 'boolean'
   )
 }
 
@@ -105,7 +108,7 @@ export function serveReviewDiff(): void {
         return { requestId, ok: false, failure: 'open-failed' }
       }
       const openedFiles: ReviewDiffOpenedFile[] = []
-      const inputs = requested.map(({ path, oldPath, before, after, workspace }) => {
+      const inputs = requested.map(({ path, oldPath, before, after, workspace, matches }) => {
         const original = URI.from({
           scheme: REVIEW_SCHEME,
           authority: reviewAuthority('original', iid, versionId),
@@ -136,7 +139,13 @@ export function serveReviewDiff(): void {
         }
         const languageId =
           languages.guessLanguageIdByFilepathOrFirstLine(URI.file(path)) ?? 'plaintext'
-        openedFiles.push({ path, original: original.toString(), modified: modified.toString() })
+        openedFiles.push({
+          path,
+          original: original.toString(),
+          modified: modified.toString(),
+          workspace,
+          matches,
+        })
         return {
           original: { resource: original, languageId },
           modified: { resource: modified, languageId },

@@ -832,6 +832,11 @@ function describe(surface: Surface): WorkbenchConnection {
     reviewLabels: {
       title: mainT('git.review.editorTitle'),
       actionFailed: mainT('git.failure.git-failed'),
+      comment: mainT('git.review.comment'),
+      reply: mainT('git.review.reply'),
+      resolve: mainT('git.review.resolve'),
+      reopen: mainT('git.review.reopen'),
+      commentingBlocked: mainT('git.review.commentingBlocked'),
       status: {
         added: mainT('git.review.status.added'),
         removed: mainT('git.review.status.removed'),
@@ -1800,6 +1805,15 @@ let resolveProjectPlace: ((projectId: string) => Promise<WorkbenchPlace>) | null
 let openRegisteredProject: ((projectId: string) => void | Promise<void>) | null = null
 
 interface WorkbenchReviewSource {
+  comment(
+    owner: WebContents,
+    request: GitRequest<'git:comment'>
+  ): Promise<GitResponse<'git:comment'>>
+  reply(owner: WebContents, request: GitRequest<'git:reply'>): Promise<GitResponse<'git:reply'>>
+  resolve(
+    owner: WebContents,
+    request: GitRequest<'git:resolve'>
+  ): Promise<GitResponse<'git:resolve'>>
   state(owner: WebContents, projectId: string): Promise<GitReviewEnvelope>
   openDiff(
     owner: WebContents,
@@ -1916,17 +1930,35 @@ export function registerWorkbenchHandlers(
       const parsed = WorkbenchReviewAction.safeParse(raw)
       if (!parsed.success) return { ok: false, message: mainT('git.failure.refused-target') }
       const action = parsed.data
-      const request = {
-        projectId: surface.projectId,
-        iid: action.iid,
-        versionId: action.versionId,
-        path: action.path,
-      }
+      const { kind, ...fields } = action
+      const request = { ...fields, projectId: surface.projectId }
       try {
-        const result = await reviewSource.openDiff(surface.owner, request)
+        let result: GitResponse<'git:openDiff'>
+        switch (kind) {
+          case 'openDiff':
+            result = await reviewSource.openDiff(
+              surface.owner,
+              request as GitRequest<'git:openDiff'>
+            )
+            break
+          case 'comment':
+            result = await reviewSource.comment(surface.owner, request as GitRequest<'git:comment'>)
+            break
+          case 'reply':
+            result = await reviewSource.reply(surface.owner, request as GitRequest<'git:reply'>)
+            break
+          case 'resolve':
+            result = await reviewSource.resolve(surface.owner, request as GitRequest<'git:resolve'>)
+            break
+        }
         return result.failure === null
           ? { ok: true }
-          : { ok: false, message: mainT(`git.failure.${result.failure}`) }
+          : {
+              ok: false,
+              message: [mainT(`git.failure.${result.failure}`), result.error]
+                .filter((part) => part !== null)
+                .join('\n'),
+            }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         const mismatch =

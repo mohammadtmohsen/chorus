@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { GitLabClient, GitLabDirectory, hunksOf } from './gitlab-client.js'
+import { GitLabClient, GitLabDirectory, hunksOf, positionFor } from './gitlab-client.js'
 import type { MrDiffItem } from './gitlab-client.js'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -490,6 +490,106 @@ describe('GitLab review files', () => {
         },
       ],
     })
+  })
+})
+
+describe('GitLab line positions', () => {
+  it.each([
+    ['modified', 2, { new_line: 2 }],
+    ['original', 2, { old_line: 2 }],
+    ['modified', 1, { old_line: 1, new_line: 1 }],
+  ] as const)('maps %s line %i inside a hunk', (side, line, expected) => {
+    const position = positionFor(version, diffItem(), side, line)
+    expect(position).toEqual({
+      position_type: 'text',
+      base_sha: version.baseSha,
+      start_sha: version.startSha,
+      head_sha: version.headSha,
+      old_path: 'src/file.ts',
+      new_path: 'src/file.ts',
+      ...expected,
+    })
+  })
+
+  it.each([
+    ['original', 2, 2, 2],
+    ['original', 6, 6, 7],
+    ['modified', 7, 6, 7],
+  ] as const)('maps %s line %i outside a hunk', (side, line, oldLine, newLine) => {
+    const file = diffItem({ diff: '@@ -4,2 +4,3 @@\n context\n-old\n+first\n+second\n' })
+    expect(positionFor(version, file, side, line)).toMatchObject({
+      old_line: oldLine,
+      new_line: newLine,
+    })
+  })
+
+  it('keeps the boundary of a zero-length insertion and maps the following unchanged line', () => {
+    const file = diffItem({ diff: '@@ -3,0 +4,2 @@\n+first\n+second\n' })
+    expect(positionFor(version, file, 'original', 3)).toMatchObject({ old_line: 3, new_line: 3 })
+    expect(positionFor(version, file, 'original', 4)).toMatchObject({ old_line: 4, new_line: 6 })
+  })
+
+  it('uses both recorded paths for a renamed file', () => {
+    const file = diffItem({ old_path: 'old.ts', new_path: 'new.ts', renamed_file: true })
+    expect(positionFor(version, file, 'modified', 1)).toMatchObject({
+      old_path: 'old.ts',
+      new_path: 'new.ts',
+      old_line: 1,
+      new_line: 1,
+    })
+  })
+})
+
+describe('GitLab review writes', () => {
+  it.each([
+    ['POST', '/discussions', { body: 'Comment', position: { new_line: 1 } }],
+    ['POST', '/discussions/thread/notes', { body: 'Reply' }],
+    ['PUT', '/discussions/thread', { resolved: true }],
+    ['PUT', '/discussions/thread', { resolved: false }],
+    ['POST', '/approve', { sha: version.headSha }],
+    ['POST', '/unapprove', {}],
+  ] as const)('sends %s %s with its JSON body', async (method, suffix, body) => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response('{}'))
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.writeReview(location, 7, method, suffix, body)).resolves.toMatchObject({
+      ok: true,
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      `https://gitlab.com/api/v4/projects/group%2Fproject/merge_requests/7${suffix}`,
+      expect.objectContaining({ method, body: JSON.stringify(body) })
+    )
+  })
+
+  it('retains GitLab position errors', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Position is invalid' }), { status: 400 })
+      )
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.writeReview(location, 7, 'POST', '/discussions', {})).resolves.toEqual({
+      ok: false,
+      failure: 'invalid-response',
+      retryAt: null,
+      error: 'Position is invalid',
+    })
+  })
+
+  it('re-reads discussions and approvals uncached after a write', async () => {
+    const fallback = reviewRequest()
+    const request = vi
+      .fn<typeof fetch>()
+      .mockImplementation((url, options) =>
+        options?.method === 'POST' ? Promise.resolve(new Response('{}')) : fallback(url, options)
+      )
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await directory.review(location, 7)
+    await directory.writeReview(location, 7, 'POST', '/approve', { sha: version.headSha })
+    await directory.review(location, 7, true)
+    expect(request.mock.calls.filter(([url]) => urlOf(url).includes('/discussions?'))).toHaveLength(
+      2
+    )
+    expect(request.mock.calls.filter(([url]) => urlOf(url).endsWith('/approvals'))).toHaveLength(2)
   })
 })
 
