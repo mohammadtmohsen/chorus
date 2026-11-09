@@ -6,6 +6,7 @@ import type {
   PreviewSelection,
   WorkbenchConnection,
   WorkbenchReviewActionResult,
+  WorkbenchReviewFileResult,
   WorkbenchTerminalEnv,
 } from '../shared/workbench-ipc.js'
 
@@ -97,6 +98,7 @@ export const REVIEW_DIFF_RESULT_CHANNEL = 'workbench:reviewDiff:result'
 export const REVIEW_STATE_CHANNEL = 'workbench:review:state'
 export const REVIEW_CHANGED_CHANNEL = 'workbench:review:changed'
 export const REVIEW_ACTION_CHANNEL = 'workbench:review:action'
+export const REVIEW_FILE_CHANNEL = 'workbench:review:file'
 /* Opening a file a transcript row named, in this project's editor. */
 export const REVEAL_CHANNEL = 'workbench:reveal'
 export const REVEAL_RESULT_CHANNEL = 'workbench:reveal:result'
@@ -251,6 +253,23 @@ ipcRenderer.on(LAYOUT_CHANNEL, (_event, payload: unknown) => {
 })
 
 const api: ChorusWorkbenchApi = {
+  reviewFile: async (request): Promise<WorkbenchReviewFileResult> => {
+    const raw: unknown = await ipcRenderer.invoke(REVIEW_FILE_CHANNEL, request)
+    if (typeof raw === 'object' && raw !== null && 'ok' in raw) {
+      if (raw.ok === true && 'text' in raw && typeof raw.text === 'string') {
+        return { ok: true, text: raw.text }
+      }
+      if (
+        raw.ok === false &&
+        'message' in raw &&
+        typeof raw.message === 'string' &&
+        raw.message !== ''
+      ) {
+        return { ok: false, message: raw.message }
+      }
+    }
+    throw new Error('Malformed workbench review file response')
+  },
   reviewState: async (): Promise<unknown> => {
     const raw: unknown = await ipcRenderer.invoke(REVIEW_STATE_CHANNEL)
     return raw

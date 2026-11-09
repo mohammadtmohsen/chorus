@@ -17,6 +17,7 @@ import {
 } from '../../../shared/workbench-ipc.js'
 import {
   onReviewDiffOpened,
+  REVIEW_SCHEME,
   reviewAuthority,
   type ReviewDiffOpened,
   type ReviewDiffOpenedFile,
@@ -32,8 +33,13 @@ const STATUS_COLORS: Record<GitReviewFile['status'], string> = {
 }
 
 export async function startGitReviewExtension(
-  labels: WorkbenchConnection['reviewLabels']
+  labels: WorkbenchConnection['reviewLabels'],
+  log: (message: string) => void
 ): Promise<void> {
+  const logError = (operation: string, error: unknown): void => {
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+    log(`review extension ${operation}: ${detail}`)
+  }
   const extension = registerExtension(
     {
       publisher: 'chorus',
@@ -84,11 +90,13 @@ export async function startGitReviewExtension(
     if (receiveOpened?.(event) !== true) pendingOpened.push(event)
   })
   const api = await extension.getApi().catch((error: unknown) => {
+    logError('get API', error)
     unsubscribeOpened()
     throw error
   })
   let commentController = api.comments.createCommentController(SOURCE_CONTROL_ID, labels.title)
   const commentThreads = new Map<string, CommentThread>()
+  const threadSignatures = new Map<string, { notes: string; resolved: boolean }>()
   const threadIds = new Map<
     CommentThread,
     { iid: number; versionId: number; discussionId: string }
@@ -111,12 +119,14 @@ export async function startGitReviewExtension(
   let shown = ''
   let latest = -1
   let readGeneration = 0
-  const reportFailure = (): void => {
+  const reportFailure = (operation: string, error: unknown): void => {
+    logError(operation, error)
     void api.window.showErrorMessage(labels.actionFailed)
   }
   const clearComments = (): void => {
     for (const thread of commentThreads.values()) thread.dispose()
     commentThreads.clear()
+    threadSignatures.clear()
     threadIds.clear()
   }
   const rememberOpened = (event: ReviewDiffOpened): boolean => {
@@ -134,11 +144,11 @@ export async function startGitReviewExtension(
     }
     return true
   }
-  const renderComments = (): void => {
+  const renderComments = (files: readonly ReviewDiffOpenedFile[], prune: boolean): void => {
     const review = activeReview
     if (review === null) return
     const wanted = new Set<string>()
-    for (const file of openedFiles.values()) {
+    for (const file of files) {
       for (const discussion of review.threads) {
         if (discussion.path !== file.path) continue
         const line = discussion.newLine ?? discussion.oldLine
@@ -147,29 +157,35 @@ export async function startGitReviewExtension(
         const key = JSON.stringify([discussion.id, resource])
         if (wanted.has(key)) continue
         wanted.add(key)
-        const comments = discussion.notes.map<Comment>((note) => {
-          const body = new api.MarkdownString(note.body)
-          body.isTrusted = false
-          body.supportHtml = false
-          return {
-            body,
-            author: { name: note.author.name },
-            mode: api.CommentMode.Preview,
-            label: formatGitTime(note.createdAt),
-          }
-        })
+        const existing = commentThreads.get(key)
+        const previous = threadSignatures.get(key)
+        const signature = JSON.stringify(discussion.notes.map((note) => [note.id, note.body]))
+        const notesChanged = previous?.notes !== signature
+        const stateChanged = previous?.resolved !== discussion.resolved
+        if (existing !== undefined && !notesChanged && !stateChanged) continue
+        const comments = (): Comment[] =>
+          discussion.notes.map((note) => {
+            const body = new api.MarkdownString(note.body)
+            body.isTrusted = false
+            body.supportHtml = false
+            return {
+              body,
+              author: { name: note.author.name },
+              mode: api.CommentMode.Preview,
+              label: formatGitTime(note.createdAt),
+            }
+          })
         const state = discussion.resolved
           ? api.CommentThreadState.Resolved
           : api.CommentThreadState.Unresolved
         const collapsed = discussion.resolved
           ? api.CommentThreadCollapsibleState.Collapsed
           : api.CommentThreadCollapsibleState.Expanded
-        const existing = commentThreads.get(key)
         if (existing === undefined) {
           const thread = commentController.createCommentThread(
             api.Uri.parse(resource),
             new api.Range(line - 1, 0, line - 1, 0),
-            comments
+            comments()
           )
           thread.canReply = true
           thread.contextValue = discussion.resolved
@@ -184,21 +200,24 @@ export async function startGitReviewExtension(
             discussionId: discussion.id,
           })
         } else {
-          existing.comments = comments
-          existing.contextValue = discussion.resolved
-            ? 'chorus.gitReview.resolved'
-            : 'chorus.gitReview.unresolved'
-          if (existing.state !== state) {
+          if (notesChanged) existing.comments = comments()
+          if (stateChanged) {
+            existing.contextValue = discussion.resolved
+              ? 'chorus.gitReview.resolved'
+              : 'chorus.gitReview.unresolved'
             existing.state = state
             existing.collapsibleState = collapsed
           }
         }
+        threadSignatures.set(key, { notes: signature, resolved: discussion.resolved })
       }
     }
+    if (!prune) return
     for (const [key, thread] of commentThreads) {
       if (wanted.has(key)) continue
       thread.dispose()
       threadIds.delete(thread)
+      threadSignatures.delete(key)
       commentThreads.delete(key)
     }
   }
@@ -230,27 +249,82 @@ export async function startGitReviewExtension(
         ? [new api.Range(0, 0, Math.max(0, document.lineCount - 1), 0)]
         : [],
   }
-  commentController.commentingRangeProvider = commentingProvider
   const documentChanges = api.workspace.onDidChangeTextDocument((event) => {
     if (event.contentChanges.length === 0) return
+    const uri = event.document.uri.toString()
+    let flipped = false
     for (const [key, file] of openedFiles) {
-      if (file.workspace && file.modified === event.document.uri.toString()) {
+      if (file.workspace && file.matches && file.modified === uri) {
         openedFiles.set(key, { ...file, matches: false })
+        flipped = true
       }
     }
-    commentController.commentingRangeProvider = commentingProvider
+    if (flipped) commentController.commentingRangeProvider = commentingProvider
   })
   receiveOpened = (event) => {
-    if (!rememberOpened(event)) return false
     try {
-      renderComments()
-      commentController.commentingRangeProvider = commentingProvider
-    } catch {
-      reportFailure()
+      if (!rememberOpened(event)) return false
+      renderComments(event.files, false)
+    } catch (error) {
+      reportFailure('receive opened files', error)
     }
     return true
   }
-  const apply = (raw: unknown): void => {
+  const scanRestoredTabs = (): void => {
+    try {
+      const review = activeReview
+      if (review === null) return
+      const root = api.workspace.workspaceFolders?.[0]?.uri
+      const authority = reviewAuthority('original', review.mr.iid, review.version.id)
+      const paths = new Set(review.files.map((file) => file.path))
+      const newFiles: ReviewDiffOpenedFile[] = []
+      const found = new Set<string>()
+      const include = (original: Uri, modified: Uri): void => {
+        if (original.scheme !== REVIEW_SCHEME || original.authority !== authority) return
+        const workspace = modified.scheme !== REVIEW_SCHEME
+        let path = modified.path.replace(/^\/+/, '')
+        if (workspace) {
+          if (root?.scheme !== modified.scheme || root.authority !== modified.authority) {
+            return
+          }
+          const prefix = `${root.path.replace(/\/+$/, '')}/`
+          if (!modified.path.startsWith(prefix)) return
+          path = modified.path.slice(prefix.length)
+        }
+        if (!paths.has(path)) return
+        const file: ReviewDiffOpenedFile = {
+          path,
+          original: original.toString(),
+          modified: modified.toString(),
+          workspace,
+          matches: !workspace,
+        }
+        const key = JSON.stringify([file.path, file.original, file.modified])
+        if (openedFiles.has(key) || found.has(key)) return
+        found.add(key)
+        newFiles.push(file)
+      }
+      for (const group of api.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+          const input = tab.input
+          if (input instanceof api.TabInputTextDiff) {
+            include(input.original, input.modified)
+          } else if (input instanceof api.TabInputTextMultiDiff) {
+            for (const pair of input.textDiffs) include(pair.original, pair.modified)
+          }
+        }
+      }
+      if (newFiles.length === 0) return
+      if (!rememberOpened({ iid: review.mr.iid, versionId: review.version.id, files: newFiles })) {
+        return
+      }
+      renderComments(newFiles, false)
+      commentController.commentingRangeProvider = commentingProvider
+    } catch (error) {
+      reportFailure('scan restored review tabs', error)
+    }
+  }
+  const applyState = (raw: unknown): void => {
     const parsed = WorkbenchReviewState.safeParse(raw)
     if (!parsed.success || parsed.data.revision < latest) return
     const state = parsed.data
@@ -268,11 +342,8 @@ export async function startGitReviewExtension(
     }
     if (review !== null) {
       for (const event of pendingOpened.splice(0)) rememberOpened(event)
-      try {
-        renderComments()
-      } catch {
-        reportFailure()
-      }
+      renderComments([...openedFiles.values()], true)
+      scanRestoredTabs()
     }
     if (identity === shown) return
     shown = identity
@@ -316,30 +387,43 @@ export async function startGitReviewExtension(
     }))
     sourceControl = next
   }
+  const apply = (raw: unknown): void => {
+    try {
+      applyState(raw)
+    } catch (error) {
+      reportFailure('apply review state', error)
+    }
+  }
   const read = async (): Promise<void> => {
     const generation = ++readGeneration
     try {
       const state = await window.chorusWorkbench.reviewState()
       if (readGeneration === generation) apply(state)
-    } catch {
-      if (readGeneration === generation) reportFailure()
+    } catch (error) {
+      if (readGeneration === generation) reportFailure('read review state', error)
+      else logError('stale review state read', error)
     }
   }
   const perform = async (action: WorkbenchReviewAction): Promise<void> => {
     try {
       const result = await window.chorusWorkbench.reviewAction(action)
       if (!result.ok) {
-        await api.window.showErrorMessage(result.message)
+        log(`review extension ${action.kind} refused: ${result.message}`)
+        void api.window.showErrorMessage(result.message)
         await read()
       }
-    } catch {
-      reportFailure()
+    } catch (error) {
+      reportFailure(`perform ${action.kind}`, error)
       await read()
     }
   }
   let actions = Promise.resolve()
   const enqueue = (action: WorkbenchReviewAction): void => {
-    actions = actions.then(() => perform(action)).catch(reportFailure)
+    actions = actions
+      .then(() => perform(action))
+      .catch((error: unknown) => {
+        reportFailure('open action queue', error)
+      })
   }
   const command = api.commands.registerCommand('chorus.gitReview.openDiff', (raw: unknown) => {
     const parsed = WorkbenchReviewAction.safeParse(raw)
@@ -351,22 +435,25 @@ export async function startGitReviewExtension(
     if (!(value['uri'] instanceof api.Uri) || typeof value['dispose'] !== 'function') return null
     return raw as CommentThread
   }
-  const failWrite = async (message: string): Promise<never> => {
-    await api.window.showErrorMessage(message)
-    throw new Error(message)
+  const failWrite = (message: string): Promise<never> => {
+    void api.window.showErrorMessage(message)
+    return Promise.reject(new Error(message))
   }
   const sendWrite = async (action: WorkbenchReviewAction): Promise<void> => {
     let result: WorkbenchReviewActionResult
     try {
       result = await window.chorusWorkbench.reviewAction(action)
-    } catch {
+    } catch (error) {
+      logError(`send ${action.kind}`, error)
       return failWrite(labels.actionFailed)
     }
     if (!result.ok) return failWrite(result.message)
   }
   const queueWrite = (work: () => Promise<void>): Promise<void> => {
     const next = actions.then(work)
-    actions = next.catch(() => undefined)
+    actions = next.catch((error: unknown) => {
+      logError('write action queue', error)
+    })
     return next
   }
   const submit = (raw: unknown, reply: boolean): Promise<void> => {
@@ -429,6 +516,7 @@ export async function startGitReviewExtension(
     api.commands.registerCommand('chorus.gitReview.resolve', (raw: unknown) => resolve(raw, true)),
     api.commands.registerCommand('chorus.gitReview.reopen', (raw: unknown) => resolve(raw, false)),
   ]
+  const tabChanges = api.window.tabGroups.onDidChangeTabs(scanRestoredTabs)
   const unsubscribe = window.chorusWorkbench.onReviewChanged((raw) => {
     if (raw === null) {
       readGeneration++
@@ -447,11 +535,14 @@ export async function startGitReviewExtension(
     clearComments()
     commentController.dispose()
     documentChanges.dispose()
+    tabChanges.dispose()
     for (const writeCommand of writeCommands) writeCommand.dispose()
     command.dispose()
     sourceControl?.dispose()
     decorationProvider.dispose()
     decorationChanges.dispose()
-    void extension.dispose().catch(reportFailure)
+    void extension.dispose().catch((error: unknown) => {
+      reportFailure('dispose', error)
+    })
   })
 }

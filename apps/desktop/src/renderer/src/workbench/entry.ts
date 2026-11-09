@@ -2,6 +2,7 @@ import { getService, IConfigurationService, initialize } from '@codingame/monaco
 import { registerServiceInitializePreParticipant } from '@codingame/monaco-vscode-api/lifecycle'
 import { ConfigurationTarget } from '@codingame/monaco-vscode-api/vscode/vs/platform/configuration/common/configuration'
 import { IWorkspaceContextService } from '@codingame/monaco-vscode-api/vscode/vs/platform/workspace/common/workspace.service'
+import { IFileService } from '@codingame/monaco-vscode-api/vscode/vs/platform/files/common/files.service'
 import { IURLService } from '@codingame/monaco-vscode-api/vscode/vs/platform/url/common/url.service'
 import { ILogService } from '@codingame/monaco-vscode-api/vscode/vs/platform/log/common/log.service'
 import { IStorageService } from '@codingame/monaco-vscode-api/vscode/vs/platform/storage/common/storage.service'
@@ -26,7 +27,7 @@ import { serveWorkbenchLifecycle } from './lifecycle.js'
 import { reportEditorContext } from './context.js'
 import { serveWorkbenchEdits, serveWorkbenchReveal, serveWorkbenchSnapshot } from './edit.js'
 import { serveAskDiff } from './ask-diff.js'
-import { serveReviewDiff } from './review-diff.js'
+import { prepareReviewFileProvider, serveReviewDiff } from './review-diff.js'
 import { startGitReviewExtension } from './git-review-extension.js'
 import { registerInlineCompletions, startLanguageServiceSampling } from './completion.js'
 import { installGateHandle } from './gate-handle.js'
@@ -345,7 +346,13 @@ async function main(): Promise<void> {
    */
   registerWorkbenchWorkers()
 
+  let registerReviewFiles = (): void => undefined
   registerServiceInitializePreParticipant(async (accessor) => {
+    registerReviewFiles = prepareReviewFileProvider(
+      accessor.get(IFileService),
+      connection.projectRoot,
+      connection.reviewLabels.actionFailed
+    )
     const configuration = accessor.get(IConfigurationService)
     const workspace = accessor.get(IWorkspaceContextService)
     const terminalLogs = accessor.get(ILogService)
@@ -377,6 +384,7 @@ async function main(): Promise<void> {
     await flushWorkbenchStorage()
   })
   await initialize(services, container, options, env)
+  registerReviewFiles()
   await serveWorkbenchLifecycle(connection)
 
   /*
@@ -431,14 +439,16 @@ async function main(): Promise<void> {
   serveWorkbenchEdits(connection.projectRoot)
   serveWorkbenchSnapshot(connection.projectRoot)
   serveAskDiff(connection.remoteAuthority)
+  const reviewLogs = await getService(ILogService)
+  const logReview = (message: string): void => {
+    reviewLogs.error(`Chorus: ${message}`)
+  }
   const reportReviewFailure = (error: unknown): void => {
     const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
-    void getService(ILogService).then((logService) => {
-      logService.error(`Chorus: review extension failed — ${detail}`)
-    })
+    logReview(`review extension failed — ${detail}`)
   }
-  void startGitReviewExtension(connection.reviewLabels).catch(reportReviewFailure)
-  serveReviewDiff()
+  void startGitReviewExtension(connection.reviewLabels, logReview).catch(reportReviewFailure)
+  serveReviewDiff(logReview)
   serveWorkbenchReveal(connection.remoteAuthority)
 
   /*

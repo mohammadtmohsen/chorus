@@ -121,9 +121,20 @@ function clientFor(sender: WebContents): EngineClient {
 }
 
 async function invokeReview<
-  C extends 'git:activeReview' | 'git:openDiff' | 'git:comment' | 'git:reply' | 'git:resolve',
+  C extends
+    | 'git:activeReview'
+    | 'git:reviewFile'
+    | 'git:openDiff'
+    | 'git:comment'
+    | 'git:reply'
+    | 'git:resolve',
 >(owner: WebContents, channel: C, request: GitRequest<C>): Promise<GitResponse<C>> {
-  const raw = await clientFor(owner).invoke(channel, request)
+  const raw = await clientFor(owner).invoke(
+    channel,
+    request,
+    undefined,
+    channel === 'git:reviewFile' ? 30_000 : undefined
+  )
   const result = GIT_CONTRACT[channel].response.safeParse(raw)
   if (!result.success) {
     throw new Error(`Malformed response on "${channel}": ${result.error.message}`)
@@ -637,6 +648,7 @@ void app.whenReady().then(async () => {
     ensure: (place) => environmentFor(place, true),
   })
   setWorkbenchReviewSource({
+    reviewFile: (owner, request) => invokeReview(owner, 'git:reviewFile', request),
     comment: (owner, request) => invokeReview(owner, 'git:comment', request),
     reply: (owner, request) => invokeReview(owner, 'git:reply', request),
     resolve: (owner, request) => invokeReview(owner, 'git:resolve', request),

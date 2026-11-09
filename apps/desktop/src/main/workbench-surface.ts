@@ -69,9 +69,12 @@ import {
   WORKBENCH_REVIEW_STATE_CHANNEL,
   WORKBENCH_REVIEW_CHANGED_CHANNEL,
   WORKBENCH_REVIEW_ACTION_CHANNEL,
+  WORKBENCH_REVIEW_FILE_CHANNEL,
   WorkbenchReviewAction,
+  WorkbenchReviewFileRequest,
   type WorkbenchReviewState,
   type WorkbenchReviewActionResult,
+  type WorkbenchReviewFileResult,
   WorkbenchRowScrollDelta,
   remotePath,
   type CompletionReply,
@@ -1805,6 +1808,10 @@ let resolveProjectPlace: ((projectId: string) => Promise<WorkbenchPlace>) | null
 let openRegisteredProject: ((projectId: string) => void | Promise<void>) | null = null
 
 interface WorkbenchReviewSource {
+  reviewFile(
+    owner: WebContents,
+    request: GitRequest<'git:reviewFile'>
+  ): Promise<GitResponse<'git:reviewFile'>>
   comment(
     owner: WebContents,
     request: GitRequest<'git:comment'>
@@ -1918,6 +1925,43 @@ export function registerWorkbenchHandlers(
     if (state.projectId !== projectId) throw new Error('workbench-review-project-mismatch')
     return { revision: state.revision, review: state.review }
   })
+  ipcMain.handle(
+    WORKBENCH_REVIEW_FILE_CHANNEL,
+    async (event, raw: unknown): Promise<WorkbenchReviewFileResult> => {
+      const surface = byContents.get(event.sender)
+      if (surface === undefined || !fromMainFrame(event)) {
+        throw new Error('unknown workbench surface')
+      }
+      if (surface.projectId === null || reviewSource === null) {
+        return { ok: false, message: mainT('git.failure.refused-target') }
+      }
+      const parsed = WorkbenchReviewFileRequest.safeParse(raw)
+      if (!parsed.success) return { ok: false, message: mainT('git.failure.refused-target') }
+      try {
+        const result = await reviewSource.reviewFile(surface.owner, {
+          ...parsed.data,
+          projectId: surface.projectId,
+        })
+        if (result.failure === null && result.text !== null) {
+          return { ok: true, text: result.text }
+        }
+        return {
+          ok: false,
+          message: [mainT(`git.failure.${result.failure ?? 'git-failed'}`), result.error]
+            .filter((part) => part !== null)
+            .join('\n'),
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const mismatch =
+          message === 'channel-refused' || message.includes('Malformed response on "git:')
+        return {
+          ok: false,
+          message: mainT(mismatch ? 'git.restartRequired' : 'git.failure.git-failed'),
+        }
+      }
+    }
+  )
   ipcMain.handle(
     WORKBENCH_REVIEW_ACTION_CHANNEL,
     async (event, raw: unknown): Promise<WorkbenchReviewActionResult> => {

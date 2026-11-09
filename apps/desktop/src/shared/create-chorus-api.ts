@@ -369,6 +369,7 @@ export function createChorusApi(transport: ShellTransport): ChorusApi {
     readGitState: invokeGit('git:state'),
     readGitRequests: invokeGit('git:requests'),
     readGitReview: invokeGit('git:review'),
+    readGitReviewFile: invokeGit('git:reviewFile'),
     commentOnGit: invokeGit('git:comment'),
     replyToGitThread: invokeGit('git:reply'),
     resolveGitThread: invokeGit('git:resolve'),

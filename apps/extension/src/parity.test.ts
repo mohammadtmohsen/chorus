@@ -39,6 +39,7 @@ describe('the extension accounts for every ChorusApi method', () => {
       'readBrowserPasswords',
       'readGitRequests',
       'readGitReview',
+      'readGitReviewFile',
       'readGitState',
       'removeBrowserPassword',
       'replyToGitThread',

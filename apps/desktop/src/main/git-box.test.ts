@@ -249,7 +249,7 @@ describe('Git box seen reviews', () => {
     })
   })
 
-  it('refuses moved heads without changing marks, git or the editor', async () => {
+  it('opens held diffs locally but still checks the remote head before commenting', async () => {
     await service.review(project.id, KEY.iid)
     latestVersion.mockResolvedValue({
       ok: true,
@@ -259,20 +259,27 @@ describe('Git box seen reviews', () => {
     const setSeen = vi.spyOn(marks, 'setSeen')
 
     await expect(service.openDiff(fileRequest())).resolves.toEqual({
-      failure: 'head-moved',
+      failure: null,
       retryAt: null,
       error: null,
     })
     await expect(service.openAllDiffs(allRequest())).resolves.toEqual({
-      failure: 'head-moved',
+      failure: null,
       retryAt: null,
       error: null,
       skipped: 0,
     })
+    expect(latestVersion).not.toHaveBeenCalled()
+    await expect(
+      service.comment({ ...fileRequest(), side: 'modified', line: 1, body: 'A comment' })
+    ).resolves.toEqual({ failure: 'head-moved', retryAt: null, error: null })
+    expect(latestVersion).toHaveBeenCalledExactlyOnceWith(
+      { host: KEY.host, path: KEY.project },
+      KEY.iid
+    )
     expect(setSeen).not.toHaveBeenCalled()
-    expect(workspace.fetchRef).not.toHaveBeenCalled()
-    expect(workspace.readFileAt).not.toHaveBeenCalled()
-    expect(openReviewDiff).not.toHaveBeenCalled()
+    expect(writeReview).not.toHaveBeenCalled()
+    expect(openReviewDiff).toHaveBeenCalledTimes(2)
   })
 
   it('records the first open and leaves an unchanged head unflagged on reopening', async () => {
@@ -682,7 +689,93 @@ describe('Git box review writes', () => {
   })
 })
 
+describe('Git box restored review files', () => {
+  it('reads a renamed original by its old path and the modified file by its new path', async () => {
+    current = snapshot({
+      files: [reviewFile('src/new.ts', { old_path: 'src/old.ts', renamed_file: true })],
+    })
+    await service.review(project.id, KEY.iid)
+    await expect(
+      service.reviewFile({ ...fileRequest('src/old.ts'), side: 'original' })
+    ).resolves.toEqual({
+      failure: null,
+      retryAt: null,
+      error: null,
+      text: `${VERSION.baseSha}:src/old.ts`,
+    })
+    await expect(
+      service.reviewFile({ ...fileRequest('src/new.ts'), side: 'modified' })
+    ).resolves.toMatchObject({ failure: null, text: `${VERSION.headSha}:src/new.ts` })
+    expect(workspace.readFileAt).toHaveBeenNthCalledWith(1, {
+      cwd: ROOT,
+      ref: VERSION.baseSha,
+      path: 'src/old.ts',
+    })
+    expect(workspace.readFileAt).toHaveBeenNthCalledWith(2, {
+      cwd: ROOT,
+      ref: VERSION.headSha,
+      path: 'src/new.ts',
+    })
+    expect(latestVersion).not.toHaveBeenCalled()
+    expect(openReviewDiff).not.toHaveBeenCalled()
+  })
+
+  it('refuses a different restored version without git or GitLab reads', async () => {
+    await service.review(project.id, KEY.iid)
+    await expect(
+      service.reviewFile({ ...fileRequest(), side: 'modified', versionId: VERSION.id + 1 })
+    ).resolves.toEqual({ failure: 'head-moved', retryAt: null, error: null, text: null })
+    expect(latestVersion).not.toHaveBeenCalled()
+    expect(workspace.fetchRef).not.toHaveBeenCalled()
+    expect(workspace.readFileAt).not.toHaveBeenCalled()
+  })
+
+  it.each(['added', 'removed'] as const)('returns the empty side of a %s file', async (status) => {
+    current = snapshot({
+      files: [
+        reviewFile('src/file.ts', {
+          new_file: status === 'added',
+          deleted_file: status === 'removed',
+        }),
+      ],
+    })
+    await service.review(project.id, KEY.iid)
+    await expect(
+      service.reviewFile({
+        ...fileRequest('src/file.ts'),
+        side: status === 'added' ? 'original' : 'modified',
+      })
+    ).resolves.toEqual({ failure: null, retryAt: null, error: null, text: '' })
+    expect(latestVersion).not.toHaveBeenCalled()
+    expect(workspace.readFileAt).not.toHaveBeenCalled()
+  })
+})
+
 describe('Git box editor diffs', () => {
+  it.each(['closed', 'root', 'token', 'no-token', 'file'] as const)(
+    'refuses the local %s mismatch without remote checks',
+    async (mismatch) => {
+      await service.review(project.id, KEY.iid)
+      if (mismatch === 'closed') service.closeReview(project.id)
+      if (mismatch === 'root') project = { ...project, canonicalRoot: '/another-project' }
+      if (mismatch === 'token') vi.spyOn(directory, 'identity').mockReturnValue('another-token')
+      if (mismatch === 'no-token') vi.spyOn(directory, 'identity').mockReturnValue(null)
+      const request = fileRequest(mismatch === 'file' ? 'missing-from-review.ts' : 'src/a.ts')
+      let failure = 'head-moved'
+      if (mismatch === 'file') failure = 'refused-target'
+      if (mismatch === 'no-token') failure = 'no-token'
+      await expect(service.openDiff(request)).resolves.toEqual({
+        failure,
+        retryAt: null,
+        error: null,
+      })
+      expect(latestVersion).not.toHaveBeenCalled()
+      expect(workspace.fetchRef).not.toHaveBeenCalled()
+      expect(workspace.readFileAt).not.toHaveBeenCalled()
+      expect(openReviewDiff).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps edit mode but blocks comments when workspace content differs from the head', async () => {
     checkedOut('feature')
     vi.mocked(readFile).mockResolvedValue('edited on disk')

@@ -167,6 +167,9 @@ export const GitReviewVersionRequest = GitReviewRequest.extend({
 export const GitReviewFileRequest = GitReviewVersionRequest.extend({
   path: z.string().min(1),
 }).strict()
+export const GitReviewFileReadRequest = GitReviewFileRequest.extend({
+  side: z.enum(['original', 'modified']),
+}).strict()
 
 const GitCommentBody = z.string().refine((body) => body.trim().length > 0)
 export const GitCommentRequest = GitReviewFileRequest.extend({
@@ -277,6 +280,10 @@ export const GIT_CONTRACT = {
   'git:review': { request: GitReviewRequest, response: GitReviewReply },
   'git:activeReview': { request: GitProject, response: GitReviewEnvelope },
   'git:closeReview': { request: GitProject, response: GitReviewEnvelope },
+  'git:reviewFile': {
+    request: GitReviewFileReadRequest,
+    response: GitDiffResult.extend({ text: z.string().nullable() }),
+  },
   'git:comment': { request: GitCommentRequest, response: GitDiffResult },
   'git:reply': { request: GitReplyRequest, response: GitDiffResult },
   'git:resolve': { request: GitResolveRequest, response: GitDiffResult },
@@ -307,6 +314,9 @@ export type GitResponse<C extends GitChannel> = z.infer<GitContract[C]['response
 export const GIT_CHANNELS = Object.keys(GIT_CONTRACT) as GitChannel[]
 
 export interface GitApi {
+  readonly readGitReviewFile: (
+    request: GitRequest<'git:reviewFile'>
+  ) => Promise<GitResponse<'git:reviewFile'>>
   readonly commentOnGit: (request: GitRequest<'git:comment'>) => Promise<GitResponse<'git:comment'>>
   readonly replyToGitThread: (request: GitRequest<'git:reply'>) => Promise<GitResponse<'git:reply'>>
   readonly resolveGitThread: (

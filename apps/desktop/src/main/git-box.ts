@@ -440,7 +440,7 @@ export class GitBoxService {
   }
 
   async openDiff(request: GitRequest<'git:openDiff'>): Promise<GitResponse<'git:openDiff'>> {
-    const guarded = await this.guardReview(request)
+    const guarded = this.localReviewFile(request)
     if ('failure' in guarded) {
       return { failure: guarded.failure, retryAt: guarded.retryAt, error: null }
     }
@@ -504,7 +504,7 @@ export class GitBoxService {
   async openAllDiffs(
     request: GitRequest<'git:openAllDiffs'>
   ): Promise<GitResponse<'git:openAllDiffs'>> {
-    const guarded = await this.guardReviewVersion(request)
+    const guarded = this.localReviewVersion(request)
     if ('failure' in guarded) {
       return { failure: guarded.failure, retryAt: guarded.retryAt, error: null, skipped: 0 }
     }
@@ -660,6 +660,63 @@ export class GitBoxService {
     }
   }
 
+  async reviewFile(request: GitRequest<'git:reviewFile'>): Promise<GitResponse<'git:reviewFile'>> {
+    const guarded = this.localReviewVersion(request)
+    if ('failure' in guarded) return { ...guarded, error: null, text: null }
+    const { session } = guarded
+    const file = session.snapshot.files.find((entry) =>
+      request.side === 'original'
+        ? entry.summary.oldPath === request.path
+        : entry.summary.path === request.path
+    )
+    if (file === undefined) {
+      return { failure: 'refused-target', retryAt: null, error: null, text: null }
+    }
+    if (file.summary.binary || file.summary.tooLarge) {
+      return { failure: 'not-text', retryAt: null, error: null, text: null }
+    }
+    const fetched = await this.exclusive(session.root, () => this.ensureReviewRefs(session))
+    if (fetched.failure !== null) return { ...fetched, text: null }
+    const original = request.side === 'original'
+    const empty =
+      (original && file.summary.status === 'added') ||
+      (!original && file.summary.status === 'removed')
+    const content = empty
+      ? ({ ok: true, value: { kind: 'text', text: '' } } as const)
+      : await readFileAt({
+          cwd: session.root,
+          ref: original ? session.snapshot.version.baseSha : session.snapshot.version.headSha,
+          path: original ? file.summary.oldPath : file.summary.path,
+        })
+    if (
+      this.reviews.get(request.projectId) !== session ||
+      session.root !== this.localRoot(request.projectId) ||
+      this.deps.gitlab.identity(session.location.host) !== session.identity
+    ) {
+      return { failure: 'head-moved', retryAt: null, error: null, text: null }
+    }
+    if (!content.ok) {
+      return { failure: 'git-failed', retryAt: null, error: content.error.message, text: null }
+    }
+    if (content.value.kind !== 'text') {
+      return {
+        failure: content.value.kind === 'absent' ? 'git-failed' : 'not-text',
+        retryAt: null,
+        error: null,
+        text: null,
+      }
+    }
+    return { failure: null, retryAt: null, error: null, text: content.value.text }
+  }
+
+  private localReviewFile(request: GitRequest<'git:openDiff'>): ReviewGuard {
+    const guarded = this.localReviewVersion(request)
+    if ('failure' in guarded) return guarded
+    const { session } = guarded
+    const file = session.snapshot.files.find((entry) => entry.summary.path === request.path)
+    return file === undefined ? { failure: 'refused-target', retryAt: null } : { session, file }
+  }
+
   private async guardReview(request: GitRequest<'git:openDiff'>): Promise<ReviewGuard> {
     const guarded = await this.guardReviewVersion(request)
     if ('failure' in guarded) return guarded
@@ -668,9 +725,7 @@ export class GitBoxService {
     return file === undefined ? { failure: 'refused-target', retryAt: null } : { session, file }
   }
 
-  private async guardReviewVersion(
-    request: GitRequest<'git:openAllDiffs'>
-  ): Promise<ReviewVersionGuard> {
+  private localReviewVersion(request: GitRequest<'git:openAllDiffs'>): ReviewVersionGuard {
     const session = this.reviews.get(request.projectId)
     if (session === undefined) return { failure: 'head-moved', retryAt: null }
     if (
@@ -683,12 +738,21 @@ export class GitBoxService {
     const identity = this.deps.gitlab.identity(session.location.host)
     if (identity === null) return { failure: 'no-token', retryAt: null }
     if (identity !== session.identity) return { failure: 'head-moved', retryAt: null }
+    return { session }
+  }
+
+  private async guardReviewVersion(
+    request: GitRequest<'git:openAllDiffs'>
+  ): Promise<ReviewVersionGuard> {
+    const guarded = this.localReviewVersion(request)
+    if ('failure' in guarded) return guarded
+    const { session } = guarded
     const latest = await this.deps.gitlab.latestVersion(session.location, request.iid)
     if (!latest.ok) return { failure: gitFailure(latest.failure), retryAt: latest.retryAt }
     if (
       latest.value !== request.versionId ||
       this.reviews.get(request.projectId) !== session ||
-      this.deps.gitlab.identity(session.location.host) !== identity
+      this.deps.gitlab.identity(session.location.host) !== session.identity
     ) {
       return { failure: 'head-moved', retryAt: null }
     }

@@ -152,6 +152,7 @@ export const PARITY: Record<keyof ChorusApi, Parity> = {
   readActiveGitReview: 'waived',
   readGitRequests: 'waived',
   readGitReview: 'waived',
+  readGitReviewFile: 'waived',
   readSettings: 'engine',
   readTrafficBody: 'engine',
   readTrafficDetail: 'engine',

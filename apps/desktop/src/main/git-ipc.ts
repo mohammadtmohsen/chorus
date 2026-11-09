@@ -15,6 +15,7 @@ export interface GitIpcDeps {
     | 'state'
     | 'requests'
     | 'review'
+    | 'reviewFile'
     | 'comment'
     | 'reply'
     | 'resolve'
@@ -98,6 +99,8 @@ export class GitIpc {
         return this.deps.service.requests(projectId)
       case 'git:review':
         return this.deps.service.review(projectId, (request as GitRequest<'git:review'>).iid)
+      case 'git:reviewFile':
+        return this.deps.service.reviewFile(request as GitRequest<'git:reviewFile'>)
       case 'git:activeReview':
         return this.deps.service.activeReview(projectId)
       case 'git:closeReview':

@@ -4,6 +4,7 @@ import {
   GitReplyRequest,
   GitResolveRequest,
   GitReviewEnvelope,
+  GitReviewFileReadRequest,
   GitReviewFileRequest,
 } from './git-ipc.js'
 /*
@@ -131,6 +132,7 @@ export type WorkbenchConnection = z.infer<typeof WorkbenchConnection>
 export const WORKBENCH_REVIEW_STATE_CHANNEL = 'workbench:review:state'
 export const WORKBENCH_REVIEW_CHANGED_CHANNEL = 'workbench:review:changed'
 export const WORKBENCH_REVIEW_ACTION_CHANNEL = 'workbench:review:action'
+export const WORKBENCH_REVIEW_FILE_CHANNEL = 'workbench:review:file'
 
 export const WorkbenchReviewState = GitReviewEnvelope.omit({ projectId: true })
 export type WorkbenchReviewState = z.infer<typeof WorkbenchReviewState>
@@ -156,6 +158,17 @@ export const WorkbenchReviewActionResult = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), message: z.string().min(1) }),
 ])
 export type WorkbenchReviewActionResult = z.infer<typeof WorkbenchReviewActionResult>
+
+export const WorkbenchReviewFileRequest = GitReviewFileReadRequest.omit({
+  projectId: true,
+}).strict()
+export type WorkbenchReviewFileRequest = z.infer<typeof WorkbenchReviewFileRequest>
+
+export const WorkbenchReviewFileResult = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), text: z.string() }),
+  z.object({ ok: z.literal(false), message: z.string().min(1) }),
+])
+export type WorkbenchReviewFileResult = z.infer<typeof WorkbenchReviewFileResult>
 
 /**
  * An OS-absolute path, spelled the way a `vscode-remote` URI requires.
@@ -1026,6 +1039,7 @@ export interface WorkbenchShellApi {
  * from the sender, so the renderer cannot name another project's resources.
  */
 export interface ChorusWorkbenchApi {
+  readonly reviewFile: (request: WorkbenchReviewFileRequest) => Promise<WorkbenchReviewFileResult>
   readonly reviewState: () => Promise<unknown>
   readonly onReviewChanged: (handler: (state: unknown) => void) => () => void
   readonly reviewAction: (action: WorkbenchReviewAction) => Promise<WorkbenchReviewActionResult>
