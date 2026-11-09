@@ -135,6 +135,7 @@ describe('engine replacement', () => {
         claude: { value: null, revision: 0 },
         codex: { value: null, revision: 0 },
         deepseek: { value: null, revision: 0 },
+        gitlab: { value: null, revision: 0 },
         typesafe: { value: null, revision: 0 },
         'completion-deepseek': { value: null, revision: 0 },
         'completion-codestral': { value: null, revision: 0 },

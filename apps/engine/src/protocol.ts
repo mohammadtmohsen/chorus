@@ -21,6 +21,7 @@ export const SecretId = z.enum([
   'claude',
   'codex',
   'deepseek',
+  'gitlab',
   'typesafe',
   'completion-deepseek',
   'completion-codestral',

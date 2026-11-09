@@ -21,6 +21,11 @@ import { raise } from './detached-windows.js'
 import { defaultDeps, openFileInEditor } from './ide-extension.js'
 import { applyTheme } from './theme.js'
 import {
+  GITLAB_WORKFLOW_SECRET,
+  importableGitLabToken,
+  readWorkbenchSecret,
+} from './workbench-secrets.js'
+import {
   closeWorkbenchProject,
   prepareWorkbenchProjectClose,
   refreshWorkbenchTerminalEnv,
@@ -117,6 +122,11 @@ export async function answerEngineHostCall(
       invalidateCompletionCredential()
       return acknowledged
     }
+    case 'gitlab.importWorkbenchToken':
+      return importableGitLabToken(
+        readWorkbenchSecret(app.getPath('userData'), GITLAB_WORKFLOW_SECRET),
+        'https://gitlab.com'
+      )
     case 'reveal':
       raise(deps.windowFor(role))
       return true

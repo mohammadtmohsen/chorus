@@ -338,6 +338,7 @@ export function EditorPane(
     setDevtoolsCollapsed,
     setGitWidth,
     setGitCollapsed,
+    setGitTab,
     setRowScroll,
     setTrafficWidth,
     setProjectTerminalWidth,
@@ -725,6 +726,11 @@ export function EditorPane(
                       key={projectId}
                       projectId={projectId}
                       collapsed={gitCollapsed}
+                      tab={git.tab}
+                      onTab={(tab) => {
+                        setGitTab(projectId, tab)
+                        commitLayout()
+                      }}
                       onOpenProject={(id) => {
                         useWorkspaceStore.getState().openProject(id)
                       }}

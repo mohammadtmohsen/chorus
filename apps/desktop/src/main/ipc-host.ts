@@ -43,6 +43,7 @@ export interface IpcHost extends HostPorts, ShellDelivery, WorkbenchEvents {
   notify(request: IpcRequest<'app:notify'>): void
   probeAgents: typeof probeAgents
   checkTypesafeKey: typeof checkTypesafeKey
+  importGitlabToken(): Promise<IpcResponse<'settings:importGitlabToken'>['result']>
   checkRemoteHost(host: string): Promise<RemoteHostCheck>
   extensionDeps(): ReturnType<typeof defaultDeps>
   invalidateCompletionCredential(): void

@@ -9,7 +9,8 @@ import type {
 } from '../shared/workbench-ipc.js'
 import type { WorkbenchPlace } from './project-root.js'
 
-export type SecretId = AgentId | 'typesafe' | 'completion-deepseek' | 'completion-codestral'
+export type SecretId =
+  AgentId | 'gitlab' | 'typesafe' | 'completion-deepseek' | 'completion-codestral'
 
 export interface EditorPort {
   hasSurface(place: WorkbenchPlace): boolean

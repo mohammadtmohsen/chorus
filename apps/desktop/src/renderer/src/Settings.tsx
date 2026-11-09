@@ -394,6 +394,19 @@ const SECRETS = {
     /* No check offered: a DeepSeek key proves itself on the next turn, free. */
     verify: null,
   },
+  gitlab: {
+    isSet: (settings: IpcResponse<'settings:read'>) => settings.gitlabTokenSet,
+    write: (value: string) => window.chorus.writeSettings({ gitlabToken: value }),
+    heading: 'settings.gitlabHeading',
+    label: 'settings.gitlabKey',
+    placeholder: 'settings.gitlabPlaceholder',
+    stored: 'settings.gitlabStored',
+    save: 'settings.gitlabSave',
+    clear: 'settings.gitlabClear',
+    note: 'settings.gitlabNote',
+    install: null,
+    verify: null,
+  },
   typesafe: {
     isSet: (settings: IpcResponse<'settings:read'>) => settings.typesafeKeySet,
     write: (value: string) => window.chorus.writeSettings({ typesafeApiKey: value }),
@@ -485,6 +498,7 @@ const SECRETS = {
  */
 function ApiKeyField(props: { secret: keyof typeof SECRETS }): React.JSX.Element {
   const { t } = useTranslation()
+  const capabilities = useHostCapabilities()
   const secret = SECRETS[props.secret]
   /* Lifted to a const so the null check narrows inside the button's callback. */
   const install = secret.install
@@ -496,6 +510,10 @@ function ApiKeyField(props: { secret: keyof typeof SECRETS }): React.JSX.Element
   const [outcome, setOutcome] = useState<IpcResponse<'agents:installSkill'> | null>(null)
   const [checking, setChecking] = useState(false)
   const [verdict, setVerdict] = useState<IpcResponse<'agents:checkServiceKey'> | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<
+    IpcResponse<'settings:importGitlabToken'>['result'] | null
+  >(null)
 
   useEffect(() => {
     let live = true
@@ -518,6 +536,7 @@ function ApiKeyField(props: { secret: keyof typeof SECRETS }): React.JSX.Element
    */
   const store = (value: string): void => {
     setError(null)
+    setImportResult(null)
     secret
       .write(value)
       .then((settings) => {
@@ -526,6 +545,25 @@ function ApiKeyField(props: { secret: keyof typeof SECRETS }): React.JSX.Element
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : String(e))
+      })
+  }
+
+  const importGitlabToken = (): void => {
+    setError(null)
+    setImportResult(null)
+    setImporting(true)
+    window.chorus
+      .importGitlabToken({})
+      .then(({ result, gitlabTokenSet }) => {
+        setIsSet(gitlabTokenSet)
+        setImportResult(result)
+        if (result === 'imported') setDraft('')
+      })
+      .catch(() => {
+        setError(t('settings.gitlabImportFailed'))
+      })
+      .finally(() => {
+        setImporting(false)
       })
   }
 
@@ -590,7 +628,7 @@ function ApiKeyField(props: { secret: keyof typeof SECRETS }): React.JSX.Element
         <button
           type="button"
           className="btn"
-          disabled={draft.trim() === ''}
+          disabled={importing || draft.trim() === ''}
           onClick={() => {
             store(draft.trim())
           }}
@@ -601,11 +639,17 @@ function ApiKeyField(props: { secret: keyof typeof SECRETS }): React.JSX.Element
           <button
             type="button"
             className="btn"
+            disabled={importing}
             onClick={() => {
               store('')
             }}
           >
             {t(secret.clear)}
+          </button>
+        )}
+        {props.secret === 'gitlab' && capabilities.embeddedEditor && (
+          <button type="button" className="btn" disabled={importing} onClick={importGitlabToken}>
+            {t(importing ? 'settings.gitlabImporting' : 'settings.gitlabImport')}
           </button>
         )}
         {install !== null && (
@@ -653,6 +697,17 @@ function ApiKeyField(props: { secret: keyof typeof SECRETS }): React.JSX.Element
         </p>
       )}
       {error !== null && <p className="settings-key-error">{error}</p>}
+      {importResult !== null && (
+        <p
+          className={importResult === 'imported' ? 'footnote' : 'settings-key-error'}
+          role="status"
+        >
+          {importResult === 'imported' && t('settings.gitlabImported')}
+          {importResult === 'none' && t('settings.gitlabImportNone')}
+          {importResult === 'oauth-only' && t('settings.gitlabImportOauth')}
+          {importResult === 'several' && t('settings.gitlabImportSeveral')}
+        </p>
+      )}
       {install !== null && outcome !== null && (
         <p className={outcome.state === 'installed' ? 'footnote' : 'settings-key-error'}>
           {outcome.state === 'installed' && t(install.installed)}
@@ -1073,6 +1128,7 @@ export function Settings(props: {
 
           <Appearance />
           <ApiKeyField secret="deepseek" />
+          <ApiKeyField secret="gitlab" />
           <ApiKeyField secret="typesafe" />
           <CompletionPreference />
           <ApiKeyField secret="completionDeepseek" />

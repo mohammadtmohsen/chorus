@@ -187,6 +187,7 @@ export const SettingsShape = z.object({
  */
 export const SettingsWithSecrets = SettingsShape.extend({
   deepseekKeySet: z.boolean().default(false),
+  gitlabTokenSet: z.boolean().default(false),
   /*
    * TypeSafe is not an agent and has no entry in `AGENT_IDS` — it is a service
    * the agents call, and Chorus holds its credential so they can. The boolean
@@ -1937,12 +1938,20 @@ export const IPC_CONTRACT = {
        * one in a transcript.
        */
       deepseekApiKey: z.string().optional(),
+      gitlabToken: z.string().optional(),
       /** Same contract as `deepseekApiKey`: empty clears, absent leaves alone. */
       typesafeApiKey: z.string().optional(),
       completionDeepseekApiKey: z.string().optional(),
       completionCodestralApiKey: z.string().optional(),
     }),
     response: SettingsWithSecrets,
+  },
+  'settings:importGitlabToken': {
+    request: z.object({}),
+    response: z.object({
+      result: z.enum(['imported', 'none', 'oauth-only', 'several']),
+      gitlabTokenSet: z.boolean(),
+    }),
   },
   'diagnostics:read': {
     request: z.void(),
@@ -2737,6 +2746,9 @@ export interface ChorusApi
   readonly writeSettings: (
     request: IpcRequest<'settings:write'>
   ) => Promise<IpcResponse<'settings:write'>>
+  readonly importGitlabToken: (
+    request: IpcRequest<'settings:importGitlabToken'>
+  ) => Promise<IpcResponse<'settings:importGitlabToken'>>
   readonly history: (
     request: IpcRequest<'conversation:history'>
   ) => Promise<IpcResponse<'conversation:history'>>
