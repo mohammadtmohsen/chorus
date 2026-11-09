@@ -295,8 +295,7 @@ const Approvals = z.object({
 
 export interface GitLabReviewFile {
   readonly raw: MrDiffItem
-  readonly summary: Omit<GitReviewFile, 'viewed'>
-  readonly digest: string
+  readonly summary: GitReviewFile
 }
 
 export interface GitLabReviewSnapshot {
@@ -314,25 +313,6 @@ export function hunksOf(file: MrDiffItem): DiffFile | null {
   if (file.deleted_file) head.push(`deleted file mode ${file.a_mode}`)
   const parsed = parseDiff(`${head.join('\n')}\n${file.diff}`)[0]
   return parsed === undefined ? null : { ...parsed, path: file.new_path, oldPath: file.old_path }
-}
-
-export function fileDigest(version: ReviewVersion, file: MrDiffItem): string {
-  const textless = !/^@@ /m.test(file.diff) || file.collapsed === true || file.too_large === true
-  return createHash('sha256')
-    .update(
-      JSON.stringify([
-        file.old_path,
-        file.new_path,
-        file.a_mode,
-        file.b_mode,
-        file.new_file,
-        file.deleted_file,
-        file.renamed_file,
-        file.diff,
-        textless ? version.headSha : '',
-      ])
-    )
-    .digest('hex')
 }
 
 function labelsOf(labels: readonly (string | z.infer<typeof Label>)[]): MrRow['labels'] {
@@ -553,7 +533,6 @@ export class GitLabDirectory implements GitProviderPort {
           tooLarge,
           threads,
         },
-        digest: fileDigest(version, raw),
       }
     })
     const mr = detail.value
@@ -579,6 +558,7 @@ export class GitLabDirectory implements GitProviderPort {
             sourceBranch: mr.source_branch,
             targetBranch: mr.target_branch,
             labels: labelsOf(mr.labels),
+            fork: mr.source_project_id !== mr.target_project_id,
           },
           version,
           pipeline: pipelineOf(mr.head_pipeline),

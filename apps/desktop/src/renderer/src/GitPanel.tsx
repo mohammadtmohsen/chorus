@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   GitBoxState,
   GitCheckoutTarget,
   GitFailure,
   GitRequests,
+  GitReviewEnvelope,
   MrRow,
 } from '../../shared/git-ipc.js'
 import { isSafeHref } from '../../shared/markdown.js'
-import { GitReview } from './GitReview.js'
+import { GitReview, type ReviewState } from './GitReview.js'
 
 export const PIPELINE_STATUSES = new Set([
   'created',
@@ -72,6 +73,13 @@ export function GitPanel(props: {
   const [requests, setRequests] = useState<GitRequestsState | null>(null)
   const [requestsRevision, setRequestsRevision] = useState(0)
   const [reviewIid, setReviewIid] = useState<number | null>(null)
+  const [heldReview, setHeldReview] = useState<GitReviewEnvelope | null>(null)
+  const [reviewOutcome, setReviewOutcome] = useState<ReviewState | { kind: 'ready' } | null>(null)
+  const reviewScope = useRef(props.projectId)
+  const reviewRevision = useRef(-1)
+  const reviewTicket = useRef(0)
+  const reviewPending = useRef(false)
+  const selectedReview = useRef<number | null>(null)
   const request = useRef(0)
   const requestsId = useRef(0)
   const pending = useRef(false)
@@ -80,6 +88,121 @@ export function GitPanel(props: {
   const defaultTab = connected ? 'requests' : 'branches'
   const tab = gitlab ? (props.tab ?? defaultTab) : 'branches'
 
+  const acceptReview = useCallback(
+    (next: GitReviewEnvelope, select: boolean): boolean => {
+      if (
+        reviewScope.current !== props.projectId ||
+        next.projectId !== props.projectId ||
+        next.revision < reviewRevision.current
+      ) {
+        return false
+      }
+      reviewRevision.current = next.revision
+      setHeldReview(next)
+      if (select && !reviewPending.current) {
+        const iid = next.review?.mr.iid ?? null
+        selectedReview.current = iid
+        setReviewIid(iid)
+        setReviewOutcome(next.review === null ? null : { kind: 'ready' })
+      }
+      return true
+    },
+    [props.projectId]
+  )
+
+  const loadReview = useCallback(
+    async (iid: number): Promise<void> => {
+      const ticket = ++reviewTicket.current
+      reviewPending.current = true
+      selectedReview.current = iid
+      setReviewIid(iid)
+      setReviewOutcome(null)
+      try {
+        const next = await window.chorus.readGitReview({ projectId: props.projectId, iid })
+        if (reviewTicket.current !== ticket || reviewScope.current !== props.projectId) return
+        acceptReview(next, false)
+        setReviewOutcome(next.outcome)
+      } catch (error) {
+        if (reviewTicket.current === ticket && reviewScope.current === props.projectId) {
+          setReviewOutcome({
+            kind: 'failed',
+            failure: isGitRestartError(error) ? 'restart-required' : 'network',
+            retryAt: null,
+          })
+        }
+      } finally {
+        if (reviewTicket.current === ticket) reviewPending.current = false
+      }
+    },
+    [props.projectId, acceptReview]
+  )
+
+  useEffect(() => {
+    let live = true
+    let engineConnected: boolean | null = null
+    reviewScope.current = props.projectId
+    reviewRevision.current = -1
+    reviewTicket.current++
+    reviewPending.current = false
+    selectedReview.current = null
+    setReviewIid(null)
+    setReviewOutcome(null)
+    setHeldReview(null)
+    const read = (): void => {
+      void window.chorus
+        .readActiveGitReview({ projectId: props.projectId })
+        .then((next) => {
+          if (live) acceptReview(next, true)
+        })
+        .catch((error: unknown) => {
+          if (live) setFailure(isGitRestartError(error) ? 'restart-required' : 'git-failed')
+        })
+    }
+    const unsubscribe = window.chorus.onGitReviewChanged((next) => {
+      if (live) acceptReview(next, true)
+    })
+    const unsubscribeEngine = window.chorusDesktop?.onEngineStatus(({ state: status }) => {
+      if (!live) return
+      if (status === 'connected') {
+        if (engineConnected === false) {
+          reviewTicket.current++
+          reviewPending.current = false
+          reviewRevision.current = -1
+          read()
+        }
+        engineConnected = true
+      } else {
+        engineConnected = false
+      }
+    })
+    read()
+    return () => {
+      live = false
+      reviewTicket.current++
+      unsubscribe()
+      unsubscribeEngine?.()
+    }
+  }, [props.projectId, acceptReview])
+
+  const closeReview = async (): Promise<void> => {
+    const ticket = ++reviewTicket.current
+    reviewPending.current = false
+    try {
+      const next = await window.chorus.closeGitReview({ projectId: props.projectId })
+      if (reviewTicket.current !== ticket || reviewScope.current !== props.projectId) return
+      acceptReview(next, true)
+      setRequestsRevision((current) => current + 1)
+    } catch (error) {
+      if (reviewTicket.current === ticket && reviewScope.current === props.projectId) {
+        setReviewOutcome({
+          kind: 'failed',
+          failure: isGitRestartError(error) ? 'restart-required' : 'git-failed',
+          retryAt: null,
+        })
+      }
+    }
+  }
+
   useEffect(
     () =>
       window.chorus.onSettings(() => {
@@ -87,8 +210,9 @@ export function GitPanel(props: {
         setRequests(null)
         setRevision((current) => current + 1)
         setRequestsRevision((current) => current + 1)
+        if (selectedReview.current !== null) void loadReview(selectedReview.current)
       }),
-    []
+    [loadReview]
   )
 
   useEffect(() => {
@@ -215,16 +339,43 @@ export function GitPanel(props: {
     )
   }
 
+  let shownReview: ReviewState | null = null
+  if (reviewOutcome?.kind === 'ready') {
+    if (heldReview?.projectId === props.projectId && heldReview.review?.mr.iid === reviewIid) {
+      shownReview = heldReview.review
+    }
+  } else {
+    shownReview = reviewOutcome
+  }
+
   if (reviewIid !== null) {
+    const currentReview = shownReview
+    const branchDiffers =
+      currentReview?.kind === 'ready' &&
+      !currentReview.mr.fork &&
+      state.branch === currentReview.mr.sourceBranch &&
+      state.branches.some(
+        (branch) =>
+          branch.head &&
+          branch.kind === 'local' &&
+          branch.name === currentReview.mr.sourceBranch &&
+          branch.sha !== currentReview.version.headSha
+      )
     return (
       <GitReview
         key={`${props.projectId}:${String(reviewIid)}`}
         projectId={props.projectId}
         iid={reviewIid}
-        collapsed={props.collapsed}
+        review={shownReview}
+        branchDiffers={branchDiffers}
+        onFailure={(next, retryAt) => {
+          setReviewOutcome({ kind: 'failed', failure: next, retryAt })
+        }}
+        onRefresh={() => {
+          void loadReview(reviewIid)
+        }}
         onBack={() => {
-          setReviewIid(null)
-          setRequestsRevision((current) => current + 1)
+          void closeReview()
         }}
       />
     )
@@ -431,7 +582,7 @@ export function GitPanel(props: {
                           type="button"
                           disabled={busy !== null}
                           onClick={() => {
-                            setReviewIid(row.iid)
+                            void loadReview(row.iid)
                           }}
                         >
                           {t('git.review.open')}

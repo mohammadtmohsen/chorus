@@ -12,11 +12,6 @@ export interface ReviewSeen {
   readonly seenAt: number
 }
 
-interface ViewedRow {
-  readonly path: unknown
-  readonly digest: unknown
-}
-
 interface SeenRow {
   readonly version_id: unknown
   readonly head_sha: unknown
@@ -25,22 +20,6 @@ interface SeenRow {
 
 export class ReviewMarksStore {
   constructor(private readonly db: Database) {}
-
-  readViewed(key: ReviewKey): ReadonlyMap<string, string> {
-    const rows = this.db
-      .prepare(
-        `SELECT path, digest FROM review_viewed
-          WHERE host = @host AND project = @project AND iid = @iid`
-      )
-      .all({ ...key }) as readonly ViewedRow[]
-    const viewed = new Map<string, string>()
-    for (const row of rows) {
-      if (typeof row.path === 'string' && typeof row.digest === 'string') {
-        viewed.set(row.path, row.digest)
-      }
-    }
-    return viewed
-  }
 
   readSeen(key: ReviewKey): ReviewSeen | null {
     const row = this.db
@@ -60,27 +39,6 @@ export class ReviewMarksStore {
       return null
     }
     return { versionId: row.version_id, headSha: row.head_sha, seenAt: row.seen_at }
-  }
-
-  setViewed(key: ReviewKey, path: string, digest: string | null, now: number): void {
-    if (digest === null) {
-      this.db
-        .prepare(
-          `DELETE FROM review_viewed
-            WHERE host = @host AND project = @project AND iid = @iid AND path = @path`
-        )
-        .run({ ...key, path })
-      return
-    }
-    this.db
-      .prepare(
-        `INSERT INTO review_viewed (host, project, iid, path, digest, viewed_at)
-         VALUES (@host, @project, @iid, @path, @digest, @now)
-         ON CONFLICT(host, project, iid, path) DO UPDATE SET
-           digest = excluded.digest,
-           viewed_at = excluded.viewed_at`
-      )
-      .run({ ...key, path, digest, now })
   }
 
   setSeen(key: ReviewKey, versionId: number, headSha: string, now: number): void {

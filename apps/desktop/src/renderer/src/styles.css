@@ -14273,50 +14273,52 @@ html.continuous-row .global-note {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--step);
-  min-height: 30px;
-  padding: var(--step) calc(var(--step) * 3);
-}
-
-.git-review-file[data-viewed='yes'] .git-review-filename {
-  color: var(--text-muted);
-}
-
-.git-review-file input {
-  flex: 0 0 auto;
-  margin: 0 var(--step) 0 0;
-  accent-color: var(--accent-text);
+  min-height: 24px;
+  padding-inline-end: calc(var(--step) * 3);
 }
 
 .git-panel .git-review-filename,
 .git-panel .git-review-folder {
-  padding-block: var(--step);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 1.5);
+  min-width: 0;
+  min-height: 24px;
+  padding-block: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
+  font-weight: normal;
   text-align: start;
 }
 
 .git-panel .git-review-folder {
-  display: flex;
-  align-items: center;
-  gap: var(--step);
   width: 100%;
-  min-height: 30px;
-  font-weight: 600;
+  padding-inline-end: calc(var(--step) * 3);
 }
 
 .git-panel .git-review-filename {
   flex: 1 1 120px;
+}
+
+.git-review-name {
   min-width: 0;
   overflow: hidden;
-  font-family: var(--mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.git-review-folder-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-linejoin: round;
+}
+
 .git-panel .git-review-filename:hover:not(:disabled),
 .git-panel .git-review-folder:hover:not(:disabled) {
-  color: var(--accent-text);
   background: var(--bg-surface);
 }
 
@@ -14324,8 +14326,33 @@ html.continuous-row .global-note {
 .git-review-counts {
   flex: 0 0 auto;
   color: var(--text-secondary);
-  font-family: var(--mono);
   font-size: 11px;
+}
+
+.git-review-status {
+  min-width: 1.5em;
+  font-weight: 600;
+  text-align: center;
+}
+
+.git-review-file[data-status='added'] :is(.git-review-status, .git-review-name) {
+  color: var(--diff-gutter-added);
+}
+
+.git-review-file[data-status='removed'] :is(.git-review-status, .git-review-name) {
+  color: var(--diff-gutter-removed);
+}
+
+.git-review-file[data-status='removed'] .git-review-name {
+  text-decoration: line-through;
+}
+
+.git-review-file[data-status='modified'] :is(.git-review-status, .git-review-name) {
+  color: var(--ansi-yellow);
+}
+
+.git-review-file[data-status='renamed'] :is(.git-review-status, .git-review-name) {
+  color: var(--ansi-green);
 }
 
 .git-review-file-issue {

@@ -2,6 +2,7 @@ import { getService } from '@codingame/monaco-vscode-api'
 import { IEditorService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/editor/common/editorService.service'
 import { IFileService } from '@codingame/monaco-vscode-api/vscode/vs/platform/files/common/files.service'
 import { ILanguageService } from '@codingame/monaco-vscode-api/vscode/vs/editor/common/languages/language.service'
+import { IWorkspaceContextService } from '@codingame/monaco-vscode-api/vscode/vs/platform/workspace/common/workspace.service'
 import { URI } from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri'
 import {
   RegisteredFileSystemProvider,
@@ -12,8 +13,16 @@ import type {
   WorkbenchReviewDiffResult,
 } from '../../../shared/workbench-ipc.js'
 
-const SCHEME = 'chorus-review'
+export const REVIEW_SCHEME = 'chorus-review'
 const resources = new Set<string>()
+
+export function reviewAuthority(
+  side: 'original' | 'modified' | 'all',
+  iid: number,
+  versionId: number
+): string {
+  return `${side}-${String(iid)}-${String(versionId)}`
+}
 let provider: RegisteredFileSystemProvider | null = null
 
 function isReviewFile(value: unknown): value is WorkbenchReviewDiffFile {
@@ -25,7 +34,8 @@ function isReviewFile(value: unknown): value is WorkbenchReviewDiffFile {
     typeof file['oldPath'] === 'string' &&
     file['oldPath'] !== '' &&
     typeof file['before'] === 'string' &&
-    typeof file['after'] === 'string'
+    typeof file['after'] === 'string' &&
+    typeof file['workspace'] === 'boolean'
   )
 }
 
@@ -63,26 +73,37 @@ export function serveReviewDiff(): void {
       const files = await getService(IFileService)
       if (provider === null) {
         const next = new RegisteredFileSystemProvider(true)
-        files.registerProvider(SCHEME, next)
+        files.registerProvider(REVIEW_SCHEME, next)
         provider = next
       }
       const registered = provider
       const languages = await getService(ILanguageService)
-      const inputs = requested.map(({ path, oldPath, before, after }) => {
+      const context = await getService(IWorkspaceContextService)
+      const root = context.getWorkspace().folders[0]?.uri
+      if (root === undefined && requested.some((file) => file.workspace)) {
+        return { requestId, ok: false, failure: 'open-failed' }
+      }
+      const inputs = requested.map(({ path, oldPath, before, after, workspace }) => {
         const original = URI.from({
-          scheme: SCHEME,
-          authority: `original-${String(iid)}-${String(versionId)}`,
-          path: `/${oldPath}`,
+          scheme: REVIEW_SCHEME,
+          authority: reviewAuthority('original', iid, versionId),
+          path: workspace && root !== undefined ? URI.joinPath(root, oldPath).path : `/${oldPath}`,
         })
-        const modified = URI.from({
-          scheme: SCHEME,
-          authority: `modified-${String(iid)}-${String(versionId)}`,
-          path: `/${path}`,
-        })
-        for (const [resource, text] of [
-          [original, before],
-          [modified, after],
-        ] as const) {
+        const modified =
+          workspace && root !== undefined
+            ? URI.joinPath(root, path)
+            : URI.from({
+                scheme: REVIEW_SCHEME,
+                authority: reviewAuthority('modified', iid, versionId),
+                path: `/${path}`,
+              })
+        const contents: readonly (readonly [URI, string])[] = workspace
+          ? [[original, before]]
+          : [
+              [original, before],
+              [modified, after],
+            ]
+        for (const [resource, text] of contents) {
           const key = resource.toString()
           if (resources.has(key)) continue
           const bytes = new TextEncoder().encode(text)
@@ -108,9 +129,10 @@ export function serveReviewDiff(): void {
         multiple
           ? {
               multiDiffSource: URI.from({
-                scheme: SCHEME,
-                authority: `all-${String(iid)}-${String(versionId)}`,
+                scheme: REVIEW_SCHEME,
+                authority: reviewAuthority('all', iid, versionId),
                 path: '/',
+                query: JSON.stringify(inputs.map(({ modified }) => modified.resource.toString())),
               }),
               label: typeof title === 'string' ? title : '',
               resources: inputs,

@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  '@codingame/monaco-vscode-extensions-service-override@33.0.9': c8559012e3bb02afb333d3e6bcb1d1735985eb4abff0e2bb87a4d072983d9b8c
   '@codingame/monaco-vscode-host-service-override@33.0.9': 05ad52a354870d667b27136e6eb5b3174fa1b0dc5fecdccb3fc2b98234698f64
   '@codingame/monaco-vscode-workbench-service-override@33.0.9': 819146f4010f2b2358e9e0f2ca6b5ef9c654887daf26ea448d6560570c27c7dd
 
@@ -134,7 +135,7 @@ importers:
         version: 33.0.9
       '@codingame/monaco-vscode-extensions-service-override':
         specifier: 33.0.9
-        version: 33.0.9
+        version: 33.0.9(patch_hash=c8559012e3bb02afb333d3e6bcb1d1735985eb4abff0e2bb87a4d072983d9b8c)
       '@codingame/monaco-vscode-files-service-override':
         specifier: 33.0.9
         version: 33.0.9
@@ -5369,7 +5370,7 @@ snapshots:
     dependencies:
       '@codingame/monaco-vscode-base-service-override': 33.0.9
       '@codingame/monaco-vscode-environment-service-override': 33.0.9
-      '@codingame/monaco-vscode-extensions-service-override': 33.0.9
+      '@codingame/monaco-vscode-extensions-service-override': 33.0.9(patch_hash=c8559012e3bb02afb333d3e6bcb1d1735985eb4abff0e2bb87a4d072983d9b8c)
       '@codingame/monaco-vscode-files-service-override': 33.0.9
       '@codingame/monaco-vscode-host-service-override': 33.0.9(patch_hash=05ad52a354870d667b27136e6eb5b3174fa1b0dc5fecdccb3fc2b98234698f64)
       '@codingame/monaco-vscode-layout-service-override': 33.0.9
@@ -5459,13 +5460,13 @@ snapshots:
   '@codingame/monaco-vscode-extension-api@33.0.9':
     dependencies:
       '@codingame/monaco-vscode-api': 33.0.9
-      '@codingame/monaco-vscode-extensions-service-override': 33.0.9
+      '@codingame/monaco-vscode-extensions-service-override': 33.0.9(patch_hash=c8559012e3bb02afb333d3e6bcb1d1735985eb4abff0e2bb87a4d072983d9b8c)
 
   '@codingame/monaco-vscode-extension-gallery-service-override@33.0.9':
     dependencies:
       '@codingame/monaco-vscode-api': 33.0.9
 
-  '@codingame/monaco-vscode-extensions-service-override@33.0.9':
+  '@codingame/monaco-vscode-extensions-service-override@33.0.9(patch_hash=c8559012e3bb02afb333d3e6bcb1d1735985eb4abff0e2bb87a4d072983d9b8c)':
     dependencies:
       '@codingame/monaco-vscode-api': 33.0.9
       '@codingame/monaco-vscode-files-service-override': 33.0.9

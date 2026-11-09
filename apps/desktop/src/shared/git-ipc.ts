@@ -74,7 +74,6 @@ export const GitReviewFile = z.object({
   collapsed: z.boolean(),
   tooLarge: z.boolean(),
   threads: z.number().int().nonnegative(),
-  viewed: z.enum(['no', 'yes', 'changed']),
 })
 export type GitReviewFile = z.infer<typeof GitReviewFile>
 
@@ -88,6 +87,7 @@ export const GitReviewReady = z.object({
     sourceBranch: true,
     targetBranch: true,
     labels: true,
+    fork: true,
   }).extend({ description: z.string() }),
   version: ReviewVersion,
   pipeline: MrRow.shape.pipeline,
@@ -117,6 +117,29 @@ export const GitReview = z.discriminatedUnion('kind', [
   GitReviewReady,
 ])
 export type GitReview = z.infer<typeof GitReview>
+
+export const GitReviewEnvelope = z.object({
+  projectId: z.string().min(1),
+  revision: z.number().int().nonnegative(),
+  review: GitReviewReady.nullable(),
+})
+export type GitReviewEnvelope = z.infer<typeof GitReviewEnvelope>
+
+export const GitReviewOutcome = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('ready') }),
+  z.object({ kind: z.literal('preparing') }),
+  z.object({
+    kind: z.literal('failed'),
+    failure: GitFailure,
+    retryAt: z.number().int().nullable(),
+  }),
+])
+export type GitReviewOutcome = z.infer<typeof GitReviewOutcome>
+
+export const GitReviewReply = GitReviewEnvelope.extend({ outcome: GitReviewOutcome })
+export type GitReviewReply = z.infer<typeof GitReviewReply>
+
+export const GIT_REVIEW_PUSH_CHANNEL = 'git:reviewChanged'
 
 export const GitReviewRequest = GitProject.extend({ iid: z.number().int().positive() }).strict()
 export const GitReviewVersionRequest = GitReviewRequest.extend({
@@ -217,11 +240,9 @@ export type GitCheckoutTarget = z.infer<typeof GitCheckoutTarget>
 export const GIT_CONTRACT = {
   'git:state': { request: GitProject, response: GitBoxState },
   'git:requests': { request: GitProject, response: GitRequests },
-  'git:review': { request: GitReviewRequest, response: GitReview },
-  'git:viewed': {
-    request: GitReviewFileRequest.extend({ viewed: z.boolean() }).strict(),
-    response: GitReview,
-  },
+  'git:review': { request: GitReviewRequest, response: GitReviewReply },
+  'git:activeReview': { request: GitProject, response: GitReviewEnvelope },
+  'git:closeReview': { request: GitProject, response: GitReviewEnvelope },
   'git:openDiff': {
     request: GitReviewFileRequest,
     response: GitDiffResult,
@@ -245,12 +266,18 @@ export type GitResponse<C extends GitChannel> = z.infer<GitContract[C]['response
 export const GIT_CHANNELS = Object.keys(GIT_CONTRACT) as GitChannel[]
 
 export interface GitApi {
+  readonly readActiveGitReview: (
+    request: GitRequest<'git:activeReview'>
+  ) => Promise<GitResponse<'git:activeReview'>>
+  readonly closeGitReview: (
+    request: GitRequest<'git:closeReview'>
+  ) => Promise<GitResponse<'git:closeReview'>>
+  readonly onGitReviewChanged: (listener: (state: GitReviewEnvelope) => void) => () => void
   readonly readGitState: (request: GitRequest<'git:state'>) => Promise<GitResponse<'git:state'>>
   readonly readGitRequests: (
     request: GitRequest<'git:requests'>
   ) => Promise<GitResponse<'git:requests'>>
   readonly readGitReview: (request: GitRequest<'git:review'>) => Promise<GitResponse<'git:review'>>
-  readonly setGitViewed: (request: GitRequest<'git:viewed'>) => Promise<GitResponse<'git:viewed'>>
   readonly openGitDiff: (
     request: GitRequest<'git:openDiff'>
   ) => Promise<GitResponse<'git:openDiff'>>

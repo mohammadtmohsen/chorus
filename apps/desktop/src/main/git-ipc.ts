@@ -1,5 +1,11 @@
 import type { IpcRegistrar, ShellClient, ShellRequest } from './shell-client.js'
-import { GIT_CHANNELS, GIT_CONTRACT, type GitChannel, type GitRequest } from '../shared/git-ipc.js'
+import {
+  GIT_CHANNELS,
+  GIT_CONTRACT,
+  GIT_REVIEW_PUSH_CHANNEL,
+  type GitChannel,
+  type GitRequest,
+} from '../shared/git-ipc.js'
 import type { GitBoxService } from './git-box.js'
 import type { ShellRole } from './traffic-ipc.js'
 
@@ -9,7 +15,9 @@ export interface GitIpcDeps {
     | 'state'
     | 'requests'
     | 'review'
-    | 'viewed'
+    | 'activeReview'
+    | 'closeReview'
+    | 'subscribe'
     | 'openDiff'
     | 'openAllDiffs'
     | 'fetch'
@@ -20,6 +28,7 @@ export interface GitIpcDeps {
 }
 
 export class GitIpc {
+  private readonly unsubscribe: () => void
   private readonly shells = new Map<
     string,
     { readonly webContents: ShellClient; readonly role: ShellRole }
@@ -30,6 +39,12 @@ export class GitIpc {
     private readonly registrar: IpcRegistrar
   ) {
     for (const channel of GIT_CHANNELS) this.register(channel)
+    this.unsubscribe = deps.service.subscribe((state) => {
+      for (const shell of this.shells.values()) {
+        if (shell.webContents.isGone() || !this.mayInspect(shell.role, state.projectId)) continue
+        shell.webContents.send(GIT_REVIEW_PUSH_CHANNEL, state)
+      }
+    })
   }
 
   registerShell(webContents: ShellClient, role: ShellRole): void {
@@ -41,6 +56,7 @@ export class GitIpc {
   }
 
   close(): void {
+    this.unsubscribe()
     for (const channel of GIT_CHANNELS) this.registrar.removeHandler(channel)
     this.shells.clear()
   }
@@ -78,8 +94,10 @@ export class GitIpc {
         return this.deps.service.requests(projectId)
       case 'git:review':
         return this.deps.service.review(projectId, (request as GitRequest<'git:review'>).iid)
-      case 'git:viewed':
-        return this.deps.service.viewed(request as GitRequest<'git:viewed'>)
+      case 'git:activeReview':
+        return this.deps.service.activeReview(projectId)
+      case 'git:closeReview':
+        return this.deps.service.closeReview(projectId)
       case 'git:openDiff':
         return this.deps.service.openDiff(request as GitRequest<'git:openDiff'>)
       case 'git:openAllDiffs':

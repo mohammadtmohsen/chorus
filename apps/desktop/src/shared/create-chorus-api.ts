@@ -74,7 +74,13 @@ import {
   type RunChannel,
   type RunResponse,
 } from './run-ipc.js'
-import { GIT_CONTRACT, type GitChannel, type GitResponse } from './git-ipc.js'
+import {
+  GIT_CONTRACT,
+  GIT_REVIEW_PUSH_CHANNEL,
+  GitReviewEnvelope,
+  type GitChannel,
+  type GitResponse,
+} from './git-ipc.js'
 import {
   TRAFFIC_CONTRACT,
   TRAFFIC_LIVE_PUSH_CHANNEL,
@@ -363,7 +369,8 @@ export function createChorusApi(transport: ShellTransport): ChorusApi {
     readGitState: invokeGit('git:state'),
     readGitRequests: invokeGit('git:requests'),
     readGitReview: invokeGit('git:review'),
-    setGitViewed: invokeGit('git:viewed'),
+    readActiveGitReview: invokeGit('git:activeReview'),
+    closeGitReview: invokeGit('git:closeReview'),
     openGitDiff: invokeGit('git:openDiff'),
     openGitAllDiffs: invokeGit('git:openAllDiffs'),
     fetchGit: invokeGit('git:fetch'),
@@ -536,6 +543,13 @@ export function createChorusApi(transport: ShellTransport): ChorusApi {
         if (parsed.success) listener(parsed.data)
       }
       return transport.on(RUN_PUSH_CHANNEL, wrapped)
+    },
+    onGitReviewChanged: (listener) => {
+      const wrapped = (payload: unknown): void => {
+        const parsed = GitReviewEnvelope.safeParse(payload)
+        if (parsed.success) listener(parsed.data)
+      }
+      return transport.on(GIT_REVIEW_PUSH_CHANNEL, wrapped)
     },
     onTrafficLive: (listener) => {
       const wrapped = (payload: unknown): void => {

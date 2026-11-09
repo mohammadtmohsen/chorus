@@ -27,6 +27,7 @@ import { reportEditorContext } from './context.js'
 import { serveWorkbenchEdits, serveWorkbenchReveal, serveWorkbenchSnapshot } from './edit.js'
 import { serveAskDiff } from './ask-diff.js'
 import { serveReviewDiff } from './review-diff.js'
+import { startGitReviewExtension } from './git-review-extension.js'
 import { registerInlineCompletions, startLanguageServiceSampling } from './completion.js'
 import { installGateHandle } from './gate-handle.js'
 import { announceSharedExtensionScope } from './extension-scope.js'
@@ -430,6 +431,13 @@ async function main(): Promise<void> {
   serveWorkbenchEdits(connection.projectRoot)
   serveWorkbenchSnapshot(connection.projectRoot)
   serveAskDiff(connection.remoteAuthority)
+  const reportReviewFailure = (error: unknown): void => {
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+    void getService(ILogService).then((logService) => {
+      logService.error(`Chorus: review extension failed — ${detail}`)
+    })
+  }
+  void startGitReviewExtension(connection.reviewLabels).catch(reportReviewFailure)
   serveReviewDiff()
   serveWorkbenchReveal(connection.remoteAuthority)
 

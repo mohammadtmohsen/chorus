@@ -14,7 +14,7 @@ import {
   type GitUiFailure,
 } from './GitPanel.js'
 
-type ReviewState =
+export type ReviewState =
   | Exclude<GitReviewResult, { kind: 'failed' }>
   | { readonly kind: 'failed'; readonly failure: GitUiFailure; readonly retryAt: number | null }
 
@@ -107,12 +107,14 @@ interface RowIssue {
 export function GitReview(props: {
   readonly projectId: string
   readonly iid: number
-  readonly collapsed: boolean
+  readonly review: ReviewState | null
+  readonly branchDiffers: boolean
+  readonly onFailure: (failure: GitUiFailure, retryAt: number | null) => void
+  readonly onRefresh: () => void
   readonly onBack: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [review, setReview] = useState<ReviewState | null>(null)
-  const [revision, setRevision] = useState(0)
+  const review = props.review
   const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [issues, setIssues] = useState<Record<string, RowIssue>>({})
   const [allDiffs, setAllDiffs] = useState<AllDiffsState | null>(null)
@@ -120,49 +122,24 @@ export function GitReview(props: {
   const generation = useRef(0)
   const pending = useRef<symbol | null>(null)
 
-  useEffect(
-    () =>
-      window.chorus.onSettings(() => {
-        generation.current++
-        setReview(null)
-        setRevision((value) => value + 1)
-      }),
-    []
-  )
-
+  const versionId = review?.kind === 'ready' ? review.version.id : null
   useEffect(() => {
-    if (props.collapsed) return undefined
     const current = ++generation.current
     pending.current = null
     setBusy(null)
-    setReview(null)
     setIssues({})
     setAllDiffs(null)
-    window.chorus
-      .readGitReview({ projectId: props.projectId, iid: props.iid })
-      .then((next) => {
-        if (generation.current === current) setReview(next)
-      })
-      .catch((error: unknown) => {
-        if (generation.current === current) {
-          setReview({
-            kind: 'failed',
-            failure: isGitRestartError(error) ? 'restart-required' : 'network',
-            retryAt: null,
-          })
-        }
-      })
     return () => {
       if (generation.current === current) generation.current++
     }
-  }, [props.projectId, props.iid, props.collapsed, revision])
+  }, [props.projectId, props.iid, versionId])
 
-  const act = async (kind: 'open' | 'viewed', file: GitReviewFile): Promise<void> => {
+  const open = async (file: GitReviewFile): Promise<void> => {
     if (review?.kind !== 'ready' || pending.current !== null) return
     const ticket = Symbol(file.path)
     pending.current = ticket
     const current = generation.current
-    setBusy(`${kind}:${file.path}`)
+    setBusy(`open:${file.path}`)
     setIssues((previous) =>
       Object.fromEntries(Object.entries(previous).filter(([key]) => key !== file.path))
     )
@@ -173,18 +150,13 @@ export function GitReview(props: {
       path: file.path,
     }
     try {
-      if (kind === 'viewed') {
-        const next = await window.chorus.setGitViewed({ ...request, viewed: file.viewed !== 'yes' })
-        if (generation.current === current && pending.current === ticket) setReview(next)
-      } else {
-        const result = await window.chorus.openGitDiff(request)
-        if (generation.current !== current || pending.current !== ticket) return
-        if (result.failure === 'head-moved') {
-          setReview({ kind: 'failed', failure: result.failure, retryAt: result.retryAt })
-        } else if (result.failure !== null) {
-          const failure = result.failure
-          setIssues((previous) => ({ ...previous, [file.path]: { ...result, failure } }))
-        }
+      const result = await window.chorus.openGitDiff(request)
+      if (generation.current !== current || pending.current !== ticket) return
+      if (result.failure === 'head-moved') {
+        props.onFailure(result.failure, result.retryAt)
+      } else if (result.failure !== null) {
+        const failure = result.failure
+        setIssues((previous) => ({ ...previous, [file.path]: { ...result, failure } }))
       }
     } catch (error) {
       if (generation.current === current && pending.current === ticket) {
@@ -221,7 +193,7 @@ export function GitReview(props: {
       })
       if (generation.current !== current || pending.current !== ticket) return
       if (result.failure === 'head-moved') {
-        setReview({ kind: 'failed', failure: result.failure, retryAt: result.retryAt })
+        props.onFailure(result.failure, result.retryAt)
       } else {
         setAllDiffs(result)
       }
@@ -274,7 +246,7 @@ export function GitReview(props: {
             type="button"
             className="git-review-reload"
             onClick={() => {
-              setRevision((value) => value + 1)
+              props.onRefresh()
             }}
           >
             {t(
@@ -289,7 +261,6 @@ export function GitReview(props: {
   }
 
   const rows = reviewTree(review.files, closed)
-  const viewed = review.files.filter((file) => file.viewed === 'yes').length
   const pipeline = review.pipeline?.status ?? 'unknown'
   const status = PIPELINE_STATUSES.has(pipeline) ? pipeline : 'unknown'
   const approvals = review.approvals
@@ -391,12 +362,17 @@ export function GitReview(props: {
             type="button"
             disabled={busy !== null}
             onClick={() => {
-              setRevision((value) => value + 1)
+              props.onRefresh()
             }}
           >
             {t('git.refresh')}
           </button>
         </header>
+        {props.branchDiffers && (
+          <p className="git-note" role="status">
+            {t('git.review.branchDiffers')}
+          </p>
+        )}
         {allResult.failure !== null && (
           <div className="git-failure" role="alert">
             <p>{t(gitFailureKey(allResult.failure))}</p>
@@ -420,9 +396,6 @@ export function GitReview(props: {
           </details>
         )}
       </div>
-      <p className="git-note muted" role="status">
-        {t('git.review.progress', { viewed, total: review.files.length })}
-      </p>
       {allResult.skipped > 0 && (
         <p className="git-note muted" role="status">
           <a
@@ -466,7 +439,16 @@ export function GitReview(props: {
                       })
                     }}
                   >
-                    <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {row.name}
+                    <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+                    <svg
+                      className="git-review-folder-icon"
+                      viewBox="0 0 16 16"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path d="M1.5 3.5h4.25l1.5 1.5h7.25v7.5h-13z" />
+                    </svg>
+                    <span className="git-review-name">{row.name}</span>
                   </button>
                 </li>
               )
@@ -479,43 +461,25 @@ export function GitReview(props: {
                 role="treeitem"
                 aria-level={row.depth + 1}
                 className="git-review-file"
-                data-viewed={file.viewed}
+                data-status={file.status}
                 style={{ paddingInlineStart: `${String(12 + row.depth * 16)}px` }}
               >
-                <input
-                  type="checkbox"
-                  checked={file.viewed === 'yes'}
-                  disabled={busy !== null}
-                  aria-label={t('git.review.viewedFile', { path: file.path })}
-                  onChange={() => {
-                    void act('viewed', file)
-                  }}
-                />
-                <span
-                  className="git-review-status"
-                  title={t(`git.review.statusName.${file.status}`)}
-                >
-                  {t(`git.review.status.${file.status}`)}
-                </span>
                 <button
                   type="button"
                   className="git-review-filename"
                   disabled={busy !== null}
                   title={file.path}
                   onClick={() => {
-                    void act('open', file)
+                    void open(file)
                   }}
                 >
-                  {row.name}
+                  <span className="git-review-name">{row.name}</span>
+                  <span className="git-review-counts">
+                    {t('git.review.changes', { added: file.added, removed: file.removed })}
+                  </span>
                 </button>
-                <span className="git-review-counts">
-                  {t('git.review.changes', { added: file.added, removed: file.removed })}
-                </span>
                 {file.threads > 0 && (
                   <span>{t('git.review.threads', { count: file.threads })}</span>
-                )}
-                {file.viewed === 'changed' && (
-                  <span className="git-updated">{t('git.review.changed')}</span>
                 )}
                 {(file.binary || file.tooLarge || file.collapsed) && (
                   <a
@@ -529,6 +493,12 @@ export function GitReview(props: {
                 {busy === `open:${file.path}` && (
                   <span role="status">{t('git.review.openingDiff')}</span>
                 )}
+                <span
+                  className="git-review-status"
+                  title={t(`git.review.statusName.${file.status}`)}
+                >
+                  {t(`git.review.status.${file.status}`)}
+                </span>
                 {issue !== undefined && (
                   <div className="git-review-file-issue" role="alert">
                     <span>{t(gitFailureKey(issue.failure))}</span>

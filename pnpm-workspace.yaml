@@ -38,5 +38,6 @@ minimumReleaseAgeExclude:
   - '@types/vscode@1.145.0'
 
 patchedDependencies:
+  '@codingame/monaco-vscode-extensions-service-override@33.0.9': patches/@codingame__monaco-vscode-extensions-service-override@33.0.9.patch
   '@codingame/monaco-vscode-host-service-override@33.0.9': patches/@codingame__monaco-vscode-host-service-override@33.0.9.patch
   '@codingame/monaco-vscode-workbench-service-override@33.0.9': patches/@codingame__monaco-vscode-workbench-service-override@33.0.9.patch

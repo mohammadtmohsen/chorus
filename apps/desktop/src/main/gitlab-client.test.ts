@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { fileDigest, GitLabClient, GitLabDirectory, hunksOf } from './gitlab-client.js'
+import { GitLabClient, GitLabDirectory, hunksOf } from './gitlab-client.js'
 import type { MrDiffItem } from './gitlab-client.js'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -469,22 +469,6 @@ describe('GitLab review files', () => {
       ],
     })
   })
-
-  it('retains unchanged text digests but resets binary and mode-only files with the head', () => {
-    const next = { ...version, id: 10, headSha: 'd'.repeat(40) }
-    const text = diffItem()
-    expect(fileDigest(version, text)).toBe(fileDigest(next, text))
-    expect(fileDigest(version, text)).not.toBe(fileDigest(version, { ...text, b_mode: '100755' }))
-    for (const file of [
-      diffItem({ diff: '' }),
-      diffItem({ diff: 'Binary files a/file.png and b/file.png differ\n' }),
-      diffItem({ diff: 'old mode 100644\nnew mode 100755\n', b_mode: '100755' }),
-      diffItem({ collapsed: true }),
-      diffItem({ too_large: true }),
-    ]) {
-      expect(fileDigest(version, file)).not.toBe(fileDigest(next, file))
-    }
-  })
 })
 
 describe('GitLabDirectory review snapshots', () => {
@@ -572,6 +556,7 @@ describe('GitLabDirectory review snapshots', () => {
             iid: 7,
             description: '',
             labels: [{ name: 'In Review', color: '#123456', textColor: '#fff' }],
+            fork: false,
           },
           version,
           pipeline: { id: 501, projectId: 99, status: 'success' },
@@ -586,7 +571,6 @@ describe('GitLabDirectory review snapshots', () => {
           files: [
             {
               raw: diffItem(),
-              digest: fileDigest(version, diffItem()),
               summary: {
                 path: 'src/file.ts',
                 status: 'modified',

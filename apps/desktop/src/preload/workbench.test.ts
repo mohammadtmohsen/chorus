@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import en from '../renderer/src/i18n/en.json'
 import {
   WORKBENCH_CONNECTION_CHANNEL,
   WORKBENCH_FOCUS_CHANNEL,
@@ -29,6 +30,9 @@ import {
   WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL,
   WORKBENCH_REVIEW_DIFF_CHANNEL,
   WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL,
+  WORKBENCH_REVIEW_STATE_CHANNEL,
+  WORKBENCH_REVIEW_CHANGED_CHANNEL,
+  WORKBENCH_REVIEW_ACTION_CHANNEL,
   type WorkbenchReviewDiffResult,
 } from '../shared/workbench-ipc.js'
 
@@ -67,6 +71,11 @@ const DESCRIPTOR = {
   connectionToken: 'a-token',
   commit: '987c9597516278c9fcf10d963a0592ce1384ab93',
   quality: 'stable',
+  reviewLabels: {
+    title: en.git.review.editorTitle,
+    actionFailed: en.git.failure['git-failed'],
+    status: en.git.review.status,
+  },
 }
 
 vi.mock('electron', () => ({
@@ -76,6 +85,9 @@ vi.mock('electron', () => ({
     },
   },
   ipcRenderer: {
+    removeListener: (channel: string) => {
+      listeners.delete(channel)
+    },
     on: (channel: string, listener: (event: unknown, payload: unknown) => void) => {
       listeners.set(channel, listener)
     },
@@ -114,6 +126,9 @@ const {
   ROW_SCROLL_REQUEST_CHANNEL,
   REVIEW_DIFF_CHANNEL,
   REVIEW_DIFF_RESULT_CHANNEL,
+  REVIEW_STATE_CHANNEL,
+  REVIEW_CHANGED_CHANNEL,
+  REVIEW_ACTION_CHANNEL,
   asConnection,
   asLayoutWidth,
   asTerminalEnv,
@@ -150,12 +165,18 @@ describe('the workbench preload', () => {
     expect(ROW_SCROLL_REQUEST_CHANNEL).toBe(WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL)
     expect(REVIEW_DIFF_CHANNEL).toBe(WORKBENCH_REVIEW_DIFF_CHANNEL)
     expect(REVIEW_DIFF_RESULT_CHANNEL).toBe(WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL)
+    expect(REVIEW_STATE_CHANNEL).toBe(WORKBENCH_REVIEW_STATE_CHANNEL)
+    expect(REVIEW_CHANGED_CHANNEL).toBe(WORKBENCH_REVIEW_CHANGED_CHANNEL)
+    expect(REVIEW_ACTION_CHANNEL).toBe(WORKBENCH_REVIEW_ACTION_CHANNEL)
   })
 
   it('exposes only the declared workbench methods', () => {
     // The list, not the count: a method named here is a capability a document
     // running extension code is handed, so which ones they are is the assertion.
     expect(Object.keys(exposed ?? {})).toEqual([
+      'reviewState',
+      'onReviewChanged',
+      'reviewAction',
       'connection',
       /*
        * The window-focus pair, and the narrowest additions to this list so far.
@@ -295,13 +316,22 @@ describe('the workbench preload', () => {
       oldPath: 'src/main.ts',
       before: 'before',
       after: 'after',
+      workspace: false,
     },
     {
       requestId: 'review-all',
       iid: 42,
       versionId: 7,
       title: '!42 changes',
-      files: [{ path: 'src/main.ts', oldPath: 'src/old.ts', before: 'before', after: 'after' }],
+      files: [
+        {
+          path: 'src/main.ts',
+          oldPath: 'src/old.ts',
+          before: 'before',
+          after: '',
+          workspace: true,
+        },
+      ],
     },
   ])('answers review diff request $requestId on its result channel', async (request) => {
     send.mockClear()
