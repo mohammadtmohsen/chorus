@@ -720,6 +720,7 @@
     "expand": "Expand Git",
     "collapse": "Shrink Git to 100px",
     "loading": "Reading branches…",
+    "restartRequired": "Chorus needs to restart to finish updating",
     "detached": "Detached HEAD",
     "fetch": "Refresh",
     "fetching": "Refreshing…",
@@ -760,6 +761,48 @@
     "notes_one": "{{count}} comment",
     "notes_other": "{{count}} comments",
     "openOnGitlab": "Open on GitLab",
+    "updatedSinceReview": "Updated since your review",
+    "review": {
+      "open": "Review",
+      "openAll": "Open all changes",
+      "openingAllDiffs": "Opening changes…",
+      "allChangesTitle": "!{{iid}} changes",
+      "skipped_one": "{{count}} file not shown — open it on GitLab",
+      "skipped_other": "{{count}} files not shown — open them on GitLab",
+      "back": "Back",
+      "loading": "Loading merge request review…",
+      "preparing": "GitLab is preparing this diff.",
+      "loadNewVersion": "Load the new version",
+      "approvedBy": "Approved by {{names}}",
+      "approvalProgress": "{{approved}} of {{required}} approvals",
+      "approved": "Approved",
+      "noApprovals": "No approvals yet",
+      "noApprovalsRequired": "No approvals required",
+      "approvalsUnknown": "Approvals unavailable",
+      "description": "Description",
+      "progress": "{{viewed}} of {{total}} viewed",
+      "incomplete": "GitLab returned a partial review. Viewing these files will not mark the whole version reviewed.",
+      "empty": "This merge request has no changed files.",
+      "files": "Merge request files",
+      "viewedFile": "Viewed {{path}}",
+      "changes": "+{{added}} −{{removed}}",
+      "threads_one": "{{count}} thread",
+      "threads_other": "{{count}} threads",
+      "changed": "Changed since you viewed it",
+      "openingDiff": "Opening diff…",
+      "status": {
+        "added": "A",
+        "removed": "D",
+        "modified": "M",
+        "renamed": "R"
+      },
+      "statusName": {
+        "added": "Added",
+        "removed": "Deleted",
+        "modified": "Modified",
+        "renamed": "Renamed"
+      }
+    },
     "scope": {
       "reviewRequested": "Review requested",
       "mine": "Mine",
@@ -808,8 +851,10 @@
       "not-found": "The GitLab resource could not be found.",
       "rate-limited": "GitLab has limited requests. Try again later.",
       "network": "GitLab could not be reached.",
-      "head-moved": "The merge request changed. Refresh it before checking out.",
-      "not-gitlab": "Merge request checkout is not available for this project."
+      "head-moved": "The merge request changed. Refresh it before continuing.",
+      "not-gitlab": "Merge requests are not available for this project.",
+      "not-text": "This file cannot be shown as text in the editor. Open it on GitLab.",
+      "no-editor": "Open this project's editor first."
     }
   },
   "traffic": {

@@ -80,6 +80,7 @@
     "@codingame/monaco-vscode-markdown-basics-default-extension": "33.0.9",
     "@codingame/monaco-vscode-markers-service-override": "33.0.9",
     "@codingame/monaco-vscode-model-service-override": "33.0.9",
+    "@codingame/monaco-vscode-multi-diff-editor-service-override": "33.0.9",
     "@codingame/monaco-vscode-notifications-service-override": "33.0.9",
     "@codingame/monaco-vscode-objective-c-default-extension": "33.0.9",
     "@codingame/monaco-vscode-output-service-override": "33.0.9",

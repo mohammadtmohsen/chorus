@@ -42,6 +42,8 @@ import {
   WORKBENCH_PROCESS_REPORT_CHANNEL,
   WORKBENCH_REVEAL_CHANNEL,
   WORKBENCH_REVEAL_RESULT_CHANNEL,
+  WORKBENCH_REVIEW_DIFF_CHANNEL,
+  WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL,
   WORKBENCH_ROW_REQUEST_CHANNEL,
   WORKBENCH_ROW_REVEAL_PUSH_CHANNEL,
   WORKBENCH_ROW_SCROLL_PUSH_CHANNEL,
@@ -75,6 +77,8 @@ import {
   type WorkbenchEditResult,
   type WorkbenchRect,
   type WorkbenchRevealResult,
+  type WorkbenchReviewDiffInput,
+  type WorkbenchReviewDiffResult,
   type WorkbenchRowRevealPush,
   type WorkbenchRowScrollPush,
   type WorkbenchShellResponse,
@@ -1370,6 +1374,11 @@ function destroySurface(viewId: string, prepared = false): Promise<void> {
   const surface = byId.get(viewId)
   if (surface === undefined) return Promise.resolve()
   byId.delete(viewId)
+  for (const [requestId, pending] of pendingReviewDiffs) {
+    if (pending.contents === surface.view.webContents) {
+      pending.settle({ requestId, ok: false, failure: 'no-editor' })
+    }
+  }
   byOwner.get(surface.owner)?.delete(viewId)
   stopWatchingFocus(viewId)
   /*
@@ -2341,6 +2350,27 @@ export function registerWorkbenchHandlers(
     pendingAskDiffs.get(result.requestId)?.(result)
   })
 
+  ipcMain.on(WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL, (event, raw: unknown) => {
+    if (byContents.get(event.sender) === undefined) return
+    if (typeof raw !== 'object' || raw === null) return
+    const result = raw as Record<string, unknown>
+    const requestId = result['requestId']
+    const ok = result['ok']
+    const failure = result['failure']
+    const message = result['message']
+    if (typeof requestId !== 'string' || typeof ok !== 'boolean') return
+    if (failure !== undefined && failure !== 'no-editor' && failure !== 'open-failed') return
+    if (message !== undefined && typeof message !== 'string') return
+    const pending = pendingReviewDiffs.get(requestId)
+    if (pending?.contents !== event.sender) return
+    pending.settle({
+      requestId,
+      ok,
+      ...(failure === undefined ? {} : { failure }),
+      ...(message === undefined ? {} : { message }),
+    })
+  })
+
   ipcMain.on(WORKBENCH_EDIT_RESULT_CHANNEL, (event, raw: unknown) => {
     if (byContents.get(event.sender) === undefined) return
     if (typeof raw !== 'object' || raw === null) return
@@ -2417,6 +2447,62 @@ export function setWorkbenchContextSink(
 const pendingEdits = new Map<string, (result: WorkbenchEditResult) => void>()
 
 const pendingAskDiffs = new Map<string, (result: WorkbenchAskDiffResult) => void>()
+
+const pendingReviewDiffs = new Map<
+  string,
+  { contents: WebContents; settle: (result: WorkbenchReviewDiffResult) => void }
+>()
+
+export async function requestWorkbenchReviewDiff(
+  projectRoot: string,
+  request: WorkbenchReviewDiffInput
+): Promise<WorkbenchReviewDiffResult> {
+  const surface = [...byId.values()].find(
+    (entry) =>
+      entry.host === LOCAL_HOST &&
+      entry.projectRoot === projectRoot &&
+      entry.state === 'active' &&
+      !editorHidden.has(projectRoot) &&
+      liveContents(entry) !== null
+  )
+  const contents = surface === undefined ? null : liveContents(surface)
+  const requestId = randomUUID()
+  if (contents === null) return { requestId, ok: false, failure: 'no-editor' }
+
+  return new Promise<WorkbenchReviewDiffResult>((resolve) => {
+    const gone = (): void => {
+      settle({ requestId, ok: false, failure: 'no-editor' })
+    }
+    const reloading = (): void => {
+      settle({ requestId, ok: false, failure: 'open-failed' })
+    }
+    const timer = setTimeout(() => {
+      settle({ requestId, ok: false, failure: 'open-failed' })
+    }, EDIT_TIMEOUT_MS)
+    const settle = (result: WorkbenchReviewDiffResult): void => {
+      if (!pendingReviewDiffs.delete(requestId)) return
+      clearTimeout(timer)
+      contents.removeListener('destroyed', gone)
+      contents.removeListener('render-process-gone', gone)
+      contents.removeListener('did-start-loading', reloading)
+      resolve(result)
+    }
+    pendingReviewDiffs.set(requestId, { contents, settle })
+    contents.once('destroyed', gone)
+    contents.once('render-process-gone', gone)
+    contents.once('did-start-loading', reloading)
+    try {
+      contents.send(WORKBENCH_REVIEW_DIFF_CHANNEL, { ...request, requestId })
+    } catch (error) {
+      settle({
+        requestId,
+        ok: false,
+        failure: 'open-failed',
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  })
+}
 
 /**
  * Shows, replaces or closes the proposed-edit diff in a project's editor.

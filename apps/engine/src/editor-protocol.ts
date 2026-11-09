@@ -23,3 +23,35 @@ export const EditorAskDiffRequest = z.object({
   close: z.boolean().optional(),
   revealPath: z.string().optional(),
 })
+const EditorReviewDiffVersion = z.object({
+  requestId: z.string(),
+  iid: z.number().int().positive(),
+  versionId: z.number().int().positive(),
+})
+export const EditorReviewDiffRequest = z.union([
+  EditorReviewDiffVersion.extend({
+    path: z.string().min(1),
+    oldPath: z.string().min(1),
+    before: z.string(),
+    after: z.string(),
+  }),
+  EditorReviewDiffVersion.extend({
+    title: z.string().min(1),
+    files: z
+      .array(
+        z.object({
+          path: z.string().min(1),
+          oldPath: z.string().min(1),
+          before: z.string(),
+          after: z.string(),
+        })
+      )
+      .min(1),
+  }),
+])
+export const EditorReviewDiffResult = z.object({
+  requestId: z.string(),
+  ok: z.boolean(),
+  failure: z.enum(['no-editor', 'open-failed']).optional(),
+  message: z.string().optional(),
+})

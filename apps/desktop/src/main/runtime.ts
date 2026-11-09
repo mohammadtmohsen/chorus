@@ -68,6 +68,7 @@ import {
   LOCAL_HOST,
   openSqlite,
   ProjectStore,
+  ReviewMarksStore,
   type AppNote,
   type AsideSummary,
   type ConversationSummary,
@@ -1201,6 +1202,7 @@ export class ChorusRuntime {
      */
     private readonly keptNotes: KeptNoteStore,
     private readonly conversationNotes: ConversationNoteStore,
+    private readonly reviewMarkStore: ReviewMarksStore,
     private readonly deferRestoredAgents: boolean
   ) {
     this.liveReplies = new LiveReplies(this.store)
@@ -1367,6 +1369,7 @@ export class ChorusRuntime {
       new AppNoteStore(db),
       new KeptNoteStore(db),
       new ConversationNoteStore(db),
+      new ReviewMarksStore(db),
       options.deferRestoredAgents ?? false
     )
   }
@@ -1387,6 +1390,10 @@ export class ChorusRuntime {
         this.log.info('remembered a permission permanently', { total: keys.length })
       },
     })
+  }
+
+  reviewMarks(): ReviewMarksStore {
+    return this.reviewMarkStore
   }
 
   /** Told whenever a provider reports its account limits. */

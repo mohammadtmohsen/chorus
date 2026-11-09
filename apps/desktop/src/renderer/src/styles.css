@@ -13954,7 +13954,7 @@ html.continuous-row .global-note {
   min-height: 0;
   min-width: 0;
   background: var(--bg-chrome);
-  overflow: hidden;
+  overflow: auto;
   font-size: 12px;
 }
 
@@ -14015,12 +14015,10 @@ html.continuous-row .global-note {
 }
 
 .git-branches {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 0 auto;
   margin: 0;
   padding: 0;
   list-style: none;
-  overflow-y: auto;
 }
 
 .git-row {
@@ -14126,19 +14124,16 @@ html.continuous-row .global-note {
 
 .git-requests {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   flex-direction: column;
-  min-height: 0;
   min-width: 0;
 }
 
 .git-request-list {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 0 auto;
   margin: 0;
   padding: 0;
   list-style: none;
-  overflow-y: auto;
 }
 
 .git-request-row {
@@ -14229,6 +14224,117 @@ html.continuous-row .global-note {
 .git-pipeline[data-status='running'],
 .git-pipeline[data-status='pending'] {
   color: var(--accent-text);
+}
+
+.git-updated {
+  color: var(--accent-text);
+  font-size: 11px;
+}
+
+.git-review-overview {
+  flex: 0 0 auto;
+}
+
+.git-review-sha {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.git-review-description {
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.git-review-description summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.git-review-description p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.git-panel .git-review-reload {
+  align-self: flex-start;
+  margin: calc(var(--step) * 3);
+}
+
+.git-review-tree {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 0 calc(var(--step) * 2);
+  list-style: none;
+}
+
+.git-review-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--step);
+  min-height: 30px;
+  padding: var(--step) calc(var(--step) * 3);
+}
+
+.git-review-file[data-viewed='yes'] .git-review-filename {
+  color: var(--text-muted);
+}
+
+.git-review-file input {
+  flex: 0 0 auto;
+  margin: 0 var(--step) 0 0;
+  accent-color: var(--accent-text);
+}
+
+.git-panel .git-review-filename,
+.git-panel .git-review-folder {
+  padding-block: var(--step);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: start;
+}
+
+.git-panel .git-review-folder {
+  display: flex;
+  align-items: center;
+  gap: var(--step);
+  width: 100%;
+  min-height: 30px;
+  font-weight: 600;
+}
+
+.git-panel .git-review-filename {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-panel .git-review-filename:hover:not(:disabled),
+.git-panel .git-review-folder:hover:not(:disabled) {
+  color: var(--accent-text);
+  background: var(--bg-surface);
+}
+
+.git-review-status,
+.git-review-counts {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.git-review-file-issue {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: var(--step);
+  padding-block: var(--step);
+  color: var(--danger);
 }
 
 /*

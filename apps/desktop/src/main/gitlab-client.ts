@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { parseRemoteUrl, readRemoteUrl, type RemoteLocation } from '@chorus/workspace'
+import { parseDiff, parseRemoteUrl, readRemoteUrl } from '@chorus/workspace'
+import type { DiffFile, RemoteLocation } from '@chorus/workspace'
 import { z } from 'zod'
-import type { MrRow } from '../shared/git-ipc.js'
+import type { GitReviewFile, GitReviewReady, MrRow, ReviewVersion } from '../shared/git-ipc.js'
 import type { GitProviderPort } from './git-box.js'
 
 export type GitLabFailure =
@@ -96,18 +97,17 @@ export class GitLabClient {
     path: string,
     item: z.ZodType<T>,
     ttlMs: number,
-    maxPages = 20
+    maxPages = 20,
+    uncached = false
   ): Promise<GitLabResult<Paged<T>>> {
     const items: T[] = []
     let fetchedAt = this.now()
     const separator = path.includes('?') ? '&' : '?'
     for (let page = 1; page <= maxPages; page += 1) {
-      const result = await this.get(
-        project,
-        `${path}${separator}per_page=${String(PAGE)}&page=${String(page)}`,
-        z.array(item),
-        ttlMs
-      )
+      const pagePath = `${path}${separator}per_page=${String(PAGE)}&page=${String(page)}`
+      const result = uncached
+        ? await this.getUncached(pagePath, z.array(item))
+        : await this.get(project, pagePath, z.array(item), ttlMs)
       if (!result.ok) return result
       items.push(...result.value)
       fetchedAt = Math.min(fetchedAt, result.fetchedAt)
@@ -116,6 +116,10 @@ export class GitLabClient {
       }
     }
     return { ok: true, value: { items, complete: false }, fetchedAt }
+  }
+
+  getUncached<T>(path: string, schema: z.ZodType<T>): Promise<GitLabResult<T>> {
+    return this.send('GET', path, undefined, schema)
   }
 
   async write<T>(
@@ -193,6 +197,11 @@ export class GitLabClient {
 
 const Person = z.object({ username: z.string(), name: z.string() })
 const User = z.object({ username: z.string() })
+const Label = z.object({
+  name: z.string(),
+  color: z.string().optional(),
+  text_color: z.string().optional(),
+})
 
 const MrListItem = z.object({
   iid: z.number().int().positive(),
@@ -209,16 +218,11 @@ const MrListItem = z.object({
   blocking_discussions_resolved: z.boolean(),
   author: Person,
   reviewers: z.array(Person),
-  labels: z.array(
-    z.object({
-      name: z.string(),
-      color: z.string().optional(),
-      text_color: z.string().optional(),
-    })
-  ),
+  labels: z.array(Label),
 })
 
 const MrDetail = MrListItem.omit({ labels: true }).extend({
+  labels: z.array(z.union([z.string(), Label])).default([]),
   description: z.string().nullable(),
   diff_refs: z
     .object({ base_sha: z.string(), start_sha: z.string(), head_sha: z.string() })
@@ -234,6 +238,129 @@ const MrDetail = MrListItem.omit({ labels: true }).extend({
     .nullable(),
 })
 
+const MrVersionItem = z.object({ id: z.number().int().positive() })
+
+export const MrDiffItem = z.object({
+  old_path: z.string(),
+  new_path: z.string(),
+  a_mode: z.string(),
+  b_mode: z.string(),
+  diff: z.string(),
+  new_file: z.boolean(),
+  renamed_file: z.boolean(),
+  deleted_file: z.boolean(),
+  collapsed: z.boolean().optional(),
+  too_large: z.boolean().optional(),
+})
+
+export type MrDiffItem = z.infer<typeof MrDiffItem>
+
+const MrVersion = MrVersionItem.extend({
+  head_commit_sha: z.string().nullable(),
+  base_commit_sha: z.string().nullable(),
+  start_commit_sha: z.string().nullable(),
+  state: z.string(),
+  real_size: z.union([z.string(), z.number().int().nonnegative()]).nullish(),
+  overflow: z.boolean().optional(),
+  diffs: z.array(MrDiffItem),
+})
+
+const Discussion = z.object({
+  id: z.string(),
+  notes: z.array(
+    z.object({
+      system: z.boolean(),
+      type: z.string().nullable(),
+      position: z
+        .object({
+          base_sha: z.string().nullish(),
+          start_sha: z.string().nullish(),
+          head_sha: z.string().nullish(),
+          old_path: z.string().nullish(),
+          new_path: z.string().nullish(),
+        })
+        .nullish(),
+    })
+  ),
+})
+
+const Approvals = z.object({
+  approved: z.boolean().optional(),
+  approvals_required: z.number().int().nonnegative().nullish(),
+  approvals_left: z.number().int().nonnegative().nullish(),
+  approved_by: z.array(z.object({ user: Person })),
+  user_has_approved: z.boolean().optional(),
+  user_can_approve: z.boolean().optional(),
+})
+
+export interface GitLabReviewFile {
+  readonly raw: MrDiffItem
+  readonly summary: Omit<GitReviewFile, 'viewed'>
+  readonly digest: string
+}
+
+export interface GitLabReviewSnapshot {
+  readonly mr: GitReviewReady['mr']
+  readonly version: ReviewVersion
+  readonly pipeline: MrRow['pipeline']
+  readonly approvals: GitReviewReady['approvals']
+  readonly files: GitLabReviewFile[]
+  readonly complete: boolean
+}
+
+export function hunksOf(file: MrDiffItem): DiffFile | null {
+  const head = ['diff --git a/file b/file']
+  if (file.new_file) head.push(`new file mode ${file.b_mode}`)
+  if (file.deleted_file) head.push(`deleted file mode ${file.a_mode}`)
+  const parsed = parseDiff(`${head.join('\n')}\n${file.diff}`)[0]
+  return parsed === undefined ? null : { ...parsed, path: file.new_path, oldPath: file.old_path }
+}
+
+export function fileDigest(version: ReviewVersion, file: MrDiffItem): string {
+  const textless = !/^@@ /m.test(file.diff) || file.collapsed === true || file.too_large === true
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        file.old_path,
+        file.new_path,
+        file.a_mode,
+        file.b_mode,
+        file.new_file,
+        file.deleted_file,
+        file.renamed_file,
+        file.diff,
+        textless ? version.headSha : '',
+      ])
+    )
+    .digest('hex')
+}
+
+function labelsOf(labels: readonly (string | z.infer<typeof Label>)[]): MrRow['labels'] {
+  return labels.map((value) => {
+    const label: z.infer<typeof Label> = typeof value === 'string' ? { name: value } : value
+    return {
+      name: label.name,
+      color:
+        label.color !== undefined && /^#[0-9a-fA-F]{3,8}$/.test(label.color) ? label.color : null,
+      textColor:
+        label.text_color !== undefined && /^#[0-9a-fA-F]{3,8}$/.test(label.text_color)
+          ? label.text_color
+          : null,
+    }
+  })
+}
+
+function pipelineOf(pipeline: z.infer<typeof MrDetail>['head_pipeline']): MrRow['pipeline'] {
+  return pipeline === null
+    ? null
+    : {
+        id: pipeline.id,
+        projectId: pipeline.project_id,
+        status: pipeline.status,
+        webUrl: pipeline.web_url,
+      }
+}
+
 interface DirectoryDeps {
   readonly token: (host: string) => string | null
   readonly now?: () => number
@@ -248,7 +375,7 @@ interface AccountClient {
 }
 
 interface Requests {
-  rows: Omit<MrRow, 'elsewhere'>[]
+  rows: Omit<MrRow, 'elsewhere' | 'updatedSinceReview'>[]
   complete: boolean
   username: string
 }
@@ -272,6 +399,10 @@ export class GitLabDirectory implements GitProviderPort {
 
   connected(host: string): boolean {
     return this.clientOf(host) !== null
+  }
+
+  identity(host: string): string | null {
+    return this.clientOf(host)?.fingerprint ?? null
   }
 
   async requestOf(
@@ -299,6 +430,177 @@ export class GitLabDirectory implements GitProviderPort {
     if (account.userFailure !== null) {
       account.user = null
       account.userFailure = null
+    }
+  }
+
+  latestVersion(location: RemoteLocation, iid: number): Promise<GitLabResult<number | null>> {
+    const account = this.clientOf(location.host)
+    if (account === null) {
+      return Promise.resolve({ ok: false, failure: 'no-token', retryAt: null })
+    }
+    return this.latestVersionOf(location, account, encodeURIComponent(location.path), iid)
+  }
+
+  async review(
+    location: RemoteLocation,
+    iid: number
+  ): Promise<
+    GitLabResult<{ kind: 'preparing' } | { kind: 'ready'; snapshot: GitLabReviewSnapshot }>
+  > {
+    const account = this.clientOf(location.host)
+    if (account === null) return { ok: false, failure: 'no-token', retryAt: null }
+    if (account.userFailure !== null) {
+      account.user = null
+      account.userFailure = null
+    }
+    const project = encodeURIComponent(location.path)
+    const latest = await this.latestVersionOf(location, account, project, iid)
+    const switched = this.changed(location.host, account)
+    if (switched !== null) return switched
+    if (!latest.ok) return latest
+    if (latest.value === null) {
+      return { ok: true, value: { kind: 'preparing' }, fetchedAt: latest.fetchedAt }
+    }
+    const root = `/projects/${project}/merge_requests/${String(iid)}`
+    const [versioned, detail, discussions, approvals, user] = await Promise.all([
+      account.client.get(project, `${root}/versions/${String(latest.value)}`, MrVersion, TTL_MS),
+      this.detail(location, account, project, iid),
+      account.client.getAll(project, `${root}/discussions`, Discussion, TTL_MS),
+      account.client.get(project, `${root}/approvals`, Approvals, TTL_MS),
+      this.userOf(account),
+    ])
+    const changed = this.changed(location.host, account)
+    if (changed !== null) return changed
+    if (!versioned.ok) return versioned
+    if (!detail.ok) return detail
+    if (!discussions.ok) return discussions
+    if (
+      !approvals.ok &&
+      (approvals.failure === 'rate-limited' || approvals.failure === 'network')
+    ) {
+      return approvals
+    }
+    if (!user.ok) return user
+    const source = versioned.value
+    if (source.id !== latest.value) {
+      return { ok: false, failure: 'invalid-response', retryAt: null }
+    }
+    const fetchedAt = Math.min(
+      latest.fetchedAt,
+      versioned.fetchedAt,
+      detail.fetchedAt,
+      discussions.fetchedAt,
+      approvals.ok ? approvals.fetchedAt : Infinity
+    )
+    if (
+      !source.head_commit_sha ||
+      !source.base_commit_sha ||
+      !source.start_commit_sha ||
+      source.state === 'collecting'
+    ) {
+      account.client.invalidate(project)
+      return { ok: true, value: { kind: 'preparing' }, fetchedAt }
+    }
+    const version: ReviewVersion = {
+      id: source.id,
+      headSha: source.head_commit_sha,
+      baseSha: source.base_commit_sha,
+      startSha: source.start_commit_sha,
+    }
+    const files: GitLabReviewFile[] = source.diffs.map((raw) => {
+      const parsed = hunksOf(raw)
+      const collapsed = raw.collapsed === true
+      const tooLarge = raw.too_large === true
+      const binary =
+        parsed?.binary === true ||
+        (raw.diff === '' &&
+          raw.a_mode === raw.b_mode &&
+          !raw.new_file &&
+          !raw.deleted_file &&
+          !raw.renamed_file &&
+          !collapsed &&
+          !tooLarge)
+      const threads = discussions.value.items.filter((discussion) =>
+        discussion.notes.some((note) => {
+          const position = note.position
+          return (
+            !note.system &&
+            note.type === 'DiffNote' &&
+            position?.head_sha === version.headSha &&
+            position.base_sha === version.baseSha &&
+            position.start_sha === version.startSha &&
+            position.old_path === raw.old_path &&
+            position.new_path === raw.new_path
+          )
+        })
+      ).length
+      return {
+        raw,
+        summary: {
+          path: raw.new_path,
+          oldPath: raw.old_path,
+          status: raw.new_file
+            ? 'added'
+            : raw.deleted_file
+              ? 'removed'
+              : raw.renamed_file
+                ? 'renamed'
+                : 'modified',
+          added: parsed?.added ?? 0,
+          removed: parsed?.removed ?? 0,
+          binary,
+          collapsed,
+          tooLarge,
+          threads,
+        },
+        digest: fileDigest(version, raw),
+      }
+    })
+    const mr = detail.value
+    const complete =
+      source.state === 'collected' &&
+      source.overflow !== true &&
+      (source.real_size === undefined ||
+        source.real_size === null ||
+        Number(source.real_size) === files.length) &&
+      discussions.value.complete &&
+      files.every((file) => !file.summary.collapsed && !file.summary.tooLarge)
+    return {
+      ok: true,
+      value: {
+        kind: 'ready',
+        snapshot: {
+          mr: {
+            iid: mr.iid,
+            title: mr.title,
+            description: mr.description ?? '',
+            webUrl: mr.web_url,
+            author: mr.author,
+            sourceBranch: mr.source_branch,
+            targetBranch: mr.target_branch,
+            labels: labelsOf(mr.labels),
+          },
+          version,
+          pipeline: pipelineOf(mr.head_pipeline),
+          approvals: approvals.ok
+            ? {
+                approved: approvals.value.approved ?? approvals.value.approvals_left === 0,
+                approvalsRequired: approvals.value.approvals_required ?? null,
+                approvalsLeft: approvals.value.approvals_left ?? null,
+                approvers: approvals.value.approved_by.map((entry) => entry.user.name),
+                userHasApproved:
+                  approvals.value.user_has_approved ??
+                  approvals.value.approved_by.some(
+                    (entry) => entry.user.username === user.value.username
+                  ),
+                userCanApprove: approvals.value.user_can_approve ?? false,
+              }
+            : null,
+          files,
+          complete,
+        },
+      },
+      fetchedAt,
     }
   }
 
@@ -343,45 +645,29 @@ export class GitLabDirectory implements GitProviderPort {
       if (failed) break
     }
     const username = user.value.username
-    const rows: Omit<MrRow, 'elsewhere'>[] = listed.value.items.map((item) => {
-      const pipeline = pipelines.get(item.iid)
-      return {
-        iid: item.iid,
-        title: item.title,
-        webUrl: item.web_url,
-        draft: item.draft,
-        labels: item.labels.map((label) => ({
-          name: label.name,
-          color:
-            label.color !== undefined && /^#[0-9a-fA-F]{3,8}$/.test(label.color)
-              ? label.color
-              : null,
-          textColor:
-            label.text_color !== undefined && /^#[0-9a-fA-F]{3,8}$/.test(label.text_color)
-              ? label.text_color
-              : null,
-        })),
-        author: item.author,
-        sourceBranch: item.source_branch,
-        targetBranch: item.target_branch,
-        sha: item.sha ?? '',
-        fork: item.source_project_id !== item.target_project_id,
-        updatedAt: Date.parse(item.updated_at),
-        notes: item.user_notes_count,
-        unresolved: !item.blocking_discussions_resolved,
-        mine: item.author.username === username,
-        reviewRequested: item.reviewers.some((reviewer) => reviewer.username === username),
-        pipeline:
-          pipeline === undefined || pipeline === null
-            ? null
-            : {
-                id: pipeline.id,
-                projectId: pipeline.project_id,
-                status: pipeline.status,
-                webUrl: pipeline.web_url,
-              },
+    const rows: Omit<MrRow, 'elsewhere' | 'updatedSinceReview'>[] = listed.value.items.map(
+      (item) => {
+        const pipeline = pipelines.get(item.iid)
+        return {
+          iid: item.iid,
+          title: item.title,
+          webUrl: item.web_url,
+          draft: item.draft,
+          labels: labelsOf(item.labels),
+          author: item.author,
+          sourceBranch: item.source_branch,
+          targetBranch: item.target_branch,
+          sha: item.sha ?? '',
+          fork: item.source_project_id !== item.target_project_id,
+          updatedAt: Date.parse(item.updated_at),
+          notes: item.user_notes_count,
+          unresolved: !item.blocking_discussions_resolved,
+          mine: item.author.username === username,
+          reviewRequested: item.reviewers.some((reviewer) => reviewer.username === username),
+          pipeline: pipeline === undefined || pipeline === null ? null : pipelineOf(pipeline),
+        }
       }
-    })
+    )
     return {
       ok: true,
       value: { rows, complete: listed.value.complete, username },
@@ -421,6 +707,36 @@ export class GitLabDirectory implements GitProviderPort {
       return result
     })
     return account.user
+  }
+
+  private async latestVersionOf(
+    location: RemoteLocation,
+    account: AccountClient,
+    project: string,
+    iid: number
+  ): Promise<GitLabResult<number | null>> {
+    const listed = await account.client.getAll(
+      project,
+      `/projects/${project}/merge_requests/${String(iid)}/versions`,
+      MrVersionItem,
+      0,
+      20,
+      true
+    )
+    const changed = this.changed(location.host, account)
+    if (changed !== null) return changed
+    if (!listed.ok) return listed
+    if (!listed.value.complete) {
+      return { ok: false, failure: 'invalid-response', retryAt: null }
+    }
+    return {
+      ok: true,
+      value: listed.value.items.reduce<number | null>(
+        (highest, item) => (highest === null || item.id > highest ? item.id : highest),
+        null
+      ),
+      fetchedAt: listed.fetchedAt,
+    }
   }
 
   private async detail(

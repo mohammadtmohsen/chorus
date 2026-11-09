@@ -717,6 +717,30 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 22,
+    name: 'a-review-remembers-what-was-read',
+    up: `
+      CREATE TABLE review_viewed (
+        host       TEXT    NOT NULL,
+        project    TEXT    NOT NULL,
+        iid        INTEGER NOT NULL,
+        path       TEXT    NOT NULL,
+        digest     TEXT    NOT NULL,
+        viewed_at  INTEGER NOT NULL,
+        PRIMARY KEY (host, project, iid, path)
+      );
+      CREATE TABLE review_seen (
+        host       TEXT    NOT NULL,
+        project    TEXT    NOT NULL,
+        iid        INTEGER NOT NULL,
+        version_id INTEGER NOT NULL,
+        head_sha   TEXT    NOT NULL,
+        seen_at    INTEGER NOT NULL,
+        PRIMARY KEY (host, project, iid)
+      );
+    `,
+  },
 ]
 
 export interface MigrationResult {

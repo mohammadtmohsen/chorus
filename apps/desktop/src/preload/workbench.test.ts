@@ -27,6 +27,9 @@ import {
   WORKBENCH_ACTIVITY_BAR_REPORT_CHANNEL,
   WORKBENCH_ROW_REQUEST_CHANNEL,
   WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL,
+  WORKBENCH_REVIEW_DIFF_CHANNEL,
+  WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL,
+  type WorkbenchReviewDiffResult,
 } from '../shared/workbench-ipc.js'
 
 /**
@@ -53,6 +56,7 @@ interface Exposed {
   reportActivityBar: (width: number) => void
   requestRowReveal: () => void
   requestRowScroll: (delta: number) => void
+  onReviewDiffRequest: (handler: (request: unknown) => Promise<WorkbenchReviewDiffResult>) => void
 }
 let exposed: Exposed | null = null
 
@@ -108,6 +112,8 @@ const {
   ACTIVITY_BAR_REPORT_CHANNEL,
   ROW_REQUEST_CHANNEL,
   ROW_SCROLL_REQUEST_CHANNEL,
+  REVIEW_DIFF_CHANNEL,
+  REVIEW_DIFF_RESULT_CHANNEL,
   asConnection,
   asLayoutWidth,
   asTerminalEnv,
@@ -142,9 +148,11 @@ describe('the workbench preload', () => {
     expect(ACTIVITY_BAR_REPORT_CHANNEL).toBe(WORKBENCH_ACTIVITY_BAR_REPORT_CHANNEL)
     expect(ROW_REQUEST_CHANNEL).toBe(WORKBENCH_ROW_REQUEST_CHANNEL)
     expect(ROW_SCROLL_REQUEST_CHANNEL).toBe(WORKBENCH_ROW_SCROLL_REQUEST_CHANNEL)
+    expect(REVIEW_DIFF_CHANNEL).toBe(WORKBENCH_REVIEW_DIFF_CHANNEL)
+    expect(REVIEW_DIFF_RESULT_CHANNEL).toBe(WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL)
   })
 
-  it('exposes exactly thirty-three methods, and no thirty-fourth', () => {
+  it('exposes only the declared workbench methods', () => {
     // The list, not the count: a method named here is a capability a document
     // running extension code is handed, so which ones they are is the assertion.
     expect(Object.keys(exposed ?? {})).toEqual([
@@ -252,6 +260,7 @@ describe('the workbench preload', () => {
        * memory for as long as the card is open.
        */
       'onAskDiffRequest',
+      'onReviewDiffRequest',
       /*
        * The third of the ask-this-document trio, and the narrowest. Like
        * `onAskDiffRequest` it can put a tab in front of the person and like it,
@@ -275,6 +284,50 @@ describe('the workbench preload', () => {
     // be listening by then.
     expect(listeners.has(CONNECTION_CHANNEL)).toBe(true)
     expect(listeners.has(LAYOUT_CHANNEL)).toBe(true)
+  })
+
+  it.each([
+    {
+      requestId: 'review-1',
+      iid: 42,
+      versionId: 7,
+      path: 'src/main.ts',
+      oldPath: 'src/main.ts',
+      before: 'before',
+      after: 'after',
+    },
+    {
+      requestId: 'review-all',
+      iid: 42,
+      versionId: 7,
+      title: '!42 changes',
+      files: [{ path: 'src/main.ts', oldPath: 'src/old.ts', before: 'before', after: 'after' }],
+    },
+  ])('answers review diff request $requestId on its result channel', async (request) => {
+    send.mockClear()
+    const handler = vi.fn<(request: unknown) => Promise<WorkbenchReviewDiffResult>>()
+    handler.mockResolvedValue({ requestId: request.requestId, ok: true })
+    exposed?.onReviewDiffRequest(handler)
+    listeners.get(REVIEW_DIFF_CHANNEL)?.(null, request)
+    await Promise.resolve()
+    expect(handler).toHaveBeenCalledWith(request)
+    expect(send).toHaveBeenCalledExactlyOnceWith(REVIEW_DIFF_RESULT_CHANNEL, {
+      requestId: request.requestId,
+      ok: true,
+    })
+  })
+
+  it('answers a rejected review diff handler with its request id', async () => {
+    send.mockClear()
+    exposed?.onReviewDiffRequest(() => Promise.reject(new Error('closed')))
+    listeners.get(REVIEW_DIFF_CHANNEL)?.(null, { requestId: 'review-2' })
+    await Promise.resolve()
+    expect(send).toHaveBeenCalledExactlyOnceWith(REVIEW_DIFF_RESULT_CHANNEL, {
+      requestId: 'review-2',
+      ok: false,
+      failure: 'open-failed',
+      message: 'closed',
+    })
   })
 
   it('accepts only a positive whole layout width', () => {

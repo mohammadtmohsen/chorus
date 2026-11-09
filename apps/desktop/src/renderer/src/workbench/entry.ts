@@ -26,6 +26,7 @@ import { serveWorkbenchLifecycle } from './lifecycle.js'
 import { reportEditorContext } from './context.js'
 import { serveWorkbenchEdits, serveWorkbenchReveal, serveWorkbenchSnapshot } from './edit.js'
 import { serveAskDiff } from './ask-diff.js'
+import { serveReviewDiff } from './review-diff.js'
 import { registerInlineCompletions, startLanguageServiceSampling } from './completion.js'
 import { installGateHandle } from './gate-handle.js'
 import { announceSharedExtensionScope } from './extension-scope.js'
@@ -429,6 +430,7 @@ async function main(): Promise<void> {
   serveWorkbenchEdits(connection.projectRoot)
   serveWorkbenchSnapshot(connection.projectRoot)
   serveAskDiff(connection.remoteAuthority)
+  serveReviewDiff()
   serveWorkbenchReveal(connection.remoteAuthority)
 
   /*

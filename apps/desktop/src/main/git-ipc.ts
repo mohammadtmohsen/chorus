@@ -4,7 +4,18 @@ import type { GitBoxService } from './git-box.js'
 import type { ShellRole } from './traffic-ipc.js'
 
 export interface GitIpcDeps {
-  readonly service: Pick<GitBoxService, 'state' | 'requests' | 'fetch' | 'sync' | 'checkout'>
+  readonly service: Pick<
+    GitBoxService,
+    | 'state'
+    | 'requests'
+    | 'review'
+    | 'viewed'
+    | 'openDiff'
+    | 'openAllDiffs'
+    | 'fetch'
+    | 'sync'
+    | 'checkout'
+  >
   readonly isAdopted: (projectId: string) => boolean
 }
 
@@ -65,6 +76,14 @@ export class GitIpc {
         return this.deps.service.state(projectId)
       case 'git:requests':
         return this.deps.service.requests(projectId)
+      case 'git:review':
+        return this.deps.service.review(projectId, (request as GitRequest<'git:review'>).iid)
+      case 'git:viewed':
+        return this.deps.service.viewed(request as GitRequest<'git:viewed'>)
+      case 'git:openDiff':
+        return this.deps.service.openDiff(request as GitRequest<'git:openDiff'>)
+      case 'git:openAllDiffs':
+        return this.deps.service.openAllDiffs(request as GitRequest<'git:openAllDiffs'>)
       case 'git:fetch':
         return this.deps.service.fetch(projectId)
       case 'git:sync':

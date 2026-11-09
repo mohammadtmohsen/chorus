@@ -571,6 +571,33 @@ export interface WorkbenchAskDiffResult {
   readonly message?: string
 }
 
+export const WORKBENCH_REVIEW_DIFF_CHANNEL = 'workbench:reviewDiff'
+export const WORKBENCH_REVIEW_DIFF_RESULT_CHANNEL = 'workbench:reviewDiff:result'
+
+export interface WorkbenchReviewDiffFile {
+  readonly path: string
+  readonly oldPath: string
+  readonly before: string
+  readonly after: string
+}
+
+export type WorkbenchReviewDiffInput = {
+  readonly iid: number
+  readonly versionId: number
+} & (
+  | WorkbenchReviewDiffFile
+  | { readonly files: readonly WorkbenchReviewDiffFile[]; readonly title: string }
+)
+
+export type WorkbenchReviewDiffRequest = WorkbenchReviewDiffInput & { readonly requestId: string }
+
+export interface WorkbenchReviewDiffResult {
+  readonly requestId: string
+  readonly ok: boolean
+  readonly failure?: 'no-editor' | 'open-failed'
+  readonly message?: string
+}
+
 export const WORKBENCH_EDIT_CHANNEL = 'workbench:edit'
 export const WORKBENCH_EDIT_RESULT_CHANNEL = 'workbench:edit:result'
 
@@ -1000,6 +1027,9 @@ export interface ChorusWorkbenchApi {
   /** Shows, replaces or closes the proposed-edit diff. */
   readonly onAskDiffRequest: (
     handler: (request: unknown) => Promise<WorkbenchAskDiffResult>
+  ) => void
+  readonly onReviewDiffRequest: (
+    handler: (request: unknown) => Promise<WorkbenchReviewDiffResult>
   ) => void
   /** Opens a file the transcript named, at a line when the click carried one. */
   readonly onRevealRequest: (handler: (request: unknown) => Promise<WorkbenchRevealResult>) => void

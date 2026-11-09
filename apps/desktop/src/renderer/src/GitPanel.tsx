@@ -8,8 +8,9 @@ import type {
   MrRow,
 } from '../../shared/git-ipc.js'
 import { isSafeHref } from '../../shared/markdown.js'
+import { GitReview } from './GitReview.js'
 
-const PIPELINE_STATUSES = new Set([
+export const PIPELINE_STATUSES = new Set([
   'created',
   'waiting_for_resource',
   'preparing',
@@ -23,7 +24,7 @@ const PIPELINE_STATUSES = new Set([
   'scheduled',
 ])
 
-function formatGitTime(timestamp: number): string {
+export function formatGitTime(timestamp: number): string {
   const date = new Date(timestamp)
   const options: Intl.DateTimeFormatOptions = {
     day: 'numeric',
@@ -36,6 +37,24 @@ function formatGitTime(timestamp: number): string {
   return date.toLocaleString([], options)
 }
 
+export type GitUiFailure = GitFailure | 'restart-required'
+
+type GitRequestsState = Omit<GitRequests, 'failure'> & {
+  readonly failure: GitUiFailure | null
+}
+
+export function isGitRestartError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  const plain = message
+    .replace(/^Error invoking remote method 'git:[^']*':\s*/, '')
+    .replace(/^(?:Error:\s*)+/, '')
+  return plain === 'channel-refused' || /^Malformed response on "git:[^"]+":/.test(plain)
+}
+
+export function gitFailureKey(failure: GitUiFailure): string {
+  return failure === 'restart-required' ? 'git.restartRequired' : `git.failure.${failure}`
+}
+
 export function GitPanel(props: {
   readonly projectId: string
   readonly collapsed: boolean
@@ -46,12 +65,13 @@ export function GitPanel(props: {
   const { t } = useTranslation()
   const [state, setState] = useState<GitBoxState | null>(null)
   const [busy, setBusy] = useState<'fetch' | 'sync' | 'checkout' | null>(null)
-  const [failure, setFailure] = useState<GitFailure | null>(null)
+  const [failure, setFailure] = useState<GitUiFailure | null>(null)
   const [filter, setFilter] = useState('')
   const [scope, setScope] = useState<'reviewRequested' | 'mine' | 'all'>('reviewRequested')
   const [revision, setRevision] = useState(0)
-  const [requests, setRequests] = useState<GitRequests | null>(null)
+  const [requests, setRequests] = useState<GitRequestsState | null>(null)
   const [requestsRevision, setRequestsRevision] = useState(0)
+  const [reviewIid, setReviewIid] = useState<number | null>(null)
   const request = useRef(0)
   const requestsId = useRef(0)
   const pending = useRef(false)
@@ -81,8 +101,10 @@ export function GitPanel(props: {
         setState(next)
         setFailure(next.failure)
       })
-      .catch(() => {
-        if (request.current === current) setFailure('git-failed')
+      .catch((error: unknown) => {
+        if (request.current === current) {
+          setFailure(isGitRestartError(error) ? 'restart-required' : 'git-failed')
+        }
       })
     return () => {
       if (request.current === current) request.current++
@@ -98,13 +120,13 @@ export function GitPanel(props: {
       .then((next) => {
         if (requestsId.current === current) setRequests(next)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (requestsId.current !== current) return
         setRequests({
           rows: [],
           complete: true,
           fetchedAt: null,
-          failure: 'network',
+          failure: isGitRestartError(error) ? 'restart-required' : 'network',
           retryAt: null,
           username: null,
         })
@@ -129,8 +151,10 @@ export function GitPanel(props: {
       if (request.current !== current) return
       setState(result.state)
       setFailure(result.failure)
-    } catch {
-      if (request.current === current) setFailure('git-failed')
+    } catch (error) {
+      if (request.current === current) {
+        setFailure(isGitRestartError(error) ? 'restart-required' : 'git-failed')
+      }
     } finally {
       pending.current = false
       setBusy(null)
@@ -157,7 +181,7 @@ export function GitPanel(props: {
     return (
       <div className="git-panel git-empty" aria-busy={failure === null}>
         <p className="muted" role={failure === null ? 'status' : 'alert'}>
-          {t(failure === null ? 'git.loading' : 'git.failure.git-failed')}
+          {t(failure === null ? 'git.loading' : gitFailureKey(failure))}
         </p>
         {failure !== null && (
           <button
@@ -177,9 +201,7 @@ export function GitPanel(props: {
   if (!state.available) {
     return (
       <div className="git-panel git-empty">
-        <p className="muted">
-          {t(`git.failure.${failure ?? state.failure ?? 'not-a-repository'}`)}
-        </p>
+        <p className="muted">{t(gitFailureKey(failure ?? state.failure ?? 'not-a-repository'))}</p>
         {state.error !== null && <pre className="git-error">{state.error}</pre>}
         <button
           type="button"
@@ -190,6 +212,21 @@ export function GitPanel(props: {
           {t('git.refresh')}
         </button>
       </div>
+    )
+  }
+
+  if (reviewIid !== null) {
+    return (
+      <GitReview
+        key={`${props.projectId}:${String(reviewIid)}`}
+        projectId={props.projectId}
+        iid={reviewIid}
+        collapsed={props.collapsed}
+        onBack={() => {
+          setReviewIid(null)
+          setRequestsRevision((current) => current + 1)
+        }}
+      />
     )
   }
 
@@ -255,7 +292,7 @@ export function GitPanel(props: {
       )}
       {failure !== null && (
         <div role="alert" className="git-failure">
-          <p>{t(`git.failure.${failure}`, { count: state.dirtyCount })}</p>
+          <p>{t(gitFailureKey(failure), { count: state.dirtyCount })}</p>
           {state.error !== null && <pre className="git-error">{state.error}</pre>}
         </div>
       )}
@@ -304,7 +341,7 @@ export function GitPanel(props: {
                 {t(
                   requests.failure === 'no-token'
                     ? 'git.connectGitlab'
-                    : `git.failure.${requests.failure}`
+                    : gitFailureKey(requests.failure)
                 )}
               </p>
               {requests.failure === 'rate-limited' && requests.retryAt !== null && (
@@ -375,6 +412,9 @@ export function GitPanel(props: {
                         <span className="git-request-notes">
                           {t('git.notes', { count: row.notes })}
                         </span>
+                        {row.updatedSinceReview && (
+                          <span className="git-updated">{t('git.updatedSinceReview')}</span>
+                        )}
                         {row.elsewhere.map((clone) => (
                           <button
                             key={clone.projectId}
@@ -387,6 +427,15 @@ export function GitPanel(props: {
                             {t('git.checkedOutIn', { name: clone.name })}
                           </button>
                         ))}
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => {
+                            setReviewIid(row.iid)
+                          }}
+                        >
+                          {t('git.review.open')}
+                        </button>
                         <button
                           type="button"
                           disabled={busy !== null || !/^[0-9a-f]{40}$/.test(row.sha)}

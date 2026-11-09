@@ -84,6 +84,7 @@ import getSecretStorageServiceOverride from '@codingame/monaco-vscode-secret-sto
  * real repository has to appear in it, before C-062 is closed.
  */
 import getScmServiceOverride from '@codingame/monaco-vscode-scm-service-override'
+import getMultiDiffEditorServiceOverride from '@codingame/monaco-vscode-multi-diff-editor-service-override'
 /*
  * Terminals in the workbench — Phase 4 slice 4d.
  *
@@ -530,6 +531,7 @@ export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetu
     ...getWorkingCopyServiceOverride(),
     ...getExplorerServiceOverride(),
     ...getScmServiceOverride(),
+    ...getMultiDiffEditorServiceOverride(),
     ...getTerminalServiceOverride(),
     ...getDebugServiceOverride(),
     ...getExtensionGalleryServiceOverride(),
