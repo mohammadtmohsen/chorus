@@ -745,21 +745,26 @@
     "views": "Git views",
     "requests": "Merge requests",
     "branches": "Branches",
-    "requestFilter": "Filter merge requests",
     "requestsLoading": "Reading merge requests…",
     "connectGitlab": "Connect GitLab in Settings to see merge requests.",
     "retryAt": "Try again after {{time}}.",
     "requestsPartial_one": "Showing the first {{count}} merge request.",
     "requestsPartial_other": "Showing the first {{count}} merge requests.",
-    "noMatchingRequests": "No open merge requests match this filter.",
+    "noRequests": "No open merge requests.",
     "requestNumber": "!{{iid}}",
     "draft": "Draft",
+    "protected": "Protected",
+    "defaultBranch": "Default",
     "author": "{{name}} (@{{username}})",
     "branchPair": "{{source}} → {{target}}",
     "requestUpdatedAt": "Updated {{time}}",
     "unresolved": "Unresolved threads",
     "notes_one": "{{count}} comment",
     "notes_other": "{{count}} comments",
+    "linesAdded": "+{{count}}",
+    "linesRemoved": "−{{count}}",
+    "changedFiles_one": "{{count}} file",
+    "changedFiles_other": "{{count}} files",
     "openOnGitlab": "Open on GitLab",
     "updatedSinceReview": "Updated since your review",
     "review": {
@@ -811,11 +816,6 @@
         "modified": "Modified",
         "renamed": "Renamed"
       }
-    },
-    "scope": {
-      "reviewRequested": "Review requested",
-      "mine": "Mine",
-      "all": "All open"
     },
     "pipeline": {
       "unknown": "Pipeline unknown",

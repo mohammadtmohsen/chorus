@@ -41,9 +41,14 @@ export const MrRow = z.object({
   updatedAt: z.number().int(),
   notes: z.number().int().nonnegative(),
   unresolved: z.boolean(),
-  mine: z.boolean(),
-  reviewRequested: z.boolean(),
   updatedSinceReview: z.boolean(),
+  diff: z
+    .object({
+      added: z.number().int().nonnegative(),
+      removed: z.number().int().nonnegative(),
+      files: z.number().int().nonnegative(),
+    })
+    .nullable(),
   pipeline: z
     .object({
       id: z.number().int().positive(),
@@ -199,6 +204,8 @@ export const GitRequests = z.object({
   failure: GitFailure.nullable(),
   retryAt: z.number().int().nullable(),
   username: z.string().nullable(),
+  protectedBranches: z.array(z.string()),
+  defaultBranch: z.string().nullable(),
 })
 export type GitRequests = z.infer<typeof GitRequests>
 
@@ -218,6 +225,7 @@ export const GitBranch = z.object({
   head: z.boolean(),
   sha: z.string(),
   changedAt: z.number().int(),
+  author: z.string().nullable(),
   upstream: z.string().nullable(),
   track: GitTrack,
   elsewhere: z.array(GitClone),
@@ -257,6 +265,7 @@ export const GitBoxState = z.object({
   dirtyCount: z.number().int().nonnegative(),
   branches: z.array(GitBranch),
   provider: GitProvider,
+  readAt: z.number().int().nullable(),
   syncedAt: z.number().int().nullable(),
   syncNote: GitSyncNote.nullable(),
   error: z.string().nullable(),

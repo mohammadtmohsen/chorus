@@ -135,6 +135,7 @@ export class GitBoxService {
               connected: gitlab.connected(location.host),
             }
           : { kind: 'other', host: location?.host ?? null },
+      readAt: this.deps.now(),
       syncedAt: this.synced.get(projectId) ?? null,
       syncNote: note,
       error: null,
@@ -192,6 +193,8 @@ export class GitBoxService {
       failure: null,
       retryAt: null,
       username: null,
+      protectedBranches: [],
+      defaultBranch: null,
     }
     const cwd = this.localRoot(projectId)
     if (cwd === null) return { ...empty, failure: 'not-gitlab' }
@@ -226,6 +229,8 @@ export class GitBoxService {
       failure: null,
       retryAt: null,
       username: result.value.username,
+      protectedBranches: result.value.protectedBranches,
+      defaultBranch: result.value.defaultBranch,
     }
   }
 
@@ -931,8 +936,8 @@ async function cloneOf(project: Project, wanted: RemoteLocation): Promise<Clone 
 
 function rowsOf(entries: readonly BranchEntry[], clones: readonly Clone[]): GitBranch[] {
   const local = entries.filter((entry) => !entry.remote)
-  const remoteDates = new Map<string, number>(
-    entries.filter((entry) => entry.remote).map((entry) => [entry.name, entry.committedAt])
+  const remoteRefs = new Map<string, BranchEntry>(
+    entries.filter((entry) => entry.remote).map((entry) => [entry.name, entry])
   )
   const named = new Set(local.map((entry) => entry.name))
   const remote = entries
@@ -940,19 +945,23 @@ function rowsOf(entries: readonly BranchEntry[], clones: readonly Clone[]): GitB
     .map((entry) => ({ ...entry, name: entry.name.slice('origin/'.length) }))
     .filter((entry) => !named.has(entry.name))
   return [...local, ...remote]
-    .map<GitBranch>(({ remote: isRemote, committedAt, ...entry }) => ({
-      ...entry,
-      kind: isRemote ? 'remote' : 'local',
-      changedAt: isRemote
-        ? committedAt
-        : Math.max(
-            committedAt,
-            remoteDates.get(entry.upstream ?? `origin/${entry.name}`) ?? committedAt
-          ),
-      elsewhere: clones
-        .filter((clone) => clone.branch === entry.name)
-        .map((clone) => ({ projectId: clone.projectId, name: clone.name })),
-    }))
+    .map<GitBranch>(({ remote: isRemote, committedAt, author, ...entry }) => {
+      const counterpart = isRemote
+        ? undefined
+        : remoteRefs.get(entry.upstream ?? `origin/${entry.name}`)
+      const newer =
+        counterpart !== undefined && counterpart.committedAt > committedAt ? counterpart : null
+      const latestAuthor = newer?.author ?? author
+      return {
+        ...entry,
+        kind: isRemote ? 'remote' : 'local',
+        changedAt: newer?.committedAt ?? committedAt,
+        author: latestAuthor === '' ? null : latestAuthor,
+        elsewhere: clones
+          .filter((clone) => clone.branch === entry.name)
+          .map((clone) => ({ projectId: clone.projectId, name: clone.name })),
+      }
+    })
     .sort((a, b) => b.changedAt - a.changedAt)
 }
 
@@ -966,6 +975,7 @@ function unavailable(failure: GitFailure): GitBoxState {
     dirtyCount: 0,
     branches: [],
     provider: { kind: 'other', host: null },
+    readAt: null,
     syncedAt: null,
     syncNote: null,
     error: null,

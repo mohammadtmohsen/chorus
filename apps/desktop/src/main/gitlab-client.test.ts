@@ -269,6 +269,9 @@ describe('GitLabDirectory credentials', () => {
       if (urlOf(url).endsWith('/user')) {
         return Promise.resolve(new Response(JSON.stringify({ username: 'first' })))
       }
+      if (urlOf(url).includes('/repository/branches')) {
+        return Promise.resolve(new Response('[]'))
+      }
       return listed.promise
     })
     let token: string | null = 'fictional-first-token'
@@ -282,7 +285,7 @@ describe('GitLabDirectory credentials', () => {
       failure: 'no-token',
       retryAt: null,
     })
-    expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenCalledTimes(3)
   })
 
   it('uses a new account client after a token change', async () => {
@@ -303,7 +306,7 @@ describe('GitLabDirectory credentials', () => {
       ok: true,
       value: { username: 'second' },
     })
-    expect(request).toHaveBeenCalledTimes(4)
+    expect(request).toHaveBeenCalledTimes(6)
   })
 
   it('keeps every MR when a detail is missing and stops after that batch', async () => {
@@ -332,6 +335,35 @@ describe('GitLabDirectory credentials', () => {
       }
       if (address.includes('merge_requests?')) {
         return Promise.resolve(new Response(JSON.stringify(items)))
+      }
+      if (address.includes('/repository/branches')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              { name: 'main', protected: true, default: true },
+              { name: 'release/1.0', protected: true, default: false },
+              { name: 'feature/1', protected: false, default: false },
+            ])
+          )
+        )
+      }
+      if (address.endsWith('/api/graphql')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                project: {
+                  mergeRequests: {
+                    nodes: [
+                      { iid: '1', diffStatsSummary: { additions: 12, deletions: 3, fileCount: 2 } },
+                      { iid: '3', diffStatsSummary: null },
+                    ],
+                  },
+                },
+              },
+            })
+          )
+        )
       }
       const iid = Number(address.split('/').at(-1))
       detailReads.push(iid)
@@ -363,9 +395,17 @@ describe('GitLabDirectory credentials', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('The MR list should remain available')
     expect(result.value.rows.map((row) => row.iid)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(result.value.protectedBranches).toEqual(['main', 'release/1.0'])
+    expect(result.value.defaultBranch).toBe('main')
     expect(result.value.rows.find((row) => row.iid === 2)?.pipeline).toBeNull()
     expect(result.value.rows.find((row) => row.iid === 3)?.pipeline?.id).toBe(503)
     expect(result.value.rows.find((row) => row.iid === 5)?.pipeline).toBeNull()
+    expect(result.value.rows.find((row) => row.iid === 1)?.diff).toEqual({
+      added: 12,
+      removed: 3,
+      files: 2,
+    })
+    expect(result.value.rows.find((row) => row.iid === 3)?.diff).toBeNull()
     expect(detailReads).toEqual([1, 2, 3, 4])
   })
 
@@ -396,7 +436,8 @@ describe('GitLabDirectory credentials', () => {
     let detailReads = 0
     let listReads = 0
     let userReads = 0
-    const request = vi.fn<typeof fetch>().mockImplementation(async (url) => {
+    const graphqlReads: { authorization: string | undefined; iids: string[] }[] = []
+    const request = vi.fn<typeof fetch>().mockImplementation(async (url, options) => {
       const address = urlOf(url)
       if (address.endsWith('/user')) {
         userReads += 1
@@ -406,6 +447,30 @@ describe('GitLabDirectory credentials', () => {
         listReads += 1
         expect(address).toContain('with_labels_details=true')
         return new Response(JSON.stringify(items))
+      }
+      if (address.includes('/repository/branches')) {
+        return new Response('[]')
+      }
+      if (address.endsWith('/api/graphql')) {
+        const headers = options?.headers as Record<string, string>
+        const body = JSON.parse(typeof options?.body === 'string' ? options.body : '{}') as {
+          variables: { iids: string[] }
+        }
+        graphqlReads.push({ authorization: headers['Authorization'], iids: body.variables.iids })
+        return new Response(
+          JSON.stringify({
+            data: {
+              project: {
+                mergeRequests: {
+                  nodes: body.variables.iids.map((iid) => ({
+                    iid,
+                    diffStatsSummary: { additions: Number(iid), deletions: 1, fileCount: 1 },
+                  })),
+                },
+              },
+            },
+          })
+        )
       }
       const iid = Number(address.split('/').at(-1))
       const item = items.find((row) => row.iid === iid)
@@ -447,7 +512,6 @@ describe('GitLabDirectory credentials', () => {
         rows: expect.arrayContaining([
           expect.objectContaining({
             iid: 1,
-            mine: true,
             labels: [
               { name: 'In Review', color: '#1F75Cb', textColor: '#fff' },
               { name: 'Uncoloured', color: null, textColor: null },
@@ -457,16 +521,24 @@ describe('GitLabDirectory credentials', () => {
           expect.objectContaining({
             iid: 2,
             fork: true,
-            reviewRequested: true,
             pipeline: expect.objectContaining({ projectId: 99 }),
           }),
-          expect.objectContaining({ iid: 45, pipeline: null }),
+          expect.objectContaining({ iid: 45, pipeline: null, diff: null }),
         ]),
       },
+    })
+    if (!first.ok) throw new Error('The MR list should be available')
+    expect(first.value.rows.find((row) => row.iid === 7)?.diff).toEqual({
+      added: 7,
+      removed: 1,
+      files: 1,
     })
     expect(second).toEqual(first)
     expect(userReads).toBe(1)
     expect(listReads).toBe(1)
+    expect(graphqlReads).toHaveLength(1)
+    expect(graphqlReads[0]?.authorization).toBe('Bearer fictional-token')
+    expect(graphqlReads[0]?.iids).toHaveLength(40)
     expect(detailReads).toBe(40)
     expect(peak).toBeLessThanOrEqual(4)
   })

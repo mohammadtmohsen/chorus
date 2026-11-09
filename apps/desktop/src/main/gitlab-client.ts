@@ -83,6 +83,28 @@ export class GitLabClient {
     schema: z.ZodType<T>,
     ttlMs: number
   ): Promise<GitLabResult<T>> {
+    return this.cached(project, path, ttlMs, () => this.send('GET', path, undefined, schema))
+  }
+
+  graphql<T>(
+    project: string,
+    query: string,
+    variables: Readonly<Record<string, unknown>>,
+    schema: z.ZodType<T>,
+    ttlMs: number
+  ): Promise<GitLabResult<T>> {
+    const body = { query, variables }
+    return this.cached(project, `graphql\u0000${JSON.stringify(body)}`, ttlMs, () =>
+      this.send('POST', '/graphql', body, schema, 'graphql')
+    )
+  }
+
+  private cached<T>(
+    project: string,
+    path: string,
+    ttlMs: number,
+    run: () => Promise<GitLabResult<T>>
+  ): Promise<GitLabResult<T>> {
     const key = `${project}\u0000${path}`
     const cached = this.cache.get(key)
     if (cached !== undefined && this.now() - cached.at < ttlMs) {
@@ -91,7 +113,7 @@ export class GitLabClient {
     const running = this.inflight.get(key)
     if (running !== undefined) return running.promise as Promise<GitLabResult<T>>
     const generation = this.generationOf(project)
-    const started = this.send('GET', path, undefined, schema).then((result) => {
+    const started = run().then((result) => {
       if (result.ok && this.generationOf(project) === generation) {
         this.cache.set(key, { project, at: result.fetchedAt, value: result.value })
       }
@@ -166,7 +188,8 @@ export class GitLabClient {
     method: string,
     path: string,
     body: unknown,
-    schema: z.ZodType<T>
+    schema: z.ZodType<T>,
+    endpoint: 'rest' | 'graphql' = 'rest'
   ): Promise<GitLabResult<T>> {
     if (this.now() < this.coolUntil) {
       return { ok: false, failure: 'rate-limited', retryAt: this.coolUntil }
@@ -174,10 +197,13 @@ export class GitLabClient {
     const signal = AbortSignal.timeout(20_000)
     let response: Response
     try {
-      response = await this.request(`https://${this.host}/api/v4${path}`, {
+      const root = endpoint === 'graphql' ? '/api' : '/api/v4'
+      response = await this.request(`https://${this.host}${root}${path}`, {
         method,
         headers: {
-          'PRIVATE-TOKEN': this.token,
+          ...(endpoint === 'graphql'
+            ? { Authorization: `Bearer ${this.token}` }
+            : { 'PRIVATE-TOKEN': this.token }),
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -249,7 +275,6 @@ const MrListItem = z.object({
   user_notes_count: z.number().int().nonnegative(),
   blocking_discussions_resolved: z.boolean(),
   author: Person,
-  reviewers: z.array(Person),
   labels: z.array(Label),
 })
 
@@ -336,6 +361,45 @@ const Approvals = z.object({
   approved_by: z.array(z.object({ user: Person })),
   user_has_approved: z.boolean().optional(),
   user_can_approve: z.boolean().optional(),
+})
+
+const BranchItem = z.object({
+  name: z.string(),
+  protected: z.boolean(),
+  default: z.boolean(),
+})
+
+const DIFF_STATS_QUERY = `query($path: ID!, $iids: [String!]) {
+  project(fullPath: $path) {
+    mergeRequests(iids: $iids, first: ${String(DETAIL_LIMIT)}) {
+      nodes { iid diffStatsSummary { additions deletions fileCount } }
+    }
+  }
+}`
+
+const DiffStatsReply = z.object({
+  data: z
+    .object({
+      project: z
+        .object({
+          mergeRequests: z.object({
+            nodes: z.array(
+              z.object({
+                iid: z.string(),
+                diffStatsSummary: z
+                  .object({
+                    additions: z.number().int().nonnegative(),
+                    deletions: z.number().int().nonnegative(),
+                    fileCount: z.number().int().nonnegative(),
+                  })
+                  .nullable(),
+              })
+            ),
+          }),
+        })
+        .nullable(),
+    })
+    .nullable(),
 })
 
 export interface GitLabReviewFile {
@@ -454,6 +518,8 @@ interface Requests {
   rows: Omit<MrRow, 'elsewhere' | 'updatedSinceReview'>[]
   complete: boolean
   username: string
+  protectedBranches: string[]
+  defaultBranch: string | null
 }
 type Failure = Extract<GitLabResult<never>, { readonly ok: false }>
 
@@ -735,6 +801,12 @@ export class GitLabDirectory implements GitProviderPort {
     const account = this.clientOf(location.host)
     if (account === null) return { ok: false, failure: 'no-token', retryAt: null }
     const project = encodeURIComponent(location.path)
+    const branchesRead = account.client.getAll(
+      project,
+      `/projects/${project}/repository/branches`,
+      BranchItem,
+      TTL_MS
+    )
     const [user, listed] = await Promise.all([
       this.userOf(account),
       account.client.getAll(
@@ -750,6 +822,12 @@ export class GitLabDirectory implements GitProviderPort {
     if (!user.ok) return user
     if (!listed.ok) return listed
     const visible = listed.value.items.slice(0, DETAIL_LIMIT)
+    const statsRead = this.diffStats(
+      account,
+      project,
+      location.path,
+      visible.map((item) => item.iid)
+    )
     const pipelines = new Map<number, z.infer<typeof MrDetail>['head_pipeline']>()
     let fetchedAt = listed.fetchedAt
     for (let start = 0; start < visible.length; start += DETAIL_CONCURRENCY) {
@@ -771,6 +849,10 @@ export class GitLabDirectory implements GitProviderPort {
       }
       if (failed) break
     }
+    const [stats, branches] = await Promise.all([statsRead, branchesRead])
+    const statsChanged = this.changed(location.host, account)
+    if (statsChanged !== null) return statsChanged
+    const branchItems = branches.ok ? branches.value.items : []
     const username = user.value.username
     const rows: Omit<MrRow, 'elsewhere' | 'updatedSinceReview'>[] = listed.value.items.map(
       (item) => {
@@ -789,15 +871,20 @@ export class GitLabDirectory implements GitProviderPort {
           updatedAt: Date.parse(item.updated_at),
           notes: item.user_notes_count,
           unresolved: !item.blocking_discussions_resolved,
-          mine: item.author.username === username,
-          reviewRequested: item.reviewers.some((reviewer) => reviewer.username === username),
+          diff: stats.get(item.iid) ?? null,
           pipeline: pipeline === undefined || pipeline === null ? null : pipelineOf(pipeline),
         }
       }
     )
     return {
       ok: true,
-      value: { rows, complete: listed.value.complete, username },
+      value: {
+        rows,
+        complete: listed.value.complete,
+        username,
+        protectedBranches: branchItems.filter((item) => item.protected).map((item) => item.name),
+        defaultBranch: branchItems.find((item) => item.default)?.name ?? null,
+      },
       fetchedAt,
     }
   }
@@ -834,6 +921,34 @@ export class GitLabDirectory implements GitProviderPort {
       return result
     })
     return account.user
+  }
+
+  private async diffStats(
+    account: AccountClient,
+    project: string,
+    path: string,
+    iids: readonly number[]
+  ): Promise<Map<number, NonNullable<MrRow['diff']>>> {
+    const stats = new Map<number, NonNullable<MrRow['diff']>>()
+    if (iids.length === 0) return stats
+    const result = await account.client.graphql(
+      project,
+      DIFF_STATS_QUERY,
+      { path, iids: iids.map(String) },
+      DiffStatsReply,
+      TTL_MS
+    )
+    if (!result.ok) return stats
+    for (const node of result.value.data?.project?.mergeRequests.nodes ?? []) {
+      const summary = node.diffStatsSummary
+      if (summary === null) continue
+      stats.set(Number(node.iid), {
+        added: summary.additions,
+        removed: summary.deletions,
+        files: summary.fileCount,
+      })
+    }
+    return stats
   }
 
   private async latestVersionOf(
