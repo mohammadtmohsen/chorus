@@ -38,6 +38,7 @@ import { useUsage, type UsageReading } from './useUsage.js'
 
 export interface QuickRailProps {
   readonly sessions: readonly SessionInfo[]
+  readonly brand?: React.ReactNode
   readonly starting: boolean
   readonly preview: PreviewController
   readonly onNewSession: () => void
@@ -209,6 +210,7 @@ export function QuickRail(props: QuickRailProps): React.JSX.Element {
         scrolling away — that half of the original reasoning is unchanged.
       */}
       <ul className="quick-rail-group">
+        {props.brand !== undefined && <li className="quick-rail-brand">{props.brand}</li>}
         <li>
           <button
             type="button"

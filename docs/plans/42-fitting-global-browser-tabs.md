@@ -8,6 +8,9 @@
 | Implementation | Equal-width follow-up written and diff reviewed; runtime behavior unverified         |
 | Tab boundaries | Written and diff reviewed: visible tab outlines and gaps; live appearance unverified |
 | Verification   | Local build and installation passed; tests and live appearance unverified            |
+| Width cap      | 2026-11-12: `.web-tab` keeps `flex: 1 1 0` and gains `max-width: 200px`              |
+| Group sizing   | 2026-11-12: group basis is `min(70%, tabs × 203px + 48px)`, from the tab count       |
+| Effect         | 2026-11-12: unused room goes to project tabs; the group sits by `+`. Not run         |
 
 ## Current / Issue
 

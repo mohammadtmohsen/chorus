@@ -357,9 +357,8 @@
   /*
    * The rail's own top inset.
    *
-   * Small, because the compact header above it already holds the traffic lights
-   * and the drag region — this is breathing room over the first tile, not
-   * clearance for anything.
+   * Small: breathing room over the first tile. Where the window draws its
+   * traffic lights over the rail, `.quick-rail` clears them itself.
    */
   --rail-top: 8px;
 }
@@ -1682,58 +1681,6 @@ body {
 
 .setup-actions .btn--wide {
   flex: 1;
-}
-
-/*
- * One quiet row: the name, the build, and the window's drag handle.
- *
- * It held the wordmark, the account windows and two buttons, wrapped to two
- * lines below 560px and stood 40px tall. Everything except the name and the
- * version has since moved — the account windows to the rail's foot, the buttons
- * to the rail and the session menu — so what is left is a caption, and a caption
- * does not need 40px. 31 is the height of the traffic lights plus their margin,
- * which is the floor for a `hiddenInset` window and the reason this row cannot
- * simply go: below it, nothing has to leave room for them.
- *
- * A fixed height rather than padding, because there is nothing left in here that
- * can wrap.
- */
-.masthead {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: calc(var(--step) * 3);
-  height: var(--masthead);
-  /* Clear of the traffic lights, which macOS draws over this row's left end. */
-  padding: 0 calc(var(--step) * 4) 0 88px;
-  border-bottom: 1px solid var(--border-default);
-  background: var(--bg-chrome);
-  -webkit-app-region: drag;
-}
-
-/*
- * The handle gives way while the global note is grown, and it has to.
- *
- * A drag region swallows pointer input before the page sees it — the same fact
- * `.workspace-tabstrip` records about the wheel, one event further up. Every
- * other part of the window closes that note by taking focus off it, because
- * blur is what collapses the box. This row could not: the press was consumed by
- * the window server, the editor stayed focused, and the note sat open over an
- * app that looked like it was ignoring the click.
- *
- * Conditional rather than removed. This is the window's only handle, and a
- * window that cannot be moved is a worse bug than a note that will not close —
- * so the region comes back the moment the note collapses. The cost is that the
- * first press on this row closes the note instead of starting a drag, which is
- * what a click outside is supposed to do anyway.
- *
- * `:has(~ …)` because `.masthead` *precedes* the note in `.stage`: the note is
- * fixed to the window rather than living in the header, for the reason the
- * comment above `GlobalNotes` in `App.tsx` gives. `data-focused` is that note's
- * own open state, so nothing new has to be published for this.
- */
-.masthead:has(~ .global-note[data-focused='true']) {
-  -webkit-app-region: no-drag;
 }
 
 .path {
@@ -5997,12 +5944,6 @@ input::placeholder {
     --gutter: 46px;
   }
 
-  .masthead {
-    gap: calc(var(--step) * 2);
-    /* Still clear of the traffic lights, which do not shrink with the window. */
-    padding: 0 calc(var(--step) * 3) 0 80px;
-  }
-
   .score {
     padding: calc(var(--step) * 5) calc(var(--step) * 3 + var(--score-scrollbar))
       calc(var(--step) * 6) calc(var(--step) * 3);
@@ -6106,10 +6047,6 @@ input::placeholder {
   inset: 0 0 auto;
   background: var(--bg-surface);
   pointer-events: none;
-}
-
-.stage:has(> .masthead) > .notice--closing {
-  top: var(--masthead);
 }
 
 .workspace-shell {
@@ -8759,6 +8696,18 @@ input::placeholder {
   -webkit-app-region: drag;
 }
 
+.stage[data-window-controls='true'] .quick-rail {
+  padding-top: var(--masthead);
+}
+
+.stage[data-window-controls='true'] > .notice--workspace {
+  padding-left: 88px;
+}
+
+.stage[data-window-controls='true']:has(> .notice--workspace:not(.notice--closing)) .quick-rail {
+  padding-top: var(--rail-top);
+}
+
 .workspace-shell[data-rail='right'] .quick-rail {
   padding: var(--rail-top) calc(var(--step) * 2) calc(var(--step) * 2) 0;
 }
@@ -8778,10 +8727,6 @@ html.continuous-row .note-zoom {
 
 html.continuous-row .zoom-badge {
   left: calc((100% + var(--continuous-row-inset, 0px)) / 2);
-}
-
-html.continuous-row .global-note {
-  max-width: calc(90vw - var(--continuous-row-inset, 0px));
 }
 
 /*
@@ -8828,6 +8773,28 @@ html.continuous-row .global-note {
    * measured on them rather than on the 44px buttons at the head and foot.
    */
   --rail-step: calc(var(--rail) - var(--step) * 2 + var(--step) * 2.5);
+}
+
+.quick-rail-brand {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  row-gap: var(--step);
+}
+
+.quick-rail-brand .wordmark {
+  grid-column: 1 / -1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.quick-rail-brand .app-version {
+  grid-column: 1;
+  margin-left: 0;
+}
+
+.quick-rail-brand .kept-notes-button {
+  grid-column: 2;
 }
 
 /*
@@ -11744,147 +11711,6 @@ html.continuous-row .global-note {
   transform: translate(-50%, 6px);
 }
 
-/* --------------------------------------------------------- the global note */
-
-/*
- * The note that belongs to no project, sitting on the masthead's own row.
- *
- * **Fixed rather than a child of the header, and that is forced.** `.stage`
- * clips its overflow and the masthead is 31px tall, so a field inside it would
- * be cut off at the row's edge the moment a second line was typed. Fixed to the
- * window is also the honest description: this is about the app, and the app is
- * not a box in the layout.
- *
- * **One line at rest, on the version's line.** The vertical padding is derived
- * from `--masthead` and the line box, so the resting height is exactly the row's
- * and the first line sits where the version does. Growing changes the height
- * below that line and never the line itself, so nothing jumps when the caret
- * lands in it.
- *
- * `width` is written inline by the component as a percentage; the two bounds
- * here are the same numbers `NOTE_SIZE` clamps to, kept as a second
- * floor so a stored value from an older build cannot leave a field too narrow to
- * find or too wide to escape.
- *
- * **Above everything except a modal.** 120 is the highest z-index in the app and
- * belongs to a dialog; this sits at 110, so a dialog opened while the note is
- * grown still comes out in front.
- */
-.global-note {
-  position: fixed;
-  top: 0;
-  right: 0;
-  z-index: 110;
-  /*
-   * What the left edge was dragged to, or a quarter of the window.
-   *
-   * The fallback is `NOTE_SIZE.width.default` written twice, which is the same
-   * bargain the two bounds below already make: the renderer always sets the
-   * property, and this is the box before the first paint carries it.
-   */
-  width: var(--note-w, 25vw);
-  /*
-   * Room for a dragged height, which the bottom edge allows up to 90% of the
-   * window — plus the toolbar under it, which is not part of that number. 50vh
-   * was this note's whole ceiling before there was a way to ask for more, and
-   * leaving it would have quietly capped every drag at half the screen.
-   */
-  max-height: 95vh;
-  min-width: 25vw;
-  max-width: 90vw;
-  /* The one padding that is this note's alone: derived from the masthead, which
-     is what puts the resting line on the version's line. The horizontal pair is
-     the root's, shared with the project note. */
-  --note-pad-y: calc((var(--masthead) - var(--note-line)) / 2);
-
-  /* Clipped, so the mark follows the rounded corner rather than running square
-     past it. */
-  overflow: hidden;
-  /* It lies over the window's drag region, and a field you cannot select text in
-     because the window moves instead is worse than no field. */
-  -webkit-app-region: no-drag;
-}
-
-/*
- * The space the editor stopped holding, moved out to the box.
- *
- * The text lost its top padding, which is right for a note that begins at its
- * own edge — but this one begins at the *window's* edge, and the padding was
- * what put its first line on the version's line. Dropping it outright would
- * leave the resting row 10px short of the masthead and the text against the top
- * of the screen. So the gap stays and only its owner changes: outside the
- * editor, where it is the box sitting on the row rather than text sitting low
- * in a box. On `.note-body` rather than on `.global-note` itself, because the
- * width grip is absolutely positioned against the box and padding there would
- * lift its top edge off the corner.
- */
-.global-note .note-body {
-  padding-top: var(--note-pad-y);
-}
-
-/*
- * Grown: out over the app, with a surface under it.
- *
- * At rest there is no box at all — the masthead is the surface, and the note
- * reads as part of the title bar. The fill and the shadow arrive with the caret,
- * which is the moment the text stops being a line in a row and starts being a
- * pad over a workspace. The values match the app's other floating surfaces
- * rather than being chosen here.
- */
-.global-note[data-focused='true'] {
-  /*
-   * The corner belongs to the grown box, not the resting row.
-   *
-   * A one-line row has nothing to round: the radius only made the edge mark hook
-   * inward at its bottom, which reads as a stray curve rather than a corner. The
-   * box that grows over the app is a panel and wants one.
-   */
-  border-radius: var(--note-radius);
-  /* Flat, with the rose on the edge — see the project note's twin for why the
-     tint left the ground, and why this is an inset shadow rather than a
-     border. */
-  background:
-    linear-gradient(
-      to right,
-      color-mix(in srgb, var(--note-tint) 20%, transparent),
-      transparent var(--note-glow)
-    ),
-    var(--bg-control);
-  box-shadow:
-    inset 3px 0 0 var(--note-tint),
-    0 8px 28px rgb(0 0 0 / 55%);
-}
-
-/*
- * A note with something in it says so at rest.
- *
- * `ProjectNotes`'s rule and its reasoning, which apply harder here: the text
- * alone was carrying the signal, and one coloured line in a title bar is exactly
- * the thing an eye reads past — the corner looked identical whether or not
- * anything was written in it. A mark on the edge makes the whole box the signal.
- *
- * **The same mark focused**, so opening the note does not change what colour it
- * is; only the page behind it arrives, and the drop shadow with it.
- */
-.global-note[data-filled='true'][data-focused='false'] {
-  /* The mark and the light off it — see the project note's twin. */
-  background: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--note-tint) 20%, transparent),
-    transparent var(--note-glow)
-  );
-  box-shadow: inset 3px 0 0 var(--note-tint);
-}
-
-/*
- * And it keeps saying it while you are in it — `ProjectNotes`'s rule, same
- * reasoning.
- *
- * Mixed into `--bg-control` rather than layered over it, so the grown box stays
- * opaque over the workspace and only its hue moves. The shadow from the focused
- * rule above is untouched, which is what still separates open from closed.
- */
-
 /*
  * The note itself, and there is no height written by anything now.
  *
@@ -11901,29 +11727,6 @@ html.continuous-row .global-note {
 .note-editor {
   overflow: hidden;
   max-height: calc(var(--note-line) + var(--note-pad-y));
-}
-
-.global-note[data-focused='true'] .note-editor {
-  /*
-   * The dragged height, or half the window.
-   *
-   * **What is dragged is this element rather than the box**, and that is what
-   * makes one custom property enough: the box is the editor plus the toolbar, so
-   * sizing the editor sizes the box without anything having to know what the bar
-   * costs. `useNoteSize` measures that difference when a drag starts, which is
-   * why the edge stays under the pointer.
-   *
-   * **A height *and* a ceiling, and the height is the half that was missing.** A
-   * `max-height` alone cannot make a box taller — it only stops one growing — so
-   * with a short note, dragging the bottom edge downward raised a limit nothing
-   * was reaching and moved nothing on screen. Dragging upward appeared to work,
-   * which is what made it look like the handle was half broken rather than the
-   * rule. Unset, `auto` hands the size back to the text and the ceiling below
-   * does its original job.
-   */
-  height: var(--note-h, auto);
-  max-height: var(--note-h, calc(50vh - var(--masthead) + var(--note-line) - 34px));
-  overflow-y: auto;
 }
 
 /*
@@ -12546,8 +12349,8 @@ html.continuous-row .global-note {
   display: none;
 }
 
-:is(.global-note, .project-notes)[data-focused='true'] .note-grip--height,
-:is(.global-note, .project-notes)[data-focused='true'] .note-grip--corner {
+.project-notes[data-focused='true'] .note-grip--height,
+.project-notes[data-focused='true'] .note-grip--corner {
   display: block;
 }
 
@@ -15273,7 +15076,7 @@ html.continuous-row .global-note {
 .web-tab-group {
   display: flex;
   align-items: center;
-  flex: 0 1 70%;
+  flex: 0 1 min(70%, calc(var(--web-tab-count, 0) * 203px + 48px));
   min-width: 36px;
   max-width: 70%;
   height: var(--pane-header, 40px);
@@ -15311,6 +15114,7 @@ html.continuous-row .global-note {
   flex: 1 1 0;
   align-items: center;
   min-width: 0;
+  max-width: 200px;
   height: 32px;
   overflow: clip;
   border: 1px solid var(--border-strong);

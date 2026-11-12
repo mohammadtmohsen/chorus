@@ -21,7 +21,6 @@
   "app": {
     "name": "Chorus",
     "tagline": "Work with several coding agents in one conversation, on your own machine.",
-    "note": "Note",
     "noteTool": {
       "bold": "Bold",
       "italic": "Italic",
@@ -62,7 +61,6 @@
     "noteImageWorking": "Fetching…",
     "noteImageCancel": "Cancel",
     "noteImageClose": "Close the image",
-    "notePlaceholder": "Anything that is not about one project…",
     "noteResizeWidth": "Drag to set the width, double-click to fit the longest line",
     "noteResizeHeight": "Drag to set the height, double-click to fit the text",
     "noteResizeBoth": "Drag to resize, double-click to fit"

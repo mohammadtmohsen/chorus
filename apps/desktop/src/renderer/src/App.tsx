@@ -22,7 +22,6 @@ import { RemoteProjectDialog } from './workspace/RemoteProjectDialog.js'
 import { INSTALL, Settings, type Defaults } from './Settings.js'
 import { Workspace } from './workspace/Workspace.js'
 import { DetachedStage } from './workspace/DetachedStage.js'
-import { GlobalNotes } from './GlobalNotes.js'
 import { KeptNotes } from './KeptNotes.js'
 import type { NoteSize } from './noteSize.js'
 import { ConfirmEndSession } from './ConfirmEndSession.js'
@@ -46,8 +45,7 @@ import {
 import { measureTabGeometry, resolveTarget } from './workspace/useTabDrag.js'
 import { reorderSessions } from './workspace/session-row.js'
 import { useShellOverlay } from './workspace/overlay.js'
-import { NOTE_SIZE } from '../../shared/workspace-layout.js'
-import { setRunningPlatform } from './shortcuts.js'
+import { runningPlatform, setRunningPlatform } from './shortcuts.js'
 
 /**
  * How long to sit on read-watermarks before writing them down.
@@ -68,24 +66,6 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   const [profiles, setProfiles] = useState<{ id: string; name: string; summary: string }[]>([])
   /** The registry, most recently opened first — the order the rail draws in. */
   const [projects, setProjects] = useState<IpcResponse<'project:list'>['projects']>([])
-  /**
-   * The note that belongs to no project, and how wide it was last dragged.
-   *
-   * Held here rather than in the workspace store, and the two are different
-   * kinds of thing: the store holds the arrangement, which is written to a
-   * snapshot file on every change, while this is one row in the database read
-   * once at start. It is also read by exactly one component, so a store slice
-   * would be reach without a second reader to justify it.
-   *
-   * **Null until the row has been read, and the note is not mounted before
-   * that.** The editor seeds its document once, from the value it is handed at
-   * mount. Rendering it against a placeholder and letting the real note arrive a
-   * moment later would mean either ignoring what was read — the note appears
-   * empty forever, which is what happened — or writing into a document somebody
-   * may already be typing in. Waiting for the read costs one IPC and removes the
-   * choice.
-   */
-  const [appNote, setAppNote] = useState<IpcResponse<'app:getNote'> | null>(null)
   const [defaults, setDefaults] = useState<Defaults>({
     /* Matches the main process's default, and has to keep matching it: this
        stands only until `readSettings` answers, but a session started inside
@@ -725,9 +705,6 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
      */
     window.chorus.probeAgents().then(setProbes).catch(fail(setError))
     window.chorus.profiles().then(setProfiles).catch(fail(setError))
-    // Read once and kept in state after that. The only writer is the panel this
-    // feeds, so there is nothing to re-read from and no second view to drift.
-    window.chorus.getAppNote({}).then(setAppNote).catch(fail(setError))
     window.chorus
       .listProjects({})
       .then(({ projects: listed }) => {
@@ -1659,36 +1636,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   )
 
   /*
-   * The app's own note, written straight into state as well as to disk.
-   *
-   * Its project-scoped neighbour above re-lists the registry after every write,
-   * because the pad seeds from a listing that several other things also change.
-   * This row has one reader and one writer, so a round trip would only confirm
-   * what was just sent.
-   *
-   * `current` is never null in either of these: nothing can call them before the
-   * note is mounted, and it is not mounted until the read has answered.
-   */
-  const saveAppNote = useCallback((notes: string) => {
-    setAppNote((current) => (current === null ? current : { ...current, notes }))
-    window.chorus.setAppNote({ notes }).catch(fail(setError))
-  }, [])
-
-  const saveAppNoteSize = useCallback((size: NoteSize) => {
-    setAppNote((current) => (current === null ? current : { ...current, ...size }))
-    /*
-     * A width is never null for this note — the panel is drawn from the window's
-     * edge and has to be *some* width, so the default stands in before the first
-     * drag. A project's note is the one that can answer null, because until it is
-     * dragged it is simply as wide as its column.
-     */
-    window.chorus
-      .setAppNoteSize({ width: size.width ?? NOTE_SIZE.width.default, height: size.height })
-      .catch(fail(setError))
-  }, [])
-
-  /*
-   * The same for a project's note, and it re-lists for the same reason its text
+   * A project's note size, and it re-lists for the same reason its text
    * does: the pad seeds from the listing and is remounted on every tab switch,
    * so a stale row would reopen at the size it had two drags ago.
    */
@@ -2080,63 +2028,10 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   }
 
   return (
-    <div className="stage">
-      {/*
-       * One compact row, and nothing in it but the name and the build.
-       *
-       * It was 40px of wrapping header with a padding rule that reserved the
-       * sidebar's width; it is 31px now, holds the wordmark and the version, and
-       * carries no actions — those all moved to the rail and the session menu.
-       * That is the whole of its job, plus two it does by existing: it is the
-       * window's drag region, and it is where `titleBarStyle: hiddenInset` puts
-       * the traffic lights, so nothing below it has to leave room for them.
-       */}
-      <header className="masthead">
-        <h1 className="wordmark">
-          <ChorusLogo className="wordmark-logo" label={t('app.name')} />
-          {appVersion !== null && (
-            <span className="app-version" data-app-version>
-              {appVersion}
-            </span>
-          )}
-        </h1>
-        {/*
-          Inside the header, unlike the global note, and the difference is what
-          each one is.
-
-          That note *is* a note and has to be readable without opening anything,
-          so it is fixed to the window and grows over the app. This is a button
-          that opens one — 22px that never changes size — so it can live on the
-          row it belongs to. What it opens is portalled out of here, because the
-          row is one line tall inside a `.stage` that clips.
-        */}
-        <KeptNotes onSendSelection={sendNoteSelection} />
-      </header>
-
-      {/*
-        Mounted as soon as the row has been read, and never unmounted after — it
-        is the note, not a way to reach one.
-
-        `ProjectNotes` is the same: one line always on screen, because a note you
-        have to open is a note you forget you wrote. There is no button and
-        nothing to toggle, so there is no open/closed state up here for it.
-
-        The gate is about seeding, not about visibility — see `appNote` above.
-
-        Not inside the header. It is fixed to the window's corner and grows down
-        over the app, and `.stage` clips its overflow — a child of the masthead
-        would be cut off at 31px the moment anyone typed a second line.
-      */}
-      {appNote !== null && (
-        <GlobalNotes
-          notes={appNote.notes}
-          size={{ width: appNote.width ?? NOTE_SIZE.width.default, height: appNote.height }}
-          onSave={saveAppNote}
-          onSaveSize={saveAppNoteSize}
-          onSendSelection={sendNoteSelection}
-        />
-      )}
-
+    <div
+      className="stage"
+      data-window-controls={capabilities.detachedWindows && runningPlatform() === 'darwin'}
+    >
       {topLevelNotice}
 
       {stopping && (
@@ -2146,6 +2041,19 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
       )}
       <Workspace
         sessions={sessions}
+        railBrand={
+          <>
+            <h1 className="wordmark">
+              <ChorusLogo className="wordmark-logo" label={t('app.name')} />
+            </h1>
+            {appVersion !== null && (
+              <span className="app-version" data-app-version>
+                {appVersion}
+              </span>
+            )}
+            <KeptNotes onSendSelection={sendNoteSelection} />
+          </>
+        }
         starting={starting}
         onNewSession={start}
         onStartInProject={startIn}

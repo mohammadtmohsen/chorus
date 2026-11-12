@@ -51,6 +51,7 @@ import { runWebCommand, startWebPages } from './web-pages.js'
 
 interface WorkspaceProps {
   readonly sessions: readonly SessionInfo[]
+  readonly railBrand: React.ReactNode
   readonly starting: boolean
   readonly onNewSession: () => void
   /** Starts a conversation in one named project — the `+` inside a pane. */
@@ -505,6 +506,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
   const rail = (
     <QuickRail
       sessions={props.sessions}
+      brand={props.railBrand}
       starting={props.starting}
       preview={preview}
       onNewSession={props.onNewSession}

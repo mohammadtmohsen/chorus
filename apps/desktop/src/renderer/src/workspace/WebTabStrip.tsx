@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent, RefObject } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { WEB_TABS_MAX } from '../../../shared/workspace-layout.js'
 import { useWebTabs } from './hooks.js'
@@ -224,7 +224,10 @@ export function WebTabStrip(): React.JSX.Element {
     useWorkspaceStore.getState().closeWebTab(id)
   }
   return (
-    <div className="web-tab-group">
+    <div
+      className="web-tab-group"
+      style={{ '--web-tab-count': webTabs.tabs.length } as CSSProperties}
+    >
       <span className="web-tab-divider" aria-hidden="true" />
       <div className="web-tabs" ref={tabs} data-compact={compact}>
         {webTabs.tabs.map((tab) => {
