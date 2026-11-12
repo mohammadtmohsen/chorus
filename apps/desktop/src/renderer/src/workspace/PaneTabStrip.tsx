@@ -96,9 +96,9 @@ export function PaneTabStrip(
           /*
            * The project's newest conversation, which is still what the tab's
            * state mark and its drag are about — a pane shows one conversation
-           * per project. A project with none of them open has nothing to draw
-           * and is dropped, which is the one case the old `flatMap` handled
-           * correctly by accident.
+           * per project. A project with none of them open still has a tab,
+           * named by the registry; only one that neither the registry nor a
+           * conversation can name is dropped.
            *
            * It no longer *names* the tab. That was the only string the strip
            * could reach, and it read correctly only for as long as a
@@ -108,24 +108,25 @@ export function PaneTabStrip(
             (candidate) => candidate.projectId === projectId
           )
           const session = projectSessions.at(-1)
-          if (session === undefined) return []
+          const project = props.projects.find((candidate) => candidate.id === projectId) ?? null
+          /* A project the registry cannot resolve has no name to show, and the
+             conversation's title is the same string it used to show anyway. */
+          const label = project === null ? session?.title : projectLabel(project)
+          if (label === undefined) return []
           const closing = props.closingProjects?.includes(projectId) === true
-          const conversationId = session.conversationId
           /* Every conversation in the project, because the mark folds them —
              see `TabState`. The drag and the pane still follow the newest. */
           const conversationIds = projectSessions.map((candidate) => candidate.conversationId)
           const active = props.pane.activeTabId === projectId && props.webShowing !== true
-          const project = props.projects.find((candidate) => candidate.id === projectId) ?? null
-          /* A project the registry cannot resolve has no name to show, and the
-             conversation's title is the same string it used to show anyway. */
-          const label = project === null ? session.title : projectLabel(project)
           return [
             <div
               key={projectId}
               className="workspace-tab"
               data-active={active}
               aria-busy={closing}
-              data-dragging={props.drag?.conversationId === conversationId}
+              data-dragging={
+                session !== undefined && props.drag?.conversationId === session.conversationId
+              }
               /*
                * Held at the width it had, for as long as the field is open —
                * the conversation strip's rule, with the conversation strip's
