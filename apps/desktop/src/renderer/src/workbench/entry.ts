@@ -57,6 +57,8 @@ import {
   type WheelModifiers,
 } from './viewport.js'
 
+const PANNING_VIEW_TYPES: ReadonlySet<string> = new Set(['editor.excalidraw'])
+
 async function forwardWebviewWheels(
   container: HTMLElement,
   modifiers: () => WheelModifiers
@@ -70,11 +72,15 @@ async function forwardWebviewWheels(
     )
     if (delta !== 0) window.chorusWorkbench.requestRowScroll(delta)
   })
+  const rowScrolling = (): IWebview[] =>
+    [...webviews.webviews].filter(
+      (webview) => !PANNING_VIEW_TYPES.has(webview.providedViewType ?? '')
+    )
   const mounted = new MutationObserver((records) => {
-    if (addsIframe(records)) watch(webviews.webviews)
+    if (addsIframe(records)) watch(rowScrolling())
   })
   mounted.observe(document.body, { childList: true, subtree: true })
-  watch(webviews.webviews)
+  watch(rowScrolling())
 }
 
 async function watchWorkbenchChrome(
