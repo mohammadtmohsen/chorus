@@ -19,6 +19,7 @@ import { app, dialog } from 'electron'
 import { z } from 'zod'
 import { ownProcessTree, type OwnedProcessTree } from '@chorus/shared/process-tree'
 import { prepareWorkbenchProcessOwner } from './workbench-process-owner.js'
+import { prepareWorkbenchLanguageModels } from './workbench-language-models.js'
 import { mainT } from './i18n.js'
 import { stopAllTunnels } from './remote-tunnel.js'
 import { hashBytes, hashFile, publishServer, sweepQuarantine } from './workbench-extract.js'
@@ -1141,6 +1142,12 @@ async function start(): Promise<WorkbenchRuntime> {
   chmodSync(data, 0o700)
   const processDirectory = prepareWorkbenchProcessOwner(data, (path, error) => {
     log.warn('workbench extension registration file could not be read', {
+      path,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
+  prepareWorkbenchLanguageModels(data, (path, error) => {
+    log.warn('workbench language model registration file could not be read', {
       path,
       error: error instanceof Error ? error.message : String(error),
     })

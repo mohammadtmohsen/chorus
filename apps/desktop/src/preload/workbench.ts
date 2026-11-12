@@ -563,6 +563,16 @@ const api: ChorusWorkbenchApi = {
     ipcRenderer.send(COMPLETION_CANCEL_CHANNEL, requestId)
   },
 
+  generateLanguageModel: async (request) => {
+    const response: unknown = await ipcRenderer.invoke('lm:generate', request)
+    return response
+  },
+
+  cancelLanguageModel: async (request) => {
+    const response: unknown = await ipcRenderer.invoke('lm:cancel', request)
+    return response
+  },
+
   reportEditorOutcome: (report: EditorReport) => {
     ipcRenderer.send(EDITOR_REPORT_CHANNEL, report)
   },

@@ -1,4 +1,10 @@
 import { LOCAL_HOST } from '@chorus/event-store'
+import {
+  LANGUAGE_MODEL_CONTRACT,
+  LanguageModelCancel,
+  LanguageModelRequest,
+  LanguageModelResponse,
+} from '../shared/language-model-ipc.js'
 import { ownProcessTree, type OwnedProcessTree } from '@chorus/shared/process-tree'
 import {
   BrowserWindow,
@@ -1830,6 +1836,17 @@ interface WorkbenchReviewSource {
 
 let reviewSource: WorkbenchReviewSource | null = null
 
+interface WorkbenchLanguageModelSource {
+  generate(owner: WebContents, request: LanguageModelRequest): Promise<LanguageModelResponse>
+  cancel(owner: WebContents, request: LanguageModelCancel): Promise<void>
+}
+
+let languageModelSource: WorkbenchLanguageModelSource | null = null
+
+export function setWorkbenchLanguageModelSource(source: WorkbenchLanguageModelSource | null): void {
+  languageModelSource = source
+}
+
 export function setWorkbenchReviewSource(source: WorkbenchReviewSource): void {
   reviewSource = source
 }
@@ -1916,6 +1933,38 @@ export function registerWorkbenchHandlers(
 ): void {
   resolveProjectPlace = resolvePlace ?? null
   openRegisteredProject = openProject ?? null
+  ipcMain.handle('lm:generate', async (event, raw: unknown): Promise<LanguageModelResponse> => {
+    const surface = byContents.get(event.sender)
+    const source = languageModelSource
+    if (surface === undefined || !fromMainFrame(event) || source === null) {
+      return {
+        ok: false,
+        failure: 'unavailable',
+        message: mainT('languageModels.failure.unavailable'),
+      }
+    }
+    const request = LanguageModelRequest.parse(raw)
+    const cancel = (): void => {
+      void source.cancel(surface.owner, { requestId: request.requestId }).catch(() => undefined)
+    }
+    event.sender.once('destroyed', cancel)
+    try {
+      return LanguageModelResponse.parse(await source.generate(surface.owner, request))
+    } catch {
+      cancel()
+      return { ok: false, failure: 'failed', message: mainT('languageModels.failure.failed') }
+    } finally {
+      event.sender.removeListener('destroyed', cancel)
+    }
+  })
+  ipcMain.handle('lm:cancel', async (event, raw: unknown) => {
+    const surface = byContents.get(event.sender)
+    const source = languageModelSource
+    if (surface === undefined || !fromMainFrame(event) || source === null)
+      throw new Error('language-model-caller-refused')
+    await source.cancel(surface.owner, LanguageModelCancel.parse(raw))
+    return LANGUAGE_MODEL_CONTRACT['lm:cancel'].response.parse({ ok: true })
+  })
   ipcMain.handle(WORKBENCH_REVIEW_STATE_CHANNEL, async (event): Promise<WorkbenchReviewState> => {
     const surface = byContents.get(event.sender)
     if (surface === undefined || !fromMainFrame(event)) throw new Error('unknown workbench surface')

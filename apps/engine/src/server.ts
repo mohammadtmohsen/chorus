@@ -21,6 +21,7 @@ import { RunIpc } from '../../desktop/src/main/run-ipc.js'
 import { GitBoxService } from '../../desktop/src/main/git-box.js'
 import { GitLabDirectory } from '../../desktop/src/main/gitlab-client.js'
 import { GitIpc } from '../../desktop/src/main/git-ipc.js'
+import { GenerationIpc } from '../../desktop/src/main/generation-ipc.js'
 import { ConsoleIpc } from '../../desktop/src/main/console-ipc.js'
 import { BrowserIpc } from '../../desktop/src/main/browser-ipc.js'
 import { BrowserConsoles } from '../../desktop/src/main/browser-console.js'
@@ -119,6 +120,7 @@ export async function serveEngine(
   }
   for (const channel of Object.keys(IPC_CONTRACT) as IpcChannel[])
     registrar.handle(channel, (_event, raw) => dispatch(handlers, channel, raw))
+  const generation = new GenerationIpc(runtime.generations, registrar)
   const traffic = new TrafficIpc(
     {
       registry: runtime.trafficRegistry(),
@@ -504,6 +506,7 @@ export async function serveEngine(
         traffic.registerShell(peer, peer.role)
         run.registerShell(peer, peer.role)
         git.registerShell(peer, peer.role)
+        generation.registerShell(peer)
         consoleIpc.registerShell(peer, peer.role)
         browser.registerShell(peer, peer.role)
         peer.write({
@@ -660,6 +663,7 @@ export async function serveEngine(
         traffic.releaseShell(peer)
         run.releaseShell(peer)
         git.releaseShell(peer)
+        generation.releaseShell(peer)
         consoleIpc.releaseShell(peer)
         browser.releaseShell(peer)
       }
@@ -719,6 +723,7 @@ export async function serveEngine(
       traffic.close()
       run.close()
       git.close()
+      generation.close()
       consoleIpc.close()
       await browser.close()
       consoles.close()

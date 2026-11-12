@@ -38,6 +38,7 @@ import {
   ShellPresence,
 } from '../shared/ipc.js'
 import type { WindowRole } from '../shared/detached-window-ipc.js'
+import { LanguageModelResponse } from '../shared/language-model-ipc.js'
 import type { WorkbenchContextReport } from './ipc-host.js'
 import type { WorkbenchPlace } from './project-root.js'
 import type { WorkbenchTerminalEnv } from '../shared/workbench-ipc.js'
@@ -80,6 +81,7 @@ import {
   setWorkbenchContextSink,
   setWorkbenchSurfaceGoneSink,
   setWorkbenchReviewSource,
+  setWorkbenchLanguageModelSource,
   publishWorkbenchReview,
   resetWorkbenchReviews,
 } from './workbench-surface.js'
@@ -655,6 +657,15 @@ void app.whenReady().then(async () => {
     state: (owner, projectId) => invokeReview(owner, 'git:activeReview', { projectId }),
     openDiff: (owner, request) => invokeReview(owner, 'git:openDiff', request),
   })
+  setWorkbenchLanguageModelSource({
+    generate: async (owner, request) =>
+      LanguageModelResponse.parse(
+        await clientFor(owner).invoke('lm:generate', request, undefined, 90_000)
+      ),
+    cancel: async (owner, request) => {
+      await clientFor(owner).invoke('lm:cancel', request)
+    },
+  })
   const detachedDeps: DetachedWindowDeps = {
     mainWindow: () => mainWindow,
     createDetachedWindow: (projectId, title, x, y) => {
@@ -948,6 +959,7 @@ async function shutDownEverything(): Promise<void> {
   setWorkbenchContextSink(null)
   setWorkbenchSurfaceGoneSink(null)
   setWorkbenchTerminalEnvSource(null)
+  setWorkbenchLanguageModelSource(null)
   browserDownloads?.dispose()
   browserDownloads = null
   consoleIpc?.close()

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { LanguageModelCancel, LanguageModelRequest } from './language-model-ipc.js'
 import {
   GitCommentRequest,
   GitOpenDiffRequest,
@@ -1040,6 +1041,8 @@ export interface WorkbenchShellApi {
  * from the sender, so the renderer cannot name another project's resources.
  */
 export interface ChorusWorkbenchApi {
+  readonly generateLanguageModel: (request: LanguageModelRequest) => Promise<unknown>
+  readonly cancelLanguageModel: (request: LanguageModelCancel) => Promise<unknown>
   readonly reviewFile: (request: WorkbenchReviewFileRequest) => Promise<WorkbenchReviewFileResult>
   readonly reviewState: () => Promise<unknown>
   readonly onReviewChanged: (handler: (state: unknown) => void) => () => void

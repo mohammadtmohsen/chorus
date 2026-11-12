@@ -254,6 +254,8 @@ describe('the workbench preload', () => {
       'readPreviewSelection',
       'requestCompletion',
       'cancelCompletion',
+      'generateLanguageModel',
+      'cancelLanguageModel',
       'reportEditorOutcome',
       'probeCompletionCache',
       /*

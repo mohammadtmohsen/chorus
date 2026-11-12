@@ -1,4 +1,23 @@
 {
+  "languageModels": {
+    "tokenEstimate": "Token counts are estimates (characters divided by four).",
+    "unsupportedTools": "This Chorus model cannot use tools.",
+    "unsupportedParts": "This Chorus model accepts text message parts only.",
+    "invalidRequest": "The language model request is invalid or exceeds its input limit.",
+    "bridgeUnavailable": "The Chorus language model bridge returned an invalid response.",
+    "generateCommitMessage": "Generate commit message",
+    "noCommitChanges": "There are no changes to describe.",
+    "commitMessageFailed": "Could not generate a commit message. Try again.",
+    "failure": {
+      "unavailable": "Claude is unavailable. Install the Claude CLI and sign in first.",
+      "busy": "All language model workers are busy. Try again shortly.",
+      "cancelled": "The language model request was cancelled.",
+      "timeout": "The language model request timed out.",
+      "rate-limited": "Claude is temporarily unavailable. Try again in one minute.",
+      "auth": "Claude authentication failed. Check your Claude CLI sign-in.",
+      "failed": "The language model request failed."
+    }
+  },
   "app": {
     "name": "Chorus",
     "tagline": "Work with several coding agents in one conversation, on your own machine.",

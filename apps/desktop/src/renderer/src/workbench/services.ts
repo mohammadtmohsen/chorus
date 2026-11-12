@@ -4,7 +4,9 @@ import {
   LogLevel,
 } from '@codingame/monaco-vscode-api'
 import type { EnvironmentOverride } from '@codingame/monaco-vscode-api/workbench'
+import { registerServiceInitializePreParticipant } from '@codingame/monaco-vscode-api/lifecycle'
 import { URI } from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri'
+import { IContextKeyService } from '@codingame/monaco-vscode-api/vscode/vs/platform/contextkey/common/contextkey.service'
 /*
  * The export-map subpath, not the path inside the tarball. The published map is
  * `"./vscode/*" → "./vscode/src/*.js"`, so the pattern supplies both `src/` and
@@ -53,6 +55,8 @@ import getStorageServiceOverride, {
   StorageScope,
 } from '@codingame/monaco-vscode-storage-service-override'
 import { SyncDescriptor } from '@codingame/monaco-vscode-api/vscode/vs/platform/instantiation/common/descriptors'
+import { LanguageModelsService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/contrib/chat/common/languageModels'
+import { ILanguageModelsService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/contrib/chat/common/languageModels.service'
 import { IStorageService } from '@codingame/monaco-vscode-api/vscode/vs/platform/storage/common/storage.service'
 import { ChorusStorageDatabase, ChorusStorageService } from './storage.js'
 import { IClipboardService } from '@codingame/monaco-vscode-api/vscode/vs/platform/clipboard/common/clipboardService.service'
@@ -342,6 +346,10 @@ export interface WorkbenchSetup {
 export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetup {
   const root = connection.projectRoot.replace(/\/+$/, '')
   assertClientMatchesServer(connection)
+  registerServiceInitializePreParticipant((accessor) => {
+    accessor.get(IContextKeyService).createKey('chatSetupHidden', true).set(true)
+    return Promise.resolve()
+  })
 
   /*
    * The workspace folder, on the `vscode-remote` scheme — and this one URI is the
@@ -452,6 +460,7 @@ export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetu
     ...getAccessibilityServiceOverride(),
     ...getAuthenticationServiceOverride(),
     ...getCommentsServiceOverride(),
+    [ILanguageModelsService.toString()]: new SyncDescriptor(LanguageModelsService, [], true),
     /*
      * Backed by Chorus, not by the browser — see `workbench/storage.ts`.
      *
@@ -790,6 +799,9 @@ export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetu
     productConfiguration: {
       nameShort: 'Chorus',
       nameLong: 'Chorus Workbench',
+      extensionEnabledApiProposals: {
+        'chorus.language-models': ['contribSourceControlInputBoxMenu'],
+      },
       /*
        * What `vscode.env.uriScheme` becomes, and therefore the scheme an
        * extension builds its OAuth callback out of.

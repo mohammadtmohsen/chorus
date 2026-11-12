@@ -1,9 +1,14 @@
 import { ProcessCleanupError } from '@chorus/shared/process-tree'
-import { existsSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { TRANSCRIPT_TYPES } from '../shared/transcript-events.js'
 import { homedir } from 'node:os'
 import { basename, join, resolve as resolvePreviewPath } from 'node:path'
-import { ClaudeAdapter, anthropicManagedEnv, type ResolvedExecutable } from '@chorus/adapter-claude'
+import {
+  ClaudeAdapter,
+  ClaudeGenerationWorker,
+  anthropicManagedEnv,
+  type ResolvedExecutable,
+} from '@chorus/adapter-claude'
 import { CodexAdapter } from '@chorus/adapter-codex'
 import type {
   AccountSummary,
@@ -135,6 +140,7 @@ import {
   type OpenProjectsState,
 } from './open-projects.js'
 import { ProjectService } from './project-service.js'
+import { GenerationService } from './generation-service.js'
 import { EditPreviews } from './edit-preview.js'
 import { containsPassage } from '../shared/plain-text.js'
 import { questionSetText } from '../shared/question-text.js'
@@ -1077,6 +1083,7 @@ export class ChorusRuntime {
   >()
   private readonly namers = new Map<string, Namer>()
   private readonly namingCleanup = new Set<Promise<void>>()
+  readonly generations: GenerationService
   /**
    * The terminal panels' shells.
    *
@@ -1205,6 +1212,29 @@ export class ChorusRuntime {
     private readonly reviewMarkStore: ReviewMarksStore,
     private readonly deferRestoredAgents: boolean
   ) {
+    const claude = claudeOptions(ports)
+    this.generations = new GenerationService({
+      models: { 'claude-haiku': { provider: 'claude', model: 'haiku' } },
+      start: (key) => {
+        const cwd = join(this.userDataPath, 'generation')
+        mkdirSync(cwd, { recursive: true })
+        return new ClaudeGenerationWorker({
+          ...key,
+          cwd,
+          resolveExecutable: claude.resolveExecutable,
+          env: () => claude.env.inject() ?? {},
+          timing: (timing) => {
+            this.log.info('generation timing', {
+              provider: key.provider,
+              model: key.model,
+              ...timing,
+              outcome: 'stream-ended',
+            })
+          },
+        })
+      },
+      log: this.log,
+    })
     this.liveReplies = new LiveReplies(this.store)
     this.store.subscribe((events) => {
       this.followHandoffs(events)
@@ -4293,6 +4323,7 @@ export class ChorusRuntime {
         questions > 0 ||
         runs.length > 0 ||
         starting > 0 ||
+        this.generations.busy ||
         this.terminals.hasBusyShells(),
     }
   }
@@ -6743,6 +6774,7 @@ export class ChorusRuntime {
 
   async close(): Promise<void> {
     this.closing = true
+    await this.generations.close()
     const naming = [...this.namers.keys()].map((id) => this.disposeNamer(id))
     for (const starting of [...this.starting.values()]) this.cancelStarting(starting)
     await this.drainStartups()

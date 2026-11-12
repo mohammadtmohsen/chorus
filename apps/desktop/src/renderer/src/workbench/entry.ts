@@ -29,6 +29,7 @@ import { serveWorkbenchEdits, serveWorkbenchReveal, serveWorkbenchSnapshot } fro
 import { serveAskDiff } from './ask-diff.js'
 import { prepareReviewFileProvider, serveReviewDiff } from './review-diff.js'
 import { startGitReviewExtension } from './git-review-extension.js'
+import { startLanguageModelExtension } from './language-model-extension.js'
 import { registerInlineCompletions, startLanguageServiceSampling } from './completion.js'
 import { installGateHandle } from './gate-handle.js'
 import { announceSharedExtensionScope } from './extension-scope.js'
@@ -448,6 +449,9 @@ async function main(): Promise<void> {
     logReview(`review extension failed — ${detail}`)
   }
   void startGitReviewExtension(connection.reviewLabels, logReview).catch(reportReviewFailure)
+  void startLanguageModelExtension().catch(() => {
+    reviewLogs.error('Chorus language model bridge could not start')
+  })
   serveReviewDiff(logReview)
   serveWorkbenchReveal(connection.remoteAuthority)
 

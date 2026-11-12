@@ -11,4 +11,5 @@
  *     servers, which is why `mcpToolCall` is never auto-allowed.
  */
 export * from './claude-adapter.js'
+export * from './generate.js'
 export * from './mapping.js'
