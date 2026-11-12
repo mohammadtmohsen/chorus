@@ -198,6 +198,18 @@ function remoteContentSource(remoteAuthority: string | null): string {
  * that authority contains the REH's ephemeral port.
  */
 const WEBVIEW_RESOURCE_HOST = 'https://*.vscode-cdn.net'
+const DEV_WORKER_HOST_IFRAME_PATH = new RegExp(
+  '^/@fs/.+/node_modules/\\.pnpm/' +
+    '@codingame\\+monaco-vscode-extensions-service-override@33\\.0\\.9_patch_hash=[a-f0-9]{16}_[a-f0-9]{32}/' +
+    'node_modules/@codingame/monaco-vscode-extensions-service-override/' +
+    'vscode/src/vs/workbench/services/extensions/worker/webWorkerExtensionHostIframe\\.html$'
+)
+const DEV_WEBVIEW_DOCUMENT_PATH = new RegExp(
+  '^/@fs/.+/node_modules/\\.pnpm/' +
+    '@codingame\\+monaco-vscode-view-common-service-override@33\\.0\\.9/' +
+    'node_modules/@codingame/monaco-vscode-view-common-service-override/' +
+    'service-override/vs/workbench/contrib/webview/browser/pre/(?:index|fake)\\.html$'
+)
 
 /**
  * Is this response a document the workbench legitimately frames?
@@ -230,16 +242,26 @@ const WEBVIEW_RESOURCE_HOST = 'https://*.vscode-cdn.net'
  * workbench, which is the attack the base policy's own comment names — the
  * per-document exception is the whole point and must stay per-document.
  */
-export function isWebviewDocument(url: string, resourceType: string): boolean {
+export function isWebviewDocument(url: string, resourceType: string, isDev = false): boolean {
   if (resourceType !== 'subFrame') return false
-  let path: string
+  let parsed: URL
   try {
-    path = new URL(url).pathname
+    parsed = new URL(url)
   } catch {
     return false
   }
-  return /\/out\/renderer\/assets\/(?:index|fake|webWorkerExtensionHostIframe)-[A-Za-z0-9_-]+\.html$/.test(
-    path
+  if (
+    /\/out\/renderer\/assets\/(?:index|fake|webWorkerExtensionHostIframe)-[A-Za-z0-9_-]+\.html$/.test(
+      parsed.pathname
+    )
+  )
+    return true
+  return (
+    isDev &&
+    parsed.protocol === 'http:' &&
+    (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+    (DEV_WORKER_HOST_IFRAME_PATH.test(parsed.pathname) ||
+      DEV_WEBVIEW_DOCUMENT_PATH.test(parsed.pathname))
   )
 }
 
@@ -433,7 +455,7 @@ export function applyWorkbenchContentSecurityPolicy(
     const responseHeaders: Record<string, string[]> = {
       ...details.responseHeaders,
       'Content-Security-Policy': [
-        isWebviewDocument(details.url, details.resourceType) ? webviewPolicy : policy,
+        isWebviewDocument(details.url, details.resourceType, isDev) ? webviewPolicy : policy,
       ],
     }
 

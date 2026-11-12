@@ -442,7 +442,7 @@ export function prepareWorkbench(connection: WorkbenchConnection): WorkbenchSetu
      * failure is invisible from main and from the REH logs; both attempts above
      * were reasoning from source, and both were wrong.
      */
-    ...getExtensionServiceOverride(),
+    ...getExtensionServiceOverride({ enableWorkerExtensionHost: true }),
     ...getModelServiceOverride(),
     ...getNotificationServiceOverride(),
     ...getDialogsServiceOverride(),

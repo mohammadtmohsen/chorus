@@ -200,6 +200,69 @@ describe('the webview document policy', () => {
 describe('which responses are webview documents', () => {
   const asset = (name: string): string =>
     `file:///Applications/Chorus.app/Contents/Resources/app.asar/out/renderer/assets/${name}`
+  const devWorkerIframe =
+    'http://127.0.0.1:5173/@fs/Users/example/chorus/node_modules/.pnpm/' +
+    '@codingame+monaco-vscode-extensions-service-override@33.0.9_patch_hash=48af9da4e21880b2_a3cdb0c21a24fa53daea8625a4bbc07b/' +
+    'node_modules/@codingame/monaco-vscode-extensions-service-override/' +
+    'vscode/src/vs/workbench/services/extensions/worker/webWorkerExtensionHostIframe.html'
+  const devWebviewBootstrap =
+    'http://127.0.0.1:5173/@fs/Users/example/chorus/node_modules/.pnpm/' +
+    '@codingame+monaco-vscode-view-common-service-override@33.0.9/' +
+    'node_modules/@codingame/monaco-vscode-view-common-service-override/' +
+    'service-override/vs/workbench/contrib/webview/browser/pre/index.html'
+
+  it.each([
+    ['worker-host iframe', devWorkerIframe],
+    ['webview bootstrap', devWebviewBootstrap],
+  ])('admits the localhost %s only in development', (_name, url) => {
+    const localhostUrl = url.replace('127.0.0.1', 'localhost')
+    expect(isWebviewDocument(localhostUrl, 'subFrame', true)).toBe(true)
+    expect(isWebviewDocument(localhostUrl, 'subFrame', false)).toBe(false)
+    expect(isWebviewDocument(localhostUrl, 'mainFrame', true)).toBe(false)
+  })
+
+  it('admits the observed webview bootstrap served by Vite only in development', () => {
+    expect(isWebviewDocument(devWebviewBootstrap, 'subFrame', true)).toBe(true)
+    expect(isWebviewDocument(devWebviewBootstrap, 'subFrame', false)).toBe(false)
+    expect(isWebviewDocument(`${devWebviewBootstrap}.evil`, 'subFrame', true)).toBe(false)
+    expect(
+      isWebviewDocument(
+        devWebviewBootstrap.replace('127.0.0.1', 'evil.example.com'),
+        'subFrame',
+        true
+      )
+    ).toBe(false)
+    expect(isWebviewDocument(devWebviewBootstrap, 'mainFrame', true)).toBe(false)
+  })
+
+  it('admits the observed nested webview document only as a development sub-frame', () => {
+    const nestedDocument = devWebviewBootstrap.replace('/index.html', '/fake.html')
+    expect(isWebviewDocument(nestedDocument, 'subFrame', true)).toBe(true)
+    expect(isWebviewDocument(nestedDocument, 'subFrame', false)).toBe(false)
+    expect(isWebviewDocument(nestedDocument, 'mainFrame', true)).toBe(false)
+    expect(isWebviewDocument(`${nestedDocument}.evil`, 'subFrame', true)).toBe(false)
+  })
+
+  it('admits the pinned worker-host iframe served by Vite only in development', () => {
+    expect(isWebviewDocument(devWorkerIframe, 'subFrame', true)).toBe(true)
+    expect(isWebviewDocument(devWorkerIframe, 'subFrame', false)).toBe(false)
+    expect(isWebviewDocument(devWorkerIframe, 'subFrame')).toBe(false)
+  })
+
+  it('keeps other origins, paths, and resource types outside the development exception', () => {
+    expect(
+      isWebviewDocument(devWorkerIframe.replace('127.0.0.1', 'evil.example.com'), 'subFrame', true)
+    ).toBe(false)
+    expect(isWebviewDocument(`${devWorkerIframe}.evil`, 'subFrame', true)).toBe(false)
+    expect(isWebviewDocument(devWorkerIframe.replace('33.0.9', '33.0.10'), 'subFrame', true)).toBe(
+      false
+    )
+    expect(isWebviewDocument(devWorkerIframe.replace('/@fs/', '/assets/'), 'subFrame', true)).toBe(
+      false
+    )
+    expect(isWebviewDocument(devWorkerIframe, 'mainFrame', true)).toBe(false)
+    expect(isWebviewDocument(devWorkerIframe, 'xhr', true)).toBe(false)
+  })
 
   it('matches the two bundled documents a webview is built from', () => {
     expect(isWebviewDocument(asset('index-D5H5KsJm.html'), 'subFrame')).toBe(true)

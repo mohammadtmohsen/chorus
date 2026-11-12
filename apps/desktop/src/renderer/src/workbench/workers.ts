@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import EditorWorker from '@codingame/monaco-vscode-api/vscode/vs/editor/common/services/editorWebWorkerMain?worker'
+import extensionHostWorkerUrl from '@codingame/monaco-vscode-api/workers/extensionHost.worker?worker&url'
 import OutputLinkWorker from '@codingame/monaco-vscode-output-service-override/worker?worker'
 import SearchWorker from '@codingame/monaco-vscode-search-service-override/worker?worker'
 import TextMateWorker from '@codingame/monaco-vscode-textmate-service-override/worker?worker'
@@ -52,10 +53,18 @@ const WORKERS: Readonly<Record<string, new () => Worker>> = {
  */
 export function registerWorkbenchWorkers(): void {
   const environment = globalThis as unknown as {
-    MonacoEnvironment?: { getWorker?: (moduleId: string, label: string) => Worker | undefined }
+    MonacoEnvironment?: {
+      getWorker?: (moduleId: string, label: string) => Worker | undefined
+      getWorkerUrl?: (moduleId: string, label: string) => string | undefined
+      getWorkerOptions?: (moduleId: string, label: string) => WorkerOptions | undefined
+    }
   }
   environment.MonacoEnvironment = {
     ...environment.MonacoEnvironment,
+    getWorkerUrl: (_moduleId, label) =>
+      label === 'extensionHostWorkerMain' ? extensionHostWorkerUrl : undefined,
+    getWorkerOptions: (_moduleId, label) =>
+      label === 'extensionHostWorkerMain' ? { type: 'module' } : undefined,
     getWorker: (_moduleId, label) => {
       const Ctor = WORKERS[label]
       return Ctor === undefined ? undefined : new Ctor()
