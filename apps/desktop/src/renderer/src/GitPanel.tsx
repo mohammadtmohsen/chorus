@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  formatGitRequestTime,
   formatGitTime,
   type GitBoxState,
   type GitCheckoutTarget,
@@ -78,6 +79,7 @@ export function GitPanel(props: {
   const [revision, setRevision] = useState(0)
   const [requests, setRequests] = useState<GitRequestsState | null>(null)
   const [requestsRevision, setRequestsRevision] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
   const [reviewIid, setReviewIid] = useState<number | null>(null)
   const [heldReview, setHeldReview] = useState<GitReviewEnvelope | null>(null)
   const [reviewOutcome, setReviewOutcome] = useState<ReviewState | { kind: 'ready' } | null>(null)
@@ -93,6 +95,17 @@ export function GitPanel(props: {
   const connected = state?.provider.kind === 'gitlab' && state.provider.connected
   const defaultTab = connected ? 'requests' : 'branches'
   const tab = gitlab ? (props.tab ?? defaultTab) : 'branches'
+
+  useEffect(() => {
+    if (props.collapsed || reviewIid !== null) return undefined
+    setNow(Date.now())
+    const timer = setInterval(() => {
+      setNow(Date.now())
+    }, 60_000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [props.collapsed, tab, reviewIid])
 
   const acceptReview = useCallback(
     (next: GitReviewEnvelope, select: boolean): boolean => {
@@ -118,6 +131,7 @@ export function GitPanel(props: {
 
   const loadReview = useCallback(
     async (iid: number): Promise<void> => {
+      setFailure(null)
       const ticket = ++reviewTicket.current
       reviewPending.current = true
       selectedReview.current = iid
@@ -271,8 +285,8 @@ export function GitPanel(props: {
   const act = async (
     kind: 'fetch' | 'sync' | 'checkout',
     run: () => Promise<{ state: GitBoxState; failure: GitFailure | null }>
-  ): Promise<void> => {
-    if (pending.current) return
+  ): Promise<boolean> => {
+    if (pending.current) return false
     pending.current = true
     const current = ++request.current
     setBusy(kind)
@@ -280,13 +294,15 @@ export function GitPanel(props: {
     requestsId.current++
     try {
       const result = await run()
-      if (request.current !== current) return
+      if (request.current !== current) return false
       setState(result.state)
       setFailure(result.failure)
+      return result.failure === null
     } catch (error) {
       if (request.current === current) {
         setFailure(isGitRestartError(error) ? 'restart-required' : 'git-failed')
       }
+      return false
     } finally {
       pending.current = false
       setBusy(null)
@@ -294,20 +310,28 @@ export function GitPanel(props: {
     }
   }
 
-  const refresh = (): Promise<void> =>
+  const refresh = (): Promise<boolean> =>
     act('fetch', async () => {
       const next = await window.chorus.fetchGit({ projectId: props.projectId })
       return { state: next, failure: next.failure }
     })
 
-  const sync = (): Promise<void> =>
+  const sync = (): Promise<boolean> =>
     act('sync', async () => {
       const next = await window.chorus.syncGit({ projectId: props.projectId })
       return { state: next, failure: next.failure }
     })
 
-  const checkout = (target: GitCheckoutTarget): Promise<void> =>
+  const checkout = (target: GitCheckoutTarget): Promise<boolean> =>
     act('checkout', () => window.chorus.checkoutGit({ projectId: props.projectId, target }))
+
+  const checkoutAndReview = async (row: MrRow): Promise<void> => {
+    if (pending.current) return
+    const checkedOut =
+      (!row.fork && state?.branch === row.sourceBranch) ||
+      (await checkout({ kind: 'mr', iid: row.iid, sha: row.sha }))
+    if (checkedOut) await loadReview(row.iid)
+  }
 
   if (state === null) {
     return (
@@ -358,10 +382,13 @@ export function GitPanel(props: {
 
   if (reviewIid !== null) {
     const currentReview = shownReview
-    const branchDiffers =
+    const onReviewBranch =
       currentReview?.kind === 'ready' &&
       !currentReview.mr.fork &&
-      state.branch === currentReview.mr.sourceBranch &&
+      state.branch === currentReview.mr.sourceBranch
+    const branchDiffers =
+      currentReview?.kind === 'ready' &&
+      onReviewBranch &&
       state.branches.some(
         (branch) =>
           branch.head &&
@@ -376,6 +403,19 @@ export function GitPanel(props: {
         iid={reviewIid}
         review={shownReview}
         branchDiffers={branchDiffers}
+        onReviewBranch={onReviewBranch}
+        busy={busy}
+        failure={failure}
+        error={state.error}
+        dirtyCount={state.dirtyCount}
+        onCheckout={() => {
+          if (currentReview?.kind !== 'ready') return
+          void checkout({
+            kind: 'mr',
+            iid: currentReview.mr.iid,
+            sha: currentReview.version.headSha,
+          })
+        }}
         onFailure={(next, retryAt) => {
           setReviewOutcome({ kind: 'failed', failure: next, retryAt })
         }}
@@ -446,6 +486,16 @@ export function GitPanel(props: {
               }}
             >
               {t(`git.${value}`)}
+              {value === 'requests' && requests?.failure === null && (
+                <>
+                  {' '}
+                  <span className="git-request-badge">
+                    {t(requests.complete ? 'git.requestsCount' : 'git.requestsCountPartial', {
+                      count: requests.rows.length,
+                    })}
+                  </span>
+                </>
+              )}
             </button>
           ))}
         </div>
@@ -506,6 +556,8 @@ export function GitPanel(props: {
               ) : (
                 <ul className="git-request-list">
                   {requests.rows.map((row) => {
+                    const created = formatGitRequestTime(row.createdAt, now, 'Created')
+                    const updated = formatGitRequestTime(row.updatedAt, now)
                     const pipelineStatus = row.pipeline?.status ?? 'unknown'
                     const status = PIPELINE_STATUSES.has(pipelineStatus)
                       ? pipelineStatus
@@ -555,9 +607,19 @@ export function GitPanel(props: {
                         <div className="git-row-line">
                           <span
                             className="git-row-date"
-                            data-age={changeAge(row.updatedAt, requests.fetchedAt)}
+                            data-age={changeAge(row.createdAt, requests.fetchedAt)}
+                            title={formatGitTime(row.createdAt)}
                           >
-                            {t('git.requestUpdatedAt', { time: formatGitTime(row.updatedAt) })}
+                            {t(created.key, created.values)}
+                          </span>
+                        </div>
+                        <div className="git-row-line">
+                          <span
+                            className="git-row-date"
+                            data-age={changeAge(row.updatedAt, requests.fetchedAt)}
+                            title={formatGitTime(row.updatedAt)}
+                          >
+                            {t(updated.key, updated.values)}
                           </span>
                           <span className="git-pipeline" data-status={status}>
                             <span className="git-pipeline-dot" aria-hidden="true" />
@@ -601,6 +663,15 @@ export function GitPanel(props: {
                               }}
                             >
                               {t('git.checkout')}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy !== null || !/^[0-9a-f]{40}$/.test(row.sha)}
+                              onClick={() => {
+                                void checkoutAndReview(row)
+                              }}
+                            >
+                              {t('git.checkoutAndReview')}
                             </button>
                           </div>
                         </div>
@@ -648,6 +719,7 @@ export function GitPanel(props: {
             <ul className="git-branches">
               {shown.map((branch) => {
                 const time = formatGitTime(branch.changedAt * 1000)
+                const updated = formatGitRequestTime(branch.changedAt * 1000, now)
                 return (
                   <li
                     key={`${branch.kind}:${branch.name}`}
@@ -681,7 +753,7 @@ export function GitPanel(props: {
                         data-age={changeAge(branch.changedAt * 1000, state.readAt)}
                         title={t('git.changedAt', { time })}
                       >
-                        {time}
+                        {t(updated.key, updated.values)}
                       </span>
                       {(byBranch.get(branch.name) ?? []).map((row) => (
                         <span key={row.iid} className="git-branch-request">

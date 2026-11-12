@@ -1,6 +1,14 @@
 import { getService } from '@codingame/monaco-vscode-api'
 import { IEditorService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/editor/common/editorService.service'
-import { DEFAULT_EDITOR_ASSOCIATION } from '@codingame/monaco-vscode-api/vscode/vs/workbench/common/editor'
+import { IEditorGroupsService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/editor/common/editorGroupsService.service'
+import { ITextEditorService } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/textfile/common/textEditorService.service'
+import type { IEditorGroup } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/editor/common/editorGroupsService'
+import {
+  DEFAULT_EDITOR_ASSOCIATION,
+  type IResourceDiffEditorInput,
+} from '@codingame/monaco-vscode-api/vscode/vs/workbench/common/editor'
+import { DiffEditorInput } from '@codingame/monaco-vscode-api/vscode/vs/workbench/common/editor/diffEditorInput'
+import { isDiffEditor } from '@codingame/monaco-vscode-api/vscode/vs/editor/browser/editorBrowser'
 import { ILanguageService } from '@codingame/monaco-vscode-api/vscode/vs/editor/common/languages/language.service'
 import { IWorkspaceContextService } from '@codingame/monaco-vscode-api/vscode/vs/platform/workspace/common/workspace.service'
 import { URI } from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri'
@@ -22,6 +30,52 @@ import type {
 export const REVIEW_SCHEME = 'chorus-review'
 const resources = new Map<string, Uint8Array>()
 const restoring = new Map<string, Promise<Uint8Array>>()
+const reviewCommits = new Map<string, { head: string; base: string }>()
+
+export function recordReviewCommits(
+  iid: number,
+  versionId: number,
+  head: string,
+  base: string
+): void {
+  const key = `${String(iid)}:${String(versionId)}`
+  reviewCommits.delete(key)
+  reviewCommits.set(key, { head, base })
+  if (reviewCommits.size > 16) {
+    const oldest = reviewCommits.keys().next().value
+    if (oldest !== undefined) reviewCommits.delete(oldest)
+  }
+}
+
+export function resolveReviewResource(
+  resource: Pick<URI, 'scheme' | 'authority' | 'path'>,
+  root: string
+): { relativePath: string; commit: string } | null {
+  if (resource.scheme !== REVIEW_SCHEME) return null
+  const authority = /^(original|modified)-(\d+)-(\d+)$/.exec(resource.authority)
+  const side = authority?.[1]
+  const iid = Number(authority?.[2])
+  const versionId = Number(authority?.[3])
+  if (
+    (side !== 'original' && side !== 'modified') ||
+    !Number.isSafeInteger(iid) ||
+    iid <= 0 ||
+    !Number.isSafeInteger(versionId) ||
+    versionId <= 0
+  ) {
+    return null
+  }
+  const commits = reviewCommits.get(`${String(iid)}:${String(versionId)}`)
+  if (commits === undefined) return null
+  const prefix = root.replace(/\/+$/, '')
+  const relativePath = (
+    resource.path.startsWith(`${prefix}/`) ? resource.path.slice(prefix.length) : resource.path
+  )
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+  if (relativePath === '' || relativePath.split('/').includes('..')) return null
+  return { relativePath, commit: side === 'original' ? commits.base : commits.head }
+}
 
 async function restoreReviewResource(
   resource: URI,
@@ -184,12 +238,27 @@ function reviewFilesOf(
   return Array.isArray(files) && files.length > 0 && files.every(isReviewFile) ? files : null
 }
 
+interface ReviewDiffReplacement {
+  readonly iid: number
+  readonly versionId: number
+  readonly path: string
+  readonly group: IEditorGroup
+  readonly editor: DiffEditorInput
+  readonly restore: IResourceDiffEditorInput
+  readonly index: number
+  readonly pinned: boolean
+  readonly sticky: boolean
+}
+
 export function serveReviewDiff(log: (message: string) => void): void {
+  const replacements = new Map<string, ReviewDiffReplacement>()
   window.chorusWorkbench.onReviewDiffRequest(async (raw): Promise<WorkbenchReviewDiffResult> => {
     const request = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
     const requestId = typeof request['requestId'] === 'string' ? request['requestId'] : ''
     const iid = request['iid']
     const versionId = request['versionId']
+    const reopen = request['kind'] === 'reopenActive'
+    const replace = request['replace']
     const requested = reviewFilesOf(request)
     const multiple = request['files'] !== undefined
     const title = request['title']
@@ -219,13 +288,86 @@ export function serveReviewDiff(log: (message: string) => void): void {
       typeof versionId !== 'number' ||
       !Number.isSafeInteger(versionId) ||
       versionId <= 0 ||
-      requested === null ||
-      (multiple && (typeof title !== 'string' || title === ''))
+      (replace !== undefined && (typeof replace !== 'string' || replace === ''))
     ) {
       return failed('invalid review diff request')
     }
 
     try {
+      const editors = await getService(IEditorService)
+      const groups = await getService(IEditorGroupsService)
+      if (reopen) {
+        const group = groups.activeGroup
+        const editor = group.activeEditor
+        if (
+          !(editor instanceof DiffEditorInput) ||
+          !isDiffEditor(group.activeEditorPane?.getControl()) ||
+          editor.original.resource?.scheme !== REVIEW_SCHEME ||
+          editor.original.resource.authority !== reviewAuthority('original', iid, versionId) ||
+          editor.modified.resource?.scheme !== REVIEW_SCHEME ||
+          editor.modified.resource.authority !== reviewAuthority('modified', iid, versionId) ||
+          editor.isDirty()
+        ) {
+          return { requestId, ok: true }
+        }
+        const restore = editor.toUntyped({ preserveViewState: group.id, preserveResource: true })
+        if (restore === undefined) return failed('active review diff cannot be restored')
+        const token = crypto.randomUUID()
+        const path = editor.modified.resource.path.replace(/^\/+/, '')
+        const target: ReviewDiffReplacement = {
+          iid,
+          versionId,
+          path,
+          group,
+          editor,
+          restore,
+          index: group.getIndexOfEditor(editor),
+          pinned: group.isPinned(editor),
+          sticky: group.isSticky(editor),
+        }
+        replacements.set(token, target)
+        const closed = group.onDidCloseEditor((event) => {
+          if (event.editor === editor) replacements.delete(token)
+        })
+        try {
+          const result = await window.chorusWorkbench.reviewAction({
+            kind: 'openDiff',
+            iid,
+            versionId,
+            path,
+            replace: token,
+          })
+          return result.ok ? { requestId, ok: true } : failed('active review diff reopen failed')
+        } finally {
+          closed.dispose()
+          replacements.delete(token)
+        }
+      }
+      if (requested === null || (multiple && (typeof title !== 'string' || title === ''))) {
+        return failed('invalid review diff request')
+      }
+      const target = typeof replace === 'string' ? replacements.get(replace) : undefined
+      const current = (): boolean =>
+        target !== undefined &&
+        groups.getGroup(target.group.id) === target.group &&
+        groups.activeGroup === target.group &&
+        target.group.activeEditor === target.editor &&
+        !target.editor.isDisposed() &&
+        !target.editor.isDirty() &&
+        target.group.getIndexOfEditor(target.editor) === target.index &&
+        target.group.isPinned(target.editor) === target.pinned &&
+        target.group.isSticky(target.editor) === target.sticky
+      if (
+        replace !== undefined &&
+        (target?.iid !== iid ||
+          target.versionId !== versionId ||
+          multiple ||
+          requested[0]?.path !== target.path ||
+          !requested[0].workspace ||
+          !current())
+      ) {
+        return failed('unknown or stale review diff replacement')
+      }
       const languages = await getService(ILanguageService)
       const context = await getService(IWorkspaceContextService)
       const root = context.getWorkspace().folders[0]?.uri
@@ -278,10 +420,72 @@ export function serveReviewDiff(log: (message: string) => void): void {
       if (first === undefined || file === undefined) {
         return failed('no review diff inputs were built')
       }
-      const editors = await getService(IEditorService)
       describeInput = () => {
         const input = editors.activeEditor
         return `type=${input?.typeId ?? 'none'}, editor=${input?.editorId ?? 'none'}`
+      }
+      if (target !== undefined && typeof replace === 'string') {
+        const textEditors = await getService(ITextEditorService)
+        const replacement = await textEditors.resolveTextEditor({
+          ...first,
+          label: `${file.path} (!${String(iid)})`,
+        })
+        await replacement.resolve()
+        if (replacements.get(replace) !== target || !current()) {
+          replacement.dispose()
+          return failed('stale review diff replacement')
+        }
+        const existing = target.group.editors.find((editor) => editor.matches(replacement))
+        replacements.delete(replace)
+        const event: ReviewDiffOpened = { iid, versionId, files: openedFiles }
+        for (const listener of openedListeners) listener(event)
+        try {
+          await target.group.replaceEditors([
+            {
+              editor: target.editor,
+              replacement,
+              options: {
+                index: target.index,
+                pinned: target.pinned,
+                sticky: target.sticky,
+                preserveFocus: true,
+              },
+            },
+          ])
+          const control = target.group.activeEditorPane?.getControl()
+          const model = isDiffEditor(control) ? control.getModel() : null
+          if (
+            model?.original.uri.toString() !== first.original.resource.toString() ||
+            model.modified.uri.toString() !== first.modified.resource.toString()
+          ) {
+            throw new Error('editable review diff did not finish opening')
+          }
+          return { requestId, ok: true }
+        } catch (error) {
+          if (groups.getGroup(target.group.id) === target.group) {
+            const restored = await editors.openEditor(
+              {
+                ...target.restore,
+                options: {
+                  ...target.restore.options,
+                  index: target.index,
+                  pinned: target.pinned,
+                  sticky: target.sticky,
+                  preserveFocus: true,
+                  override: DEFAULT_EDITOR_ASSOCIATION.id,
+                },
+              },
+              target.group
+            )
+            if (restored !== undefined && existing === undefined) {
+              const failedInput = target.group.editors.find((editor) => editor.matches(replacement))
+              if (failedInput !== undefined && !failedInput.isDirty()) {
+                await target.group.closeEditor(failedInput, { preserveFocus: true })
+              }
+            }
+          }
+          throw error
+        }
       }
       const event: ReviewDiffOpened = { iid, versionId, files: openedFiles }
       for (const listener of openedListeners) listener(event)
@@ -303,7 +507,7 @@ export function serveReviewDiff(log: (message: string) => void): void {
               ...first,
               label: `${file.path} (!${String(iid)})`,
               options: {
-                pinned: true,
+                pinned: false,
                 preserveFocus: false,
                 revealIfOpened: true,
                 override: DEFAULT_EDITOR_ASSOCIATION.id,

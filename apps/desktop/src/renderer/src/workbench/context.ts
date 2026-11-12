@@ -17,6 +17,7 @@ import {
   removeEditor,
   type TrackerState,
 } from './editor-tracking.js'
+import { resolveReviewResource, REVIEW_SCHEME } from './review-diff.js'
 /*
  * The two Node-free subpaths, never `@chorus/ide-protocol` itself.
  *
@@ -117,7 +118,7 @@ function resolveActive(
   root: string,
   /** The active input's `typeId`, so a `no-editor` report says what the pane was. */
   editorTypeId: string,
-  uri: { scheme: string; path: string; query: string; fsPath: string } | undefined
+  uri: Pick<URI, 'scheme' | 'authority' | 'path' | 'query' | 'fsPath'> | undefined
 ): {
   relativePath: string | null
   provenance: Provenance
@@ -133,6 +134,18 @@ function resolveActive(
       scheme: '',
       editorTypeId,
       reason: 'no-editor',
+    }
+  }
+  if (uri.scheme === REVIEW_SCHEME) {
+    const review = resolveReviewResource(uri, root)
+    if (review !== null) {
+      return {
+        relativePath: review.relativePath,
+        provenance: { kind: 'review', commit: review.commit },
+        scheme: uri.scheme,
+        editorTypeId,
+        reason: 'ok',
+      }
     }
   }
   /*

@@ -14271,7 +14271,7 @@ html.continuous-row .global-note {
 }
 
 .git-row-date[data-age='week'] {
-  color: var(--text-secondary);
+  color: var(--ansi-yellow);
 }
 
 .git-request-diff {
@@ -14294,7 +14294,12 @@ html.continuous-row .global-note {
   min-width: 0;
   color: var(--text-secondary);
   font-size: 11px;
+  font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+.git-request-author {
+  font-weight: 600;
 }
 
 .git-branch-request {

@@ -36,6 +36,7 @@ export const EditorReviewDiffRequest = z.union([
     after: z.string(),
     workspace: z.boolean(),
     matches: z.boolean(),
+    replace: z.string().min(1).optional(),
   }),
   EditorReviewDiffVersion.extend({
     title: z.string().min(1),
@@ -52,6 +53,7 @@ export const EditorReviewDiffRequest = z.union([
       )
       .min(1),
   }),
+  EditorReviewDiffVersion.extend({ kind: z.literal('reopenActive') }),
 ])
 export const EditorReviewDiffResult = z.object({
   requestId: z.string(),

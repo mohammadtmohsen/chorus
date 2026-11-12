@@ -38,6 +38,7 @@ export const MrRow = z.object({
   targetBranch: z.string(),
   sha: z.string(),
   fork: z.boolean(),
+  createdAt: z.number().int(),
   updatedAt: z.number().int(),
   notes: z.number().int().nonnegative(),
   unresolved: z.boolean(),
@@ -172,6 +173,9 @@ export const GitReviewVersionRequest = GitReviewRequest.extend({
 export const GitReviewFileRequest = GitReviewVersionRequest.extend({
   path: z.string().min(1),
 }).strict()
+export const GitOpenDiffRequest = GitReviewFileRequest.extend({
+  replace: z.string().min(1).optional(),
+}).strict()
 export const GitReviewFileReadRequest = GitReviewFileRequest.extend({
   side: z.enum(['original', 'modified']),
 }).strict()
@@ -301,7 +305,7 @@ export const GIT_CONTRACT = {
     response: GitDiffResult,
   },
   'git:openDiff': {
-    request: GitReviewFileRequest,
+    request: GitOpenDiffRequest,
     response: GitDiffResult,
   },
   'git:openAllDiffs': {
@@ -370,4 +374,23 @@ export function formatGitTime(timestamp: number): string {
   }
   if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
   return date.toLocaleString([], options)
+}
+
+export function formatGitRequestTime(
+  timestamp: number,
+  now: number,
+  label: 'Updated' | 'Created' = 'Updated'
+): { readonly key: string; readonly values: { readonly count?: number; readonly time?: string } } {
+  const prefix = `git.request${label}`
+  const minutes = Math.floor(Math.max(0, now - timestamp) / 60_000)
+  if (minutes < 1) return { key: `${prefix}Now`, values: {} }
+  if (minutes < 60) return { key: `${prefix}Minutes`, values: { count: minutes } }
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return { key: `${prefix}Hours`, values: { count: hours } }
+  const days = Math.floor(hours / 24)
+  if (days < 7) return { key: `${prefix}Days`, values: { count: days } }
+  const date = new Date(timestamp)
+  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' }
+  if (date.getFullYear() !== new Date(now).getFullYear()) options.year = 'numeric'
+  return { key: `${prefix}At`, values: { time: date.toLocaleDateString([], options) } }
 }

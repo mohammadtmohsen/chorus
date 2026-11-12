@@ -17,6 +17,7 @@ import {
 } from '../../../shared/workbench-ipc.js'
 import {
   onReviewDiffOpened,
+  recordReviewCommits,
   REVIEW_SCHEME,
   reviewAuthority,
   type ReviewDiffOpened,
@@ -341,6 +342,12 @@ export async function startGitReviewExtension(
       if (review === null) pendingOpened.length = 0
     }
     if (review !== null) {
+      recordReviewCommits(
+        review.mr.iid,
+        review.version.id,
+        review.version.headSha,
+        review.version.baseSha
+      )
       for (const event of pendingOpened.splice(0)) rememberOpened(event)
       renderComments([...openedFiles.values()], true)
       scanRestoredTabs()
@@ -418,16 +425,18 @@ export async function startGitReviewExtension(
     }
   }
   let actions = Promise.resolve()
-  const enqueue = (action: WorkbenchReviewAction): void => {
+  const enqueue = (action: WorkbenchReviewAction): Promise<void> => {
     actions = actions
       .then(() => perform(action))
       .catch((error: unknown) => {
         reportFailure('open action queue', error)
       })
+    return actions
   }
   const command = api.commands.registerCommand('chorus.gitReview.openDiff', (raw: unknown) => {
     const parsed = WorkbenchReviewAction.safeParse(raw)
-    if (parsed.success && parsed.data.kind === 'openDiff') enqueue(parsed.data)
+    if (parsed.success && parsed.data.kind === 'openDiff') return enqueue(parsed.data)
+    return Promise.resolve()
   })
   const asThread = (raw: unknown): CommentThread | null => {
     if (typeof raw !== 'object' || raw === null) return null

@@ -1,11 +1,11 @@
 import { z } from 'zod'
 import {
   GitCommentRequest,
+  GitOpenDiffRequest,
   GitReplyRequest,
   GitResolveRequest,
   GitReviewEnvelope,
   GitReviewFileReadRequest,
-  GitReviewFileRequest,
 } from './git-ipc.js'
 /*
  * The `/protocol` subpath, never the package's barrel.
@@ -138,7 +138,7 @@ export const WorkbenchReviewState = GitReviewEnvelope.omit({ projectId: true })
 export type WorkbenchReviewState = z.infer<typeof WorkbenchReviewState>
 
 export const WorkbenchReviewAction = z.discriminatedUnion('kind', [
-  GitReviewFileRequest.omit({ projectId: true })
+  GitOpenDiffRequest.omit({ projectId: true })
     .extend({ kind: z.literal('openDiff') })
     .strict(),
   GitCommentRequest.omit({ projectId: true })
@@ -651,8 +651,9 @@ export type WorkbenchReviewDiffInput = {
   readonly iid: number
   readonly versionId: number
 } & (
-  | WorkbenchReviewDiffFile
+  | (WorkbenchReviewDiffFile & { readonly replace?: string | undefined })
   | { readonly files: readonly WorkbenchReviewDiffFile[]; readonly title: string }
+  | { readonly kind: 'reopenActive' }
 )
 
 export type WorkbenchReviewDiffRequest = WorkbenchReviewDiffInput & { readonly requestId: string }

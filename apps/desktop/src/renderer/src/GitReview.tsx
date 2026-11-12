@@ -110,6 +110,12 @@ export function GitReview(props: {
   readonly iid: number
   readonly review: ReviewState | null
   readonly branchDiffers: boolean
+  readonly onReviewBranch: boolean
+  readonly busy: 'fetch' | 'sync' | 'checkout' | null
+  readonly failure: GitUiFailure | null
+  readonly error: string | null
+  readonly dirtyCount: number
+  readonly onCheckout: () => void
   readonly onFailure: (failure: GitUiFailure, retryAt: number | null) => void
   readonly onRefresh: () => void
   readonly onBack: () => void
@@ -314,7 +320,7 @@ export function GitReview(props: {
     : 'git.review.approve'
   if (busy === 'approval') approvalLabel = 'git.review.approving'
   return (
-    <div className="git-panel git-review" aria-busy={busy !== null}>
+    <div className="git-panel git-review" aria-busy={busy !== null || props.busy !== null}>
       <div className="git-review-overview">
         <header className="git-head git-review-head">
           <button type="button" onClick={props.onBack}>
@@ -409,6 +415,15 @@ export function GitReview(props: {
           >
             {t(busy === 'all' ? 'git.review.openingAllDiffs' : 'git.review.openAll')}
           </button>
+          {!props.onReviewBranch && (
+            <button
+              type="button"
+              disabled={busy !== null || props.busy !== null}
+              onClick={props.onCheckout}
+            >
+              {t(props.busy === 'checkout' ? 'git.checkingOut' : 'git.checkout')}
+            </button>
+          )}
           <button
             type="button"
             disabled={busy !== null}
@@ -419,6 +434,12 @@ export function GitReview(props: {
             {t('git.refresh')}
           </button>
         </header>
+        {props.failure !== null && (
+          <div className="git-failure" role="alert">
+            <p>{t(gitFailureKey(props.failure), { count: props.dirtyCount })}</p>
+            {props.error !== null && <pre className="git-error">{props.error}</pre>}
+          </div>
+        )}
         {props.branchDiffers && (
           <p className="git-note" role="status">
             {t('git.review.branchDiffers')}

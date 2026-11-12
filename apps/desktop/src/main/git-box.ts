@@ -20,6 +20,7 @@ import {
   type SwitchTarget,
 } from '@chorus/workspace'
 import { LOCAL_HOST, type Project, type ReviewMarksStore } from '@chorus/event-store'
+import type { Logger } from '@chorus/shared'
 import type {
   GitBoxState,
   GitBranch,
@@ -59,6 +60,7 @@ export interface GitBoxDeps {
   readonly gitlab: GitLabDirectory
   readonly marks: ReviewMarksStore
   readonly editor: EditorPort
+  readonly log?: Pick<Logger, 'error'>
   readonly now: () => number
 }
 
@@ -494,6 +496,7 @@ export class GitBoxService {
         after: after.value.text,
         workspace,
         matches,
+        ...(request.replace === undefined ? {} : { replace: request.replace }),
       })
       const failure = result.failure === 'no-editor' ? 'no-editor' : 'git-failed'
       return {
@@ -614,7 +617,34 @@ export class GitBoxService {
             state: { ...(await this.state(projectId)), error: switched.error.message },
             failure: 'git-failed',
           }
+    }).then((outcome) => {
+      if (outcome.failure === null) {
+        void this.reopenReview(projectId).catch((error: unknown) => {
+          this.deps.log?.error('review diff could not be reopened after checkout', error, {
+            projectId,
+          })
+        })
+      }
+      return outcome
     })
+  }
+
+  private async reopenReview(projectId: string): Promise<void> {
+    const session = this.reviews.get(projectId)
+    if (session === undefined || !(await this.onReviewBranch(session))) return
+    if (this.reviews.get(projectId) !== session) return
+    const result = await this.deps.editor.openReviewDiff(session.root, {
+      kind: 'reopenActive',
+      iid: session.snapshot.mr.iid,
+      versionId: session.snapshot.version.id,
+    })
+    if (!result.ok) {
+      this.deps.log?.error('review diff could not be reopened after checkout', undefined, {
+        projectId,
+        failure: result.failure,
+        message: result.message,
+      })
+    }
   }
 
   async clonesOf(projectId: string, wanted: RemoteLocation | null): Promise<Clone[]> {

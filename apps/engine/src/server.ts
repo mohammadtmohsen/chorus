@@ -152,6 +152,7 @@ export async function serveEngine(
         projectBusy: (id) => runtime.projectBusy(id),
         marks: runtime.reviewMarks(),
         editor: host.editor,
+        log: runtime.log,
         gitlab: new GitLabDirectory({
           token: (gitlabHost) => (gitlabHost === 'gitlab.com' ? host.secrets.read('gitlab') : null),
         }),
