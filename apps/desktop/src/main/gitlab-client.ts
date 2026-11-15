@@ -813,7 +813,7 @@ export class GitLabDirectory implements GitProviderPort {
       account.client.getAll(
         project,
         `/projects/${project}/merge_requests?state=opened&scope=all` +
-          '&order_by=updated_at&sort=desc&with_labels_details=true',
+          '&order_by=created_at&sort=desc&with_labels_details=true',
         MrListItem,
         TTL_MS
       ),
@@ -878,6 +878,7 @@ export class GitLabDirectory implements GitProviderPort {
         }
       }
     )
+    rows.sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)
     return {
       ok: true,
       value: {

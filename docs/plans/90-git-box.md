@@ -1601,7 +1601,7 @@ const MrDetail = MrListItem.extend({
 ```
 
 ```text
-GET /api/v4/projects/:id/merge_requests?state=opened&scope=reviews_for_me|created_by_me|all&order_by=updated_at
+GET /api/v4/projects/:id/merge_requests?state=opened&scope=reviews_for_me|created_by_me|all&order_by=created_at
 GET /api/v4/projects/:id/merge_requests/:iid        one per visible row, at most 4 at a time
 ```
 
