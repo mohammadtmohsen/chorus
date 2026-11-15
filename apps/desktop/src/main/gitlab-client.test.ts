@@ -25,6 +25,17 @@ const version = {
   headSha: 'b'.repeat(40),
   baseSha: 'a'.repeat(40),
   startSha: 'c'.repeat(40),
+  display: {
+    headSha: 'b'.repeat(40),
+    baseSha: 'a'.repeat(40),
+    startSha: 'c'.repeat(40),
+  },
+}
+
+const mergedDisplay = {
+  baseSha: 'd'.repeat(40),
+  startSha: 'd'.repeat(40),
+  headSha: 'e'.repeat(40),
 }
 
 function diffItem(overrides: Partial<MrDiffItem> = {}): MrDiffItem {
@@ -69,6 +80,11 @@ function reviewRequest(
     document?: unknown
     discussions?: unknown
     approvals?: unknown
+    state?: string
+    hasConflicts?: boolean
+    mergeRef?: unknown
+    commit?: unknown
+    comparison?: unknown
   } = {}
 ): ReturnType<typeof vi.fn<typeof fetch>> {
   return vi.fn<typeof fetch>().mockImplementation((url) => {
@@ -98,9 +114,23 @@ function reviewRequest(
         approved_by: [{ user: { username: 'me', name: 'Reviewer Name' } }],
         user_can_approve: false,
       }
+    } else if (address.endsWith('/merge_ref')) {
+      if (overrides.mergeRef === undefined) {
+        return Promise.resolve(new Response(null, { status: 400 }))
+      }
+      value = overrides.mergeRef
+    } else if (address.includes('/repository/commits/')) {
+      value = overrides.commit ?? {
+        id: mergedDisplay.headSha,
+        parent_ids: [mergedDisplay.baseSha, version.headSha],
+      }
+    } else if (address.includes('/repository/compare?')) {
+      value = overrides.comparison ?? { compare_timeout: false, diffs: [diffItem()] }
     } else if (address.endsWith('/merge_requests/7')) {
       value = {
         iid: 7,
+        state: overrides.state ?? 'opened',
+        has_conflicts: overrides.hasConflicts ?? false,
         title: 'A recorded review',
         web_url: 'https://gitlab.com/group/project/-/merge_requests/7',
         draft: false,
@@ -243,6 +273,7 @@ describe('GitLabClient cache boundaries', () => {
       ok: false,
       failure: 'rate-limited',
       retryAt: 61_000,
+      status: 429,
     })
     now = 61_001
     await expect(client.get('p', '/projects/p/merge_requests', Value, 0)).resolves.toEqual({
@@ -316,6 +347,7 @@ describe('GitLabDirectory credentials', () => {
       title: `Request ${String(index + 1)}`,
       web_url: `https://gitlab.com/group/project/-/merge_requests/${String(index + 1)}`,
       draft: false,
+      state: 'opened',
       sha: 'a'.repeat(40),
       source_branch: `feature/${String(index + 1)}`,
       target_branch: 'main',
@@ -417,6 +449,7 @@ describe('GitLabDirectory credentials', () => {
       title: `Request ${String(index + 1)}`,
       web_url: `https://gitlab.com/group/project/-/merge_requests/${String(index + 1)}`,
       draft: false,
+      state: 'opened',
       sha: 'a'.repeat(40),
       source_branch: `feature/${String(index + 1)}`,
       target_branch: 'main',
@@ -574,7 +607,7 @@ describe('GitLab line positions', () => {
     ['original', 2, { old_line: 2 }],
     ['modified', 1, { old_line: 1, new_line: 1 }],
   ] as const)('maps %s line %i inside a hunk', (side, line, expected) => {
-    const position = positionFor(version, diffItem(), side, line)
+    const position = positionFor(version, diffItem(), side, line, true)
     expect(position).toEqual({
       position_type: 'text',
       base_sha: version.baseSha,
@@ -592,7 +625,7 @@ describe('GitLab line positions', () => {
     ['modified', 7, 6, 7],
   ] as const)('maps %s line %i outside a hunk', (side, line, oldLine, newLine) => {
     const file = diffItem({ diff: '@@ -4,2 +4,3 @@\n context\n-old\n+first\n+second\n' })
-    expect(positionFor(version, file, side, line)).toMatchObject({
+    expect(positionFor(version, file, side, line, true)).toMatchObject({
       old_line: oldLine,
       new_line: newLine,
     })
@@ -600,18 +633,41 @@ describe('GitLab line positions', () => {
 
   it('keeps the boundary of a zero-length insertion and maps the following unchanged line', () => {
     const file = diffItem({ diff: '@@ -3,0 +4,2 @@\n+first\n+second\n' })
-    expect(positionFor(version, file, 'original', 3)).toMatchObject({ old_line: 3, new_line: 3 })
-    expect(positionFor(version, file, 'original', 4)).toMatchObject({ old_line: 4, new_line: 6 })
+    expect(positionFor(version, file, 'original', 3, true)).toMatchObject({
+      old_line: 3,
+      new_line: 3,
+    })
+    expect(positionFor(version, file, 'original', 4, true)).toMatchObject({
+      old_line: 4,
+      new_line: 6,
+    })
   })
 
   it('uses both recorded paths for a renamed file', () => {
     const file = diffItem({ old_path: 'old.ts', new_path: 'new.ts', renamed_file: true })
-    expect(positionFor(version, file, 'modified', 1)).toMatchObject({
+    expect(positionFor(version, file, 'modified', 1, true)).toMatchObject({
       old_path: 'old.ts',
       new_path: 'new.ts',
       old_line: 1,
       new_line: 1,
     })
+  })
+
+  it('posts identical displayed hunks against the regular refs', () => {
+    expect(
+      positionFor({ ...version, display: mergedDisplay }, diffItem(), 'modified', 2, true)
+    ).toMatchObject({
+      base_sha: version.baseSha,
+      start_sha: version.startSha,
+      head_sha: version.headSha,
+      new_line: 2,
+    })
+  })
+
+  it('refuses a displayed file whose regular hunks do not match', () => {
+    expect(
+      positionFor({ ...version, display: mergedDisplay }, diffItem(), 'modified', 2, false)
+    ).toBeNull()
   })
 })
 
@@ -647,6 +703,7 @@ describe('GitLab review writes', () => {
       failure: 'invalid-response',
       retryAt: null,
       error: 'Position is invalid',
+      status: 400,
     })
   })
 
@@ -665,6 +722,332 @@ describe('GitLab review writes', () => {
       2
     )
     expect(request.mock.calls.filter(([url]) => urlOf(url).endsWith('/approvals'))).toHaveLength(2)
+  })
+})
+
+describe('GitLab merged-result reviews', () => {
+  it('shows six comparison files instead of the regular version with 54 files', async () => {
+    const regular = Array.from({ length: 54 }, (_, index) =>
+      diffItem({ old_path: `regular/${String(index)}.ts`, new_path: `regular/${String(index)}.ts` })
+    )
+    const displayed = Array.from({ length: 6 }, (_, index) =>
+      diffItem({ old_path: `merged/${String(index)}.ts`, new_path: `merged/${String(index)}.ts` })
+    )
+    const request = reviewRequest({
+      mergeRef: { commit_id: mergedDisplay.headSha },
+      document: {
+        id: version.id,
+        head_commit_sha: version.headSha,
+        base_commit_sha: version.baseSha,
+        start_commit_sha: version.startSha,
+        state: 'overflow',
+        real_size: '54',
+        diffs: regular,
+      },
+      comparison: { compare_timeout: false, diffs: displayed },
+    })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    const result = await directory.review(location, 7)
+    if (!result.ok || result.value.kind !== 'ready') throw new Error('Review should be ready')
+    const review = result.value.snapshot
+    expect(review.version).toEqual({ ...version, display: mergedDisplay })
+    expect(review.files.map((file) => file.summary.path)).toEqual([
+      'merged/0.ts',
+      'merged/1.ts',
+      'merged/2.ts',
+      'merged/3.ts',
+      'merged/4.ts',
+      'merged/5.ts',
+    ])
+    expect(review.files.map((file) => file.raw)).toEqual(displayed)
+    expect(review.files.reduce((sum, file) => sum + file.summary.added, 0)).toBe(6)
+    expect(review.files.reduce((sum, file) => sum + file.summary.removed, 0)).toBe(6)
+    expect(review.complete).toBe(true)
+    expect(request).toHaveBeenCalledWith(
+      `https://gitlab.com/api/v4/projects/group%2Fproject/repository/compare?from=${mergedDisplay.baseSha}&to=${mergedDisplay.headSha}&straight=true`,
+      expect.objectContaining({ method: 'GET' })
+    )
+  })
+
+  it.each([
+    ['merge_ref', 400],
+    ['merge_ref', 403],
+    ['merge_ref', 404],
+    ['merge_ref', 409],
+    ['commit', 404],
+    ['compare', 400],
+    ['compare', 403],
+    ['compare', 404],
+    ['compare', 409],
+  ] as const)('uses the regular version when %s returns %i', async (stage, status) => {
+    const fallback = reviewRequest({ mergeRef: { commit_id: mergedDisplay.headSha } })
+    const request = vi.fn<typeof fetch>().mockImplementation((url, options) => {
+      const address = urlOf(url)
+      if (
+        (stage === 'merge_ref' && address.endsWith('/merge_ref')) ||
+        (stage === 'commit' && address.includes('/repository/commits/')) ||
+        (stage === 'compare' && address.includes('/repository/compare?'))
+      ) {
+        return Promise.resolve(new Response(null, { status }))
+      }
+      return fallback(url, options)
+    })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        kind: 'ready',
+        snapshot: {
+          version,
+          files: [{ raw: diffItem(), summary: { commentable: true } }],
+          complete: true,
+        },
+      },
+    })
+  })
+
+  it.each(['closed', 'merged'])('does not request a merged result for a %s MR', async (state) => {
+    const request = reviewRequest({ state, mergeRef: { commit_id: mergedDisplay.headSha } })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'ready', snapshot: { version, complete: true } },
+    })
+    expect(request.mock.calls.some(([url]) => urlOf(url).endsWith('/merge_ref'))).toBe(false)
+  })
+
+  it('uses the regular version without requesting a merge ref for a conflicted open MR', async () => {
+    const request = reviewRequest({
+      state: 'opened',
+      hasConflicts: true,
+      mergeRef: { commit_id: mergedDisplay.headSha },
+    })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        kind: 'ready',
+        snapshot: { version, files: [{ raw: diffItem() }], complete: true },
+      },
+    })
+    expect(request.mock.calls.some(([url]) => urlOf(url).endsWith('/merge_ref'))).toBe(false)
+  })
+
+  it.each([
+    { parents: [] },
+    { parents: [mergedDisplay.baseSha] },
+    { parents: [mergedDisplay.baseSha, version.headSha, 'f'.repeat(40)] },
+  ])('uses the regular version when merge parent count is unsupported: %o', async ({ parents }) => {
+    const request = reviewRequest({
+      mergeRef: { commit_id: mergedDisplay.headSha },
+      commit: { parent_ids: parents },
+    })
+    const directory = new GitLabDirectory({
+      token: () => 'fictional-token',
+      now: () => 1_000,
+      request,
+    })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        kind: 'ready',
+        snapshot: { version, files: [{ raw: diffItem() }], complete: true },
+      },
+    })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'ready', snapshot: { version } },
+    })
+    expect(request.mock.calls.some(([url]) => urlOf(url).includes('/repository/compare?'))).toBe(
+      false
+    )
+    expect(request.mock.calls.filter(([url]) => urlOf(url).endsWith('/versions/9'))).toHaveLength(1)
+  })
+
+  it('prepares again and invalidates the version cache when the source parent moves', async () => {
+    const request = reviewRequest({
+      mergeRef: { commit_id: mergedDisplay.headSha },
+      commit: { parent_ids: [mergedDisplay.baseSha, 'f'.repeat(40)] },
+    })
+    const directory = new GitLabDirectory({
+      token: () => 'fictional-token',
+      now: () => 1_000,
+      request,
+    })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'preparing' },
+    })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'preparing' },
+    })
+    expect(request.mock.calls.some(([url]) => urlOf(url).includes('/repository/compare?'))).toBe(
+      false
+    )
+    expect(request.mock.calls.filter(([url]) => urlOf(url).endsWith('/versions/9'))).toHaveLength(2)
+  })
+
+  it.each([
+    ['merge_ref', 401, 'unauthorized'],
+    ['merge_ref', 429, 'rate-limited'],
+    ['compare', 401, 'unauthorized'],
+    ['compare', 429, 'rate-limited'],
+    ['merge_ref', 422, 'invalid-response'],
+  ] as const)('retains a %s %i failure', async (stage, status, failure) => {
+    const fallback = reviewRequest({ mergeRef: { commit_id: mergedDisplay.headSha } })
+    const request = vi.fn<typeof fetch>().mockImplementation((url, options) => {
+      const address = urlOf(url)
+      if (
+        (stage === 'merge_ref' && address.endsWith('/merge_ref')) ||
+        (stage === 'compare' && address.includes('/repository/compare?'))
+      ) {
+        return Promise.resolve(new Response(null, { status }))
+      }
+      return fallback(url, options)
+    })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({ ok: false, failure })
+  })
+
+  it('retains a merge-ref network failure', async () => {
+    const fallback = reviewRequest()
+    const request = vi
+      .fn<typeof fetch>()
+      .mockImplementation((url, options) =>
+        urlOf(url).endsWith('/merge_ref')
+          ? Promise.reject(new Error('Recorded network failure'))
+          : fallback(url, options)
+      )
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: false,
+      failure: 'network',
+    })
+  })
+
+  it('re-reads the merge ref when the target moves without a new regular version', async () => {
+    const responses = {
+      mergeRef: { commit_id: mergedDisplay.headSha },
+      commit: { parent_ids: [mergedDisplay.baseSha, version.headSha] },
+      comparison: { compare_timeout: false, diffs: [diffItem()] },
+    }
+    const request = reviewRequest(responses)
+    const directory = new GitLabDirectory({
+      token: () => 'fictional-token',
+      now: () => 1_000,
+      request,
+    })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'ready', snapshot: { version: { id: 9, display: mergedDisplay } } },
+    })
+    const nextTarget = '0'.repeat(40)
+    const nextHead = 'f'.repeat(40)
+    responses.mergeRef.commit_id = nextHead
+    responses.commit.parent_ids = [nextTarget, version.headSha]
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        kind: 'ready',
+        snapshot: {
+          version: {
+            id: 9,
+            headSha: version.headSha,
+            display: { baseSha: nextTarget, startSha: nextTarget, headSha: nextHead },
+          },
+        },
+      },
+    })
+    expect(request.mock.calls.filter(([url]) => urlOf(url).endsWith('/merge_ref'))).toHaveLength(2)
+  })
+
+  it.each([
+    { compare_timeout: true, diffs: [diffItem()] },
+    { compare_timeout: false, diffs: [diffItem({ collapsed: true })] },
+    { compare_timeout: false, diffs: [diffItem({ too_large: true })] },
+  ])('keeps an incomplete displayed comparison incomplete: %o', async (comparison) => {
+    const request = reviewRequest({ mergeRef: { commit_id: mergedDisplay.headSha }, comparison })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    await expect(directory.review(location, 7)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'ready', snapshot: { complete: false } },
+    })
+  })
+
+  it.each([
+    [{}, true],
+    [{ old_path: 'src/other.ts' }, false],
+    [{ new_path: 'src/other.ts' }, false],
+    [{ diff: '@@ -1 +1 @@\n-old\n+changed\n' }, false],
+    [{ new_file: true }, false],
+    [{ renamed_file: true }, false],
+    [{ deleted_file: true }, false],
+  ] satisfies [Partial<MrDiffItem>, boolean][])(
+    'only enables comments for an identical regular entry: %o',
+    async (changes, commentable) => {
+      const request = reviewRequest({
+        mergeRef: { commit_id: mergedDisplay.headSha },
+        comparison: { compare_timeout: false, diffs: [diffItem(changes)] },
+      })
+      const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+      await expect(directory.review(location, 7)).resolves.toMatchObject({
+        ok: true,
+        value: { kind: 'ready', snapshot: { files: [{ summary: { commentable } }] } },
+      })
+    }
+  )
+
+  it('places regular and display threads only on identical displayed files', async () => {
+    const other = diffItem({ old_path: 'other.ts', new_path: 'other.ts' })
+    const regularPosition = {
+      base_sha: version.baseSha,
+      start_sha: version.startSha,
+      head_sha: version.headSha,
+      old_path: 'src/file.ts',
+      new_path: 'src/file.ts',
+      old_line: null,
+      new_line: 2,
+    }
+    const displayPosition = {
+      ...regularPosition,
+      base_sha: mergedDisplay.baseSha,
+      start_sha: mergedDisplay.startSha,
+      head_sha: mergedDisplay.headSha,
+    }
+    const request = reviewRequest({
+      mergeRef: { commit_id: mergedDisplay.headSha },
+      document: {
+        id: version.id,
+        head_commit_sha: version.headSha,
+        base_commit_sha: version.baseSha,
+        start_commit_sha: version.startSha,
+        state: 'collected',
+        real_size: '2',
+        diffs: [diffItem(), other],
+      },
+      comparison: {
+        compare_timeout: false,
+        diffs: [diffItem(), { ...other, diff: '@@ -1 +1 @@\n-old\n+different\n' }],
+      },
+      discussions: [
+        { id: 'regular', notes: [discussionNote({ position: regularPosition })] },
+        { id: 'display', notes: [discussionNote({ position: displayPosition })] },
+        {
+          id: 'changed-file',
+          notes: [
+            discussionNote({
+              position: { ...displayPosition, old_path: 'other.ts', new_path: 'other.ts' },
+            }),
+          ],
+        },
+      ],
+    })
+    const directory = new GitLabDirectory({ token: () => 'fictional-token', request })
+    const result = await directory.review(location, 7)
+    if (!result.ok || result.value.kind !== 'ready') throw new Error('Review should be ready')
+    expect(result.value.snapshot.threads.map((thread) => thread.id)).toEqual(['regular', 'display'])
+    expect(result.value.snapshot.files.map((file) => file.summary.threads)).toEqual([2, 0])
   })
 })
 
@@ -948,7 +1331,7 @@ describe('GitLabDirectory review snapshots', () => {
         now: () => 1_000,
         request,
       })
-      await expect(directory.review(location, 7)).resolves.toEqual({
+      await expect(directory.review(location, 7)).resolves.toMatchObject({
         ok: false,
         failure,
         retryAt: failure === 'rate-limited' ? 61_000 : null,

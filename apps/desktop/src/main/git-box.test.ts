@@ -46,6 +46,7 @@ vi.mock('@chorus/workspace', async (importOriginal) => {
     readFetchRefspecs: vi.fn<typeof actual.readFetchRefspecs>(),
     readRemoteUrl: vi.fn<typeof actual.readRemoteUrl>(),
     readFileAt: vi.fn<typeof actual.readFileAt>(),
+    readMergeBase: vi.fn<typeof actual.readMergeBase>(),
     readStatus: vi.fn<typeof actual.readStatus>(),
     switchTo: vi.fn<typeof actual.switchTo>(),
   }
@@ -60,6 +61,17 @@ const VERSION: ReviewVersion = {
   headSha: 'b'.repeat(40),
   baseSha: 'a'.repeat(40),
   startSha: 'c'.repeat(40),
+  display: {
+    headSha: 'b'.repeat(40),
+    baseSha: 'a'.repeat(40),
+    startSha: 'c'.repeat(40),
+  },
+}
+
+const DISPLAY = {
+  baseSha: 'd'.repeat(40),
+  startSha: 'd'.repeat(40),
+  headSha: 'e'.repeat(40),
 }
 
 const latestVersion = vi.fn<GitLabDirectory['latestVersion']>()
@@ -96,6 +108,7 @@ function reviewFile(path: string, overrides: Partial<MrDiffItem> = {}): GitLabRe
       binary: raw.diff.startsWith('Binary files '),
       collapsed: raw.collapsed === true,
       tooLarge: raw.too_large === true,
+      commentable: true,
       threads: 0,
     },
   }
@@ -1142,5 +1155,486 @@ describe('Git box editor diffs', () => {
     expect(workspace.fetchRef).not.toHaveBeenCalled()
     expect(workspace.readFileAt).not.toHaveBeenCalled()
     expect(openReviewDiff).not.toHaveBeenCalled()
+  })
+})
+
+describe('Git box merged-result readers', () => {
+  beforeEach(() => {
+    current = snapshot({ version: { ...VERSION, display: DISPLAY } })
+    vi.mocked(workspace.fetchedHead).mockResolvedValue({ ok: true, value: DISPLAY.headSha })
+  })
+
+  it('fetches the merge ref and opens its target and merged contents', async () => {
+    await service.review(project.id, KEY.iid)
+    await expect(service.openDiff(fileRequest())).resolves.toMatchObject({ failure: null })
+    expect(workspace.fetchRef).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      remote: 'origin',
+      ref: 'refs/merge-requests/7/merge',
+    })
+    expect(openReviewDiff).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({
+        before: `${DISPLAY.baseSha}:src/a.ts`,
+        after: `${DISPLAY.headSha}:src/a.ts`,
+      })
+    )
+  })
+
+  it('uses displayed commits for all files and restored reads', async () => {
+    await service.review(project.id, KEY.iid)
+    await expect(service.openAllDiffs(allRequest())).resolves.toMatchObject({ failure: null })
+    expect(openReviewDiff).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({
+        files: [
+          expect.objectContaining({
+            before: `${DISPLAY.baseSha}:src/a.ts`,
+            after: `${DISPLAY.headSha}:src/a.ts`,
+          }),
+          expect.objectContaining({
+            before: `${DISPLAY.baseSha}:src/b.ts`,
+            after: `${DISPLAY.headSha}:src/b.ts`,
+          }),
+        ],
+      })
+    )
+    await expect(service.reviewFile({ ...fileRequest(), side: 'original' })).resolves.toMatchObject(
+      {
+        failure: null,
+        text: `${DISPLAY.baseSha}:src/a.ts`,
+      }
+    )
+    await expect(service.reviewFile({ ...fileRequest(), side: 'modified' })).resolves.toMatchObject(
+      {
+        failure: null,
+        text: `${DISPLAY.headSha}:src/a.ts`,
+      }
+    )
+  })
+
+  it('retains source SHA for approvals and review marks', async () => {
+    await service.review(project.id, KEY.iid)
+    expect(marks.readSeen(KEY)?.headSha).toBe(VERSION.headSha)
+    await expect(service.approve({ ...allRequest(), approve: true })).resolves.toMatchObject({
+      failure: null,
+    })
+    expect(writeReview).toHaveBeenCalledWith(
+      { host: KEY.host, path: KEY.project },
+      KEY.iid,
+      'POST',
+      '/approve',
+      { sha: VERSION.headSha }
+    )
+  })
+
+  it('compares workspace contents against the merged head while keeping the target before side', async () => {
+    checkedOut('feature')
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest())
+    expect(workspace.readFileAt).toHaveBeenCalledWith({
+      cwd: ROOT,
+      ref: DISPLAY.headSha,
+      path: 'src/a.ts',
+    })
+    expect(openReviewDiff).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({
+        before: `${DISPLAY.baseSha}:src/a.ts`,
+        after: '',
+        workspace: true,
+        matches: false,
+      })
+    )
+  })
+
+  it('refuses a merge ref that moved after the snapshot', async () => {
+    await service.review(project.id, KEY.iid)
+    vi.mocked(workspace.fetchedHead).mockResolvedValue({ ok: true, value: VERSION.headSha })
+    await expect(service.openDiff(fileRequest())).resolves.toMatchObject({ failure: 'head-moved' })
+    expect(workspace.readFileAt).not.toHaveBeenCalled()
+    expect(openReviewDiff).not.toHaveBeenCalled()
+  })
+
+  it('fetches a new merged head even when the regular version ID is unchanged', async () => {
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest())
+    const nextHead = 'f'.repeat(40)
+    current = snapshot({ version: { ...VERSION, display: { ...DISPLAY, headSha: nextHead } } })
+    vi.mocked(workspace.fetchedHead).mockResolvedValue({ ok: true, value: nextHead })
+    await service.review(project.id, KEY.iid)
+    await service.openDiff(fileRequest())
+    expect(workspace.fetchRef).toHaveBeenCalledTimes(2)
+    expect(openReviewDiff).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ after: `${nextHead}:src/a.ts` })
+    )
+  })
+
+  it('refuses comments on a displayed file with different regular hunks', async () => {
+    const file = reviewFile('src/a.ts')
+    current = { ...current, files: [{ ...file, summary: { ...file.summary, commentable: false } }] }
+    await service.review(project.id, KEY.iid)
+    await expect(
+      service.comment({ ...fileRequest(), side: 'modified', line: 1, body: 'A comment' })
+    ).resolves.toMatchObject({ failure: 'refused-target' })
+    expect(writeReview).not.toHaveBeenCalled()
+  })
+
+  it.each(['baseSha', 'headSha'] as const)(
+    'reports a submitted write when displayed %s changes during refresh',
+    async (field) => {
+      await service.review(project.id, KEY.iid)
+      writeReview.mockImplementationOnce(() => {
+        current = {
+          ...current,
+          version: { ...current.version, display: { ...DISPLAY, [field]: 'f'.repeat(40) } },
+        }
+        return Promise.resolve({ ok: true, value: {}, fetchedAt: NOW })
+      })
+      await expect(service.approve({ ...allRequest(), approve: true })).resolves.toMatchObject({
+        failure: 'head-moved',
+        error: expect.stringContaining('submitted to GitLab'),
+      })
+      expect(service.activeReview(project.id).review?.version.display).toEqual(DISPLAY)
+    }
+  )
+})
+
+describe('Git box checkout freshness', () => {
+  const localSha = 'a'.repeat(40)
+  const staleSha = 'c'.repeat(40)
+  let inventory: WorkspaceModule.BranchEntry[]
+  const branch = (name: string, sha: string, remote = false): WorkspaceModule.BranchEntry => ({
+    name,
+    remote,
+    head: name === 'main',
+    sha,
+    committedAt: NOW,
+    author: 'Fixture',
+    upstream: null,
+    track: { kind: 'none' },
+  })
+  const checkout = (): ReturnType<GitBoxService['checkout']> =>
+    service.checkout(project.id, { kind: 'mr', iid: KEY.iid, sha: VERSION.headSha })
+
+  beforeEach(() => {
+    inventory = [
+      branch('main', staleSha),
+      branch('feature', localSha),
+      branch('origin/feature', staleSha, true),
+    ]
+    vi.spyOn(directory, 'requestOf').mockResolvedValue({ fork: false, sourceBranch: 'feature' })
+    vi.mocked(workspace.readBranchInventory).mockImplementation(() =>
+      Promise.resolve({ ok: true, value: inventory })
+    )
+    vi.mocked(workspace.readFetchRefspecs).mockResolvedValue({
+      ok: true,
+      value: ['+refs/heads/*:refs/remotes/origin/*'],
+    })
+    vi.mocked(workspace.fetchRef).mockImplementation(({ ref }) => {
+      const upstream =
+        ref?.startsWith('refs/heads/') === true ? `origin/${ref.slice('refs/heads/'.length)}` : null
+      inventory = inventory.map((entry) =>
+        entry.name === upstream ? { ...entry, sha: VERSION.headSha } : entry
+      )
+      return Promise.resolve({ ok: true, value: undefined })
+    })
+    vi.mocked(workspace.readMergeBase).mockResolvedValue({ ok: true, value: localSha })
+    vi.mocked(workspace.switchTo).mockImplementation(({ target }) => {
+      checkedOut(target.kind === 'detach' ? null : target.name)
+      return Promise.resolve({ ok: true, value: undefined })
+    })
+    vi.mocked(workspace.fastForward).mockResolvedValue({ ok: true, value: undefined })
+  })
+
+  it('fetches first and fast-forwards a behind-only branch to the exact fetched SHA', async () => {
+    await expect(checkout()).resolves.toMatchObject({ failure: null, state: { branch: 'feature' } })
+    expect(workspace.fetchRef).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      remote: 'origin',
+      ref: 'refs/heads/feature',
+    })
+    expect(workspace.readMergeBase).toHaveBeenCalledWith({
+      cwd: ROOT,
+      base: VERSION.headSha,
+      head: localSha,
+    })
+    expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      target: { kind: 'local', name: 'feature' },
+    })
+    expect(workspace.fastForward).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      sha: VERSION.headSha,
+    })
+    expect(vi.mocked(workspace.readBranchInventory).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(workspace.fetchRef).mock.invocationCallOrder[0] ?? Infinity
+    )
+    expect(vi.mocked(workspace.fastForward).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(workspace.switchTo).mock.invocationCallOrder[0] ?? Infinity
+    )
+  })
+
+  it.each([VERSION.headSha, 'd'.repeat(40)])(
+    'switches an ahead or diverged branch without changing its commits: %s',
+    async (mergeBase) => {
+      vi.mocked(workspace.readMergeBase).mockResolvedValue({ ok: true, value: mergeBase })
+      await expect(checkout()).resolves.toMatchObject({ failure: null })
+      expect(workspace.switchTo).toHaveBeenCalledWith({
+        cwd: ROOT,
+        target: { kind: 'local', name: 'feature' },
+      })
+      expect(workspace.fastForward).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps an equal branch at the fetched SHA without needing an ancestry read', async () => {
+    inventory = inventory.map((entry) =>
+      entry.name === 'feature' ? { ...entry, sha: VERSION.headSha } : entry
+    )
+    await expect(checkout()).resolves.toMatchObject({ failure: null })
+    expect(workspace.readMergeBase).not.toHaveBeenCalled()
+    expect(workspace.fastForward).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      sha: VERSION.headSha,
+    })
+  })
+
+  it('uses the fetched source SHA when the MR card SHA is stale', async () => {
+    await expect(
+      service.checkout(project.id, { kind: 'mr', iid: KEY.iid, sha: staleSha })
+    ).resolves.toMatchObject({ failure: null })
+    expect(workspace.fastForward).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      sha: VERSION.headSha,
+    })
+  })
+
+  it('tracks the freshly fetched origin branch when no local branch exists', async () => {
+    inventory = inventory.filter((entry) => entry.name !== 'feature')
+    await expect(checkout()).resolves.toMatchObject({ failure: null })
+    expect(inventory.find((entry) => entry.name === 'origin/feature')?.sha).toBe(VERSION.headSha)
+    expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      target: { kind: 'track', remote: 'origin', name: 'feature' },
+    })
+    expect(workspace.fastForward).not.toHaveBeenCalled()
+  })
+
+  it('rechecks dirty state after fetching before switching or fast-forwarding', async () => {
+    vi.mocked(workspace.fetchRef).mockImplementationOnce(() => {
+      vi.mocked(workspace.readStatus).mockResolvedValue({
+        ok: true,
+        value: { branch: 'main', upstream: null, ahead: 0, behind: 0, files: [], clean: false },
+      })
+      return Promise.resolve({ ok: true, value: undefined })
+    })
+    await expect(checkout()).resolves.toMatchObject({ failure: 'dirty' })
+    expect(workspace.switchTo).not.toHaveBeenCalled()
+    expect(workspace.fastForward).not.toHaveBeenCalled()
+  })
+
+  describe('branches-tab checkout', () => {
+    beforeEach(() => {
+      inventory = inventory.map((entry): WorkspaceModule.BranchEntry =>
+        entry.name === 'feature'
+          ? {
+              ...entry,
+              upstream: 'origin/feature',
+              track: { kind: 'tracking', ahead: 0, behind: 1 },
+            }
+          : entry
+      )
+    })
+
+    const localCheckout = (): ReturnType<GitBoxService['checkout']> =>
+      service.checkout(project.id, { kind: 'local', name: 'feature' })
+
+    it('fetches a tracked origin branch and fast-forwards to its exact fetched SHA', async () => {
+      const requestOf = vi.spyOn(directory, 'requestOf')
+      await expect(localCheckout()).resolves.toMatchObject({
+        failure: null,
+        state: { branch: 'feature' },
+      })
+      expect(workspace.fetchRef).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        remote: 'origin',
+        ref: 'refs/heads/feature',
+      })
+      expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        target: { kind: 'local', name: 'feature' },
+      })
+      expect(workspace.fastForward).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        sha: VERSION.headSha,
+      })
+      expect(requestOf).not.toHaveBeenCalled()
+    })
+
+    it.each([VERSION.headSha, 'd'.repeat(40)])(
+      'switches an ahead or diverged local branch without fast-forwarding: %s',
+      async (mergeBase) => {
+        vi.mocked(workspace.readMergeBase).mockResolvedValue({ ok: true, value: mergeBase })
+        await expect(localCheckout()).resolves.toMatchObject({ failure: null })
+        expect(workspace.fetchRef).toHaveBeenCalledTimes(1)
+        expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+          cwd: ROOT,
+          target: { kind: 'local', name: 'feature' },
+        })
+        expect(workspace.fastForward).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each([
+      { upstream: null, track: { kind: 'none' } },
+      { upstream: 'origin/feature', track: { kind: 'gone' } },
+      { upstream: 'backup/feature', track: { kind: 'tracking', ahead: 0, behind: 1 } },
+      { upstream: 'origin/--invalid', track: { kind: 'tracking', ahead: 0, behind: 1 } },
+    ] satisfies Pick<WorkspaceModule.BranchEntry, 'upstream' | 'track'>[])(
+      'switches without fetching when the origin upstream is unavailable: %o',
+      async (tracking) => {
+        inventory = inventory.map((entry) =>
+          entry.name === 'feature' ? { ...entry, ...tracking } : entry
+        )
+        await expect(localCheckout()).resolves.toMatchObject({ failure: null })
+        expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+          cwd: ROOT,
+          target: { kind: 'local', name: 'feature' },
+        })
+        expect(workspace.fetchRef).not.toHaveBeenCalled()
+        expect(workspace.readMergeBase).not.toHaveBeenCalled()
+        expect(workspace.fastForward).not.toHaveBeenCalled()
+      }
+    )
+
+    it('switches locally when the fetch refspec does not map the upstream', async () => {
+      vi.mocked(workspace.readFetchRefspecs).mockResolvedValue({
+        ok: true,
+        value: ['+refs/heads/main:refs/remotes/origin/main'],
+      })
+      await expect(localCheckout()).resolves.toMatchObject({ failure: null })
+      expect(workspace.fetchRef).not.toHaveBeenCalled()
+      expect(workspace.fastForward).not.toHaveBeenCalled()
+    })
+
+    it('still switches locally when fetching fails', async () => {
+      vi.mocked(workspace.fetchRef).mockResolvedValueOnce({
+        ok: false,
+        error: new workspace.GitError('Recorded offline failure', ROOT),
+      })
+      await expect(localCheckout()).resolves.toMatchObject({
+        failure: null,
+        state: { branch: 'feature' },
+      })
+      expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        target: { kind: 'local', name: 'feature' },
+      })
+      expect(workspace.fetchedHead).not.toHaveBeenCalled()
+      expect(workspace.fastForward).not.toHaveBeenCalled()
+    })
+
+    it('still switches locally when the fetched SHA cannot be read', async () => {
+      vi.mocked(workspace.fetchedHead).mockResolvedValueOnce({
+        ok: false,
+        error: new workspace.GitError('Recorded FETCH_HEAD read failure', ROOT),
+      })
+      await expect(localCheckout()).resolves.toMatchObject({ failure: null })
+      expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        target: { kind: 'local', name: 'feature' },
+      })
+      expect(workspace.fastForward).not.toHaveBeenCalled()
+    })
+
+    it('fetches a remote-only branch before tracking its refreshed origin ref', async () => {
+      inventory = inventory.filter((entry) => entry.name !== 'feature')
+      await expect(
+        service.checkout(project.id, { kind: 'remote', name: 'feature' })
+      ).resolves.toMatchObject({ failure: null })
+      expect(workspace.fetchRef).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        remote: 'origin',
+        ref: 'refs/heads/feature',
+      })
+      expect(inventory.find((entry) => entry.name === 'origin/feature')?.sha).toBe(VERSION.headSha)
+      expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        target: { kind: 'track', remote: 'origin', name: 'feature' },
+      })
+      expect(vi.mocked(workspace.switchTo).mock.invocationCallOrder[0]).toBeGreaterThan(
+        vi.mocked(workspace.fetchRef).mock.invocationCallOrder[0] ?? Infinity
+      )
+    })
+
+    it('still tracks the existing origin ref when the remote fetch fails', async () => {
+      inventory = inventory.filter((entry) => entry.name !== 'feature')
+      vi.mocked(workspace.fetchRef).mockResolvedValueOnce({
+        ok: false,
+        error: new workspace.GitError('Recorded offline failure', ROOT),
+      })
+      await expect(
+        service.checkout(project.id, { kind: 'remote', name: 'feature' })
+      ).resolves.toMatchObject({ failure: null })
+      expect(workspace.fetchRef).toHaveBeenCalledTimes(1)
+      expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        target: { kind: 'track', remote: 'origin', name: 'feature' },
+      })
+      expect(workspace.fastForward).not.toHaveBeenCalled()
+    })
+
+    it('fetches the upstream name when it differs from the local name', async () => {
+      inventory = inventory.map((entry) =>
+        entry.name === 'feature' ? { ...entry, upstream: 'origin/release/feature' } : entry
+      )
+      inventory.push(branch('origin/release/feature', staleSha, true))
+      vi.mocked(workspace.readFetchRefspecs).mockResolvedValue({
+        ok: true,
+        value: ['+refs/heads/release/feature:refs/remotes/origin/release/feature'],
+      })
+      await expect(localCheckout()).resolves.toMatchObject({ failure: null })
+      expect(workspace.fetchRef).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        remote: 'origin',
+        ref: 'refs/heads/release/feature',
+      })
+      expect(workspace.switchTo).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        target: { kind: 'local', name: 'feature' },
+      })
+      expect(workspace.fastForward).toHaveBeenCalledExactlyOnceWith({
+        cwd: ROOT,
+        sha: VERSION.headSha,
+      })
+    })
+  })
+
+  it.each([false, true])('keeps MR checkout strict when fetching fails, fork=%s', async (fork) => {
+    vi.spyOn(directory, 'requestOf').mockResolvedValue({ fork, sourceBranch: 'feature' })
+    vi.mocked(workspace.fetchRef).mockResolvedValueOnce({
+      ok: false,
+      error: new workspace.GitError('Recorded offline failure', ROOT),
+    })
+    await expect(checkout()).resolves.toMatchObject({ failure: 'git-failed' })
+    expect(workspace.switchTo).not.toHaveBeenCalled()
+    expect(workspace.fastForward).not.toHaveBeenCalled()
+  })
+
+  it('keeps fork checkout on the guarded detached MR head', async () => {
+    vi.spyOn(directory, 'requestOf').mockResolvedValue({ fork: true, sourceBranch: 'feature' })
+    await expect(checkout()).resolves.toMatchObject({ failure: null })
+    expect(workspace.fetchRef).toHaveBeenCalledExactlyOnceWith({
+      cwd: ROOT,
+      remote: 'origin',
+      ref: 'refs/merge-requests/7/head',
+    })
+    expect(workspace.switchTo).toHaveBeenCalledWith({
+      cwd: ROOT,
+      target: { kind: 'detach', sha: VERSION.headSha },
+    })
+    expect(workspace.fastForward).not.toHaveBeenCalled()
   })
 })

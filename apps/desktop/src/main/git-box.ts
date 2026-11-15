@@ -12,6 +12,7 @@ import {
   readFetchRefspecs,
   readRemoteUrl,
   readFileAt,
+  readMergeBase,
   readStatus,
   resolveWithinRoot,
   switchTo,
@@ -76,7 +77,8 @@ interface Outcome {
 }
 
 type Resolved =
-  { readonly target: SwitchTarget } | { readonly failure: GitFailure; readonly error?: string }
+  | { readonly target: SwitchTarget; readonly fastForwardSha?: string }
+  | { readonly failure: GitFailure; readonly error?: string }
 
 interface HeldReview {
   readonly root: string
@@ -317,7 +319,13 @@ export class GitBoxService {
       const guarded = await this.guardReview(request)
       if ('failure' in guarded) return { ...guarded, error: null }
       const { session, file } = guarded
-      const position = positionFor(session.snapshot.version, file.raw, request.side, request.line)
+      const position = positionFor(
+        session.snapshot.version,
+        file.raw,
+        request.side,
+        request.line,
+        file.summary.commentable
+      )
       if (position === null) return { failure: 'refused-target', retryAt: null, error: null }
       return this.writeReview(request.projectId, session, 'POST', '/discussions', {
         body: request.body,
@@ -419,6 +427,10 @@ export class GitBoxService {
     if (
       refreshed.value.kind !== 'ready' ||
       refreshed.value.snapshot.version.id !== session.snapshot.version.id ||
+      refreshed.value.snapshot.version.display.headSha !==
+        session.snapshot.version.display.headSha ||
+      refreshed.value.snapshot.version.display.baseSha !==
+        session.snapshot.version.display.baseSha ||
       this.reviews.get(projectId) !== session ||
       this.deps.gitlab.identity(session.location.host) !== session.identity
     ) {
@@ -467,10 +479,14 @@ export class GitBoxService {
     const [before, after] = await Promise.all([
       file.summary.status === 'added'
         ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
-        : readFileAt({ cwd: session.root, ref: version.baseSha, path: file.summary.oldPath }),
+        : readFileAt({
+            cwd: session.root,
+            ref: version.display.baseSha,
+            path: file.summary.oldPath,
+          }),
       workspace || file.summary.status === 'removed'
         ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
-        : readFileAt({ cwd: session.root, ref: version.headSha, path: file.summary.path }),
+        : readFileAt({ cwd: session.root, ref: version.display.headSha, path: file.summary.path }),
     ])
     if (!before.ok) return { failure: 'git-failed', retryAt: null, error: before.error.message }
     if (!after.ok) return { failure: 'git-failed', retryAt: null, error: after.error.message }
@@ -537,10 +553,18 @@ export class GitBoxService {
       const [before, after] = await Promise.all([
         file.summary.status === 'added'
           ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
-          : readFileAt({ cwd: session.root, ref: version.baseSha, path: file.summary.oldPath }),
+          : readFileAt({
+              cwd: session.root,
+              ref: version.display.baseSha,
+              path: file.summary.oldPath,
+            }),
         workspace || file.summary.status === 'removed'
           ? Promise.resolve({ ok: true, value: { kind: 'text', text: '' } } as const)
-          : readFileAt({ cwd: session.root, ref: version.headSha, path: file.summary.path }),
+          : readFileAt({
+              cwd: session.root,
+              ref: version.display.headSha,
+              path: file.summary.path,
+            }),
       ])
       if (!before.ok) {
         return { failure: 'git-failed', retryAt: null, error: before.error.message, skipped }
@@ -611,10 +635,14 @@ export class GitBoxService {
         return this.refused(projectId, 'refused-target')
       if (this.deps.projectBusy(projectId)) return this.refused(projectId, 'agent-busy')
       const switched = await switchTo({ cwd, target: resolved.target })
-      return switched.ok
+      const forwarded =
+        switched.ok && resolved.fastForwardSha !== undefined
+          ? await fastForward({ cwd, sha: resolved.fastForwardSha })
+          : switched
+      return forwarded.ok
         ? { state: await this.state(projectId), failure: null }
         : {
-            state: { ...(await this.state(projectId)), error: switched.error.message },
+            state: { ...(await this.state(projectId)), error: forwarded.error.message },
             failure: 'git-failed',
           }
     }).then((outcome) => {
@@ -670,7 +698,7 @@ export class GitBoxService {
         readFile(resolved.value, 'utf8'),
         readFileAt({
           cwd: session.root,
-          ref: session.snapshot.version.headSha,
+          ref: session.snapshot.version.display.headSha,
           path: file.summary.path,
         }),
       ])
@@ -720,7 +748,9 @@ export class GitBoxService {
       ? ({ ok: true, value: { kind: 'text', text: '' } } as const)
       : await readFileAt({
           cwd: session.root,
-          ref: original ? session.snapshot.version.baseSha : session.snapshot.version.headSha,
+          ref: original
+            ? session.snapshot.version.display.baseSha
+            : session.snapshot.version.display.headSha,
           path: original ? file.summary.oldPath : file.summary.path,
         })
     if (
@@ -816,29 +846,31 @@ export class GitBoxService {
 
   private async ensureReviewRefs(session: HeldReview): Promise<GitResponse<'git:openDiff'>> {
     const { version, mr } = session.snapshot
-    const key = `${session.root}\u0000${version.headSha}`
+    const { display } = version
+    const key = `${session.root}\u0000${display.headSha}`
     const cwd = session.root
-    if (!this.fetchedReviews.has(key) || !(await hasCommit({ cwd, sha: version.headSha }))) {
+    if (!this.fetchedReviews.has(key) || !(await hasCommit({ cwd, sha: display.headSha }))) {
+      const kind = display.headSha === version.headSha ? 'head' : 'merge'
       const fetched = await fetchRef({
         cwd,
         remote: 'origin',
-        ref: `refs/merge-requests/${String(mr.iid)}/head`,
+        ref: `refs/merge-requests/${String(mr.iid)}/${kind}`,
       })
       if (!fetched.ok) return { failure: 'git-failed', retryAt: null, error: fetched.error.message }
       const head = await fetchedHead({ cwd })
       if (!head.ok) return { failure: 'git-failed', retryAt: null, error: head.error.message }
-      if (head.value !== version.headSha)
+      if (head.value !== display.headSha)
         return { failure: 'head-moved', retryAt: null, error: null }
       this.fetchedReviews.add(key)
     }
-    if (!(await hasCommit({ cwd, sha: version.baseSha }))) {
+    if (!(await hasCommit({ cwd, sha: display.baseSha }))) {
       const fetched = await fetchRef({
         cwd,
         remote: 'origin',
         ref: `refs/heads/${mr.targetBranch}`,
       })
       if (!fetched.ok) return { failure: 'git-failed', retryAt: null, error: fetched.error.message }
-      if (!(await hasCommit({ cwd, sha: version.baseSha }))) {
+      if (!(await hasCommit({ cwd, sha: display.baseSha }))) {
         return { failure: 'git-failed', retryAt: null, error: null }
       }
     }
@@ -869,11 +901,48 @@ export class GitBoxService {
     cwd: string,
     target: GitRequest<'git:checkout'>['target']
   ): Promise<Resolved> {
-    if (target.kind === 'local') return this.resolveBranch(cwd, target.name, 'local')
-    if (target.kind === 'remote') return this.resolveBranch(cwd, target.name, 'remote')
+    if (target.kind === 'local' || target.kind === 'remote') {
+      if (!isSafeRef(target.name)) return { failure: 'refused-target' }
+      let upstream = target.kind === 'remote' ? target.name : null
+      if (target.kind === 'local') {
+        const branches = await readBranchInventory({ cwd })
+        const local = branches.ok
+          ? branches.value.find((entry) => !entry.remote && entry.name === target.name)
+          : undefined
+        if (local?.track.kind === 'tracking' && local.upstream?.startsWith('origin/') === true) {
+          upstream = local.upstream.slice('origin/'.length)
+        }
+      }
+      if (upstream !== null && isSafeRef(upstream)) {
+        const specs = await readFetchRefspecs({ cwd, remote: 'origin' })
+        if (specs.ok && mapsBranch(specs.value, 'origin', upstream)) {
+          const fetched = await fetchRef({
+            cwd,
+            remote: 'origin',
+            ref: `refs/heads/${upstream}`,
+          })
+          if (fetched.ok && target.kind === 'local') {
+            const head = await fetchedHead({ cwd })
+            if (head.ok) return this.resolveBranch(cwd, target.name, 'local', head.value)
+          }
+        }
+      }
+      return this.resolveBranch(cwd, target.name, target.kind)
+    }
     const request = await this.deps.gitlab.requestOf(cwd, target.iid)
     if (request === null) return { failure: 'not-gitlab' }
-    if (!request.fork) return this.resolveBranch(cwd, request.sourceBranch, 'any')
+    if (!request.fork) {
+      if (!isSafeRef(request.sourceBranch)) return { failure: 'refused-target' }
+      const fetched = await fetchRef({
+        cwd,
+        remote: 'origin',
+        ref: `refs/heads/${request.sourceBranch}`,
+      })
+      if (!fetched.ok) return { failure: 'git-failed', error: fetched.error.message }
+      const head = await fetchedHead({ cwd })
+      if (!head.ok) return { failure: 'git-failed', error: head.error.message }
+      return this.resolveBranch(cwd, request.sourceBranch, 'any', head.value)
+    }
     const fetched = await fetchRef({
       cwd,
       remote: 'origin',
@@ -890,13 +959,21 @@ export class GitBoxService {
   private async resolveBranch(
     cwd: string,
     name: string,
-    kind: 'local' | 'remote' | 'any'
+    kind: 'local' | 'remote' | 'any',
+    fetchedSha?: string
   ): Promise<Resolved> {
     if (!isSafeRef(name)) return { failure: 'refused-target' }
     const branches = await readBranchInventory({ cwd })
     if (!branches.ok) return { failure: 'not-a-repository', error: branches.error.message }
-    const local = branches.value.some((entry) => !entry.remote && entry.name === name)
-    if (local && kind !== 'remote') return { target: { kind: 'local', name } }
+    const local = branches.value.find((entry) => !entry.remote && entry.name === name)
+    if (local !== undefined && kind !== 'remote') {
+      const target: SwitchTarget = { kind: 'local', name }
+      if (fetchedSha === undefined) return { target }
+      if (local.sha === fetchedSha) return { target, fastForwardSha: fetchedSha }
+      const base = await readMergeBase({ cwd, base: fetchedSha, head: local.sha })
+      if (!base.ok) return { failure: 'git-failed', error: base.error.message }
+      return base.value === local.sha ? { target, fastForwardSha: fetchedSha } : { target }
+    }
     const remote = branches.value.some((entry) => entry.remote && entry.name === `origin/${name}`)
     if (!remote || kind === 'local') return { failure: 'refused-target' }
     const specs = await readFetchRefspecs({ cwd, remote: 'origin' })

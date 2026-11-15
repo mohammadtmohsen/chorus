@@ -12,6 +12,7 @@ function file(path: string): GitReviewFile {
     binary: false,
     collapsed: false,
     tooLarge: false,
+    commentable: true,
     threads: 0,
   }
 }

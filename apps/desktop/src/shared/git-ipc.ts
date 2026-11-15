@@ -67,6 +67,11 @@ export const ReviewVersion = z.object({
   headSha: z.string().regex(/^[0-9a-f]{40}$/),
   baseSha: z.string().regex(/^[0-9a-f]{40}$/),
   startSha: z.string().regex(/^[0-9a-f]{40}$/),
+  display: z.object({
+    baseSha: z.string().regex(/^[0-9a-f]{40}$/),
+    startSha: z.string().regex(/^[0-9a-f]{40}$/),
+    headSha: z.string().regex(/^[0-9a-f]{40}$/),
+  }),
 })
 export type ReviewVersion = z.infer<typeof ReviewVersion>
 
@@ -79,6 +84,7 @@ export const GitReviewFile = z.object({
   binary: z.boolean(),
   collapsed: z.boolean(),
   tooLarge: z.boolean(),
+  commentable: z.boolean(),
   threads: z.number().int().nonnegative(),
 })
 export type GitReviewFile = z.infer<typeof GitReviewFile>

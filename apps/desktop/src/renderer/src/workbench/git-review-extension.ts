@@ -236,7 +236,7 @@ export async function startGitReviewExtension(
     const context = contextFor(uri)
     if (context === null || activeReview === null) return false
     const summary = activeReview.files.find((file) => file.path === context.file.path)
-    if (summary === undefined) return false
+    if (summary?.commentable !== true) return false
     if (context.side === 'original') return summary.status !== 'added'
     if (summary.status === 'removed') return false
     if (!context.file.workspace) return true
@@ -331,7 +331,10 @@ export async function startGitReviewExtension(
     const state = parsed.data
     latest = state.revision
     const review = state.review
-    const identity = review === null ? '' : `${String(review.mr.iid)}:${String(review.version.id)}`
+    const identity =
+      review === null
+        ? ''
+        : `${String(review.mr.iid)}:${String(review.version.id)}:${review.version.display.headSha}`
     activeReview = review
     if (identity !== shown) {
       clearComments()
@@ -345,8 +348,8 @@ export async function startGitReviewExtension(
       recordReviewCommits(
         review.mr.iid,
         review.version.id,
-        review.version.headSha,
-        review.version.baseSha
+        review.version.display.headSha,
+        review.version.display.baseSha
       )
       for (const event of pendingOpened.splice(0)) rememberOpened(event)
       renderComments([...openedFiles.values()], true)

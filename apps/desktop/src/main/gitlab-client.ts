@@ -28,6 +28,7 @@ export type GitLabResult<T> =
       readonly failure: GitLabFailure
       readonly retryAt: number | null
       readonly error?: string
+      readonly status?: number
     }
 
 export interface Paged<T> {
@@ -48,6 +49,7 @@ const PAGE = 100
 const TTL_MS = 60_000
 const DETAIL_LIMIT = 40
 const DETAIL_CONCURRENCY = 4
+const DIFF_FALLBACK_STATUSES = new Set([400, 403, 404, 409])
 
 interface CacheEntry {
   readonly project: string
@@ -238,6 +240,7 @@ export class GitLabClient {
             ? 'rate-limited'
             : (FAILURE_BY_STATUS[response.status] ?? 'network'),
         retryAt: response.status === 429 ? this.coolUntil : null,
+        status: response.status,
         ...(error === undefined ? {} : { error }),
       }
     }
@@ -280,6 +283,8 @@ const MrListItem = z.object({
 })
 
 const MrDetail = MrListItem.omit({ labels: true }).extend({
+  state: z.string(),
+  has_conflicts: z.boolean().optional(),
   labels: z.array(z.union([z.string(), Label])).default([]),
   description: z.string().nullable(),
   diff_refs: z
@@ -321,6 +326,13 @@ const MrVersion = MrVersionItem.extend({
   real_size: z.union([z.string(), z.number().int().nonnegative()]).nullish(),
   overflow: z.boolean().optional(),
   diffs: z.array(MrDiffItem),
+})
+
+const MergeRef = z.object({ commit_id: z.string().regex(/^[0-9a-f]{40}$/) })
+const MergeCommit = z.object({ parent_ids: z.array(z.string().regex(/^[0-9a-f]{40}$/)) })
+const RepositoryCompare = z.object({
+  diffs: z.array(MrDiffItem),
+  compare_timeout: z.boolean(),
 })
 
 const Discussion = z
@@ -430,9 +442,10 @@ export function positionFor(
   version: ReviewVersion,
   file: MrDiffItem,
   side: 'original' | 'modified',
-  line: number
+  line: number,
+  commentable: boolean
 ): Record<string, string | number> | null {
-  if (!Number.isSafeInteger(line) || line <= 0) return null
+  if (!commentable || !Number.isSafeInteger(line) || line <= 0) return null
   if ((file.new_file && side === 'original') || (file.deleted_file && side === 'modified')) {
     return null
   }
@@ -651,7 +664,7 @@ export class GitLabDirectory implements GitProviderPort {
     if (source.id !== latest.value) {
       return { ok: false, failure: 'invalid-response', retryAt: null }
     }
-    const fetchedAt = Math.min(
+    let fetchedAt = Math.min(
       latest.fetchedAt,
       versioned.fetchedAt,
       detail.fetchedAt,
@@ -672,21 +685,111 @@ export class GitLabDirectory implements GitProviderPort {
       headSha: source.head_commit_sha,
       baseSha: source.base_commit_sha,
       startSha: source.start_commit_sha,
+      display: {
+        baseSha: source.base_commit_sha,
+        startSha: source.start_commit_sha,
+        headSha: source.head_commit_sha,
+      },
     }
+    let diffs = source.diffs
+    let diffComplete =
+      source.state === 'collected' &&
+      source.overflow !== true &&
+      (source.real_size === undefined ||
+        source.real_size === null ||
+        Number(source.real_size) === diffs.length)
+    if (detail.value.state === 'opened' && detail.value.has_conflicts !== true) {
+      const merged = await account.client.getUncached(`${root}/merge_ref`, MergeRef)
+      const afterMerge = this.changed(location.host, account)
+      if (afterMerge !== null) return afterMerge
+      if (!merged.ok) {
+        if (merged.status === undefined || !DIFF_FALLBACK_STATUSES.has(merged.status)) return merged
+      } else {
+        fetchedAt = Math.min(fetchedAt, merged.fetchedAt)
+        const commit = await account.client.get(
+          project,
+          `/projects/${project}/repository/commits/${merged.value.commit_id}`,
+          MergeCommit,
+          TTL_MS
+        )
+        const afterCommit = this.changed(location.host, account)
+        if (afterCommit !== null) return afterCommit
+        if (!commit.ok) {
+          if (commit.status === undefined || !DIFF_FALLBACK_STATUSES.has(commit.status)) {
+            return commit
+          }
+        } else {
+          fetchedAt = Math.min(fetchedAt, commit.fetchedAt)
+          const parents = commit.value.parent_ids
+          const target = parents[0]
+          if (parents.length === 2 && target !== undefined) {
+            if (parents[1] !== version.headSha) {
+              account.client.invalidate(project)
+              return { ok: true, value: { kind: 'preparing' }, fetchedAt }
+            }
+            const compared = await account.client.get(
+              project,
+              `/projects/${project}/repository/compare?from=${target}&to=${merged.value.commit_id}&straight=true`,
+              RepositoryCompare,
+              TTL_MS
+            )
+            const afterCompare = this.changed(location.host, account)
+            if (afterCompare !== null) return afterCompare
+            if (!compared.ok) {
+              if (compared.status === undefined || !DIFF_FALLBACK_STATUSES.has(compared.status)) {
+                return compared
+              }
+            } else {
+              fetchedAt = Math.min(fetchedAt, compared.fetchedAt)
+              diffs = compared.value.diffs
+              diffComplete = !compared.value.compare_timeout
+              version.display = {
+                baseSha: target,
+                startSha: target,
+                headSha: merged.value.commit_id,
+              }
+            }
+          }
+        }
+      }
+    }
+    const commentable = new Set(
+      diffs.filter(
+        (file) =>
+          diffs === source.diffs ||
+          source.diffs.some(
+            (regular) =>
+              regular.old_path === file.old_path &&
+              regular.new_path === file.new_path &&
+              regular.diff === file.diff &&
+              regular.new_file === file.new_file &&
+              regular.renamed_file === file.renamed_file &&
+              regular.deleted_file === file.deleted_file
+          )
+      )
+    )
     const threads = discussions.value.items.flatMap((discussion): GitReviewThread[] => {
       if (discussion === null) return []
       const first = discussion.notes[0]
       if (first?.system !== false || first.type !== 'DiffNote') return []
       const position = first.position
       if (
-        position?.head_sha !== version.headSha ||
-        position.base_sha !== version.baseSha ||
-        position.start_sha !== version.startSha
+        position === null ||
+        position === undefined ||
+        ![version, version.display].some(
+          (refs) =>
+            position.head_sha === refs.headSha &&
+            position.base_sha === refs.baseSha &&
+            position.start_sha === refs.startSha
+        )
       ) {
         return []
       }
-      const file = source.diffs.find(
-        (entry) => entry.old_path === position.old_path && entry.new_path === position.new_path
+      const file = diffs.find(
+        (entry) =>
+          commentable.has(entry) &&
+          entry.old_path === position.old_path &&
+          entry.new_path === position.new_path
       )
       if (file === undefined) return []
       return [
@@ -712,7 +815,7 @@ export class GitLabDirectory implements GitProviderPort {
         },
       ]
     })
-    const files: GitLabReviewFile[] = source.diffs.map((raw) => {
+    const files: GitLabReviewFile[] = diffs.map((raw) => {
       const parsed = hunksOf(raw)
       const collapsed = raw.collapsed === true
       const tooLarge = raw.too_large === true
@@ -742,6 +845,7 @@ export class GitLabDirectory implements GitProviderPort {
           binary,
           collapsed,
           tooLarge,
+          commentable: commentable.has(raw),
           threads: threads.filter(
             (thread) => thread.oldPath === raw.old_path && thread.path === raw.new_path
           ).length,
@@ -750,11 +854,7 @@ export class GitLabDirectory implements GitProviderPort {
     })
     const mr = detail.value
     const complete =
-      source.state === 'collected' &&
-      source.overflow !== true &&
-      (source.real_size === undefined ||
-        source.real_size === null ||
-        Number(source.real_size) === files.length) &&
+      diffComplete &&
       discussions.value.complete &&
       files.every((file) => !file.summary.collapsed && !file.summary.tooLarge)
     return {

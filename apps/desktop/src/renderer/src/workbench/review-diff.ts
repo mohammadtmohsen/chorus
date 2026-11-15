@@ -39,6 +39,21 @@ export function recordReviewCommits(
   base: string
 ): void {
   const key = `${String(iid)}:${String(versionId)}`
+  const previous = reviewCommits.get(key)
+  if (previous !== undefined && (previous.head !== head || previous.base !== base)) {
+    const original = reviewAuthority('original', iid, versionId)
+    const modified = reviewAuthority('modified', iid, versionId)
+    for (const cached of new Set([...resources.keys(), ...restoring.keys()])) {
+      const resource = URI.parse(cached)
+      if (
+        resource.scheme === REVIEW_SCHEME &&
+        (resource.authority === original || resource.authority === modified)
+      ) {
+        resources.delete(cached)
+        restoring.delete(cached)
+      }
+    }
+  }
   reviewCommits.delete(key)
   reviewCommits.set(key, { head, base })
   if (reviewCommits.size > 16) {
@@ -103,9 +118,7 @@ async function restoreReviewResource(
     if (path === '') throw new Error(failureMessage)
     const result = await window.chorusWorkbench.reviewFile({ iid, versionId, side, path })
     if (!result.ok) throw new Error(result.message)
-    const bytes = new TextEncoder().encode(result.text)
-    resources.set(resource.toString(), bytes)
-    return bytes
+    return new TextEncoder().encode(result.text)
   } catch (error) {
     throw createFileSystemProviderError(
       error instanceof Error ? error.message : failureMessage,
@@ -128,7 +141,15 @@ export function prepareReviewFileProvider(
     const pending = restoreReviewResource(resource, root, failureMessage)
     restoring.set(key, pending)
     try {
-      return await pending
+      const bytes = await pending
+      if (restoring.get(key) !== pending) {
+        throw createFileSystemProviderError(
+          failureMessage,
+          FileSystemProviderErrorCode.FileNotFound
+        )
+      }
+      resources.set(key, bytes)
+      return bytes
     } finally {
       if (restoring.get(key) === pending) restoring.delete(key)
     }

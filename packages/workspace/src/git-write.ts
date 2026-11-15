@@ -213,13 +213,18 @@ export async function switchTo(
   return result.ok ? ok(undefined) : result
 }
 
-export async function fastForward(options: GitOptions): Promise<Result<void, GitError>> {
+export async function fastForward(
+  options: GitOptions & { readonly sha?: string }
+): Promise<Result<void, GitError>> {
+  if (options.sha !== undefined && !FULL_SHA.test(options.sha)) {
+    return err(new GitError('refused-target', options.cwd))
+  }
   const result = await git(options, [
     'merge',
     '--ff-only',
     '--no-autostash',
     '--quiet',
-    '@{upstream}',
+    options.sha ?? '@{upstream}',
   ])
   return result.ok ? ok(undefined) : result
 }

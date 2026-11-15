@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { readStatus } from './git.js'
-import { commit, discard, isSafePath, push, stage, unstage } from './git-write.js'
+import { commit, discard, fastForward, isSafePath, push, stage, unstage } from './git-write.js'
 
 let base: string
 let cwd: string
@@ -162,6 +162,45 @@ describe('push', () => {
   it('refuses an option-shaped remote or branch', async () => {
     expect((await push({ cwd, remote: '--exec=touch /tmp/x', branch: 'main' })).ok).toBe(false)
     expect((await push({ cwd, remote: 'origin', branch: '--force' })).ok).toBe(false)
+  })
+})
+
+describe('fast-forward', () => {
+  it('advances to an explicit fetched SHA even when the upstream has not moved', async () => {
+    at(cwd, 'branch', 'stale-upstream')
+    at(cwd, 'branch', '--set-upstream-to=stale-upstream', 'main')
+    at(cwd, 'switch', '-c', 'incoming')
+    writeFileSync(join(cwd, 'src', 'kept.ts'), 'export const A = 2\n')
+    at(cwd, 'add', 'src/kept.ts')
+    at(cwd, 'commit', '-m', 'incoming')
+    const sha = at(cwd, 'rev-parse', 'HEAD').trim()
+    at(cwd, 'switch', 'main')
+
+    expect((await fastForward({ cwd, sha })).ok).toBe(true)
+    expect(at(cwd, 'rev-parse', 'HEAD').trim()).toBe(sha)
+    expect(readFileSync(join(cwd, 'src', 'kept.ts'), 'utf8')).toBe('export const A = 2\n')
+  })
+
+  it('preserves a diverged local commit instead of merging the explicit SHA', async () => {
+    at(cwd, 'switch', '-c', 'incoming')
+    writeFileSync(join(cwd, 'src', 'kept.ts'), 'incoming\n')
+    at(cwd, 'add', 'src/kept.ts')
+    at(cwd, 'commit', '-m', 'incoming')
+    const sha = at(cwd, 'rev-parse', 'HEAD').trim()
+    at(cwd, 'switch', 'main')
+    writeFileSync(join(cwd, 'src', 'kept.ts'), 'local\n')
+    at(cwd, 'add', 'src/kept.ts')
+    at(cwd, 'commit', '-m', 'local')
+    const local = at(cwd, 'rev-parse', 'HEAD').trim()
+
+    expect((await fastForward({ cwd, sha })).ok).toBe(false)
+    expect(at(cwd, 'rev-parse', 'HEAD').trim()).toBe(local)
+    expect(readFileSync(join(cwd, 'src', 'kept.ts'), 'utf8')).toBe('local\n')
+  })
+
+  it.each(['--force', 'HEAD', 'not-a-sha'])('refuses an invalid explicit SHA: %s', async (sha) => {
+    expect((await fastForward({ cwd, sha })).ok).toBe(false)
+    expect(at(cwd, 'log', '-1', '--pretty=%s').trim()).toBe('first')
   })
 })
 
