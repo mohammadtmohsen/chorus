@@ -155,7 +155,7 @@ export const WorkbenchReviewAction = z.discriminatedUnion('kind', [
 export type WorkbenchReviewAction = z.infer<typeof WorkbenchReviewAction>
 
 export const WorkbenchReviewActionResult = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(true), message: z.string().min(1).optional() }),
   z.object({ ok: z.literal(false), message: z.string().min(1) }),
 ])
 export type WorkbenchReviewActionResult = z.infer<typeof WorkbenchReviewActionResult>

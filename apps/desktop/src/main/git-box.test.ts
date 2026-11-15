@@ -18,6 +18,7 @@ import type {
   GitReviewEnvelope,
   ReviewVersion,
 } from '../shared/git-ipc.js'
+import en from '../renderer/src/i18n/en.json'
 import { GitBoxService } from './git-box.js'
 import {
   GitLabDirectory,
@@ -669,37 +670,179 @@ describe('Git box review writes', () => {
     })
   })
 
-  it('keeps a refused position message and does not publish a failed write', async () => {
+  it.each(['comment', 'reply'] as const)(
+    'keeps a rejected %s error and does not publish a failed write',
+    async (kind) => {
+      current = snapshot({ threads: [thread] })
+      await service.review(project.id, KEY.iid)
+      const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+      service.subscribe(listener)
+      writeReview.mockResolvedValue({
+        ok: false,
+        failure: 'invalid-response',
+        retryAt: null,
+        error: 'Position is invalid',
+      })
+      await expect(invoke(kind)).resolves.toEqual({
+        failure: 'git-failed',
+        retryAt: null,
+        error: 'Position is invalid',
+      })
+      expect(listener).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['comment', 'reply'] as const)(
+    'adopts the refreshed review after an accepted %s when only display refs change',
+    async (kind) => {
+      current = snapshot({ version: { ...VERSION, display: DISPLAY }, threads: [thread] })
+      await service.review(project.id, KEY.iid)
+      const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+      service.subscribe(listener)
+      writeReview.mockImplementationOnce(() => {
+        current = {
+          ...current,
+          version: {
+            ...current.version,
+            display: { baseSha: 'f'.repeat(40), startSha: 'f'.repeat(40), headSha: '1'.repeat(40) },
+          },
+          threads: [
+            {
+              ...thread,
+              notes: [
+                ...thread.notes,
+                {
+                  id: 2,
+                  body: 'Posted',
+                  author: { name: 'Author', username: 'author' },
+                  createdAt: NOW,
+                },
+              ],
+            },
+          ],
+        }
+        return Promise.resolve({ ok: true, value: {}, fetchedAt: NOW })
+      })
+      await expect(invoke(kind)).resolves.toEqual({ failure: null, retryAt: null, error: null })
+      expect(service.activeReview(project.id).review).toMatchObject({
+        version: current.version,
+        threads: current.threads,
+      })
+      expect(listener).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          review: expect.objectContaining({ version: current.version, threads: current.threads }),
+        })
+      )
+    }
+  )
+
+  it.each(kinds)('keeps accepted %s successful after a version change', async (kind) => {
+    current = snapshot({ threads: [thread] })
     await service.review(project.id, KEY.iid)
+    const held = service.activeReview(project.id)
     const listener = vi.fn<(state: GitReviewEnvelope) => void>()
     service.subscribe(listener)
-    writeReview.mockResolvedValue({
-      ok: false,
-      failure: 'invalid-response',
-      retryAt: null,
-      error: 'Position is invalid',
+    writeReview.mockImplementationOnce(() => {
+      current = { ...current, version: { ...VERSION, id: VERSION.id + 1 } }
+      return Promise.resolve({ ok: true, value: {}, fetchedAt: NOW })
     })
-    await expect(invoke('comment')).resolves.toEqual({
-      failure: 'git-failed',
+    await expect(invoke(kind)).resolves.toEqual({
+      failure: null,
       retryAt: null,
-      error: 'Position is invalid',
+      error: en.git.review.writeRefreshFailed,
     })
+    expect(service.activeReview(project.id)).toEqual(held)
     expect(listener).not.toHaveBeenCalled()
+    expect(writeReview).toHaveBeenCalledTimes(1)
   })
 
-  it('reports that a write was submitted when the following refresh fails', async () => {
+  it.each(kinds)('keeps accepted %s successful after a failed refresh', async (kind) => {
+    current = snapshot({ threads: [thread] })
     await service.review(project.id, KEY.iid)
+    const held = service.activeReview(project.id)
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    service.subscribe(listener)
     vi.spyOn(directory, 'review').mockResolvedValueOnce({
       ok: false,
       failure: 'network',
+      retryAt: NOW + 1_000,
+      error: 'Recorded network failure',
+    })
+    await expect(invoke(kind)).resolves.toEqual({
+      failure: null,
       retryAt: null,
+      error: en.git.review.writeRefreshFailed,
     })
-    await expect(invoke('comment')).resolves.toMatchObject({
-      failure: 'network',
-      error: expect.stringContaining('submitted to GitLab'),
-    })
+    expect(service.activeReview(project.id)).toEqual(held)
+    expect(listener).not.toHaveBeenCalled()
     expect(writeReview).toHaveBeenCalledTimes(1)
   })
+
+  it('keeps an accepted comment successful while GitLab prepares the review', async () => {
+    await service.review(project.id, KEY.iid)
+    const held = service.activeReview(project.id)
+    const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+    service.subscribe(listener)
+    vi.spyOn(directory, 'review').mockResolvedValueOnce({
+      ok: true,
+      value: { kind: 'preparing' },
+      fetchedAt: NOW,
+    })
+    await expect(invoke('comment')).resolves.toEqual({
+      failure: null,
+      retryAt: null,
+      error: en.git.review.writeRefreshFailed,
+    })
+    expect(service.activeReview(project.id)).toEqual(held)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it.each(['closed', 'identity'] as const)(
+    'keeps an accepted comment successful when the session changes while posting: %s',
+    async (change) => {
+      await service.review(project.id, KEY.iid)
+      const held = service.activeReview(project.id)
+      const reviews = vi.spyOn(directory, 'review')
+      reviews.mockClear()
+      writeReview.mockImplementationOnce(() => {
+        if (change === 'closed') service.closeReview(project.id)
+        else vi.spyOn(directory, 'identity').mockReturnValue('another-account')
+        return Promise.resolve({ ok: true, value: {}, fetchedAt: NOW })
+      })
+      await expect(invoke('comment')).resolves.toEqual({
+        failure: null,
+        retryAt: null,
+        error: en.git.review.writeRefreshFailed,
+      })
+      expect(reviews).not.toHaveBeenCalled()
+      if (change === 'closed') expect(service.activeReview(project.id).review).toBeNull()
+      else expect(service.activeReview(project.id)).toEqual(held)
+    }
+  )
+
+  it.each(['closed', 'identity'] as const)(
+    'does not revive a session that changed while refreshing an accepted comment: %s',
+    async (change) => {
+      await service.review(project.id, KEY.iid)
+      const held = service.activeReview(project.id)
+      vi.spyOn(directory, 'review').mockImplementationOnce(() => {
+        if (change === 'closed') service.closeReview(project.id)
+        else vi.spyOn(directory, 'identity').mockReturnValue('another-account')
+        return Promise.resolve({
+          ok: true,
+          value: { kind: 'ready', snapshot: current },
+          fetchedAt: NOW,
+        })
+      })
+      await expect(invoke('comment')).resolves.toEqual({
+        failure: null,
+        retryAt: null,
+        error: en.git.review.writeRefreshFailed,
+      })
+      if (change === 'closed') expect(service.activeReview(project.id).review).toBeNull()
+      else expect(service.activeReview(project.id)).toEqual(held)
+    }
+  )
 })
 
 describe('Git box restored review files', () => {
@@ -1282,9 +1425,11 @@ describe('Git box merged-result readers', () => {
   })
 
   it.each(['baseSha', 'headSha'] as const)(
-    'reports a submitted write when displayed %s changes during refresh',
+    'adopts a submitted write when displayed %s changes during refresh',
     async (field) => {
       await service.review(project.id, KEY.iid)
+      const listener = vi.fn<(state: GitReviewEnvelope) => void>()
+      service.subscribe(listener)
       writeReview.mockImplementationOnce(() => {
         current = {
           ...current,
@@ -1292,11 +1437,19 @@ describe('Git box merged-result readers', () => {
         }
         return Promise.resolve({ ok: true, value: {}, fetchedAt: NOW })
       })
-      await expect(service.approve({ ...allRequest(), approve: true })).resolves.toMatchObject({
-        failure: 'head-moved',
-        error: expect.stringContaining('submitted to GitLab'),
+      await expect(service.approve({ ...allRequest(), approve: true })).resolves.toEqual({
+        failure: null,
+        retryAt: null,
+        error: null,
       })
-      expect(service.activeReview(project.id).review?.version.display).toEqual(DISPLAY)
+      expect(service.activeReview(project.id).review?.version.display).toEqual(
+        current.version.display
+      )
+      expect(listener).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          review: expect.objectContaining({ version: current.version }),
+        })
+      )
     }
   )
 })

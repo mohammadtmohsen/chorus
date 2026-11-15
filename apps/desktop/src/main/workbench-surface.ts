@@ -2045,7 +2045,12 @@ export function registerWorkbenchHandlers(
             break
         }
         return result.failure === null
-          ? { ok: true }
+          ? {
+              ok: true,
+              ...(typeof result.error === 'string' && result.error !== ''
+                ? { message: result.error }
+                : {}),
+            }
           : {
               ok: false,
               message: [mainT(`git.failure.${result.failure}`), result.error]

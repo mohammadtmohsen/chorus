@@ -414,27 +414,19 @@ export class GitBoxService {
       this.reviews.get(projectId) !== session ||
       this.deps.gitlab.identity(session.location.host) !== session.identity
     ) {
-      return { failure: 'head-moved', retryAt: null, error: posted }
+      return { failure: null, retryAt: null, error: posted }
     }
     const refreshed = await this.deps.gitlab.review(session.location, session.snapshot.mr.iid, true)
     if (!refreshed.ok) {
-      return {
-        failure: gitFailure(refreshed.failure),
-        retryAt: refreshed.retryAt,
-        error: [posted, refreshed.error].filter((part) => part !== undefined).join('\n'),
-      }
+      return { failure: null, retryAt: null, error: posted }
     }
     if (
       refreshed.value.kind !== 'ready' ||
       refreshed.value.snapshot.version.id !== session.snapshot.version.id ||
-      refreshed.value.snapshot.version.display.headSha !==
-        session.snapshot.version.display.headSha ||
-      refreshed.value.snapshot.version.display.baseSha !==
-        session.snapshot.version.display.baseSha ||
       this.reviews.get(projectId) !== session ||
       this.deps.gitlab.identity(session.location.host) !== session.identity
     ) {
-      return { failure: 'head-moved', retryAt: null, error: posted }
+      return { failure: null, retryAt: null, error: posted }
     }
     this.reviews.set(projectId, { ...session, snapshot: refreshed.value.snapshot })
     this.publishReview(projectId)

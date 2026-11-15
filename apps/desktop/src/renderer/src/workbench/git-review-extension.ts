@@ -460,6 +460,7 @@ export async function startGitReviewExtension(
       return failWrite(labels.actionFailed)
     }
     if (!result.ok) return failWrite(result.message)
+    if (result.message !== undefined) void api.window.showInformationMessage(result.message)
   }
   const queueWrite = (work: () => Promise<void>): Promise<void> => {
     const next = actions.then(work)
@@ -468,15 +469,19 @@ export async function startGitReviewExtension(
     })
     return next
   }
+  const inFlight = new Set<CommentThread>()
   const submit = (raw: unknown, reply: boolean): Promise<void> => {
+    if (typeof raw !== 'object' || raw === null) return failWrite(labels.actionFailed)
+    const value = raw as Record<string, unknown>
+    const thread = asThread(value['thread'])
+    if (thread === null) return failWrite(labels.actionFailed)
+    if (inFlight.has(thread)) return Promise.resolve()
+    inFlight.add(thread)
     const identity = shown
     return queueWrite(async () => {
       if (identity === '' || shown !== identity) return failWrite(labels.actionFailed)
-      if (typeof raw !== 'object' || raw === null) return failWrite(labels.actionFailed)
-      const value = raw as Record<string, unknown>
-      const thread = asThread(value['thread'])
       const body = value['text']
-      if (thread === null || typeof body !== 'string' || body.trim() === '') {
+      if (typeof body !== 'string' || body.trim() === '') {
         return failWrite(labels.actionFailed)
       }
       if (reply) {
@@ -507,6 +512,8 @@ export async function startGitReviewExtension(
         body,
       })
       thread.dispose()
+    }).finally(() => {
+      inFlight.delete(thread)
     })
   }
   const resolve = (raw: unknown, resolved: boolean): Promise<void> =>

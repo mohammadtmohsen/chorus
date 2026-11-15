@@ -286,7 +286,12 @@ const api: ChorusWorkbenchApi = {
   reviewAction: async (action): Promise<WorkbenchReviewActionResult> => {
     const raw: unknown = await ipcRenderer.invoke(REVIEW_ACTION_CHANNEL, action)
     if (typeof raw === 'object' && raw !== null && 'ok' in raw) {
-      if (raw.ok === true) return { ok: true }
+      if (raw.ok === true) {
+        if (!('message' in raw) || raw.message === undefined) return { ok: true }
+        if (typeof raw.message === 'string' && raw.message !== '') {
+          return { ok: true, message: raw.message }
+        }
+      }
       if (
         raw.ok === false &&
         'message' in raw &&
