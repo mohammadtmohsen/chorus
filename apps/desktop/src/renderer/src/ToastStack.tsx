@@ -9,7 +9,18 @@ import { useSignal } from './workspace/signal.js'
 import { useShellOverlayActive } from './workspace/overlay.js'
 import { useToastWindow } from './useToastWindow.js'
 
-export function ToastStack(): React.JSX.Element {
+export interface ToastMessage {
+  readonly key: string
+  readonly text: string
+  readonly tone: 'bad' | 'status'
+  readonly onDismiss: (() => void) | null
+}
+
+export function ToastStack({
+  messages,
+}: {
+  readonly messages: readonly ToastMessage[]
+}): React.JSX.Element {
   const { t } = useTranslation()
   const shown = useSignal(toastSignal)
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
@@ -19,7 +30,10 @@ export function ToastStack(): React.JSX.Element {
   const dismissAll = useCallback(() => {
     toastSignal.set([])
   }, [])
-  const { host, anchor, stack } = useToastWindow(shown.length > 0 && !overlayActive, dismissAll)
+  const { host, anchor, stack } = useToastWindow(
+    (shown.length > 0 || messages.length > 0) && !overlayActive,
+    dismissAll
+  )
 
   const cards = (
     <div
@@ -31,6 +45,27 @@ export function ToastStack(): React.JSX.Element {
           : { position: 'relative', top: 0, right: 0, width: '100%', maxHeight: 'inherit' }
       }
     >
+      {messages.map((message) => (
+        <div
+          className={`toast toast--${message.tone}`}
+          key={message.key}
+          role={message.tone === 'bad' ? 'alert' : 'status'}
+        >
+          <div className="toast-head">
+            <span className="toast-message">{message.text}</span>
+            {message.onDismiss !== null && (
+              <button
+                type="button"
+                className="toast-close"
+                aria-label={t('notify.dismiss')}
+                onClick={message.onDismiss}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
       {shown.map((toast) => {
         const key = toastKey(toast)
         const held = busy.has(key)

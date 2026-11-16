@@ -6035,20 +6035,6 @@ input::placeholder {
   overflow: hidden;
 }
 
-.notice--workspace {
-  flex: none;
-  margin: 0;
-  border-radius: 0;
-}
-
-.notice--closing {
-  position: absolute;
-  z-index: 30;
-  inset: 0 0 auto;
-  background: var(--bg-surface);
-  pointer-events: none;
-}
-
 .workspace-shell {
   position: relative;
   display: flex;
@@ -8698,14 +8684,6 @@ input::placeholder {
 
 .stage[data-window-controls='true'] .quick-rail {
   padding-top: var(--masthead);
-}
-
-.stage[data-window-controls='true'] > .notice--workspace {
-  padding-left: 88px;
-}
-
-.stage[data-window-controls='true']:has(> .notice--workspace:not(.notice--closing)) .quick-rail {
-  padding-top: var(--rail-top);
 }
 
 .workspace-shell[data-rail='right'] .quick-rail {
@@ -14978,6 +14956,18 @@ html.continuous-row .zoom-badge {
 .toast--question {
   border-color: color-mix(in srgb, var(--voice, var(--bone)) 55%, var(--border-strong));
   background: color-mix(in srgb, var(--voice, var(--bone)) 9%, var(--bg-surface));
+}
+
+.toast--bad {
+  border-color: var(--alert);
+  background: color-mix(in srgb, var(--alert) 7%, var(--bg-surface));
+  color: var(--alert);
+}
+
+.toast-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .toast .btn {

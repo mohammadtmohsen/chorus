@@ -2,8 +2,7 @@ import { hostReconnected, onHostProjectAdopted } from './host-actions.js'
 import { diagnosticStaging } from './diagnostic-staging.js'
 import { useHostCapabilities } from './host-context.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ErrorNotice } from './ErrorNotice.js'
-import { ToastStack } from './ToastStack.js'
+import { ToastStack, type ToastMessage } from './ToastStack.js'
 import { useTranslation } from 'react-i18next'
 import type { AgentProbeResult, IpcRequest, IpcResponse } from '../../shared/ipc.js'
 import type { WindowRole } from '../../shared/detached-window-ipc.js'
@@ -44,7 +43,6 @@ import {
 } from './workspace/layout.js'
 import { measureTabGeometry, resolveTarget } from './workspace/useTabDrag.js'
 import { reorderSessions } from './workspace/session-row.js'
-import { useShellOverlay } from './workspace/overlay.js'
 import { runningPlatform, setRunningPlatform } from './shortcuts.js'
 
 /**
@@ -126,8 +124,6 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   const [stoppingChats, setStoppingChats] = useState<readonly string[]>([])
   const [stoppingProjects, setStoppingProjects] = useState<readonly string[]>([])
   const stopping = stoppingChats.length > 0 || stoppingProjects.length > 0
-  // Native editor views otherwise cover the floating close-pending message.
-  useShellOverlay(stopping)
   /**
    * A way to read each mounted session's draft, lent by the session itself.
    *
@@ -1811,20 +1807,35 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
       </div>
     )
 
-  const toastStack = <ToastStack />
-
-  const notice = error ?? (engineRestartRequired ? t('notice.engineRestartRequired') : null)
-  const topLevelNotice =
-    notice === null ? null : (
-      <ErrorNotice
-        message={notice}
-        className="notice--workspace"
-        onDismiss={() => {
-          setError(null)
-          setEngineRestartRequired(false)
-        }}
-      />
-    )
+  const restartToasts: readonly ToastMessage[] = engineRestartRequired
+    ? [
+        {
+          key: 'restart',
+          text: t('notice.engineRestartRequired'),
+          tone: 'bad',
+          onDismiss: () => {
+            setEngineRestartRequired(false)
+          },
+        },
+      ]
+    : []
+  const errorToasts: readonly ToastMessage[] =
+    error === null
+      ? []
+      : [
+          {
+            key: 'error',
+            text: error,
+            tone: 'bad',
+            onDismiss: () => {
+              setError(null)
+            },
+          },
+        ]
+  const stoppingToasts: readonly ToastMessage[] = stopping
+    ? [{ key: 'stopping', text: t('workspace.stopping'), tone: 'status', onDismiss: null }]
+    : []
+  const toastStack = <ToastStack messages={[...errorToasts, ...restartToasts, ...stoppingToasts]} />
 
   const sheets = (
     <>
@@ -1892,7 +1903,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
     return (
       <>
         <div className="empty" aria-busy="true" />
-        {topLevelNotice}
+        {toastStack}
       </>
     )
   }
@@ -1912,7 +1923,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   if (sessions.length === 0 && projects.length === 0 && error === null) {
     return (
       <>
-        {topLevelNotice}
+        {toastStack}
         <div className="empty">
           <ChorusLogo label={t('app.name')} />
           <h1>{t('app.name')}</h1>
@@ -1955,7 +1966,7 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   if (sessions.length === 0 && (projects.length === 0 || noAgentInstalled(probes))) {
     return (
       <>
-        {error === null && topLevelNotice}
+        <ToastStack messages={restartToasts} />
         <Stuck
           error={error}
           starting={starting}
@@ -1997,12 +2008,6 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
   if (role.kind === 'detached') {
     return (
       <div className="stage">
-        {topLevelNotice}
-        {stopping && (
-          <p className="notice notice--workspace notice--closing" role="status">
-            {t('workspace.stopping')}
-          </p>
-        )}
         <DetachedStage
           sessions={sessions}
           projects={projects}
@@ -2032,13 +2037,6 @@ export function App({ role }: { readonly role: WindowRole }): React.JSX.Element 
       className="stage"
       data-window-controls={capabilities.detachedWindows && runningPlatform() === 'darwin'}
     >
-      {topLevelNotice}
-
-      {stopping && (
-        <p className="notice notice--workspace notice--closing" role="status">
-          {t('workspace.stopping')}
-        </p>
-      )}
       <Workspace
         sessions={sessions}
         railBrand={
