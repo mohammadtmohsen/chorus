@@ -644,7 +644,7 @@ export class EventStore {
       )
       .all(params)
 
-    return rows.map((r) => toStoredEvent(r))
+    return rows.flatMap((r) => toStoredEvent(r) ?? [])
   }
 
   count(conversationId: string, options: Pick<ReadOptions, 'afterSeq' | 'types'> = {}): number {
@@ -692,7 +692,7 @@ export class EventStore {
       )
       .all(params)
 
-    return rows.map((r) => toStoredEvent(r)).reverse()
+    return rows.flatMap((r) => toStoredEvent(r) ?? []).reverse()
   }
 
   /**
@@ -1057,7 +1057,7 @@ export class EventStore {
       this.db
         .prepare(sql)
         .all(params)
-        .map((row) => toStoredEvent(row))
+        .flatMap((row) => toStoredEvent(row) ?? [])
 
     const recordTypes = TASK_RECORD_TYPES.map((type) => `'${type}'`).join(', ')
     const inRange =
@@ -1158,7 +1158,7 @@ export class EventStore {
         markerSeq: event.seq,
         ...prefixParams,
       })
-      return row === undefined ? [] : [toStoredEvent(row)]
+      return row === undefined ? [] : (toStoredEvent(row) ?? [])
     })
 
     const participants = new Set<string>()
@@ -1177,7 +1177,7 @@ export class EventStore {
         markerSeq: window === null ? Number.MAX_SAFE_INTEGER : window.toSeq + 1,
         ...prefixParams,
       })
-      return row === undefined ? [] : [toStoredEvent(row)]
+      return row === undefined ? [] : (toStoredEvent(row) ?? [])
     })
 
     const bySeq = new Map<number, StoredEvent>()
@@ -1299,7 +1299,7 @@ export class EventStore {
       .get({ conversationId, taskId, asOfSeq })
     if (opened === undefined) return null
     const event = toStoredEvent(opened)
-    if (event.payload.type !== 'task.opened') return null
+    if (event?.payload.type !== 'task.opened') return null
     const { originEventId } = event.payload
     const origin = this.db
       .prepare('SELECT seq FROM events WHERE id = @id AND conversation_id = @conversationId')
@@ -1380,7 +1380,7 @@ export class EventStore {
           ORDER BY seq`
       )
       .all(scope)
-      .map((row) => toStoredEvent(row))
+      .flatMap((row) => toStoredEvent(row) ?? [])
     return {
       opened,
       latestRevisions,
@@ -1974,8 +1974,8 @@ export class EventStore {
       let last = 0
       for (const row of rows) {
         const event = toStoredEvent(row)
-        applyToProjections(this.db, event)
-        last = event.seq
+        if (event !== null) applyToProjections(this.db, event)
+        last = StoredEventRow.parse(row).seq
       }
       this.bumpProjectionState(last)
       return { events: rows.length, lastSeq: last }
@@ -2104,8 +2104,13 @@ function eventFilter(
   return { where: clauses.join(' AND '), params }
 }
 
-function toStoredEvent(row: unknown): StoredEvent {
+const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set(
+  ChorusEventPayload.options.map((option) => option.shape.type.value)
+)
+
+function toStoredEvent(row: unknown): StoredEvent | null {
   const parsed = StoredEventRow.parse(row)
+  if (!KNOWN_EVENT_TYPES.has(parsed.type)) return null
   return {
     seq: parsed.seq,
     id: parsed.id,
